@@ -201,9 +201,9 @@ database do not match; Settings and the home page carry on).
    in a second browser (the tick goes stale, the old fingerprint gets 409), withdraw, the Time Card, the
    PDF; then delete the test rows.
 
-The crews keep filing hours in the old portal until the cutover: the timesheet history import and the
-switch-over wait for the timesheet Saturday after DCR Agents 2 is live (BLUEPRINT 4.4, Q6; the
-cutover steps 6–9 of that README).
+The crews keep filing hours in the old portal until they switch to Portal 2, on a Saturday the owner
+picks once it is ready (texted hours need DCR Agents 2). The old hours are not imported (owner's
+decision 2026-10-20): they stay in the old portal.
 
 **Owner, once (any time before the first publish)**
 
