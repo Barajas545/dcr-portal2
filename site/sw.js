@@ -1,6 +1,6 @@
 /* DCR Employee Portal 2 service worker (BLUEPRINT 2.2.6).
 
-   - Cache "dcr-portal2-v1". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
+   - Cache "dcr-portal2-v2". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
      portal's "dcr-portal-*" nor anything else on the device.
    - Network FIRST for the site's own pages and files (always up to date online; the last copy
      offline). A copy is kept under its path only, never with a query string: an address such as
@@ -8,18 +8,46 @@
      and a page with ?id= falls back to its one kept copy. The pinned CDN libraries (exact versions,
      scoped packages included: @supabase/supabase-js@2.117.2) are kept and used first.
    - Never touches *.supabase.co (data, sign-in, Storage, Realtime) and never a non-GET request.
-   - Phone reminders: the push and notificationclick handlers of the old sw.js (P3 turns them on). */
-const CACHE = "dcr-portal2-v1";
+   - Phone reminders (P3, BLUEPRINT 3.3.8): "push" shows {title, body, url, tag} from the Edge Function
+     "push"; "notificationclick" opens or focuses that page, and only a page of this site (same origin,
+     inside this worker's scope): anything else in a payload opens the home page instead.
+   v2 (P3): the push handlers and the task pages; a new name so every installed copy takes them.
+   A new name must never cost a phone its offline libraries: install also keeps supabase-js (PINNED_PRECACHE),
+   and activate copies every pinned CDN file an older "dcr-portal2-*" cache held into the new one BEFORE
+   that cache is deleted (the visit that installs the new worker is still served by the old one, so it
+   never fetches them itself). tests/core-sw.test.mjs runs both. */
+const CACHE = "dcr-portal2-v2";
 const PREFIX = "dcr-portal2-";
+// Every page below with every file it loads (its stylesheets and its whole static import graph:
+// tests/core-sw.test.mjs checks it), so the installed app also opens offline from a cold start (a
+// phone that lost signal before it ever opened that page).
 const SHELL = [
   "./", "index.html", "dashboard.html", "change-password.html", "settings.html",
   "board.html", "project.html", "search.html", "logs.html", "capture.html", "report-journal.html",
   "timesheet.html", "timesheet-mobile.html", "timesheet-manager.html", "timesheet-batch.html", "report-timecard.html", "admin.html",
-  "css/styles.css", "manifest.json",
+  "my-tasks.html", "tasks-map.html",
+  "css/styles.css", "css/tasks.css", "manifest.json",
   "js/config.js", "js/sb.js", "js/common2.js", "js/live.js", "js/money-mask.js", "js/upload-queue2.js",
-  "js/install.js", "js/push2.js",
+  "js/install.js", "js/push2.js", "js/timesheet-pdf.js",
   "js/shell/index.js", "js/shell/dashboard.js", "js/shell/settings.js", "js/shell/change-password.js",
+  "js/repo/_db.js", "js/repo/activity.js", "js/repo/employees.js", "js/repo/files.js", "js/repo/journal.js",
+  "js/repo/people.js", "js/repo/projects.js", "js/repo/search.js", "js/repo/tasks.js", "js/repo/timesheets.js",
+  "js/map/activity.js", "js/map/files.js", "js/map/geo.js", "js/map/journal.js", "js/map/legacy.js", "js/map/pacific.js",
+  "js/map/projects.js", "js/map/search.js", "js/map/status.js", "js/map/tasks.js", "js/map/timesheets.js",
+  "js/pages/shell.js", "js/pages/admin.js", "js/pages/board.js", "js/pages/board-model.js", "js/pages/capture.js",
+  "js/pages/journal-sync.js", "js/pages/logs.js", "js/pages/my-tasks.js", "js/pages/project.js", "js/pages/project-files.js",
+  "js/pages/project-journal.js", "js/pages/project-log.js", "js/pages/project-mailing.js", "js/pages/project-overview.js",
+  "js/pages/project-tasks.js", "js/pages/report-journal.js", "js/pages/report-timecard.js", "js/pages/search.js",
+  "js/pages/task-form.js", "js/pages/tasks-map.js", "js/pages/timesheet.js", "js/pages/timesheet-batch.js",
+  "js/pages/timesheet-manager.js", "js/pages/timesheet-mobile.js", "js/pages/ts-shared.js", "js/pages/uploads.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
+];
+
+// The pinned library every page needs before it can reach the database (js/sb.js SUPABASE_JS_URL - the
+// same address: tests/core-sw.test.mjs compares them), kept at install so a cold start with no signal works
+// even on a phone that never loaded it under this cache's name.
+const PINNED_PRECACHE = [
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js",
 ];
 
 self.addEventListener("install", (event) => {
@@ -35,13 +63,36 @@ self.addEventListener("install", (event) => {
         if (res && res.ok && res.type === "basic") await cache.put(url, res);
       } catch (e) { /* offline or missing: kept when first visited */ }
     }));
+    await Promise.all(PINNED_PRECACHE.map(async (url) => {
+      try {
+        if (await cache.match(url)) return;
+        const res = await fetch(url, { mode: "cors", credentials: "omit" });
+        if (res && res.ok) await cache.put(url, res);
+      } catch (e) { /* offline: activate copies it from the previous cache, or the first page load keeps it */ }
+    }));
   })());
 });
+
+/** The pinned CDN files an older "dcr-portal2-*" cache holds, copied into `cache` (what it has already stays). */
+async function keepPinned(cache, oldNames) {
+  for (const name of oldNames) {
+    try {
+      const old = await caches.open(name);
+      for (const req of await old.keys()) {
+        if (!PINNED_CDN.test(req.url) || (await cache.match(req))) continue;
+        const res = await old.match(req);
+        if (res) await cache.put(req, res);
+      }
+    } catch (e) { /* one cache that cannot be read must not stop the others */ }
+  }
+}
 
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k.indexOf(PREFIX) === 0 && k !== CACHE).map((k) => caches.delete(k)));
+    const older = keys.filter((k) => k.indexOf(PREFIX) === 0 && k !== CACHE);
+    try { await keepPinned(await caches.open(CACHE), older); } catch (e) { /* the first online page load keeps them again */ }
+    await Promise.all(older.map((k) => caches.delete(k)));
     // a copy kept with a query string by an earlier worker is dropped (it could hold a typed sign-in)
     try {
       const cache = await caches.open(CACHE);
@@ -99,37 +150,62 @@ self.addEventListener("fetch", (event) => {
 });
 
 /* ── phone reminders (P3) ─────────────────────────────────────────────────
-   {title, body, url, tag}: the tag makes a second reminder for the same thing replace the first;
-   a push with no readable payload still shows something (iOS does not allow a silent push). */
+   The payload {title, body, url, tag}: the tag makes a second notice about the same thing (the same task,
+   the same missing day) replace the first instead of stacking. A push with no readable payload still
+   shows something: iOS does not allow a silent push and would end the subscription. */
+const HOME = "dashboard.html";
+const TEXT_MAX = { title: 80, body: 400, tag: 60 };
+
+/** The page a notice may open: a page of this site (same origin, inside the scope), else the home page. */
+function safeTarget(raw) {
+  const scope = self.registration.scope;
+  try {
+    if (typeof raw === "string" && raw) {
+      const u = new URL(raw, scope);
+      if (u.origin === self.location.origin && u.href.indexOf(scope) === 0) return u.href;
+    }
+  } catch (e) { /* not a URL */ }
+  return new URL(HOME, scope).href;
+}
+function text(v, max) {
+  return typeof v === "string" ? v.slice(0, max) : "";
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) {
     try { data = { body: event.data.text() }; } catch (e2) { data = {}; }
   }
+  if (!data || typeof data !== "object") data = {};
   const scope = self.registration.scope;
-  const url = data.url ? new URL(data.url, scope).href : new URL("dashboard.html", scope).href;
-  event.waitUntil(self.registration.showNotification(data.title || "DCR Framing", {
-    body: data.body || "",
+  event.waitUntil(self.registration.showNotification(text(data.title, TEXT_MAX.title) || "DCR Framing", {
+    body: text(data.body, TEXT_MAX.body),
     icon: new URL("icons/icon-192.png", scope).href,
     badge: new URL("icons/icon-192.png", scope).href,
-    tag: data.tag || "dcr-portal2",
+    tag: text(data.tag, TEXT_MAX.tag) || "dcr-portal2",
     renotify: true,
-    data: { url },
+    data: { url: safeTarget(data.url) },
   }));
 });
 
+/* Tapping a notice: a window already showing that page is focused; else an open Portal 2 window is
+   taken to it; else a new window opens. Never a page of another site. */
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const url = safeTarget(event.notification.data && event.notification.data.url);
   const scope = self.registration.scope;
-  let url = (event.notification.data && event.notification.data.url) || new URL("dashboard.html", scope).href;
-  if (url.indexOf(scope) !== 0) url = new URL("dashboard.html", scope).href;    // only this site's pages
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    for (const c of all) {
-      if (c.url && c.url.indexOf(scope) === 0 && "focus" in c) {
-        try { if ("navigate" in c) await c.navigate(url); } catch (e) { /* a window we may not steer */ }
-        return c.focus();
-      }
+    const ours = all.filter((c) => c.url && c.url.indexOf(scope) === 0 && "focus" in c);
+    const same = ours.find((c) => c.url === url);
+    if (same) return same.focus();
+    for (const c of ours) {
+      try {
+        if ("navigate" in c) {
+          const moved = await c.navigate(url);
+          return (moved || c).focus();
+        }
+      } catch (e) { /* a window we may not steer: try the next, or open one */ }
     }
     if (self.clients.openWindow) return self.clients.openWindow(url);
     return undefined;

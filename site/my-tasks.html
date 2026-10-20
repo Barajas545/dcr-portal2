@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — My Tasks</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/tasks.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      /* My Tasks is opened from a reminder on a phone far more often than from a desk, so it is laid
+         out for a phone first: one column of cards, and a task opens as a full-screen view with its
+         own way back. From 960px the task sits beside the list instead. (The old portal's page.) */
+      .mt-layout{display:block;}
+      .mt-head{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap;}
+      .mt-head h2{margin:4px 0 2px; font-size:22px; line-height:1.25;}
+      .mt-head h2:focus{outline:none;}
+      .mt-headbtns{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;}
+      .mt-headbtns .btn{min-height:44px; display:inline-flex; align-items:center; text-decoration:none;}
+      .dcr-mo-ft .btn{min-height:44px;}
+      .mt-sub{margin:0 0 12px; color:var(--text-muted); font-size:14px; min-height:21px;}
+      .mt-sub b{color:var(--warn);}
+
+      /* Mine / the crew's / everyone's */
+      .mt-seg{display:inline-flex; flex-wrap:wrap; gap:3px; padding:3px; margin:0 0 6px; background:var(--surface-2);
+        border:1px solid var(--border); border-radius:12px; max-width:100%;}
+      .mt-seg[hidden]{display:none;}
+      .mt-seg button{min-height:44px; padding:8px 14px; border:0; border-radius:9px; background:transparent;
+        color:var(--text-muted); font-weight:700; font-size:14px; white-space:nowrap;}
+      .mt-seg button[aria-pressed="true"]{background:var(--surface); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.14);}
+      .mt-seg button:focus-visible{outline:2px solid var(--acc); outline-offset:1px;}
+
+      .mt-empty{padding:28px 16px; text-align:center; color:var(--text-muted); background:var(--surface);
+        border:1px dashed var(--border); border-radius:12px; margin-top:12px;}
+      .mt-empty b{display:block; color:var(--text); font-size:16px; margin-bottom:4px;}
+      .mt-skel{height:86px; border-radius:12px; margin-bottom:10px; background:var(--surface); border:1px solid var(--border); opacity:.6;}
+      .mt-foot{display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; margin-top:22px; padding-top:12px; border-top:1px solid var(--border); font-size:14px;}
+      .mt-foot a{display:inline-flex; align-items:center; min-height:44px; color:var(--acc); font-weight:600; text-decoration:none;}
+      .mt-live{font-size:12px; color:var(--text-muted);}
+
+      /* The task. Off-canvas on a phone until a task is opened; then it is the whole screen, sized to
+         the part the keyboard leaves visible (--vvh from visualViewport), so Send never ends up under
+         the keyboard. */
+      .mt-detail{display:none;}
+      .mt-detail.open{display:flex; flex-direction:column; position:fixed; inset:0; z-index:40;
+        height:var(--vvh, 100dvh); background:var(--bg);}
+      .mt-dbar{display:flex; align-items:center; justify-content:space-between; gap:8px; flex:none;
+        padding:calc(6px + env(safe-area-inset-top)) 8px 6px; background:var(--surface); border-bottom:1px solid var(--border);}
+      .mt-back{min-height:44px; padding:8px 12px; border:0; background:none; color:var(--acc); font-weight:700; font-size:15.5px;}
+      .mt-back:focus-visible, .mt-x:focus-visible{outline:2px solid var(--acc); outline-offset:1px; border-radius:8px;}
+      .mt-x{display:none; width:44px; height:44px; border:1px solid var(--border); border-radius:10px;
+        background:var(--surface); color:var(--text); font-size:22px; line-height:1;}
+      .mt-dscroll{flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+        padding:16px 16px calc(28px + env(safe-area-inset-bottom));}
+      .mt-ph{padding:40px 24px; text-align:center; color:var(--text-muted); font-size:14.5px;}
+      .mt-dtop{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px;}
+      .mt-dtitle{margin:0 0 4px; font-size:21px; line-height:1.25; overflow-wrap:anywhere;}
+      /* the headings take focus only so a screen reader starts there (a task opened, the list back): they are
+         not controls, so no ring (a notification's link would otherwise open the task with a box round its title) */
+      .mt-dtitle:focus, .mt-dtitle:focus-visible, #mtTitle:focus, #mtTitle:focus-visible{outline:none;}
+      .mt-dplace{font-size:14px; color:var(--text-muted); overflow-wrap:anywhere;}
+      .mt-dwhen{margin-top:2px; font-size:14px; font-weight:700; color:var(--text-muted);}
+      .mt-dwhen.warn{color:var(--warn);}
+      .mt-facts{display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:12px 0 0; font-size:13.5px;}
+      .mt-facts dt{color:var(--text-muted); font-weight:600;}
+      .mt-facts dd{margin:0; overflow-wrap:anywhere;}
+      .mt-ro{margin:16px 0 4px; padding:10px 12px; border-radius:10px; border:1px dashed var(--border); color:var(--text-muted); font-size:14px;}
+
+      .mt-compose{margin:16px 0 4px; padding:12px; border-radius:12px; background:var(--surface); border:1px solid var(--border);}
+      .mt-label{display:block; margin:0 0 8px; font-size:14px; font-weight:800;}
+      .mt-datepick{display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 8px;}
+      .mt-datepick[hidden]{display:none;}
+      .mt-datepick label{margin:0; font-size:13px;}
+      .mt-datepick input{width:auto; min-height:44px; font-size:16px; color-scheme:light dark;}
+      .mt-dateadd{min-height:44px; padding:8px 18px; border:0; border-radius:10px; background:var(--acc); color:#fff; font-weight:800; font-size:15px;}
+      .mt-dateadd:hover{background:var(--acc-2);}
+      .mt-dateadd:focus-visible{outline:2px solid var(--text); outline-offset:2px;}
+      .mt-text{display:block; width:100%; min-height:96px; padding:10px; font-family:inherit; font-size:16px; line-height:1.45; resize:vertical;
+        border:1px solid var(--border); border-radius:10px; background:var(--bg); color:var(--text); color-scheme:light dark;}
+      .mt-text:focus{outline:none; border-color:var(--acc); box-shadow:0 0 0 3px var(--tint-2);}
+      .mt-row{display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:10px; margin-top:10px;}
+      .mt-status{flex:1 1 180px; font-size:13.5px; color:var(--text-muted); min-height:20px;}
+      .mt-status.ok{color:var(--ok-text); font-weight:700;}
+      .mt-status.err{color:var(--warn); font-weight:600;}
+      .mt-send{min-height:48px; padding:10px 22px; border:0; border-radius:12px; background:var(--acc); color:#fff; font-weight:800; font-size:16px;}
+      .mt-send:hover{background:var(--acc-2);}
+      .mt-send:disabled{opacity:.6; cursor:default;}
+      .mt-send:focus-visible{outline:2px solid var(--text); outline-offset:2px;}
+      .mt-next[hidden]{display:none;}
+      .mt-nextbtn{display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; width:100%; margin-top:10px; min-height:48px;
+        padding:10px 14px; text-align:left; border-radius:12px; border:1px solid var(--warn); background:var(--warn-bg); color:var(--text);}
+      .mt-nextbtn small{color:var(--warn); font-weight:700;}
+      .mt-nextbtn:focus-visible{outline:2px solid var(--acc); outline-offset:1px;}
+
+      .mt-dactions{display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border);}
+      .mt-complete{min-height:48px; padding:10px 18px; border-radius:12px; border:1px solid var(--ok); background:var(--ok-bg); color:var(--ok-text); font-weight:800;}
+      .mt-complete:disabled{opacity:.6;}
+      .mt-photo{display:inline-flex; align-items:center; gap:6px; min-height:48px; padding:10px 16px; border-radius:12px;
+        border:1px solid var(--border); background:var(--surface); color:var(--text); font-weight:700; text-decoration:none;}
+      .mt-complete:focus-visible, .mt-photo:focus-visible{outline:2px solid var(--acc); outline-offset:2px;}
+
+      html.mt-locked, html.mt-locked body{overflow:hidden;}
+
+      @media (min-width:960px){
+        .mt-layout{display:grid; grid-template-columns:minmax(0,1fr) minmax(380px,460px); gap:22px; align-items:start;}
+        .mt-detail, .mt-detail.open{display:flex; flex-direction:column; position:sticky; inset:auto; top:72px; z-index:auto;
+          height:auto; max-height:calc(100vh - 92px); background:var(--surface); border:1px solid var(--border);
+          border-radius:14px; box-shadow:var(--shadow); overflow:hidden;}
+        .mt-dbar{padding:6px 8px; justify-content:flex-end;}
+        .mt-back{display:none;}
+        .mt-x{display:inline-flex; align-items:center; justify-content:center;}
+        .mt-detail:not(.open) .mt-dbar{display:none;}
+        .mt-compose, .mt-desc, .mt-brief{background:var(--bg);}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <main class="mt">
+      <div class="mt-layout">
+        <section class="mt-listcol" id="mtListCol" aria-labelledby="mtTitle">
+          <header class="mt-head">
+            <h2 id="mtTitle" tabindex="-1">My tasks</h2>
+            <div class="mt-headbtns">
+              <button type="button" class="btn btn-sm" id="mtNew" hidden>＋ New task</button>
+              <a class="btn btn-ghost btn-sm" href="tasks-map.html">🗺️ Map</a>
+            </div>
+          </header>
+          <p class="mt-sub" id="mtSub">Loading your tasks…</p>
+          <div class="mt-seg" id="mtSeg" role="group" aria-label="Whose tasks" hidden></div>
+          <div id="mtNotice" role="status" aria-live="polite"></div>
+          <div id="mtList" aria-busy="true">
+            <div class="mt-skel"></div><div class="mt-skel"></div><div class="mt-skel"></div>
+          </div>
+          <footer class="mt-foot">
+            <a href="tasks-map.html">Open the tasks map</a>
+            <a href="capture.html" id="mtCaptureLink">Site photos</a>
+            <span class="mt-live" id="mtLive"></span>
+          </footer>
+        </section>
+
+        <section class="mt-detail" id="mtDetail" role="region" aria-label="Task">
+          <div class="mt-dbar">
+            <button type="button" class="mt-back" id="mtBack">‹ All my tasks</button>
+            <button type="button" class="mt-x" id="mtClose" aria-label="Close this task">×</button>
+          </div>
+          <div class="mt-dscroll" id="mtDScroll">
+            <div class="mt-ph">Pick a task to see its updates and send one.</div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="js/pages/my-tasks.js"></script>
+  </body>
+</html>

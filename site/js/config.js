@@ -4,6 +4,7 @@
    (the same pair DCR Desktop 2 ships in dcrdesk/backend/project.py). Every protection is in the
    database (row level security, triggers, functions), never in the browser. The service-role key,
    the database password and the VAPID private key never appear here (BLUEPRINT 2.1, principle 2).
+   Phone reminders need no key here either: push2.js asks the push function for its public key.
 
    Loaded as a classic script in each page's <head>, before the page's modules. */
 window.DCR2_CONFIG = Object.freeze({
@@ -11,9 +12,6 @@ window.DCR2_CONFIG = Object.freeze({
   SUPABASE_KEY: "sb_publishable_25rroXT2P3zgJdbacWrIcg_f1tIS7oe",
   SITE_URL: "https://portal.dcrframing.com",
   COMPANY_NAME: "DCR Framing",
-  // Phone reminders (P3). Empty until the owner generates the new VAPID pair; the private half is
-  // a Supabase function secret only.
-  VAPID_PUBLIC_KEY: "",
   // The old portal, for projects imported from it (old estimates, money and documents stay there).
   OLD_PORTAL_URL: "https://barajas545.github.io/dcr-portal/",
   // Letterhead for printed pages. Empty fields are hidden wherever they would appear.

@@ -13,7 +13,7 @@
    - screenshots (core_*.png) into --out.
    Pages are served with the demo stand-in: nothing is sent to Supabase. Prints a JSON summary and
    exits 1 when a check failed. Talks to Chrome over the DevTools protocol with Node's own WebSocket. */
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { startServer } from "./devserve.mjs";
@@ -24,6 +24,8 @@ const arg = (name, dflt) => { const i = args.indexOf(name); return i === -1 ? df
 const OUT = resolve(arg("--out", join(tmpdir(), "dcr2-check-pages")));
 const PAGES = arg("--pages", "all");
 const launch = () => launchChrome(arg("--chrome"));
+// the worker's cache name, read from site/sw.js (it is bumped when the worker changes: v2 = P3 push)
+const SW_CACHE = /const CACHE = "([^"]+)"/.exec(readFileSync(new URL("../site/sw.js", import.meta.url), "utf8"))[1];
 const newPage = (cdp, name) => openPage(cdp, name, OUT);
 
 /* ── the walk ───────────────────────────────────────────────────────── */
@@ -88,8 +90,9 @@ async function main() {
     await signIn(d, "manager@demo.test", true, "dashboard.html");
     check("sign-in goes to ?next= (dashboard)", /dashboard\.html$/.test(await d.eval("location.pathname")), await d.eval("location.href"));
     await d.until("document.querySelectorAll('.hm-card').length > 3");
-    check("home cards for a manager", (await d.eval("Array.from(document.querySelectorAll('.hm-card .tt')).map(n=>n.textContent).join('|')")) ===
-      "Project Board|Search|Log History|Site Photos|Time Sheet|Team Sheets|Batch Entry|Settings|Employees & crews");
+    // the card's own words (the My Tasks card also carries its badge, P3)
+    check("home cards for a manager", (await d.eval("Array.from(document.querySelectorAll('.hm-card .tt')).map(n=>n.childNodes[0].textContent).join('|')")) ===
+      "Project Board|Search|Log History|My Tasks|Tasks on Map|Site Photos|Time Sheet|Team Sheets|Batch Entry|Settings|Employees & crews");
     check("kept signed in: the session is in localStorage", await d.eval("!!localStorage.getItem('dcr2-auth') && !sessionStorage.getItem('dcr2-auth')"));
     check("top bar: Portal 2 badge and the user", await d.eval("document.querySelector('.dcr2-topbar .p2-badge') && document.getElementById('userPill').textContent.includes('Morgan')"));
     await sleep(800);
@@ -98,9 +101,9 @@ async function main() {
     const sw = await d.until("navigator.serviceWorker.getRegistration().then(r => r && r.active ? r.active.state : null)", 8000).catch(() => null);
     check("service worker registered and active", sw === "activated" || sw === "activating", sw);
     const caches = await d.eval("caches.keys()");
-    check("caches: only dcr-portal2-v1", JSON.stringify(caches) === '["dcr-portal2-v1"]', JSON.stringify(caches));
+    check("caches: only " + SW_CACHE, JSON.stringify(caches) === JSON.stringify([SW_CACHE]), JSON.stringify(caches));
     await d.goto(base + "/index.html?email=x%40example.com&next=dashboard.html", 1200);   // a query on a kept page
-    const kept = await d.eval("caches.open('dcr-portal2-v1').then(c => c.keys()).then(l => l.map(r => r.url))");
+    const kept = await d.eval("caches.open('" + SW_CACHE + "').then(c => c.keys()).then(l => l.map(r => r.url))");
     check("service worker: no kept address carries a query string (never a typed sign-in)", kept.length > 5 && kept.every((u) => !/\?/.test(u)),
       kept.filter((u) => /\?/.test(u)).join(" ") || String(kept.length));
     await d.goto(base + "/index.html?next=" + encodeURIComponent("search.html?q=A24"), 1500);
@@ -203,7 +206,7 @@ async function main() {
       await a.size(1280, 860, false);
       await signIn(a, "admin@demo.test", true, "dashboard.html");
       for (const path of ["dashboard.html", "settings.html", "board.html", "project.html?id=268", "search.html?q=A24", "logs.html",
-        "capture.html", "report-journal.html?id=268"]) {
+        "capture.html", "report-journal.html?id=268", "my-tasks.html", "my-tasks.html?task=1", "tasks-map.html", "project.html?id=268&tab=tasks"]) {
         await a.goto(base + "/" + path, 1500);
       }
     }

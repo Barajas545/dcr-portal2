@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Tasks on Map</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/tasks.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+    <style>
+      /* The old portal's tasks-map.html: the map fills the screen under its own dark bar (filters, the
+         person picker), a projects panel at the side, and bottom sheets for a pin's tasks, one task and
+         a new task. Its inline script and its 36 inline handlers are now js/pages/tasks-map.js and
+         listeners; Leaflet comes from jsDelivr at the same 1.9.4. The sheets follow the theme. */
+      html, body { height: 100%; }
+      body { display: flex; flex-direction: column; overflow: hidden; }
+      .tm { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative;
+        --bar: #1a1a1a; --bar-2: #111; --bar-text: #fff; --bar-muted: rgba(255,255,255,.7); }
+
+      /* the bar */
+      .tm-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bar); color: var(--bar-text);
+        box-shadow: 0 2px 16px rgba(0,0,0,.4); z-index: 500; flex-wrap: nowrap; min-height: 52px; }
+      .tm-title { font-size: 16px; font-weight: 700; letter-spacing: -.02em; white-space: nowrap; }
+      .tm-count { background: #e53935; color: #fff; border-radius: 20px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+      .tm-person { background: rgba(255,255,255,.1); color: #fff; border: 1.5px solid rgba(255,255,255,.3); border-radius: 16px;
+        padding: 5px 8px; font-size: 12px; font-weight: 600; max-width: 170px; min-height: 32px; flex-shrink: 0; }
+      .tm-person option { color: #1a1a1a; background: #fff; }
+      .tm-person[hidden] { display: none; }
+      .tm-chips { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1; }
+      .tm-chips::-webkit-scrollbar { display: none; }
+      .tm-chip { display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 16px; font-size: 12px; font-weight: 600;
+        border: 1.5px solid rgba(255,255,255,.25); background: transparent; color: var(--bar-muted); white-space: nowrap; flex-shrink: 0; min-height: 32px; }
+      .tm-chip .d { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
+      .tm-chip[data-f="urgent"] .d { background: #ff6b6b; }
+      .tm-chip[data-f="medium"] .d { background: #ffaa44; }
+      .tm-chip[data-f="low"] .d { background: #66bb6a; }
+      .tm-chip .n { background: rgba(255,255,255,.2); color: #fff; border-radius: 12px; padding: 0 6px; font-size: 10.5px; font-weight: 700; }
+      .tm-chip[aria-pressed="true"] { color: #fff; }
+      .tm-chip[data-f="all"][aria-pressed="true"] { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.6); }
+      .tm-chip[data-f="urgent"][aria-pressed="true"] { background: #c62828; border-color: #ff6b6b; }
+      .tm-chip[data-f="medium"][aria-pressed="true"] { background: #b85f0a; border-color: #ffaa44; }
+      .tm-chip[data-f="low"][aria-pressed="true"] { background: #2e7d32; border-color: #66bb6a; }
+      .tm-btn { background: none; border: 1px solid rgba(255,255,255,.35); color: #fff; border-radius: 8px; padding: 5px 10px;
+        font-size: 13px; min-height: 34px; white-space: nowrap; flex-shrink: 0; }
+      .tm-btn:hover { background: rgba(255,255,255,.12); }
+      .tm-btn.go { background: #0b6b3a; border-color: #0b6b3a; font-weight: 700; }
+      .tm-btn[hidden] { display: none; }
+      .tm-chip:focus-visible, .tm-btn:focus-visible, .tm-person:focus-visible { outline: 2px solid #8cc4fa; outline-offset: 1px; }
+
+      /* the phone's row under the bar: All Tasks / Projects */
+      .tm-nav { display: none; gap: 10px; padding: 8px 12px; background: var(--bar-2); z-index: 499; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+      .tm-nav button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; border-radius: 12px;
+        background: rgba(255,255,255,.07); border: 1.5px solid rgba(255,255,255,.12); color: rgba(255,255,255,.7); font-size: 14px; font-weight: 700; }
+      .tm-nav button[aria-pressed="true"] { background: #fff; border-color: #fff; color: #1a1a1a; }
+
+      .tm-mapwrap { position: relative; flex: 1; min-height: 0; background: #ddd; }
+      /* its own stacking context: Leaflet's controls (z-index 1000) stay under the sheets and the panel */
+      #tmMap { position: absolute; inset: 0; z-index: 0; }
+      .tm-nomap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center;
+        background: var(--bg); color: var(--text-muted); z-index: 400; }
+      .tm-nomap[hidden] { display: none; }
+
+      /* pins: drawn with CSS (no picture from the CDN: the page's policy only allows its own) */
+      .tm-pin { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 3px solid #fff;
+        box-shadow: 0 2px 8px rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; background: var(--pri-low, #2e7d32); }
+      .tm-pin.urgent { background: #c62828; } .tm-pin.medium { background: #d07a12; } .tm-pin.low { background: #2e7d32; }
+      .tm-pin.dim { opacity: .28; }
+      .tm-pin.moving { outline: 3px dashed #fff; }
+      .tm-pin b { transform: rotate(45deg); color: #fff; font-size: 12px; font-weight: 800; font-family: inherit; }
+      .leaflet-container { font: inherit; }
+      .tm-pop { min-width: 190px; }
+      .tm-pop strong { display: block; font-size: 14px; margin-bottom: 2px; overflow-wrap: anywhere; }
+      .tm-pop .c { color: #666; font-size: 12px; }
+      .tm-pop .n { color: #1565c0; font-size: 12px; font-weight: 600; display: block; margin-top: 2px; }
+      .tm-pop .r { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+      .tm-pop button { flex: 1; padding: 10px; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; color: #fff; background: #1a1a1a; min-height: 40px; }
+      .tm-pop button.dir { background: #1565c0; }
+
+      /* the projects panel */
+      .tm-pull { display: none; position: absolute; left: 0; top: 50%; transform: translateY(-50%); z-index: 610; background: #1a1a1a; border: none;
+        border-radius: 0 8px 8px 0; padding: 18px 12px; box-shadow: 3px 0 14px rgba(0,0,0,.3); flex-direction: column; gap: 5px; align-items: center; }
+      .tm-pull span { display: block; width: 18px; height: 2px; background: #fff; border-radius: 2px; }
+      .tm-sideover { display: none; position: absolute; inset: 0; z-index: 590; background: rgba(0,0,0,.4); }
+      .tm-sideover.open { display: block; }
+      .tm-side { position: absolute; left: 0; top: 0; bottom: 0; z-index: 600; width: min(300px, 85vw); background: #1a1a1a; color: #fff;
+        transform: translateX(-100%); transition: transform .3s cubic-bezier(.4,0,.2,1); overflow-y: auto; padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+        box-shadow: 4px 0 24px rgba(0,0,0,.5); }
+      .tm-side.open { transform: translateX(0); }
+      .tm-side h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #999; margin: 0 0 12px; }
+      .tm-addr { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: rgba(255,255,255,.06);
+        border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 12px 14px; font-size: 14px; margin-bottom: 8px; color: #fff; min-height: 48px; }
+      .tm-addr:hover, .tm-addr.on { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.35); }
+      .tm-addr .t { min-width: 0; overflow-wrap: anywhere; }
+      .tm-addr .t small { display: block; color: #aaa; font-size: 11.5px; }
+      .tm-addr .k { margin-left: auto; font-size: 11px; opacity: .6; }
+      .tm-addr.all { justify-content: center; margin-top: 12px; }
+      .tm-side .none { color: #888; font-size: 14px; }
+
+      .tm-toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 620; border-radius: 24px; padding: 10px 22px;
+        font-size: 14px; font-weight: 600; color: #fff; background: #1a1a1a; display: none; pointer-events: none; white-space: nowrap;
+        box-shadow: 0 4px 16px rgba(0,0,0,.3); max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
+      .tm-geo { position: absolute; bottom: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 500; font-size: 12px;
+        color: #fff; background: rgba(0,0,0,.7); border-radius: 24px; padding: 8px 18px; pointer-events: none; display: none; }
+
+      /* moving a pin: the controls float just above it and follow it */
+      .tm-pinctl { display: none; position: absolute; z-index: 620; transform: translate(-50%, -100%); flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+      .tm-pinctl .tip { background: rgba(26,26,26,.92); color: #fff; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 10px; white-space: nowrap; }
+      .tm-pinctl .row { display: flex; gap: 8px; pointer-events: auto; }
+      .tm-pinctl button { padding: 11px 18px; border-radius: 12px; border: none; font-size: 14px; font-weight: 700; min-height: 44px; min-width: 96px;
+        box-shadow: 0 4px 14px rgba(0,0,0,.45); color: #fff; }
+      #tmPinSave { background: #2e7d32; } #tmPinCancel { background: #1a1a1a; border: 1px solid rgba(255,255,255,.25); }
+
+      /* the sheets: a pin's tasks (or all of them) and one task */
+      .tm-over { position: absolute; inset: 0; z-index: 700; background: rgba(0,0,0,.5); display: none; align-items: flex-end; justify-content: center; }
+      .tm-over.open { display: flex; animation: tmIn .2s ease; }
+      @keyframes tmIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes tmUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      .tm-sheet { background: var(--surface); color: var(--text); border-radius: 20px 20px 0 0; width: 100%; max-width: 540px; max-height: 85%;
+        display: flex; flex-direction: column; box-shadow: 0 -8px 40px rgba(0,0,0,.25); overflow: hidden; animation: tmUp .3s cubic-bezier(.4,0,.2,1); }
+      #tmOver2 .tm-sheet { max-height: 92%; }
+      .tm-handle { width: 36px; height: 4px; border-radius: 4px; background: var(--border); margin: 10px auto 0; flex-shrink: 0; }
+      .tm-h1 { padding: 12px 20px 0; flex-shrink: 0; }
+      .tm-h1row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .tm-h1 .a { font-size: 18px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+      .tm-h1 .s { font-size: 13px; color: var(--text-muted); margin-top: 4px; overflow-wrap: anywhere; }
+      .tm-x { width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0; border: none; background: var(--surface-2); color: var(--text-muted); font-size: 16px; }
+      .tm-dirrow { display: flex; gap: 8px; margin: 12px 0 8px; flex-wrap: wrap; }
+      .tm-dirrow[hidden] { display: none; }
+      .tm-big { flex: 1; padding: 12px; border-radius: 12px; border: none; background: #1a1a1a; color: #fff; font-size: 14px; font-weight: 700;
+        display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; text-decoration: none; }
+      .tm-big.pin { background: #555; } .tm-big.new { background: #0b6b3a; flex-basis: 100%; }
+      .tm-big[hidden] { display: none; }
+      :root[data-theme="dark"] .tm-big:not(.pin):not(.new) { background: #2a3442; }
+      @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tm-big:not(.pin):not(.new) { background: #2a3442; } }
+      .tm-sort { display: flex; gap: 8px; padding: 10px 20px 4px; }
+      .tm-sort[hidden] { display: none; }
+      .tm-sort button { padding: 8px 18px; border-radius: 24px; font-size: 13px; font-weight: 600; border: 1px solid var(--border);
+        background: var(--surface); color: var(--text-muted); min-height: 38px; }
+      .tm-sort button[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: var(--text); }
+      .tm-scroll { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 8px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; flex: 1; }
+      .tm-sec { font-size: 15px; font-weight: 700; color: var(--text); padding: 12px 2px 4px; display: flex; align-items: center; gap: 8px; }
+      .tm-sec small { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+      .tm-sec i { flex: 1; height: 1px; background: var(--border); }
+      .tm-mini { border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; background: var(--surface); min-height: 60px; }
+      .tm-mini.needs { border-left: 4px solid var(--warn); }
+      .tm-mini .i { flex: 1; min-width: 0; }
+      .tm-mini .t { font-size: 15px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+      .tm-mini .s { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+      .tm-mini .s.warn { color: var(--warn); font-weight: 600; }
+      .tm-mini .b { display: flex; gap: 8px; flex-shrink: 0; }
+      .tm-mini .b button { padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--text); min-height: 40px; }
+      .tm-mini .b button.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok-text); }
+      .tm-empty { color: var(--text-muted); font-size: 15px; padding: 32px; text-align: center; }
+
+      .tm-d2top { padding: 0 16px; flex-shrink: 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 56px; }
+      .tm-d2left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+      .tm-back { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--text); background: var(--surface); color: var(--text); font-size: 14px; font-weight: 700; min-height: 38px; }
+      .tm-crumb { display: flex; flex-direction: column; min-width: 0; }
+      .tm-crumb .a { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tm-crumb .s { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tm-pills { display: flex; gap: 6px; flex-shrink: 0; }
+      .tm-pill { padding: 8px 12px; border-radius: 10px; font-size: 12px; font-weight: 700; border: 1px solid var(--border); background: var(--surface); color: var(--text); min-height: 38px; }
+      .tm-pill[hidden] { display: none; }
+      .tm-pill.dir { border-color: #1565c0; color: #1565c0; background: rgba(21,101,192,.08); }
+      .tm-pill.ok { border-color: var(--ok); color: var(--ok-text); background: var(--ok-bg); }
+      :root[data-theme="dark"] .tm-pill.dir { color: #8cc4fa; border-color: #8cc4fa; }
+      @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tm-pill.dir { color: #8cc4fa; border-color: #8cc4fa; } }
+      .tm-d2body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 18px 20px calc(28px + env(safe-area-inset-bottom)); }
+      .tm-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 700; margin: 0 6px 10px 0; }
+      .tm-badge.urgent { background: var(--warn-bg); color: var(--warn); }
+      .tm-badge.medium { background: var(--gold-bg); color: var(--gold); }
+      .tm-badge.low { background: var(--ok-bg); color: var(--ok-text); }
+      .tm-name { font-size: 20px; font-weight: 700; line-height: 1.3; margin: 0 0 8px; overflow-wrap: anywhere; }
+      .tm-desc { font-size: 15px; color: var(--text); line-height: 1.6; margin: 0 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .tm-div { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+      .tm-meta { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-muted); margin-bottom: 8px; min-height: 26px; overflow-wrap: anywhere; }
+      .tm-meta .ic { font-size: 16px; opacity: .6; flex-shrink: 0; }
+      .tm-sh { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin-bottom: 10px; }
+      .tm-note { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+      .tm-note .d { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+      .tm-note .x { font-size: 14px; color: var(--text); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .tm-nonote { color: var(--text-muted); font-size: 13px; text-align: center; padding: 12px 0; }
+      .tm-addnote { width: 100%; margin-top: 10px; padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2);
+        color: var(--text); font-size: 14px; font-weight: 600; min-height: 48px; }
+      .tm-noteform[hidden] { display: none; }
+      .tm-noteform textarea { width: 100%; min-height: 100px; padding: 12px; font-size: 16px; border: 2px solid var(--border); border-radius: 12px;
+        resize: vertical; font-family: inherit; color: var(--text); background: var(--bg); margin-top: 12px; color-scheme: light dark; }
+      .tm-noteform textarea:focus { border-color: var(--acc); outline: none; }
+      .tm-save { margin-top: 10px; padding: 14px; width: 100%; background: var(--acc); color: #fff; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; min-height: 48px; }
+      .tm-save:disabled { opacity: .6; }
+      .tm-st { font-size: 13px; margin-top: 8px; display: block; min-height: 18px; color: var(--text-muted); }
+      .tm-st.ok { color: var(--ok-text); font-weight: 600; } .tm-st.err { color: var(--warn); font-weight: 600; }
+      .tm-mylink { display: inline-flex; margin-top: 14px; font-weight: 700; color: var(--acc); text-decoration: none; min-height: 44px; align-items: center; }
+
+      @media (min-width: 601px) {
+        .tm-over { align-items: center; padding: 20px; }
+        .tm-sheet { border-radius: 16px; max-height: 82%; animation: tmIn .25s ease; }
+        .tm-handle { display: none; }
+        .tm-pull { display: flex; }
+      }
+      @media (max-width: 600px) {
+        .tm-bar { flex-wrap: wrap; row-gap: 6px; }
+        .tm-person { order: 10; flex: 1 1 100%; max-width: none; }
+        .tm-nav { display: flex; }
+        .tm-title, .tm-list { display: none; }
+        .tm-pills { flex-direction: column; gap: 4px; }
+        .tm-pill { font-size: 11px; padding: 5px 9px; min-height: 32px; }
+        .tm-mini .b { flex-direction: column; gap: 4px; }
+        .tm-mini .b button { padding: 6px 10px; font-size: 12px; min-height: 34px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <div class="tm" id="tmApp">
+      <div class="tm-bar" id="tmBar">
+        <span class="tm-title">Tasks on Map</span>
+        <span class="tm-count" id="tmCount" title="Open tasks shown">…</span>
+        <select class="tm-person" id="tmPerson" title="Show tasks for" aria-label="Show tasks for" hidden></select>
+        <div class="tm-chips" id="tmChips" role="group" aria-label="Priority">
+          <button type="button" class="tm-chip" data-f="all" aria-pressed="true"><span class="d"></span> All <span class="n" id="tmNall"></span></button>
+          <button type="button" class="tm-chip" data-f="urgent" aria-pressed="false"><span class="d"></span> Urgent <span class="n" id="tmNurgent"></span></button>
+          <button type="button" class="tm-chip" data-f="medium" aria-pressed="false"><span class="d"></span> Normal <span class="n" id="tmNmedium"></span></button>
+          <button type="button" class="tm-chip" data-f="low" aria-pressed="false"><span class="d"></span> Low <span class="n" id="tmNlow"></span></button>
+        </div>
+        <button type="button" class="tm-btn" id="tmRefresh" title="Read the tasks again" aria-label="Refresh">↻</button>
+        <a class="tm-btn tm-list" href="my-tasks.html" style="text-decoration:none" title="The list">☰ List</a>
+      </div>
+      <div class="tm-nav" id="tmNav">
+        <button type="button" id="tmNavTasks" aria-pressed="false"><span aria-hidden="true">📋</span> All Tasks</button>
+        <button type="button" id="tmNavProjects" aria-pressed="false"><span aria-hidden="true">📁</span> Projects</button>
+      </div>
+      <div class="tm-mapwrap" id="tmWrap">
+        <div id="tmMap" aria-label="Map of the jobs with open tasks"></div>
+        <div class="tm-nomap" id="tmNoMap" hidden></div>
+        <button type="button" class="tm-pull" id="tmPull" aria-label="Projects"><span></span><span></span><span></span></button>
+        <div class="tm-sideover" id="tmSideOver"></div>
+        <nav class="tm-side" id="tmSide" aria-label="Projects with open tasks">
+          <h3>Projects</h3>
+          <div id="tmAddrList"><div class="none">Loading…</div></div>
+        </nav>
+        <div class="tm-toast" id="tmToast" role="status" aria-live="polite"></div>
+        <div class="tm-geo" id="tmGeo"></div>
+        <div class="tm-pinctl" id="tmPinCtl">
+          <div class="tip">📍 Drag the pin, then save</div>
+          <div class="row"><button type="button" id="tmPinSave">✓ Save</button><button type="button" id="tmPinCancel">Cancel</button></div>
+        </div>
+
+        <!-- a pin's tasks, or all of them -->
+        <div class="tm-over" id="tmOver1">
+          <div class="tm-sheet" role="dialog" aria-modal="true" aria-labelledby="tmD1Title">
+            <div class="tm-handle"></div>
+            <div class="tm-h1">
+              <div class="tm-h1row">
+                <div style="flex:1;min-width:0">
+                  <div class="a" id="tmD1Title"></div>
+                  <div class="s" id="tmD1Sub"></div>
+                  <div class="tm-dirrow" id="tmD1Btns">
+                    <a class="tm-big" id="tmD1Dir" target="_blank" rel="noopener" href="#">Get Directions</a>
+                    <button type="button" class="tm-big pin" id="tmD1Move">📍 Move Pin</button>
+                    <button type="button" class="tm-big new" id="tmD1New">＋ New task here</button>
+                  </div>
+                </div>
+                <button type="button" class="tm-x" id="tmD1Close" aria-label="Close">✕</button>
+              </div>
+            </div>
+            <div class="tm-sort" id="tmSort" hidden>
+              <button type="button" data-sort="project" aria-pressed="true">By Project</button>
+              <button type="button" data-sort="priority" aria-pressed="false">By Priority</button>
+            </div>
+            <div class="tm-scroll" id="tmScroll"></div>
+          </div>
+        </div>
+
+        <!-- one task -->
+        <div class="tm-over" id="tmOver2" style="z-index:800">
+          <div class="tm-sheet" role="dialog" aria-modal="true" aria-labelledby="tmD2Name">
+            <div class="tm-handle"></div>
+            <div class="tm-d2top">
+              <div class="tm-d2left">
+                <button type="button" class="tm-back" id="tmD2Back" aria-label="Back">←</button>
+                <div class="tm-crumb"><div class="a" id="tmD2Addr"></div><div class="s" id="tmD2Sub"></div></div>
+              </div>
+              <div class="tm-pills">
+                <button type="button" class="tm-pill" id="tmD2Move" hidden>Move Pin</button>
+                <a class="tm-pill dir" id="tmD2Dir" target="_blank" rel="noopener" href="#" style="text-decoration:none">Directions</a>
+                <button type="button" class="tm-pill ok" id="tmD2Done">Complete</button>
+              </div>
+            </div>
+            <div class="tm-d2body" id="tmD2Body"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="js/pages/tasks-map.js"></script>
+  </body>
+</html>

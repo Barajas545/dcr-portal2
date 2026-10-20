@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* DCR Portal 2 — the end-to-end walk of the DEMO site (development only).
 
-     node tools/e2e-demo.mjs [--out <dir>] [--chrome <path>] [--shots none|final] [--p2 checks|shots|none]
+     node tools/e2e-demo.mjs [--out <dir>] [--chrome <path>] [--shots none|final] [--p2 checks|shots|none] [--p3 checks|shots|none]
 
    Starts tools/devserve.mjs on a free 127.0.0.1 port (the in-browser stand-in database, made-up data,
    nothing sent to Supabase or OpenStreetMap) and drives a local Chrome or Edge headless through
@@ -26,7 +26,8 @@
    each signs in WITHOUT "keep me signed in", so each tab is its own person (sessionStorage).
    Then (--p2 checks, the default) the P2 timesheet walk, tools/e2e-p2.mjs, in its own browser and demo
    database (--p2 shots: with its screenshots into <out>/p2; --p2 none: P1 only); its checks are part of
-   this summary ("P2: ...").
+   this summary ("P2: ..."). Then (--p3 checks, the default) the P3 task walk, tools/e2e-p3.mjs, the same
+   way (--p3 shots: screenshots into <out>/p3; --p3 none: without it): "P3: ...".
 
    Prints a JSON summary; exit code 1 when a check failed. */
 import { spawn } from "node:child_process";
@@ -42,11 +43,12 @@ const arg = (name, dflt) => { const i = args.indexOf(name); return i === -1 ? df
 const OUT = resolve(arg("--out", join(tmpdir(), "dcr2-e2e")));
 const SHOTS = arg("--shots", "final");
 const P2 = arg("--p2", "checks");
+const P3 = arg("--p3", "checks");
 
-/** The P2 walk (tools/e2e-p2.mjs) as a child: -> its JSON summary, or {ok: false, error}. */
-function runP2() {
+/** A later phase's walk (tools/e2e-p2.mjs, tools/e2e-p3.mjs) as a child: -> its JSON summary, or {ok: false, error}. */
+function runWalk(file, mode, sub) {
   return new Promise((done) => {
-    const argv = [join(dirname(fileURLToPath(import.meta.url)), "e2e-p2.mjs"), "--out", join(OUT, "p2"), "--shots", P2 === "shots" ? "all" : "none"];
+    const argv = [join(dirname(fileURLToPath(import.meta.url)), file), "--out", join(OUT, sub), "--shots", mode === "shots" ? "all" : "none"];
     if (arg("--chrome")) argv.push("--chrome", arg("--chrome"));
     const child = spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "inherit"] });
     let out = "";
@@ -512,7 +514,7 @@ async function main() {
     await sleep(500);
     let p2shots = 0;
     if (P2 !== "none") {
-      const p2 = await runP2();
+      const p2 = await runWalk("e2e-p2.mjs", P2, "p2");
       if (Array.isArray(p2.results)) {
         p2.results.forEach((r) => results.push({ name: "P2: " + r.name, ok: !!r.ok, detail: r.detail }));
         p2shots = p2.shots || 0;
@@ -520,8 +522,18 @@ async function main() {
         results.push({ name: "P2: the timesheet walk (tools/e2e-p2.mjs) ran", ok: false, detail: p2.error || "" });
       }
     }
+    let p3shots = 0;
+    if (P3 !== "none") {
+      const p3 = await runWalk("e2e-p3.mjs", P3, "p3");
+      if (Array.isArray(p3.results)) {
+        p3.results.forEach((r) => results.push({ name: "P3: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p3shots = p3.shots || 0;
+      } else {
+        results.push({ name: "P3: the task walk (tools/e2e-p3.mjs) ran", ok: false, detail: p3.error || "" });
+      }
+    }
     const summary = { base, out: OUT, passed: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length,
-      failures: results.filter((x) => !x.ok), results: results.map((r) => (r.ok ? "ok   " : "FAIL ") + r.name), screenshots: shots.length + p2shots };
+      failures: results.filter((x) => !x.ok), results: results.map((r) => (r.ok ? "ok   " : "FAIL ") + r.name), screenshots: shots.length + p2shots + p3shots };
     console.log(JSON.stringify(summary, null, 1));
     process.exitCode = summary.failed ? 1 : 0;
   }

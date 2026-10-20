@@ -14,6 +14,7 @@ import vm from "node:vm";
 const SITE = fileURLToPath(new URL("../site/", import.meta.url));
 const SRC = readFileSync(join(SITE, "sw.js"), "utf8");
 const ORIGIN = "https://portal.example.test";
+const CACHE = /const CACHE = "([^"]+)"/.exec(SRC)[1];          // the worker's own cache name (bumped per release)
 
 function walk(dir) {
   const out = [];
@@ -89,7 +90,7 @@ test("sw: a sign-in sent by the browser itself is never stored, only the page's 
   const url = ORIGIN + "/index.html?email=field%40example.com&password=Made-up-Pass-2026";
   const r = await w.get(url, "navigate");
   assert.ok(r.responded);
-  const kept = Array.from(w.stores.get("dcr-portal2-v1").keys());
+  const kept = Array.from(w.stores.get(CACHE).keys());
   assert.ok(kept.every((k) => !/password=|email=/.test(k)), kept.join("\n"));
   assert.ok(kept.every((k) => !new URL(k).search), "no key carries a query string");
   assert.ok(kept.includes(ORIGIN + "/index.html"));
@@ -106,12 +107,12 @@ test("sw: offline, a page with ?id= gets the one kept copy of its path", async (
 test("sw: an older worker's copies with a query string are dropped on activate", async () => {
   const w = worker();
   const c = w.ctx.caches;
-  const cache = await c.open("dcr-portal2-v1");
+  const cache = await c.open(CACHE);
   await cache.put(ORIGIN + "/index.html?email=a%40b.c&password=x", { ok: true });
   await cache.put(ORIGIN + "/board.html", { ok: true });
   await cache.put("https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js", { ok: true });
   await w.fire("activate", {});
-  const kept = Array.from(w.stores.get("dcr-portal2-v1").keys());
+  const kept = Array.from(w.stores.get(CACHE).keys());
   assert.deepEqual(kept.sort(), [ORIGIN + "/board.html", "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"].sort());
 });
 
@@ -143,4 +144,71 @@ test("sw: the database and non-GET requests are never touched; an unpinned CDN p
   assert.equal((await w.fire("fetch", { request: { url: ORIGIN + "/index.html", method: "POST", mode: "navigate" } })).responded, false);
   assert.equal((await w.get("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js")).responded, false);
   assert.equal((await w.get("https://cdn.jsdelivr.net/gh/someone/repo@1.0.0/x.js")).responded, false);
+});
+
+test("sw: every precached page comes with everything it loads (stylesheets, its whole static import graph): a cold start offline works; every precached file exists", async () => {
+  const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(SRC)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
+  for (const f of shell) if (f !== "./") assert.ok(statSync(join(SITE, f)).isFile(), f + " exists");
+  const need = new Set();
+  const local = (u) => !/^(https?:|data:|\/\/)/.test(u);
+  function mod(rel) {
+    if (need.has(rel)) return;
+    need.add(rel);
+    const src = readFileSync(join(SITE, rel), "utf8");
+    for (const m of src.matchAll(/(?:^|[;\n])\s*(?:import|export)\s+(?:[^'"]*?from\s+)?["']([^"']+)["']/g)) {
+      if (m[1].startsWith(".")) mod(new URL(m[1], "https://x/" + rel).pathname.slice(1));
+    }
+  }
+  for (const page of shell.filter((f) => f.endsWith(".html"))) {
+    const html = readFileSync(join(SITE, page), "utf8");
+    for (const m of html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)) if (local(m[1])) mod(m[1]);
+    for (const m of html.matchAll(/<link\b[^>]*>/g)) {
+      const href = /\bhref="([^"]+)"/.exec(m[0]);
+      if (/\brel="stylesheet"/.test(m[0]) && href && local(href[1])) need.add(href[1]);
+    }
+  }
+  const missing = Array.from(need).filter((f) => !shell.includes(f)).sort();
+  assert.deepEqual(missing, [], "add these to SHELL in site/sw.js");
+});
+
+test("sw: a new cache name keeps the pinned CDN libraries an older dcr-portal2-* cache held (an update visit, then a cold start offline)", async () => {
+  const w = worker();
+  const SB = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js";
+  const LEAF = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
+  const OLD = "dcr-portal2-v0-test";
+  assert.notEqual(OLD, CACHE);
+  const old = await w.ctx.caches.open(OLD);
+  await old.put(SB, { ok: true, type: "cors", url: SB, from: "old" });
+  await old.put(LEAF, { ok: true, type: "cors", url: LEAF, from: "old" });
+  await old.put(ORIGIN + "/board.html", { ok: true, type: "basic", url: ORIGIN + "/board.html", from: "old" });
+  const theirs = await w.ctx.caches.open("dcr-portal-v9");              // the old portal's: never touched
+  await theirs.put(ORIGIN + "/x.html", { ok: true });
+  w.net.offline = true;                                                  // nothing can be fetched again
+  await w.fire("install", {});
+  await w.fire("activate", {});
+  assert.ok(!w.stores.has(OLD), "the older cache is gone");
+  assert.ok(w.stores.has("dcr-portal-v9"), "the old portal's cache is left alone");
+  const kept = w.stores.get(CACHE);
+  assert.equal(kept.get(SB) && kept.get(SB).from, "old", "supabase-js moved into " + CACHE);
+  assert.equal(kept.get(LEAF) && kept.get(LEAF).from, "old", "Leaflet moved too");
+  assert.ok(!kept.has(ORIGIN + "/board.html") || kept.get(ORIGIN + "/board.html").from !== "old", "the site's own files are not copied (fetched fresh)");
+  const r = await w.get(SB, "cors");
+  assert.ok(r.responded && r.out && r.out.from === "old", "offline: the library answers from the new cache");
+});
+
+test("sw: install keeps supabase-js itself (the address js/sb.js loads)", async () => {
+  const sbSrc = readFileSync(join(SITE, "js", "sb.js"), "utf8");
+  const v = /SUPABASE_JS_VERSION = "(\d+\.\d+\.\d+)"/.exec(sbSrc)[1];
+  const want = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@" + v + "/dist/umd/supabase.js";
+  const pre = /const PINNED_PRECACHE = \[([\s\S]*?)\];/.exec(SRC);
+  assert.ok(pre && pre[1].includes('"' + want + '"'), "PINNED_PRECACHE names " + want);
+  const w = worker();
+  await w.fire("install", {});
+  assert.ok(w.stores.get(CACHE).has(want), "kept at install");
+  assert.ok(w.net.calls.includes(want));
+  const calls = w.net.calls.length;
+  w.net.offline = true;
+  const r = await w.get(want, "cors");
+  assert.ok(r.responded && r.out && r.out.url === want, "used first, offline too");
+  assert.equal(w.net.calls.length, calls, "no second download");
 });

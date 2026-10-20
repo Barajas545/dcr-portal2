@@ -7,6 +7,7 @@
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>DCR Portal 2 — Project</title>
     <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/tasks.css" />
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" type="image/png" href="icons/icon-192.png" />
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
@@ -171,6 +172,48 @@
       .pj-modal-actions{display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:14px;}
       .pj-glow{animation:pjglow 1.2s ease-out;}
       @keyframes pjglow{from{box-shadow:0 0 0 3px rgba(214,161,58,.7);} to{box-shadow:none;}}
+      /* tasks (the old Tasks tab: Pending / Completed / All, the tick, a row opens its updates) */
+      .pj-bar{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:12px;}
+      .pj-chip{padding:6px 13px; border-radius:16px; font-size:12.5px; font-weight:600; border:1px solid var(--border);
+        background:var(--surface); color:var(--text-muted); cursor:pointer; min-height:34px;}
+      .pj-chip.on{background:var(--tint-2); border-color:var(--acc); color:var(--acc);}
+      .pt-tbl th{padding:8px 10px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); border-bottom:1px solid var(--border);}
+      .pt-tbl tr:first-child td{border-top:1px solid var(--border);}
+      .pt-tbl tbody tr.pt-row:first-child td{border-top:none;}
+      /* the table's cells wrap (the site's td rule cuts every cell to one line of 320 px) */
+      .pt-tbl td{white-space:normal; max-width:none; overflow:visible; text-overflow:clip;}
+      .pt-tbl td.pt-req{white-space:nowrap;}
+      .pt-c{width:34px;} .pt-c input{width:20px; height:20px; accent-color:var(--ok); margin:0; cursor:pointer;}
+      .pt-tick{display:inline-flex; align-items:center; justify-content:center; min-width:30px; min-height:30px; margin:-5px 0 0 -5px; cursor:pointer;}
+      .pt-open{display:inline-flex; align-items:center; gap:7px; background:none; border:0; padding:0; color:var(--text); font:inherit;
+        font-weight:600; text-align:left; cursor:pointer; overflow-wrap:anywhere;}
+      .pt-open:hover{color:var(--acc);}
+      .pt-row.done .pt-open{color:var(--text-muted); text-decoration:line-through;}
+      .pt-when{display:block;} .pt-when.warn{color:var(--err); font-weight:600;}
+      .pt-more td{background:var(--surface-2);}
+      .pt-more .mt-n{background:var(--surface); border:1px solid var(--border);}   /* the count on the panel's grey */
+      .pt-more .mt-desc{margin:0 0 10px; white-space:pre-wrap;}
+      .pt-more .mt-h3{margin:4px 0 8px;}
+      .tk-notes{padding:4px 0 6px;}
+      .tk-add{margin-top:10px;}
+      .tk-add .tk-in{min-height:64px;}
+      @media (max-width:640px){
+        .pt-tbl thead{display:none;}
+        .pt-tbl tr.pt-row{display:grid; grid-template-columns:44px 1fr; gap:0 6px; padding:8px 4px; border-top:1px solid var(--border);}
+        .pt-tbl tr.pt-row td{border:0; padding:2px 4px;}
+        .pt-tbl tr.pt-row .pt-c{grid-row:1 / span 3;}
+        .pt-tbl .pt-cat:empty, .pt-tbl .pt-req{display:none;}
+        .pt-tbl .pt-cat, .pt-tbl .pt-who{font-size:12px; color:var(--text-muted);}
+        .pt-tbl tr.pt-more{display:block;} .pt-tbl tr.pt-more td{display:block; border:0; width:auto;}
+        .pt-tbl tr.pt-more td:first-child{display:none;}
+        /* a finger's targets (44 px), as on My Tasks */
+        .pt-c{width:auto;}
+        .pt-tick{min-width:44px; min-height:44px; margin:-10px 0 0 -4px;}
+        .pt-c input{width:24px; height:24px;}
+        .pt-open{display:flex; width:100%; min-height:44px;}
+        .pt-tk .pj-bar .pj-btn, .pt-tk .tk-add .pj-btn{min-height:44px;}
+        .pt-tk .pj-more{display:inline-flex; align-items:center; min-height:44px; font-size:14px;}
+      }
       @media (max-width:700px){ .pj-switch input{width:150px;} .pj-title{font-size:17px;} }
     </style>
   </head>
@@ -206,6 +249,7 @@
         <button class="pj-tab" data-tab="journal" type="button" role="tab">Journal</button>
         <button class="pj-tab" data-tab="mailing" type="button" role="tab">Mailing</button>
         <button class="pj-tab" data-tab="files" type="button" role="tab">Files</button>
+        <button class="pj-tab" data-tab="tasks" type="button" role="tab">Tasks</button>
       </div>
 
       <div class="pj-pane active" id="pane-overview" role="tabpanel"><div class="pj-empty">Loading…</div></div>
@@ -213,6 +257,7 @@
       <div class="pj-pane" id="pane-journal" role="tabpanel"><div class="pj-empty">Loading…</div></div>
       <div class="pj-pane" id="pane-mailing" role="tabpanel"><div class="pj-empty">Loading…</div></div>
       <div class="pj-pane" id="pane-files" role="tabpanel"><div class="pj-empty">Loading…</div></div>
+      <div class="pj-pane" id="pane-tasks" role="tabpanel"><div class="pj-empty">Loading…</div></div>
     </div>
 
     <!-- voice note: record, live transcript where available, review, save to Site Notes -->

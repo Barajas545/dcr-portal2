@@ -21,10 +21,13 @@ export const CSP = "default-src 'self'; script-src 'self' " + SUPABASE_JS + "; "
   "base-uri 'self'; form-action 'self'";
 
 // A page that needs another library names its exact file(s) in script-src, and only that page:
-// the timesheet PDF (js/timesheet-pdf.js) loads jsPDF and its table plugin on the two Time Sheet pages.
+// the timesheet PDF (js/timesheet-pdf.js) loads jsPDF and its table plugin on the two Time Sheet pages;
+// the tasks map (P3) loads Leaflet 1.9.4 (the old portal's version, from jsDelivr instead of unpkg).
 export const PDF_LIBS = ["https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js",
   "https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"];
-export const PAGE_LIBS = { "timesheet.html": PDF_LIBS, "timesheet-mobile.html": PDF_LIBS };
+export const LEAFLET_JS = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
+export const LEAFLET_CSS = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
+export const PAGE_LIBS = { "timesheet.html": PDF_LIBS, "timesheet-mobile.html": PDF_LIBS, "tasks-map.html": [LEAFLET_JS] };
 
 function walk(dir) {
   const out = [];
@@ -168,7 +171,7 @@ test("Portal 2's own browser-side names, never the old portal's (Appendix C)", (
     for (const [re, what] of old) assert.ok(!re.test(src), rel(f) + ": uses " + what);
   }
   const sw = read(join(SITE, "sw.js"));
-  assert.match(sw, /const CACHE = "dcr-portal2-v1"/);
+  assert.match(sw, /const CACHE = "dcr-portal2-v\d+"/);           // bumped when the worker's behaviour changes (v2: P3 push)
   assert.match(sw, /const PREFIX = "dcr-portal2-"/);
   assert.ok(!/k\.indexOf\("dcr-portal-"\)/.test(sw), "the worker never deletes the old portal's caches");
 });
@@ -184,7 +187,7 @@ test("nothing from the demo mode is published, and no secret", () => {
   const key = /SUPABASE_KEY:\s*"([^"]*)"/.exec(cfg)[1];
   assert.match(key, /^sb_publishable_/, "only the publishable key");
   assert.match(cfg, /SITE_URL:\s*"https:\/\/portal\.dcrframing\.com"/);
-  assert.match(cfg, /VAPID_PUBLIC_KEY:\s*"/);
+  assert.ok(!/VAPID/.test(cfg.replace(/\/\*[\s\S]*?\*\//g, "")), "no VAPID key in config.js: push2.js asks the push function (op public_key)");
 });
 
 test("the manifest is Portal 2's own app", () => {

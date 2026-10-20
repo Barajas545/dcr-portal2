@@ -12,7 +12,8 @@
      relationship found from the foreign keys (none: PGRST200, several: PGRST201);
    - eq/neq/gt/gte/lt/lte/like/ilike/is/in, order, range, limit, single, maybeSingle;
    - insert / update / delete with .select(...) -> "WITH src AS (<dml> RETURNING *) SELECT ...";
-     without .select() nothing is returned (return=minimal);
+     without .select() nothing is returned (return=minimal); upsert(body, {onConflict, ignoreDuplicates})
+     -> INSERT ... ON CONFLICT (cols) DO NOTHING | DO UPDATE SET <the other columns> = excluded.*;
    - rpc(name, args) -> public.name(arg => $1 ...) matched by argument NAME (an unknown or missing
      argument: PGRST202, as PostgREST answers); set-returning -> array, composite -> object;
    - storage.from(bucket): upload (INSERT into storage.objects under its RLS), createSignedUrl(s)
@@ -280,6 +281,12 @@ export function makeClient({ db, catalog, passwords, onQuery }) {
     }
     select(cols) { if (this.method !== "select") this.returning = true; this.cols = cols || "*"; return this; }
     insert(body) { this.method = "insert"; this.body = body; return this; }
+    /** PostgREST's upsert: ON CONFLICT (onConflict, else the primary key) DO NOTHING (ignoreDuplicates) or DO UPDATE. */
+    upsert(body, o) {
+      this.method = "insert"; this.body = body;
+      this.conflict = { cols: String((o && o.onConflict) || "id").split(",").map((s) => s.trim()).filter(Boolean), ignore: !!(o && o.ignoreDuplicates) };
+      return this;
+    }
     update(body) { this.method = "update"; this.body = body; return this; }
     delete() { this.method = "delete"; return this; }
     order(col, o) { this.orders.push({ col, asc: !o || o.ascending !== false, nullsFirst: o && o.nullsFirst }); return this; }
@@ -334,6 +341,12 @@ export function makeClient({ db, catalog, passwords, onQuery }) {
         keys.forEach((k) => typeOf(cat, this.table, k));
         dml = "insert into public." + qi(this.table) + " (" + keys.map(qi).join(", ") + ") values " +
           list.map((r) => "(" + keys.map((k) => (k in r ? sql.param(r[k], cat.tables[this.table].cols[k]) : "default")).join(", ") + ")").join(", ");
+        if (this.conflict) {
+          this.conflict.cols.forEach((k) => typeOf(cat, this.table, k));
+          const rest = keys.filter((k) => !this.conflict.cols.includes(k));
+          dml += " on conflict (" + this.conflict.cols.map(qi).join(", ") + ") " + (this.conflict.ignore || !rest.length ? "do nothing"
+            : "do update set " + rest.map((k) => qi(k) + " = excluded." + qi(k)).join(", "));
+        }
       } else if (this.method === "update") {
         const keys = Object.keys(this.body || {});
         if (!keys.length) throw restErr("PGRST100", "nothing to update");

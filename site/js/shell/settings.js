@@ -1,4 +1,4 @@
-/* Your settings: details, appearance, password (ported from the old settings.js).
+/* Your settings: details, phone reminders, appearance, password (ported from the old settings.js).
 
    Three independent things, each saving on its own: a password change and a phone number fail for
    different reasons. Details are a versioned PATCH of the person's own profiles row (name, phone,
@@ -7,7 +7,7 @@
    rpc update_my_contact (only those two columns of their own row: the old profile.js allow-list). */
 import { sb, me, changePassword, passwordProblem, authStorage } from "../sb.js";
 import { requireAuth, topbar, theme, errorText, roleLabel, logout, toast, DCR2 } from "../common2.js";
-import { mountSwitch } from "../push2.js";
+import { mountSettings } from "../push2.js";
 import * as employees from "../repo/employees.js";
 
 const $ = (id) => document.getElementById(id);
@@ -153,7 +153,7 @@ async function start() {
     ? "Signed in <b>for this browser session only</b>: closing the browser signs you out."
     : "<b>Kept signed in</b> on this device until you sign out.";
   $("stSignOut").addEventListener("click", () => logout());
-  mountSwitch("pushSlot");
+  mountSettings("stPushBox");             // phone reminders (P3): switch, iPhone steps, test notice
   $("stEmpSave").addEventListener("click", saveEmployee);
   // the employee record arrives with P2 (migration M2); before it the section simply stays hidden
   employees.mine(p.id).then(fillEmployee).catch(() => fillEmployee(null));

@@ -18,6 +18,10 @@ import { sb, me } from "./sb.js";
 export const PRESENCE_TOPIC = "presence:dcr";
 export const SOFT_DELETE_TABLES = new Set(["contacts", "projects", "estimates", "estimate_items", "bills",
   "invoices", "journal_entries", "files", "email_templates", "item_library", "mail_notes"]);
+/* Tables whose tombstones in "deletions" are handed on as a DELETE: the soft-delete tables, and tasks —
+   a task handed AWAY from a field or view-only person leaves a "no longer yours" tombstone that only
+   they read (migration M1, deletions.for_user): Realtime never sends them the UPDATE that took it away. */
+export const TOMBSTONE_TABLES = new Set(Array.from(SOFT_DELETE_TABLES).concat(["tasks"]));
 
 let topicN = 0;
 
@@ -94,13 +98,13 @@ export function watch(table, filter, cb) {
       if (filter && !matchFilter(row, filter) && !(p.eventType === "UPDATE" && matchFilter(p.old, filter))) return;
       deliver({ type: p.eventType, table, new: p.new || null, old: p.old || null });
     });
-    if (SOFT_DELETE_TABLES.has(table)) {
+    if (TOMBSTONE_TABLES.has(table)) {
       mine.on("postgres_changes", { event: "INSERT", schema: "public", table: "deletions", filter: "table_name=eq." + table }, (p) => {
         const t = p.new || {};
         const gone = { id: t.row_id, project_id: t.project_id };
         const checkable = parseFilter(filter).every((c) => c.col === "id" || c.col === "project_id");
         if (filter && checkable && !matchFilter(gone, filter)) return;
-        deliver({ type: "DELETE", table, new: null, old: gone, soft: true });
+        deliver({ type: "DELETE", table, new: null, old: gone, soft: true, forMe: !!t.for_user });
       });
     }
     mine.subscribe((status) => {

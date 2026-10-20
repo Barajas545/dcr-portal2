@@ -1,0 +1,161 @@
+/* DCR Portal 2 — the task pieces shared by My Tasks, the tasks map and the project's Tasks tab (the old
+   portal's my-tasks.html styles, light and dark, plus the new-task form). */
+
+.mt, .tm, .pt-tk, .tk-sheet {
+  --acc:#2f80d8; --acc-2:#1f6fc8; --tint:rgba(47,128,216,.12); --tint-2:rgba(47,128,216,.22);
+  --warn:#c8371f; --warn-bg:rgba(200,55,31,.10); --ok-text:#1f7a55; --ok-bg:rgba(31,157,85,.10);
+  --gold:#a46a12; --gold-bg:rgba(183,121,31,.14);
+  /* text on the blue tint (the shoot badge): darker than --acc so it reads at 4.5:1 on the tint */
+  --acc-text:#1d5fa8;
+  --pri-urgent:#c62828; --pri-medium:#d07a12; --pri-low:#2e7d32;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mt, :root:not([data-theme="light"]) .tm, :root:not([data-theme="light"]) .pt-tk,
+  :root:not([data-theme="light"]) .tk-sheet {
+    --warn:#f0937f; --warn-bg:rgba(240,147,127,.13); --ok-text:#6fd3a4; --ok-bg:rgba(111,211,164,.12);
+    --gold:#e0b25a; --gold-bg:rgba(224,178,90,.14); --tint-2:rgba(77,155,240,.30); --acc-text:#8cc4fa;
+    --pri-urgent:#ef7d6b; --pri-medium:#e7a948; --pri-low:#6fcf8e;
+  }
+}
+:root[data-theme="dark"] .mt, :root[data-theme="dark"] .tm, :root[data-theme="dark"] .pt-tk, :root[data-theme="dark"] .tk-sheet {
+  --warn:#f0937f; --warn-bg:rgba(240,147,127,.13); --ok-text:#6fd3a4; --ok-bg:rgba(111,211,164,.12);
+  --gold:#e0b25a; --gold-bg:rgba(224,178,90,.14); --tint-2:rgba(77,155,240,.30); --acc-text:#8cc4fa;
+  --pri-urgent:#ef7d6b; --pri-medium:#e7a948; --pri-low:#6fcf8e;
+}
+
+.mt { max-width:1180px; margin:0 auto; padding:14px 16px calc(40px + env(safe-area-inset-bottom)); }
+
+/* a message above the list: a link to a task finished since, a task that moved, a task just closed */
+.mt-notice{display:flex; flex-direction:column; gap:6px; padding:14px; margin:8px 0 12px; border-radius:12px;
+  background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--acc);}
+.mt-notice.ok{border-left-color:var(--ok); background:var(--ok-bg);}
+.mt-notice.warn{border-left-color:var(--warn);}
+.mt-notice b{font-size:15.5px;}
+.mt-notice span{font-size:14px; color:var(--text); overflow-wrap:anywhere;}
+.mt-nbtn{align-self:flex-start; margin-top:4px; min-height:44px; padding:8px 14px; border-radius:10px;
+  border:1px solid var(--border); background:var(--surface); color:var(--text); font-weight:700;}
+.mt-nbtn:focus-visible{outline:2px solid var(--acc); outline-offset:1px;}
+
+/* groups and cards */
+.mt-grp{display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:18px 0 8px; font-size:12px; font-weight:800;
+  text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted);}
+.mt-grp .who{text-transform:none; letter-spacing:0; font-size:15px; color:var(--text);}
+/* a task's description and the "Updates" heading: My Tasks and the project's Tasks tab */
+.mt-desc{margin:12px 0 0; padding:10px 12px; border-radius:10px; background:var(--surface); border:1px solid var(--border);
+  font-size:14.5px; white-space:pre-wrap; overflow-wrap:anywhere;}
+.mt-h3{display:flex; align-items:center; gap:8px; margin:20px 0 8px; font-size:12px; font-weight:800;
+  text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted);}
+.mt-n{min-width:22px; padding:1px 8px; border-radius:11px; background:var(--surface-2); color:var(--text);
+  font-size:12px; text-align:center; letter-spacing:0; text-transform:none;}
+.mt-n.warn{background:var(--warn); color:#fff;}
+:root[data-theme="dark"] .mt-n.warn{color:#2a0d07;}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .mt-n.warn{color:#2a0d07;} }
+.mt-card{background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--border);
+  border-radius:12px; margin-bottom:10px; overflow:hidden;}
+.mt-card.needs{border-left-color:var(--warn);}
+.mt-card.sel{border-color:var(--acc); box-shadow:0 0 0 2px var(--tint-2);}
+.mt-open{display:block; width:100%; text-align:left; background:none; border:0; color:var(--text);
+  padding:12px 14px 4px; min-height:44px; font:inherit; -webkit-tap-highlight-color:transparent;}
+.mt-open:hover{background:var(--surface-2);}
+.mt-open:focus-visible{outline:2px solid var(--acc); outline-offset:-2px;}
+.mt-row1{display:flex; align-items:flex-start; justify-content:space-between; gap:8px;}
+.mt-name{font-weight:700; font-size:16px; line-height:1.3; overflow-wrap:anywhere;}
+.mt-chip{flex:none; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800; letter-spacing:.03em;
+  text-transform:uppercase; background:var(--surface-2); color:var(--text-muted);}
+.mt-chip.urgent{background:var(--warn-bg); color:var(--warn);}
+.mt-chip.medium{background:var(--gold-bg); color:var(--gold);}
+.mt-chips{display:flex; flex-wrap:wrap; justify-content:flex-end; gap:4px; flex:none; max-width:60%;}
+.mt-chip.photo, .mt-chip.shoot, .mt-chip.recur, .mt-chip.due{text-transform:none; letter-spacing:0; font-size:12px;}
+.mt-chip.photo, .mt-chip.recur{background:var(--tint); color:var(--acc-text);}
+.mt-chip.shoot, .mt-chip.due{background:var(--surface-2); color:var(--text);}
+.mt-chip.shoot.today, .mt-chip.due.today{background:var(--gold-bg); color:var(--gold);}
+.mt-chip.shoot.late, .mt-chip.due.late{background:var(--warn-bg); color:var(--warn);}
+.mt-when{display:block; margin-top:4px; font-size:13.5px; font-weight:600; color:var(--text-muted);}
+.mt-when.warn{color:var(--warn);}
+.mt-last{display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-top:3px;
+  font-size:13.5px; color:var(--text-muted); overflow-wrap:anywhere;}
+.mt-place{display:flex; flex-wrap:wrap; align-items:center; gap:0 8px; padding:0 14px 4px; font-size:13px; color:var(--text-muted);}
+.mt-place .proj{overflow-wrap:anywhere;}
+/* on a phone the chips go under the task's name, which keeps the whole width */
+@media (max-width:560px){
+  .mt-row1{flex-direction:column; align-items:flex-start; gap:6px;}
+  .mt-chips{justify-content:flex-start; max-width:100%;}
+}
+.mt-dir{display:inline-flex; align-items:center; min-height:44px; color:var(--acc); font-weight:600; text-decoration:none; overflow-wrap:anywhere;}
+.mt-dir:hover{text-decoration:underline;}
+.mt-dir:focus-visible{outline:2px solid var(--acc); outline-offset:2px; border-radius:4px;}
+
+/* quick phrases */
+.mt-quick{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;}
+.mt-quick button{min-height:44px; padding:8px 12px; border:1px solid var(--border); border-radius:22px;
+  background:var(--surface-2); color:var(--text); font-size:13.5px; font-weight:600;}
+.mt-quick button:hover{border-color:var(--acc);}
+.mt-quick button:focus-visible{outline:2px solid var(--acc); outline-offset:1px;}
+.mt-quick .done{border-color:var(--ok); color:var(--ok-text); background:var(--ok-bg);}
+
+/* the shoot brief: its sections as small headings, the shot list as checkboxes big enough for a thumb */
+.mt-brief{margin:12px 0 0; padding:2px 12px 10px; border-radius:10px; background:var(--surface); border:1px solid var(--border);
+  font-size:14.5px; overflow-wrap:anywhere;}
+.mt-bh{margin:12px 0 4px; font-size:11.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--text-muted);}
+.mt-bp{margin:2px 0;}
+.mt-blist{margin:2px 0 4px; padding-left:20px;}
+.mt-blist li{margin:2px 0;}
+.mt-blist.shots{list-style:none; padding-left:0;}
+.mt-shot{display:flex; align-items:center; gap:10px; min-height:44px; margin:0; padding:2px 0; cursor:pointer;
+  font-size:14.5px; font-weight:400; color:var(--text);}
+.mt-shot input{flex:none; width:22px; height:22px; margin:0; accent-color:var(--acc);}
+.mt-shot input:checked + span{color:var(--text-muted); text-decoration:line-through;}
+.mt-shot input:focus-visible{outline:2px solid var(--acc); outline-offset:2px;}
+:root[data-theme="dark"] .mt-shot input{color-scheme:dark;}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .mt-shot input{color-scheme:dark;} }
+
+/* the updates, newest first */
+.mt-history{list-style:none; margin:0 0 0 6px; padding:0; border-left:2px solid var(--border);}
+.mt-note{position:relative; padding:0 0 14px 16px;}
+.mt-note::before{content:""; position:absolute; left:-7px; top:6px; width:12px; height:12px; border-radius:50%;
+  background:var(--surface); border:2px solid var(--border); box-sizing:border-box;}
+.mt-note:first-child::before{background:var(--acc); border-color:var(--acc);}
+.mt-note.fresh{animation:mtFresh 2.6s ease-out;}
+@keyframes mtFresh{0%{background:var(--tint-2);} 100%{background:transparent;}}
+.mt-nday{font-size:12.5px; font-weight:700; color:var(--text-muted);}
+.mt-nwho{font-weight:600;}
+.mt-ntext{font-size:14.5px; white-space:pre-wrap; overflow-wrap:anywhere;}
+.mt-none{color:var(--text-muted); font-size:14px; padding:4px 0 8px 16px;}
+
+/* priority dots (the map's and the project tab's) */
+.tk-dot{display:inline-block; width:10px; height:10px; border-radius:50%; flex:none; background:var(--pri-low);}
+.tk-dot.urgent{background:var(--pri-urgent);}
+.tk-dot.medium{background:var(--pri-medium);}
+
+/* the new-task form (a sheet from the bottom on a phone, a dialog on a desk) */
+.tk-overlay{position:fixed; inset:0; z-index:900; background:rgba(0,0,0,.5); display:flex; align-items:flex-end; justify-content:center;}
+.tk-sheet{background:var(--surface); color:var(--text); border-radius:20px 20px 0 0; width:100%; max-width:540px;
+  max-height:92vh; max-height:92dvh; display:flex; flex-direction:column; box-shadow:0 -8px 40px rgba(0,0,0,.25); overflow:hidden;}
+.tk-head{display:flex; align-items:flex-start; gap:10px; padding:14px 18px 12px; border-bottom:1px solid var(--border);}
+.tk-title{font-size:19px; font-weight:800; line-height:1.2;}
+/* the sheet's title takes the focus on a phone (task-form.js) so the keyboard stays shut: it is not a
+   control, so no ring (as My Tasks' task title) */
+.tk-title:focus, .tk-title:focus-visible{outline:none;}
+.tk-sub{font-size:13px; color:var(--text-muted); margin-top:3px; overflow-wrap:anywhere;}
+.tk-x{width:36px; height:36px; border-radius:50%; flex:none; border:none; background:var(--surface-2); color:var(--text-muted); font-size:16px; margin-left:auto;}
+.tk-body{padding:14px 18px 6px; overflow-y:auto; -webkit-overflow-scrolling:touch; flex:1;}
+.tk-lab{display:block; font-size:12px; font-weight:700; color:var(--text-muted); margin:12px 0 5px;}
+.tk-lab:first-child{margin-top:0;}
+.tk-in{width:100%; box-sizing:border-box; padding:12px; border:1px solid var(--border); border-radius:11px;
+  font-size:16px; font-family:inherit; color:var(--text); background:var(--bg); min-height:48px; color-scheme:light dark;}
+textarea.tk-in{min-height:84px; resize:vertical; line-height:1.45;}
+.tk-in:focus{outline:none; border-color:var(--acc); box-shadow:0 0 0 3px var(--tint-2);}
+.tk-row{display:flex; gap:10px;}
+.tk-row > div{flex:1; min-width:0;}
+.tk-msg{font-size:13px; margin:12px 0 4px; min-height:18px; color:var(--text-muted);}
+.tk-msg.err{color:var(--warn); font-weight:600;}
+.tk-msg.ok{color:var(--ok-text); font-weight:600;}
+.tk-foot{display:flex; gap:8px; padding:12px 18px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--border);}
+.tk-foot button{min-height:48px; border-radius:12px; font-weight:800; font-size:15px; border:1px solid var(--border);}
+.tk-cancel{flex:1; background:var(--surface-2); color:var(--text);}
+.tk-go{flex:2; background:#0b6b3a; border-color:#0b6b3a !important; color:#fff;}
+.tk-go:disabled{opacity:.6;}
+@media (min-width:601px){
+  .tk-overlay{align-items:center; padding:20px;}
+  .tk-sheet{border-radius:16px; max-height:86vh;}
+}

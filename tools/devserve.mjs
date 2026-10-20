@@ -5,7 +5,7 @@
 
    Serves site/ as GitHub Pages would, and, in every HTML page it serves, swaps the supabase-js
    <script> for the demo stand-in (/__dev/fake-supabase.js = tools/fake/engine.js + seed.js +
-   fake-supabase.js): made-up data in the browser, no request to Supabase at all. The files in site/
+   fake-supabase.js + push-demo.js): made-up data in the browser, no request to Supabase at all. The files in site/
    are never changed; the published site has no switch that could turn this on.
 
    Binds to 127.0.0.1 only. PORT / DCR2_DEV_PORT override the port; --no-demo serves site/ untouched
@@ -19,7 +19,7 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(HERE, "..");
 const SITE = resolve(ROOT, "site");
 const FAKE_DIR = resolve(HERE, "fake");
-const FAKE_PARTS = ["engine.js", "seed.js", "fake-supabase.js"];
+const FAKE_PARTS = ["engine.js", "seed.js", "fake-supabase.js", "push-demo.js"];
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.DCR2_DEV_PORT || process.env.PORT || 8792);
 const DEMO = !process.argv.includes("--no-demo");

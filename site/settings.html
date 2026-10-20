@@ -54,6 +54,28 @@
       .st-msg.err { color: var(--err); font-weight: 600; }
       .st-kv { font-size: 13px; color: var(--text-muted); margin: 0 0 10px; }
       .st-kv b { color: var(--text); }
+      /* phone reminders (push2.js mountSettings) */
+      .pr-row { display: flex; align-items: center; gap: 14px; justify-content: space-between; }
+      .pr-label { min-width: 0; }
+      .pr-title { font-size: 14px; font-weight: 700; }
+      .pr-status { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.45; }
+      .pr-status.on { color: var(--ok); font-weight: 600; }
+      .pr-status.warn { color: var(--err); }
+      .pr-switch { flex: none; position: relative; width: 52px; height: 30px; border-radius: 999px; padding: 0; cursor: pointer;
+        border: 1px solid var(--border); background: var(--bg); transition: background .15s, border-color .15s; }
+      .pr-switch .pr-knob { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+        background: var(--text-muted); transition: transform .15s, background .15s; }
+      .pr-switch[aria-checked="true"] { background: var(--acc); border-color: var(--acc); }
+      .pr-switch[aria-checked="true"] .pr-knob { transform: translateX(22px); background: #fff; }
+      .pr-switch:disabled { opacity: .5; cursor: not-allowed; }
+      .pr-switch:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+      .pr-guide { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--p2-tint); font-size: 13px; line-height: 1.5; }
+      .pr-guide p { margin: 0 0 6px; }
+      .pr-guide ol { margin: 0 0 6px; padding-left: 20px; }
+      .pr-guide li { margin: 2px 0; }
+      .pr-guide .pr-small { font-size: 12px; color: var(--text-muted); margin: 0; }
+      .pr-acts { margin-top: 14px; }
+      .pr-acts[hidden], .pr-switch[hidden], .pr-guide[hidden] { display: none; }
     </style>
   </head>
   <body>
@@ -61,7 +83,7 @@
     <main class="st">
       <div class="st-head">
         <h2>Your settings</h2>
-        <p class="st-lead">Your details, how Portal 2 looks on this device, and your password.</p>
+        <p class="st-lead">Your details, phone reminders, how Portal 2 looks on this device, and your password.</p>
       </div>
 
       <section class="st-sec" aria-labelledby="stDetailsH">
@@ -115,6 +137,13 @@
         </div>
       </section>
 
+      <section class="st-sec" aria-labelledby="stPushH">
+        <h3 id="stPushH">Phone reminders</h3>
+        <p class="why">A notification on this phone or computer when a task is given to you, and DCR Agents reminders
+          (a missing timesheet). Turn it on on each device you use; it stays off on the others.</p>
+        <div id="stPushBox"></div>
+      </section>
+
       <section class="st-sec" aria-labelledby="stThemeH">
         <h3 id="stThemeH">Appearance</h3>
         <p class="why">Applies to this device only, and takes effect straight away.</p>
@@ -155,7 +184,6 @@
       <section class="st-sec" aria-labelledby="stDevH">
         <h3 id="stDevH">This device</h3>
         <p class="st-kv" id="stKept"></p>
-        <div id="pushSlot" style="margin-bottom:10px"></div>
         <div class="st-acts">
           <button class="btn btn-ghost btn-sm" type="button" id="stSignOut">Sign out of this device</button>
         </div>

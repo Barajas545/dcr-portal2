@@ -1,8 +1,12 @@
 /* The home page: the same launcher as the old portal (search, then cards by section), with only the
-   modules Portal 2 has so far (P1 projects, P2 timesheets). Cards are gated by role and switch, as the
-   database rules them (BLUEPRINT 3.2, Appendix D); later phases add their cards here. */
+   modules Portal 2 has so far (P1 projects, P2 timesheets, P3 tasks). Cards are gated by role and
+   switch, as the database rules them (BLUEPRINT 3.2, Appendix D); later phases add their cards here.
+   The My Tasks card carries the old badge: how many of your own tasks need an update (red: somebody's
+   job today), else how many are open, else the crew's, dimmed (rpc my_tasks_summary, counts only). */
 import { requireAuth, topbar, el, companyInfo, roleLabel } from "../common2.js";
 import { crewOf } from "../repo/employees.js";
+import { summary as taskSummary } from "../repo/tasks.js";
+import { summaryOf, badgeOf } from "../map/tasks.js";
 import { drain } from "../upload-queue2.js";
 import { startSweeper } from "../pages/journal-sync.js";
 import { mountSwitch } from "../push2.js";
@@ -25,6 +29,11 @@ export function cardsFor(p, opts) {
   ] });
   const teams = ["admin", "manager", "accountant", "lead"].indexOf(role) !== -1;
   sections.push({ label: "Field & Time", cards: [
+    /* first in the row: the one card that is somebody's job today; its badge says how many tasks are
+       waiting for an update */
+    { href: "my-tasks.html", ic: "✅", tt: "My Tasks", id: "hmMyTasks",
+      ds: role === "viewer" ? "The tasks given to you and their updates." : "Your open tasks — send an update in a few taps." },
+    { href: "tasks-map.html", ic: "🗺️", tt: "Tasks on Map", ds: "Open tasks by job on a map, with directions." },
     { href: "capture.html", ic: "📸", tt: "Site Photos", show: role !== "viewer",
       ds: "Photograph or film the job you're standing on, filed by day. Works with no signal." },
     { href: "timesheet.html", ic: "🕐", tt: "Time Sheet",
@@ -38,7 +47,7 @@ export function cardsFor(p, opts) {
       ds: "Submit time for a whole crew at once." },
   ] });
   sections.push({ label: "You", cards: [
-    { href: "settings.html", ic: "⚙️", tt: "Settings", ds: "Your name and phone, how Portal 2 looks, and your password." },
+    { href: "settings.html", ic: "⚙️", tt: "Settings", ds: "Your name and phone, phone reminders, how Portal 2 looks, and your password." },
   ] });
   if (role === "admin" || role === "manager") {
     sections.push({ label: "Admin", cards: [
@@ -61,12 +70,24 @@ function render(p, opts) {
       const body = [el("span", { class: "ic", "aria-hidden": "true" }, c.ic), el("span", { class: "tt" }, c.tt), el("span", { class: "ds" }, c.ds)];
       const card = c.info
         ? el("div", { class: "hm-card info" }, el("div", { class: "hm-card-go" }, body))
-        : el("div", { class: "hm-card" }, el("a", { class: "hm-card-go", href: c.href }, body),
+        : el("div", { class: "hm-card", id: c.id || null }, el("a", { class: "hm-card-go", href: c.href }, body),
           c.links ? el("div", { class: "links" }, c.links.map((l) => el("a", { href: l[1] }, l[0]))) : null);
       grid.appendChild(card);
     }
     host.appendChild(grid);
   }
+}
+
+/** The My Tasks badge, drawn after the cards from the counts-only answer; any failure leaves the card. */
+async function myTasksBadge() {
+  let b = null;
+  try { b = badgeOf(summaryOf(await taskSummary())); } catch (e) { return; }
+  const card = $("hmMyTasks");
+  if (!card || !b) return;
+  const tt = card.querySelector(".tt");
+  const old = tt.querySelector(".hm-badge");
+  if (old) old.remove();
+  tt.appendChild(el("span", { class: "hm-badge " + b.cls }, b.text));
 }
 
 function notes() {
@@ -91,7 +112,8 @@ async function start() {
   });
   render(p);
   // a lead's Batch Entry card waits for their crew (crew_members: their own rows)
-  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) render(p, { hasCrew: true }); }).catch(() => null);
+  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { render(p, { hasCrew: true }); myTasksBadge(); } }).catch(() => null);
+  myTasksBadge();
   notes();
   mountSwitch("pushSlot");
   // journal entries written with no signal are created (the app may have been killed since), then

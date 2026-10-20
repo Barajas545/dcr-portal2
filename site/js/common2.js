@@ -690,6 +690,16 @@ export async function requireAuth(opts) {
 }
 
 export async function logout() {
+  // A shared phone: this person's notices stop reaching it (push2.js forgetOnSignOut - their own row for this
+  // device and the browser's subscription). Loaded only now (push2.js imports this module), best effort and
+  // bounded: signing out never waits more than a few seconds on it.
+  let timer = null;
+  try {
+    await Promise.race([
+      import("./push2.js").then(function (p) { return p.forgetOnSignOut(3000); }),
+      new Promise(function (res) { timer = setTimeout(res, 3500); }),
+    ]);
+  } catch (e) { /* signing out goes on */ } finally { clearTimeout(timer); }
   await signOut();
   location.replace("index.html");
 }
@@ -704,11 +714,13 @@ export function roleLabel(role) { return ROLE_LABELS[role] || String(role || "")
 
 /** The pages, by role. Field and view-only people read the Board; only a viewer cannot take site
     photos (the database refuses their uploads). Everyone has a Time Sheet (a viewer reads theirs);
-    Team Sheets is for admin, manager, accountant (read only) and lead. Later phases add theirs. */
+    Team Sheets is for admin, manager, accountant (read only) and lead. Everyone has My Tasks (P3: a
+    view-only account reads the tasks given to it). Later phases add theirs. */
 export function navItems(p) {
   const role = p && p.role;
   return [
     { key: "home", href: "dashboard.html", text: "Home" },
+    { key: "tasks", href: "my-tasks.html", text: "My Tasks" },
     { key: "board", href: "board.html", text: "Board" },
     { key: "search", href: "search.html", text: "Search" },
     { key: "logs", href: "logs.html", text: "Log History" },

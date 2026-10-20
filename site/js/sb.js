@@ -116,14 +116,30 @@ function hasLibrary() {
   return !!(globalThis.supabase && typeof globalThis.supabase.createClient === "function");
 }
 
-if (typeof document !== "undefined" && !hasLibrary()) {
-  await new Promise((resolve) => {
+function loadLibrary() {
+  return new Promise((resolve) => {
     const s = document.createElement("script");
     s.src = SUPABASE_JS_URL;
     s.crossOrigin = "anonymous";
-    s.onload = s.onerror = () => resolve();
+    s.onload = s.onerror = () => resolve(hasLibrary());
     document.head.appendChild(s);
   });
+}
+
+if (typeof document !== "undefined" && !hasLibrary()) {
+  await loadLibrary();
+  // A cold start with no signal and no kept copy: try again when the connection comes back, so this page
+  // (Site Photos with a queue waiting, say) reaches the database without a reload.
+  if (!hasLibrary() && typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    let trying = false;
+    const again = () => {
+      if (hasLibrary()) { window.removeEventListener("online", again); return; }
+      if (trying) return;
+      trying = true;
+      loadLibrary().then((ok) => { trying = false; if (ok) window.removeEventListener("online", again); });
+    };
+    window.addEventListener("online", again);
+  }
 }
 
 let _client = null;

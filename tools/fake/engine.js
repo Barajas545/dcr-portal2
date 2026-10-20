@@ -21,6 +21,14 @@
      employee), timesheet_confirmations (no direct access) and the RPCs my_roster,
      update_my_contact, confirm_timesheet_week (md5 fingerprint, PT409), unconfirm_timesheet_week,
      timesheet_weeks;
+   - phase 3 (M3, BLUEPRINT 3.3.7): tasks (sub_category, due_time, the import's legacy_sp_id and
+     author_name, the agents' agent_kind / agent_ref / agent_date — set by no person), task_notes (via,
+     on_behalf_of, source_key, author_name — a person writes desktop or portal only), the Q3 read scope,
+     the M1 handover tombstone (deletions.for_user), notifications_outbox (a new assignment for someone
+     else: the Access wording and the Portal 2 link; admin reads, nobody writes) and the RPCs my_tasks
+     (mine | crew | everyone with the project, the notes and app.task_clock), my_tasks_summary,
+     add_task_note (one line, 2,000 characters, "already complete", the client key once) and
+     complete_task (status and closing note together, versioned, done already is done);
    - Storage: simple uploads, TUS resumable uploads (6 MiB chunks), signed URLs, with the
      project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read).
    Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
@@ -35,14 +43,17 @@
   const SOFT = new Set(["contacts", "projects", "journal_entries", "files"]);
   const TABLES = ["profiles", "settings", "settings_prices", "contacts", "projects", "project_prices", "activity",
     "journal_entries", "files", "tasks", "task_notes", "deletions",
-    "employees", "crew_members", "timesheets", "timesheet_confirmations"];
+    "employees", "crew_members", "timesheets", "timesheet_confirmations", "notifications_outbox", "push_subscriptions"];
   const TS_KINDS = ["work", "holiday", "vacation", "sick", "day_off"];
   const TS_SOURCES = ["portal", "desktop", "agents_sms", "agents_email", "agents_whatsapp", "agents_app", "import"];
   const NO_DIRECT = new Set(["timesheet_confirmations"]);     // RLS on, no policies: RPCs only
+  const NOTE_VIA = ["desktop", "portal", "email", "sms", "whatsapp", "assistant", "agent", "import"];
+  const PEOPLE_VIA = ["desktop", "portal"];                    // M3: only the agents role files a channel's words
+  const TASK_DAYS = 5;                                         // app.task_clock: needs an update after MORE than 5 days
   const VIEWS = { current_files: "files" };
   const PK = { project_prices: "project_id" };
   const UUID_PK = new Set(["profiles"]);
-  const NO_AUDIT = new Set(["deletions"]);
+  const NO_AUDIT = new Set(["deletions", "notifications_outbox"]);
   const LOCAL_CITIES = ["Pine Hollow", "Cedar Flats", "Oak Vista", "Sage Valley", "Sandbox"];
   const TZ = "America/Los_Angeles";
   const CHUNK = 6 * 1024 * 1024;
@@ -53,7 +64,7 @@
     profiles: Object.assign({ id: null, full_name: "", email: null, phone: null, role: "viewer", can_see_prices: false,
       can_see_financials: false, can_approve_payments: false, active: true, color: null, must_change_password: false }, AUDIT),
     settings: Object.assign({ id: 1, company_name: "DCR Framing LLC", address: null, phone: null, email: null, license: null,
-      tax_rate: 8, next_project_number: 291, invoice_terms: null, agents_checks_enabled: false }, AUDIT),
+      tax_rate: 8, next_project_number: 291, invoice_terms: null, agents_checks_enabled: false, task_email_enabled: false }, AUDIT),
     settings_prices: Object.assign({ id: 1, default_labor_rate: 110, local_labor_rate: 90, out_of_area_labor_rate: 110 }, AUDIT),
     contacts: Object.assign({ id: null, name: null, company: null, kind: "client", trade: null, phone: null, email: null,
       address: null, city: null, notes: null, deleted_at: null }, AUDIT),
@@ -70,9 +81,13 @@
       subpath: "", name: null, storage_path: null, size: null, mime: null, version_no: 1, previous_id: null, is_financial: false,
       storage: "cloud", rel_path: null, modified_at: null, description: null, preview_path: null, source: null, deleted_at: null }, AUDIT),
     tasks: Object.assign({ id: null, project_id: null, estimate_item_id: null, title: null, description: null, category: null,
-      priority: "normal", assigned_to: null, due_date: null, status: "open", completed_at: null, completed_by: null }, AUDIT),
-    task_notes: Object.assign({ id: null, task_id: null, text: null }, AUDIT),
-    deletions: { id: null, table_name: null, row_id: null, project_id: null, deleted_at: null, deleted_by: null },
+      sub_category: null, priority: "normal", assigned_to: null, due_date: null, due_time: null, status: "open", completed_at: null,
+      completed_by: null, legacy_sp_id: null, author_name: null, agent_kind: null, agent_ref: null, agent_date: null }, AUDIT),
+    task_notes: Object.assign({ id: null, task_id: null, text: null, via: "desktop", on_behalf_of: null, source_key: null, author_name: null }, AUDIT),
+    deletions: { id: null, table_name: null, row_id: null, project_id: null, deleted_at: null, deleted_by: null, for_user: null },
+    notifications_outbox: { id: null, kind: "task_new", task_id: null, to_profile_id: null, to_email: null, subject: null, body: null,
+      created_at: null, claimed_at: null, sent_at: null, attempts: 0, error: null, sent_by: null, push_sent_at: null, push_result: null,
+      email_wanted: false },
     employees: Object.assign({ id: null, profile_id: null, contact_id: null, full_name: null, employee_no: null, phone: null,
       phone_e164: null, email: null, address: null, normal_start1: null, normal_end1: null, normal_start2: null, normal_end2: null,
       normal_lunch_hours: 1, active: true, notes: null, legacy_sp_id: null }, AUDIT),
@@ -82,6 +97,8 @@
       notes: null, source: "portal", source_key: null, legacy_sp_id: null }, AUDIT),
     timesheet_confirmations: Object.assign({ id: null, employee_id: null, week_start: null, confirmed_by: null, confirmed_at: null,
       hours_at_confirm: null, fingerprint: null }, AUDIT),
+    // M3 (BLUEPRINT 3.3.8): one browser's push subscription, own rows only; read by the push function
+    push_subscriptions: Object.assign({ id: null, profile_id: null, endpoint: null, p256dh: null, auth: null, device: null, last_ok_at: null }, AUDIT),
   };
   COLS.current_files = COLS.files;
 
@@ -100,6 +117,7 @@
     ["tasks", "assigned_to", "profiles"],
     ["tasks", "completed_by", "profiles"],
     ["task_notes", "task_id", "tasks"],
+    ["notifications_outbox", "task_id", "tasks"],
     ["employees", "profile_id", "profiles", true],
     ["employees", "contact_id", "contacts"],
     ["crew_members", "lead_profile_id", "profiles"],
@@ -445,10 +463,12 @@
           return (!r.deleted_at || w.admin) && projectVisible(w, r.project_id) && (!r.is_financial || w.financials) &&
             (r.folder !== "estimates" || w.prices) && (r.folder !== "invoices" || w.financials);
         case "tasks":   // Q3: field and view-only people see their own tasks and the ones they created
-          if (w.role === "field" || w.role === "viewer") return r.assigned_to === w.uid || r.created_by === w.uid;
+          if (w.role === "field" || w.role === "viewer") return projectVisible(w, r.project_id) && (r.assigned_to === w.uid || r.created_by === w.uid);
           return projectVisible(w, r.project_id);
         case "task_notes": { const t = rows.tasks.find((x) => x.id === r.task_id); return !!t && canRead(w, "tasks", t); }
-        case "deletions": return true;
+        case "deletions": return r.for_user === null || r.for_user === undefined || r.for_user === w.uid;   // M1 7b: "no longer yours" for one person
+        case "notifications_outbox": return w.admin;                                                          // M3: admin reads, nobody writes
+        case "push_subscriptions": return r.profile_id === w.uid;                                             // M3: own rows only, admins too
         case "employees": return employeeReads(w, r);
         case "crew_members":
           if (["admin", "manager", "accountant"].includes(w.role)) return true;
@@ -671,10 +691,11 @@
         }
         case "files": filesBeforeInsert(w, r); break;
         case "tasks": {
-          if (!r.title || !String(r.title).trim()) throw rule("23514", 'new row for relation "tasks" violates check constraint "tasks_title_check"');
+          tasksCheck(w, r, null);
           if (r.status === "done") { r.completed_at = nowIso(); r.completed_by = w.uid; }
           break;
         }
+        case "task_notes": taskNotesCheck(w, r, null); break;
         case "contacts": {
           if (!r.name || !String(r.name).trim()) throw rule("23514", 'new row for relation "contacts" violates check constraint "contacts_name_check"');
           break;
@@ -693,6 +714,7 @@
           break;
         }
         case "timesheets": timesheetsCheck(r, null); break;
+        case "push_subscriptions": pushSubCheck(r); break;
         default: break;
       }
       return r;
@@ -770,6 +792,144 @@
       }
     }
 
+    /* ── tasks and notes (M3, BLUEPRINT 3.3.7) ─────────────────────────── */
+    const AGENT_COLS = ["agent_kind", "agent_ref", "agent_date"];
+    function tasksCheck(w, r, old) {
+      const bad = (c) => rule("23514", 'new row for relation "tasks" violates check constraint "' + c + '"');
+      if (!r.title || !String(r.title).trim()) throw bad("tasks_title_check");
+      if (!["low", "normal", "high", "urgent"].includes(r.priority)) throw bad("tasks_priority_check");
+      if (!["open", "done"].includes(r.status)) throw bad("tasks_status_check");
+      if (r.project_id !== null && r.project_id !== undefined) {
+        r.project_id = Number(r.project_id);
+        if (!rows.projects.some((p) => p.id === r.project_id)) throw rule("23503", 'insert or update on table "tasks" violates foreign key constraint "tasks_project_id_fkey"');
+      }
+      if (r.assigned_to && !rows.profiles.some((p) => p.id === r.assigned_to)) {
+        throw rule("23503", 'insert or update on table "tasks" violates foreign key constraint "tasks_assigned_to_fkey"');
+      }
+      if (r.due_time !== null && r.due_time !== undefined && r.due_time !== "") {
+        if (!TIME_OK.test(String(r.due_time))) throw rule("22007", 'invalid input syntax for type time: "' + r.due_time + '"');
+        if (String(r.due_time).length === 5) r.due_time += ":00";
+      } else r.due_time = null;
+      if (r.agent_kind !== null && r.agent_kind !== undefined && !["photo", "recurring"].includes(r.agent_kind)) throw bad("tasks_agent_kind_check");
+      if (!quiet && !w.agents) {
+        // the guard trigger: only the agents role (or the import, the table owner with no JWT) sets these
+        const changed = (k) => (old ? (r[k] ?? null) !== (old[k] ?? null) : r[k] !== null && r[k] !== undefined);
+        if (AGENT_COLS.some(changed)) throw deny("agent_kind, agent_ref and agent_date are set by DCR Agents 2 only");
+        if (changed("legacy_sp_id") || changed("author_name")) throw deny("only the import may set legacy columns");
+      }
+      if (r.agent_kind && rows.tasks.some((t) => t.id !== r.id && t.agent_kind === r.agent_kind && t.agent_ref === r.agent_ref && t.agent_date === r.agent_date)) {
+        throw new PgErr("23505", 'duplicate key value violates unique constraint "tasks_agent_key"', 409);
+      }
+      if (r.legacy_sp_id !== null && r.legacy_sp_id !== undefined && rows.tasks.some((t) => t.id !== r.id && t.legacy_sp_id === r.legacy_sp_id)) {
+        throw new PgErr("23505", 'duplicate key value violates unique constraint "tasks_legacy_sp_id_key"', 409);
+      }
+    }
+    function taskNotesCheck(w, r, old) {
+      const len = String(r.text || "").length;
+      if (len < 1 || len > 4000) throw rule("23514", 'new row for relation "task_notes" violates check constraint "task_notes_text_check"');
+      if (!r.via) r.via = "desktop";
+      if (!NOTE_VIA.includes(r.via)) throw rule("23514", 'new row for relation "task_notes" violates check constraint "task_notes_via_check"');
+      if (!quiet && !w.agents) {
+        if (!PEOPLE_VIA.includes(r.via) || (r.on_behalf_of !== null && r.on_behalf_of !== undefined)) {
+          throw deny("only DCR Agents 2 files a note from a channel or on someone's behalf");
+        }
+        if ((r.author_name || null) !== ((old && old.author_name) || null)) throw deny("only the import may set legacy columns");
+      }
+      if (r.source_key && rows.task_notes.some((n) => n.id !== r.id && n.task_id === r.task_id && n.source_key === r.source_key)) {
+        throw new PgErr("23505", 'duplicate key value violates unique constraint "task_notes_source_key"', 409);
+      }
+    }
+    const RULE39 = "=".repeat(39), SEP39 = "-".repeat(39);
+    /** t97_tasks_notice: a task given to someone other than the person saving it (a new open task, or a
+        reassignment; never to oneself, never by the import, never for an inactive person or the agents
+        account) -> one outbox row: the Access wording, CRLF lines, the Portal 2 link */
+    function taskOutbox(w, t, old) {
+      if (!t.assigned_to || t.status !== "open") return;
+      if (old && old.assigned_to === t.assigned_to) return;
+      if (!w.uid || t.assigned_to === w.uid) return;
+      const to = profileOf(t.assigned_to);
+      if (!to || !to.active || to.role === "agents") return;
+      const p = t.project_id === null ? null : rows.projects.find((x) => x.id === t.project_id);
+      const emp = rows.employees.find((e) => e.profile_id === to.id);
+      const link = "https://portal.dcrframing.com/my-tasks.html?task=" + t.id;
+      const body = ["", (String(to.full_name || "").trim() || to.email) + ",", "",
+        "This is an automated E-Mail from the DCR Framing Database. The following task has been assigned to you: ", "",
+        RULE39, "PROJECT:", "Project ID: #" + (p ? p.number : ""), "Name: " + (p ? p.name || "" : ""),
+        "Address: " + (p ? p.address || "" : "") + " - " + (p ? p.city || "" : ""), RULE39, "", "TASK:",
+        "Category: " + (t.category || "") + ", " + (t.sub_category || ""), "Priority: " + statusLabel(t.priority), "",
+        "Name: " + t.title, "Description: " + (t.description || ""), "", SEP39, "", "",
+        "Please visit " + link + " to view your currently assigned tasks."].join("\r\n");
+      const r = Object.assign(clone(COLS.notifications_outbox), { id: nextId("notifications_outbox"), task_id: t.id, to_profile_id: t.assigned_to,
+        to_email: (emp && String(emp.email || "").trim()) || to.email, subject: ("New Request - " + (t.category || "") + " - " + (t.sub_category || "") + " - " + t.title).slice(0, 1000),
+        body, created_at: nowIso(), email_wanted: !!(rows.settings[0] && rows.settings[0].task_email_enabled) });
+      commitInsert("notifications_outbox", r);
+    }
+    /** M1 7b: a task handed AWAY from a field / view-only person (who did not create it) leaves a
+        "no longer yours" tombstone only they read */
+    function taskHandover(w, old, r) {
+      if (!old.assigned_to || r.assigned_to === old.assigned_to || old.assigned_to === r.created_by) return;
+      const p = profileOf(old.assigned_to);
+      if (!p || !["field", "viewer"].includes(p.role)) return;
+      commitInsert("deletions", { id: nextId("deletions"), table_name: "tasks", row_id: r.id, project_id: r.project_id,
+        deleted_at: nowIso(), deleted_by: w.uid || null, for_user: old.assigned_to });
+    }
+    /** app.task_clock(task, now): the newest of the newest note (dated no later than today) and the
+        task's created_at (a tie says note); Pacific calendar days, never below 0; needs_update: an open
+        task, MORE than 5 days, a photo task never through its agent_date */
+    function taskClock(t) {
+      const day = today();
+      const notes = rows.task_notes.filter((n) => n.task_id === t.id && companyDay(new Date(n.created_at)) <= day);
+      let newest = null;
+      for (const n of notes) if (!newest || cmp(n.created_at, newest.created_at) > 0 || (cmp(n.created_at, newest.created_at) === 0 && n.id > newest.id)) newest = n;
+      const useNote = !!newest && (!t.created_at || cmp(newest.created_at, t.created_at) >= 0);
+      const last = useNote ? newest.created_at : t.created_at;
+      const days = last ? Math.max(0, Math.round((Date.parse(day + "T12:00:00Z") - Date.parse(companyDay(new Date(last)) + "T12:00:00Z")) / 86400000)) : 0;
+      const shootAhead = t.agent_kind === "photo" && !!t.agent_date && day <= t.agent_date;
+      return { last_update: last, last_update_source: useNote ? "note" : "created", days_since_update: days,
+        last_note: newest ? newest.text : null, needs_update: (t.status || "open") === "open" && days > TASK_DAYS && !shootAhead };
+    }
+    /** app.my_crew_profiles(): the accounts of the active lead's crew */
+    function crewProfiles(w) {
+      if (w.role !== "lead") return [];
+      const emps = rows.crew_members.filter((c) => c.lead_profile_id === w.uid).map((c) => c.employee_id);
+      return rows.employees.filter((e) => emps.includes(e.id) && e.profile_id).map((e) => e.profile_id);
+    }
+    const PRI_ORDER = { urgent: 0, high: 1, normal: 2, low: 3 };
+    /** rpc my_tasks(p_view): mine (assigned to the caller, or unassigned and made by them) | crew (a lead:
+        mine and the crew's) | everyone (admin, manager, lead, accountant: every task they read); the OPEN
+        tasks with the project, the names, `mine`, the notes (oldest first) and the clock — the columns of
+        migration M3 */
+    function myTasks(w, view) {
+      const v = String(view === null || view === undefined ? "mine" : view).trim().toLowerCase();
+      if (!["mine", "crew", "everyone"].includes(v)) throw rule("22023", "p_view is mine, crew or everyone");
+      if (v === "everyone" && !["admin", "manager", "lead", "accountant"].includes(w.role)) throw deny("Only the office sees everyone's tasks.");
+      if (v === "crew" && w.role !== "lead") throw deny("Only a lead has a crew.");
+      const crew = v === "crew" ? crewProfiles(w) : [];
+      const list = readable(w, "tasks").filter((t) => t.status === "open" && (
+        v === "everyone" || t.assigned_to === w.uid || (!t.assigned_to && t.created_by === w.uid) || (v === "crew" && crew.includes(t.assigned_to))));
+      const nm = (id) => { const p = profileOf(id); return p && String(p.full_name || "").trim() ? String(p.full_name).trim() : null; };
+      return list.sort((x, y) => (PRI_ORDER[x.priority] - PRI_ORDER[y.priority]) ||
+        ((x.due_date === null) - (y.due_date === null)) || cmp(x.due_date || "", y.due_date || "") ||
+        ((x.due_time === null) - (y.due_time === null)) || cmp(x.due_time || "", y.due_time || "") || cmp(x.created_at, y.created_at) || x.id - y.id)
+        .map((t) => {
+          const p = t.project_id === null ? null : rows.projects.find((x) => x.id === t.project_id);
+          const notes = rows.task_notes.filter((n) => n.task_id === t.id).sort((x, y) => cmp(x.created_at, y.created_at) || x.id - y.id)
+            .map((n) => ({ id: n.id, text: n.text, created_at: n.created_at, created_by: n.created_by, author: nm(n.created_by) || n.author_name,
+              via: n.via, on_behalf_of: n.on_behalf_of, on_behalf_of_name: n.on_behalf_of ? nm(n.on_behalf_of) : null, version: n.version }));
+          return Object.assign({
+            id: t.id, project_id: t.project_id, estimate_item_id: t.estimate_item_id, title: t.title, description: t.description, category: t.category,
+            sub_category: t.sub_category, priority: t.priority, assigned_to: t.assigned_to, due_date: t.due_date, due_time: t.due_time, status: t.status,
+            created_at: t.created_at, created_by: t.created_by, updated_at: t.updated_at, updated_by: t.updated_by, version: t.version,
+            agent_kind: t.agent_kind, agent_ref: t.agent_ref, agent_date: t.agent_date, author_name: t.author_name,
+            project_number: p ? p.number : null, project_name: p ? p.name : null, project_address: p ? p.address : null, project_city: p ? p.city : null,
+            project_lat: p ? p.lat : null, project_lng: p ? p.lng : null, assignee_name: nm(t.assigned_to), created_by_name: nm(t.created_by) || t.author_name,
+            mine: t.assigned_to === w.uid || (!t.assigned_to && t.created_by === w.uid), notes,
+          }, taskClock(t));
+        });
+    }
+    /** app.note_line: every line break (and tab, NEL, LS, PS, no-break space) a space, runs of spaces one, trimmed */
+    const oneLine = (s) => String(s === null || s === undefined ? "" : s).replace(/[\r\n\t\u000b\f\u0085\u2028\u2029 ]/g, " ").replace(/ {2,}/g, " ").trim();
+
     function filesBeforeInsert(w, r) {
       if (!FOLDERS.includes(r.folder)) throw rule("23514", 'new row for relation "files" violates check constraint "files_folder_check"');
       if (!r.name || !String(r.name).trim() || String(r.name).length > 255 || String(r.name).includes("/")) {
@@ -831,6 +991,8 @@
     }
 
     function afterInsert(w, table, r, extra) {
+      if (table === "push_subscriptions") pushSubKeep(r);
+      if (table === "tasks" && !quiet) taskOutbox(w, r, null);
       if (table === "projects") {
         const x = extra || {};
         const city = String(r.city || "");
@@ -893,6 +1055,9 @@
         case "settings": return w.admin;
         case "employees": case "crew_members": return canEdit(w, "people");
         case "timesheets": return tsWrites(w, r.employee_id);
+        case "push_subscriptions":            // profile_id default auth.uid(); WITH CHECK own row
+          if (r.profile_id === null || r.profile_id === undefined) r.profile_id = w.uid;
+          return w.active && r.profile_id === w.uid;      // app.is_active(): never the agents account
         default: return false;
       }
     }
@@ -911,6 +1076,7 @@
         case "settings": case "settings_prices": return w.admin;
         case "employees": return canEdit(w, "people");
         case "timesheets": return tsWrites(w, r.employee_id);
+        case "push_subscriptions": return r.profile_id === w.uid;
         default: return false;
       }
     }
@@ -957,14 +1123,23 @@
         }
       }
       if (table === "tasks") {
+        tasksCheck(w, r, old);
         if (r.status === "done" && old.status !== "done") { r.completed_at = nowIso(); r.completed_by = w.uid; }
         else if (r.status !== "done") { r.completed_at = null; r.completed_by = null; }
+        else { r.completed_at = old.completed_at; r.completed_by = old.completed_by; }
+      }
+      if (table === "task_notes") {
+        if (r.task_id !== old.task_id) throw rule("23514", "a note cannot move to another task");
+        taskNotesCheck(w, r, old);
       }
       if (table === "employees") {
         if ("legacy_sp_id" in patch && patch.legacy_sp_id !== old.legacy_sp_id) throw deny("only the import may set legacy columns");
         employeesCheck(r, old);
       }
       if (table === "crew_members") throw deny("a crew row is added or removed, never changed");
+      if (table === "push_subscriptions" && (r.profile_id !== old.profile_id || r.endpoint !== old.endpoint)) {
+        throw deny("a subscription's person and endpoint do not change");
+      }
       if (table === "timesheets") {
         timesheetsCheck(r, old);
         // WITH CHECK: the row as it will be must still be in the writer's scope
@@ -973,6 +1148,10 @@
     }
 
     function afterUpdate(w, table, old, r) {
+      if (table === "tasks" && r.assigned_to !== old.assigned_to) {
+        taskHandover(w, old, r);
+        if (!quiet) taskOutbox(w, r, old);
+      }
       if (table === "projects" && r.status !== old.status) {
         const note = r.status_note !== old.status_note && String(r.status_note || "").trim() ? " \u2014 " + r.status_note : "";
         logActivity(w, r.id, "status", "Status: " + statusLabel(old.status) + " \u2192 " + statusLabel(r.status) + note, old.status, r.status);
@@ -1001,6 +1180,7 @@
       for (const raw of list) {
         checkColumns(table, raw);
         const r = Object.assign(clone(COLS[table]), clone(raw));
+        if (table === "push_subscriptions" && canInsert(w, table, r)) pushSubTakeover(r);   // M3 t10: before the conflict check
         if (q && q.upsert) {
           const keys = q.onConflict ? String(q.onConflict).split(",").map((s) => s.trim()) : [pk];
           const hit = keys.every((k) => r[k] !== null && r[k] !== undefined) ? rows[table].find((x) => keys.every((k) => cmp(x[k], r[k]) === 0)) : null;
@@ -1078,6 +1258,7 @@
         case "task_notes": return r.created_by === w.uid || w.admin;
         case "crew_members": return canEdit(w, "people");
         case "timesheets": return tsWrites(w, r.employee_id);
+        case "push_subscriptions": return r.profile_id === w.uid;
         default: return false;
       }
     }
@@ -1097,6 +1278,10 @@
       confirm_timesheet_week: { args: ["p_employee_id", "p_week_start", "p_seen_fingerprint"], required: ["p_employee_id", "p_week_start", "p_seen_fingerprint"] },
       unconfirm_timesheet_week: { args: ["p_confirmation_id"], required: ["p_confirmation_id"] },
       timesheet_weeks: { args: ["p_from", "p_to"], required: ["p_from", "p_to"] },
+      add_task_note: { args: ["p_task_id", "p_text", "p_client_key"], required: ["p_task_id", "p_text"] },
+      complete_task: { args: ["p_id", "p_version", "p_note", "p_via"], required: ["p_id"] },
+      my_tasks: { args: ["p_view"], required: [] },
+      my_tasks_summary: { args: [], required: [] },
     };
     function checkArgs(name, args) {
       const sig = SIGNATURES[name];
@@ -1301,6 +1486,97 @@
           commitDelete("timesheet_confirmations", old);
           return { removed: true, id: old.id, employee_id: old.employee_id, week_start: old.week_start };
         }
+        case "my_tasks": {
+          if (!w.active) throw deny("sign in first");
+          return myTasks(w, arg(args, "p_view"));
+        }
+        case "my_tasks_summary": {
+          // {mine, mine_needs_update, mine_overdue, mine_due_today, crew, crew_needs_update, everyone,
+          //  everyone_needs_update, today}: open tasks; crew / everyone null when the role has no such view
+          if (!w.active) throw deny("sign in first");
+          const lead = w.role === "lead";
+          const office = ["admin", "manager", "lead", "accountant"].includes(w.role);
+          const crew = lead ? crewProfiles(w) : [];
+          const day = today();
+          const open = readable(w, "tasks").filter((t) => t.status === "open").map((t) => ({
+            mine: t.assigned_to === w.uid || (!t.assigned_to && t.created_by === w.uid), crew: crew.includes(t.assigned_to),
+            due: t.due_date, needs: taskClock(t).needs_update }));
+          const count = (f) => open.filter(f).length;
+          return { mine: count((o) => o.mine), mine_needs_update: count((o) => o.mine && o.needs),
+            mine_overdue: count((o) => o.mine && o.due && o.due < day), mine_due_today: count((o) => o.mine && o.due === day),
+            crew: lead ? count((o) => o.mine || o.crew) : null, crew_needs_update: lead ? count((o) => (o.mine || o.crew) && o.needs) : null,
+            everyone: office ? open.length : null, everyone_needs_update: office ? count((o) => o.needs) : null, today: day };
+        }
+        case "add_task_note": {
+          // one line, at most 2,000 characters; 23514 "That task is already complete." on a done task; the
+          // same client key accepted once (a resend answers the note already written)
+          if (!w.active) throw deny("sign in first");
+          const raw = arg(args, "p_task_id");
+          if (raw === null || raw === undefined) throw rule("22023", "which task (p_task_id)?");
+          const id = Number(raw);
+          const key = String(arg(args, "p_client_key") === null || arg(args, "p_client_key") === undefined ? "" : arg(args, "p_client_key")).trim();
+          if (key && (key.length > 100 || !/^[A-Za-z0-9._:-]+$/.test(key))) {
+            throw rule("22023", "a client key is 1 to 100 letters, digits, dots, dashes, colons or underscores");
+          }
+          const t = rows.tasks.find((x) => x.id === id && canRead(w, "tasks", x));
+          if (!t) throw new PgErr("PT404", "That task isn't on your list.", 404);
+          const sk = key ? "portal:" + key : null;
+          const seen = sk ? rows.task_notes.find((n) => n.task_id === id && n.source_key === sk) : null;
+          if (seen) return clone(seen);
+          if (t.status === "done") throw rule("23514", "That task is already complete.");
+          const words = oneLine(arg(args, "p_text"));
+          if (!words) throw rule("22023", "Write an update first.");
+          if (words.length > 2000) throw rule("22023", "That update is too long - keep it under 2,000 characters.");
+          const n = Object.assign(clone(COLS.task_notes), { task_id: id, text: words, via: "portal", source_key: sk });
+          if (!canInsert(w, "task_notes", n)) throw new PgErr("42501", 'new row violates row-level security policy for table "task_notes"', 403);
+          n.id = nextId("task_notes");
+          taskNotesCheck(w, n, null);
+          auditInsert(w, "task_notes", n);
+          commitInsert("task_notes", n);
+          return clone(n);
+        }
+        case "complete_task": {
+          // the status and the closing note in ONE transaction; done already: answered as it is (completed_by
+          // says who) and the closing words still added once (not when the caller already wrote those exact
+          // words on it); a moved version: PT409; p_via portal (one line, 2,000) | desktop (trimmed, 4,000)
+          if (!w.active) throw deny("sign in first");
+          const raw = arg(args, "p_id");
+          if (raw === null || raw === undefined) throw rule("22023", "which task (p_id)?");
+          const via = String(arg(args, "p_via") === null || arg(args, "p_via") === undefined ? "portal" : arg(args, "p_via")).trim().toLowerCase();
+          if (!["portal", "desktop"].includes(via)) throw rule("22023", "p_via is portal or desktop");
+          const id = Number(raw);
+          const t = rows.tasks.find((x) => x.id === id && canRead(w, "tasks", x));
+          if (!t) throw new PgErr("PT404", "That task isn't on your list.", 404);
+          const rawNote = arg(args, "p_note");
+          const note = via === "portal" ? oneLine(rawNote) : String(rawNote === null || rawNote === undefined ? "" : rawNote).trim();
+          const max = via === "portal" ? 2000 : 4000;
+          if (note.length > max) throw rule("22023", "That closing note is too long - keep it under " + max.toLocaleString("en-US") + " characters.");
+          if (t.status === "done") {
+            if (note && !rows.task_notes.some((x) => x.task_id === id && x.created_by === w.uid && x.text === note)) {
+              const late = Object.assign(clone(COLS.task_notes), { task_id: id, text: note, via });
+              if (!canInsert(w, "task_notes", late)) throw deny("You can only complete the tasks you may change.");
+              late.id = nextId("task_notes");
+              auditInsert(w, "task_notes", late);
+              commitInsert("task_notes", late);
+            }
+            return clone(t);
+          }
+          const v = arg(args, "p_version");
+          if (v !== null && v !== undefined && Number(v) !== Number(t.version)) {
+            throw new PgErr("PT409", "Someone else changed this task first.", 409, JSON.stringify({ table: "tasks", id, version: t.version }));
+          }
+          if (!canUpdate(w, "tasks", t)) throw deny("You can only complete the tasks you may change.");
+          const r = Object.assign(clone(t), { status: "done" });
+          guardUpdate(w, "tasks", t, r, { status: "done" });
+          auditUpdate(w, "tasks", r, t);
+          commitUpdate("tasks", t, r);
+          if (note) {
+            const n = Object.assign(clone(COLS.task_notes), { id: nextId("task_notes"), task_id: id, text: note, via });
+            auditInsert(w, "task_notes", n);
+            commitInsert("task_notes", n);
+          }
+          return clone(r);
+        }
         default:
           throw new PgErr("PGRST202", "Could not find the function public." + name + " without parameters in the schema cache", 404,
             "Searched for the function public." + name, null);
@@ -1492,6 +1768,121 @@
     }
     storage.request = storageRequest;
 
+    /* ── phone reminders (M3, BLUEPRINT 3.3.8): push_subscriptions and the Edge Function "push" ──
+       push_subscriptions: own rows only (select, insert, delete; Portal 2 never updates one), profile_id
+       default the caller, endpoint https and unique, a device's endpoint taken over by whoever subscribes
+       on it now (M3's t10 trigger), the newest 5 per person kept. invoke(ctx, "push", body)
+       answers like supabase/functions/push (Desktop 2 repo) with the delivery imitated: every device on
+       file counts as reached. public_key gives RFC 8291's published example key (a valid P-256 point;
+       the demo never sends anything with it); drain claims the outbox rows like
+       app.push_take_new_task_notices (unsent, under 24 hours old, 50 at most). */
+    const PUSH_KEEP = 5;
+    const PUSH_SITE = "https://portal.dcrframing.com";
+    const DEMO_VAPID_PUBLIC = "BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8";
+    const PUSH_LIMITS = { title: 80, body: 400, url: 500, tag: 60, profileIds: 50 };
+    function pushSubCheck(r) {
+      const bad = (c) => rule("23514", 'new row for relation "push_subscriptions" violates check constraint "push_subscriptions_' + c + '_check"');
+      const ep = String(r.endpoint || "").trim();
+      if (!/^https:\/\/\S+$/i.test(ep) || ep.length > 2000) throw bad("endpoint");
+      if (!r.p256dh || String(r.p256dh).length > 200) throw bad("p256dh");
+      if (!r.auth || String(r.auth).length > 100) throw bad("auth");
+      if (rows.push_subscriptions.some((s) => s.endpoint === ep)) {
+        throw new PgErr("23505", 'duplicate key value violates unique constraint "push_subscriptions_endpoint_key"', 409);
+      }
+      r.endpoint = ep;
+      r.last_ok_at = null;
+    }
+    /** M3's t10 trigger: a device's endpoint moves to whoever subscribes on it now (a shared phone) */
+    function pushSubTakeover(r) {
+      const ep = String(r.endpoint || "").trim();
+      for (const s of rows.push_subscriptions.filter((x) => x.endpoint === ep && x.profile_id !== r.profile_id)) commitDelete("push_subscriptions", s);
+    }
+    function pushSubKeep(r) {
+      const mine = rows.push_subscriptions.filter((s) => s.profile_id === r.profile_id)
+        .sort((a, b) => cmp(b.created_at, a.created_at) || b.id - a.id);
+      for (const old of mine.slice(PUSH_KEEP)) commitDelete("push_subscriptions", old);
+    }
+    function invokeFunction(ctx, name, body) {
+      const out = (status, data) => ({ status, data: clone(data) });
+      const bad = (message) => out(400, { error: "invalid", message });
+      if (name !== "push") return out(404, { code: "NOT_FOUND", message: "Requested function was not found" });
+      const w = who(ctx);
+      if (!w.uid) return out(401, { error: "unauthorized", message: "sign in first" });
+      const b = body && typeof body === "object" && !Array.isArray(body) ? body : null;
+      if (!b) return bad("the body must be a JSON object");
+      if (!["public_key", "key", "send", "test", "drain"].includes(b.op)) return bad("op must be public_key, send, test or drain");
+      if (!w.p || !w.p.active) return out(403, { error: "forbidden", message: "This account is not active." });
+      const allowed = b.op === "send" ? ["op", "profile_ids", "employee_id", "title", "body", "url", "tag"] : ["op"];
+      const extra = Object.keys(b).find((k) => !allowed.includes(k));
+      if (extra) return bad("unknown field: " + extra);
+      const devicesOf = (pids) => rows.push_subscriptions.filter((s) => pids.includes(s.profile_id));
+      const reached = (subs) => {
+        for (const s of subs) commitUpdate("push_subscriptions", s, Object.assign(clone(s), { last_ok_at: nowIso() }));
+        return { sent: subs.length, gone: 0, failed: 0, none: subs.length === 0 };
+      };
+      switch (b.op) {
+        case "public_key": case "key": return out(200, { key: DEMO_VAPID_PUBLIC });
+        case "test": return out(200, reached(devicesOf([w.uid])));
+        case "send": {
+          if (!["admin", "agents"].includes(w.p.role)) {
+            return out(403, { error: "forbidden", message: "Only the DCR Agents account or an admin can send phone notifications." });
+          }
+          const hasP = b.profile_ids !== undefined && b.profile_ids !== null;
+          const hasE = b.employee_id !== undefined && b.employee_id !== null;
+          if (hasP === hasE) return bad("give profile_ids or employee_id (one of them)");
+          for (const k of ["title", "body", "tag"]) {
+            if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") return bad(k + " must be text");
+            if (typeof b[k] === "string" && Array.from(b[k].trim()).length > PUSH_LIMITS[k]) return bad(k + " is too long (at most " + PUSH_LIMITS[k] + " characters)");
+          }
+          if (!String(b.title || "").trim() && !String(b.body || "").trim()) return bad("a title or a body is required");
+          if (b.url !== undefined && b.url !== null && b.url !== "") {
+            let u = null;
+            try { u = new URL(String(b.url)); } catch (e) { u = null; }
+            if (!u || u.origin !== PUSH_SITE || u.username || u.password || String(b.url).length > PUSH_LIMITS.url) return bad("url must be on " + PUSH_SITE);
+          }
+          let pids;
+          if (hasE) {
+            if (!Number.isSafeInteger(b.employee_id) || b.employee_id <= 0) return bad("employee_id must be a positive whole number");
+            const e = rows.employees.find((x) => x.id === b.employee_id);
+            const p = e && e.profile_id ? profileOf(e.profile_id) : null;
+            if (!p || !p.active) return out(404, { error: "not_found", message: "No active account is linked to that employee." });
+            pids = [p.id];
+          } else {
+            if (!Array.isArray(b.profile_ids) || !b.profile_ids.length) return bad("profile_ids must be a list of user ids");
+            if (b.profile_ids.length > PUSH_LIMITS.profileIds) return bad("at most " + PUSH_LIMITS.profileIds + " profile_ids");
+            pids = Array.from(new Set(b.profile_ids.map((x) => String(x).toLowerCase()))).filter((id) => { const p = profileOf(id); return !!(p && p.active); });
+          }
+          return out(200, reached(devicesOf(pids)));
+        }
+        case "drain": {
+          // app.push_take_new_task_notices: rows over 24 hours old are marked 'expired' and never pushed; the
+          // rest are taken once ('claimed' while the task is still open and still that person's, else
+          // 'skipped' and not pushed), 50 at most
+          const since = clock().getTime() - 24 * 3600000;
+          const waiting = (o) => !o.push_sent_at && !o.push_result;
+          for (const o of rows.notifications_outbox.filter((x) => waiting(x) && Date.parse(x.created_at) <= since)) {
+            commitUpdate("notifications_outbox", o, Object.assign(clone(o), { push_result: "expired" }));
+          }
+          const taken = rows.notifications_outbox.filter((o) => waiting(o) && o.to_profile_id && Date.parse(o.created_at) > since)
+            .sort((a, b) => a.id - b.id).slice(0, 50);
+          const res = { notices: 0, sent: 0, gone: 0, failed: 0, none: 0 };
+          for (const o of taken) {
+            const t = rows.tasks.find((x) => x.id === o.task_id);
+            const live = !!(t && t.status === "open" && t.assigned_to === o.to_profile_id);
+            commitUpdate("notifications_outbox", o, Object.assign(clone(o), { push_sent_at: nowIso(), push_result: live ? "claimed" : "skipped" }));
+            if (!live) continue;
+            res.notices++;
+            const p = profileOf(o.to_profile_id);
+            const subs = p && p.active && p.role !== "agents" ? devicesOf([p.id]) : [];
+            if (!subs.length) res.none++;
+            else res.sent += reached(subs).sent;
+          }
+          return out(200, res);
+        }
+        default: return bad("op must be public_key, send, test or drain");
+      }
+    }
+
     /* ── load, ops, inspection ──────────────────────────────────────── */
     function load(data) {
       quiet++;
@@ -1541,6 +1932,8 @@
       select, insert, update, delete: del, rpc, storage,
       upsert: (ctx, table, input, q) => insert(ctx, table, input, Object.assign({}, q, { upsert: true })),
       who, canRead, profileOf,
+      /** an Edge Function call (only "push" exists in the demo): {status, data} */
+      invoke: invokeFunction,
       load, applyOps,
       onChange(cb) { listeners.add(cb); return () => listeners.delete(cb); },
       onOp(cb) { opListeners.add(cb); return () => opListeners.delete(cb); },

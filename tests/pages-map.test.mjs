@@ -259,6 +259,8 @@ test("search: the RPC's lists become the old page's groups", () => {
   assert.equal(groups[0].items[0].href, "project.html?id=7");
   assert.equal(groups[1].items[0].email, "pat@example.test");
   assert.equal(groups[2].items[0].sub, "A267 · Open · due 2026-10-22");
+  assert.equal(groups[2].items[0].href, "my-tasks.html?task=1", "P3: an open task opens on My Tasks");
+  assert.equal(toGroups({ tasks: [{ id: 2, project_id: 7, title: "x", status: "done" }] })[0].items[0].href, "project.html?id=7&tab=tasks", "a done one on its project's Tasks tab");
   assert.equal(groups[3].items[0].href, "project.html?id=7&tab=files");
   assert.equal(groups[3].items[0].sub, "A267 · Photos · v2");
 });

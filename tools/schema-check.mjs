@@ -14,8 +14,15 @@
    prices — the owner's Q1 —, a manager with prices, accountant, lead, field, viewer, the agents
    account, an inactive account, a person with a temporary password).
 
+   P3's phone reminders run the same way end to end: site/js/push2.js (on a stand-in browser with real
+   P-256 subscription keys) -> supabase-js functions.invoke -> DCR Desktop 2's OWN push Edge Function
+   logic (supabase/functions/push/handler.ts + sql.ts, its SQL run as the service role with no JWT, the
+   way index.ts runs it) -> a stand-in push service that decrypts what it is sent (RFC 8291) and checks
+   the VAPID token. The VAPID pair is made in memory for the run and never written anywhere.
+
    DCR Desktop 2 is looked for in DCR_DESKTOP2_DIR, else next to this repository ("../DCR Desktop 2").
    Nothing here talks to Supabase. Exit code 0 = every check passed. */
+import crypto from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -132,7 +139,7 @@ const S = {};
 // ===========================================================================================
 section = "schema";
 // ===========================================================================================
-await check("every table, view and RPC named in site/js exists in the migrations (push_subscriptions: M3, unused until a VAPID key is set)", async () => {
+await check("every table, view and RPC named in site/js exists in the migrations (before M3: push_subscriptions waits for it)", async () => {
   const src = [];
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).forEach((d) => {
     const p = path.join(dir, d.name);
@@ -145,9 +152,10 @@ await check("every table, view and RPC named in site/js exists in the migrations
   const watched = new Set([...all.matchAll(/watch\("([a-z_]+)"/g)].map((m) => m[1]));
   const missingT = [...tables].filter((t) => !catalog.tables[t] && t !== "project-files");
   const missingF = [...rpcs].filter((f) => !catalog.functions[f]);
-  same(missingT, ["push_subscriptions"], "tables / views not in the schema");
+  same(missingT, catalog.tables.push_subscriptions ? [] : ["push_subscriptions"], "tables / views not in the schema");
   same(missingF, [], "RPCs not in the schema");
   ok(tables.has("projects") && tables.has("current_files") && rpcs.has("set_project_location") && rpcs.has("password_changed"), "the scan found the calls");
+  ok(tables.has("tasks") && tables.has("task_notes") && rpcs.has("my_tasks") && rpcs.has("add_task_note") && rpcs.has("complete_task") && rpcs.has("my_tasks_summary"), "the P3 calls");
   const pub = new Set((await sql("select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public'")).map((r) => r.tablename));
   const notLive = [...watched, "deletions"].filter((t) => !pub.has(t));
   same(notLive, [], "watched tables missing from the supabase_realtime publication");
@@ -907,7 +915,7 @@ if (!HAS_M2) {
     await refused(() => ts.create(form(E.field.id, day(4), { projectId: null })), "23514", "work without a project");
     await refused(() => ts.create(form(E.field.id, day(4), { hours: 0 })), "23514", "work with 0 hours");
     await refused(() => ts.create(form(E.field.id, day(4), { hours: 24.5 })), "23514", "25 hours");
-    const raw = await client.from("timesheets").insert({ employee_id: E.field.id, work_date: day(4), kind: "holiday", project_id: S.p1.id, hours: 8, source: "portal" }).select();
+    const raw = await client.from("timesheets").insert({ employee_id: Number(E.field.id), work_date: day(4), kind: "holiday", project_id: S.p1.id, hours: 8, source: "portal" }).select();
     same(raw.error && raw.error.code, "23514", "a leave day with a project");
     const t = (await sql("select start1::text as s from public.timesheets where id = $1", [T["lead:field"].id]))[0];
     same(t.s, "07:00:00", "start1 is a time");
@@ -1036,6 +1044,624 @@ if (!HAS_M2) {
     await refused(() => ts.confirm(E.field.id, lastSat, "x"), "42501", "confirm");
     await refused(() => emp.updateMyContact("805 555 0100", ""), "42501", "update_my_contact");
   });
+}
+
+// ===========================================================================================
+section = "P3: tasks, notes and notices (repo/tasks.js, migration M3)";
+// ===========================================================================================
+const HAS_M3 = !!(catalog.functions.my_tasks && catalog.functions.add_task_note && catalog.functions.complete_task &&
+  catalog.tables.notifications_outbox && catalog.tables.tasks && catalog.tables.tasks.cols.agent_kind);
+const tasksRepo = await site("repo/tasks.js");
+const tmap = await site("map/tasks.js");
+const T3 = {};
+const PRICED = /qty|quantity|price|markup|invoice|paid|amount|cost/i;
+
+if (!HAS_M3 || !HAS_M2) {
+  results.push({ section, name: "M3 (20261022000100_tasks_push) is not in DCR Desktop 2 yet: the P3 checks wait for it", ok: true });
+} else {
+  const today3 = (await sql("select app.today()::text as d"))[0].d;
+  const outCols = async (fn) => (await sql(`select coalesce(string_agg(a.n, ',' order by a.i), '') as c
+      from pg_proc p join pg_namespace s on s.oid = p.pronamespace,
+           unnest(p.proargnames, p.proargmodes) with ordinality as a(n, m, i)
+     where s.nspname = 'public' and p.proname = $1 and a.m = 't'`, [fn]))[0].c.split(",").filter(Boolean);
+
+  await check("the M3 columns, RPC signatures and my_tasks' answer columns the pages read; no priced column in tasks (P3 check 6)", async () => {
+    same(catalog.functions.add_task_note.map((f) => f.args.map((a) => a.name)), [["p_task_id", "p_text", "p_client_key"]], "add_task_note(...)");
+    same(catalog.functions.complete_task.map((f) => f.args.map((a) => a.name)), [["p_id", "p_version", "p_note", "p_via"]], "complete_task(...)");
+    same(catalog.functions.my_tasks.map((f) => f.args.map((a) => a.name)), [["p_view"]], "my_tasks(p_view)");
+    same(catalog.functions.my_tasks_summary.map((f) => [f.args.length, f.rettype]), [[0, "jsonb"]], "my_tasks_summary() -> jsonb");
+    const cols = await outCols("my_tasks");
+    const READS = ["id", "version", "project_id", "title", "description", "category", "sub_category", "priority", "assigned_to", "due_date", "due_time",
+      "status", "created_at", "created_by", "agent_kind", "agent_ref", "agent_date", "author_name", "project_number", "project_name", "project_address",
+      "project_city", "project_lat", "project_lng", "assignee_name", "created_by_name", "mine", "notes", "last_update", "last_update_source",
+      "days_since_update", "last_note", "needs_update"];
+    same(READS.filter((c) => !cols.includes(c)), [], "columns map/tasks.js toTask reads from my_tasks");
+    for (const c of ["sub_category", "due_time", "legacy_sp_id", "author_name", "agent_kind", "agent_ref", "agent_date"]) ok(catalog.tables.tasks.cols[c], "tasks." + c);
+    for (const c of ["via", "on_behalf_of", "source_key", "author_name"]) ok(catalog.tables.task_notes.cols[c], "task_notes." + c);
+    same(Object.keys(catalog.tables.tasks.cols).filter((c) => PRICED.test(c)), [], "no priced task column exists");
+    same(cols.filter((c) => PRICED.test(c)), [], "my_tasks answers no priced column");
+    for (const t of ["projects", "notifications_outbox", "push_subscriptions"]) ok(catalog.tables[t], t);
+  });
+
+  await check("create() (Q8): a lead for anyone — one outbox row in the Access wording with the Portal 2 link (P3 check 5); field and the accountant for themselves or nobody; a viewer nothing; nobody sets the agents' or the import's columns", async () => {
+    let me = await as("lead");
+    me = await sbm.me();
+    T3.forField = await tasksRepo.create({ title: "Check the hold-downs", description: "North wall first", category: "General Task", subCategory: "Review",
+      priority: "high", assignedTo: PEOPLE.field.id, projectId: S.p1.id, dueDate: today3, dueTime: "07:30" }, me);
+    same([T3.forField.assigned_to, T3.forField.created_by, T3.forField.due_time, T3.forField.sub_category, T3.forField.status],
+      [PEOPLE.field.id, PEOPLE.lead.id, "07:30:00", "Review", "open"], "created");
+    const ob = await sql("select * from public.notifications_outbox where task_id = $1", [T3.forField.id]);
+    same(ob.length, 1, "one notice");
+    same(ob[0].subject, "New Request - General Task - Review - Check the hold-downs", "the Access subject");
+    ok(ob[0].body.includes("https://portal.dcrframing.com/my-tasks.html?task=" + T3.forField.id) && ob[0].body.includes("=".repeat(39)) &&
+      ob[0].body.includes("\r\n") && ob[0].body.includes("Project ID: #" + S.p1.internalIDNumber), "the body: the 39-character rules, CRLF, the project, the link");
+    same([ob[0].to_profile_id, ob[0].kind, ob[0].email_wanted], [PEOPLE.field.id, "task_new", false], "to the field person; no e-mail until the owner turns it on");
+    T3.forLead = await tasksRepo.create({ title: "Order the beams", assignedTo: PEOPLE.lead.id, projectId: S.p2.id }, me);
+    same((await sql("select count(*)::int as n from public.notifications_outbox where task_id = $1", [T3.forLead.id]))[0].n, 0, "no notice to oneself");
+    await as("field");
+    const f = await sbm.me();
+    T3.fieldOwn = await tasksRepo.create({ title: "Bring the long ladder", assignedTo: PEOPLE.field.id, projectId: S.p1.id }, f);
+    T3.fieldNobody = await tasksRepo.create({ title: "Find the chalk line", projectId: S.p1.id }, f);
+    same([T3.fieldOwn.assigned_to, T3.fieldNobody.assigned_to], [PEOPLE.field.id, null], "field: themself or nobody");
+    const raw = await client.from("tasks").insert({ title: "For the lead", assigned_to: PEOPLE.lead.id, project_id: S.p1.id }).select("*");
+    same(raw.error && raw.error.code, "42501", "field gives a task to someone else (the database refuses)");
+    for (const extra of [{ agent_kind: "photo", agent_ref: "PV-X", agent_date: today3 }, { legacy_sp_id: 99 }, { author_name: "Someone" }]) {
+      const r = await client.from("tasks").insert(Object.assign({ title: "x", assigned_to: PEOPLE.field.id, project_id: S.p1.id }, extra)).select("*");
+      same(r.error && r.error.code, "42501", "a person sets " + Object.keys(extra)[0]);
+    }
+    await as("accountant");
+    const a = await sbm.me();
+    T3.acctOwn = await tasksRepo.create({ title: "Collect the receipts", assignedTo: PEOPLE.accountant.id }, a);
+    same(T3.acctOwn.project_id, null, "a task without a project");
+    same((await client.from("tasks").insert({ title: "For field", assigned_to: PEOPLE.field.id }).select("*")).error.code, "42501", "the accountant for someone else");
+    await as("viewer");
+    await refused(() => tasksRepo.create({ title: "Nope" }, { id: PEOPLE.viewer.id, role: "viewer" }), "42501", "a viewer creates nothing");
+  });
+
+  await check("who reads which task through REST (Q3, P3 check 1): the office and leads all; field their own and the ones they made; a viewer theirs; the agents account none", async () => {
+    await as("admin");
+    const all = (await client.from("tasks").select("id")).data.length;
+    ok(all >= 5, "tasks made: " + all);
+    // own or made: counted by the table's owner (earlier checks made tasks too, e.g. the search's)
+    const ownOrMade = async (k) => (await sql("select count(*)::int as n from public.tasks where assigned_to = $1 or created_by = $1", [PEOPLE[k].id]))[0].n;
+    const want = { admin: all, manager: all, manager2: all, accountant: all, lead: all,
+      field: await ownOrMade("field"), field2: await ownOrMade("field2"), viewer: await ownOrMade("viewer") };
+    ok(want.field >= 3 && want.field < all, "field's own and made: " + want.field + " of " + all);
+    for (const [k, n] of Object.entries(want)) {
+      await as(k);
+      const r = await client.from("tasks").select("id, assigned_to, created_by");
+      same(r.data.length, n, k + " reads tasks");
+      if (k === "field") ok(r.data.every((t) => t.assigned_to === PEOPLE.field.id || t.created_by === PEOPLE.field.id), "field: own or made");
+    }
+    await as("agents");
+    same(((await client.from("tasks").select("id")).data || []).length, 0, "agents");
+  });
+
+  await check("list(view) through my_tasks: mine for everyone; a lead's crew (crew_members -> employees.profile_id); everyone for the office and leads; a view the role does not have is 42501; mapped as the pages draw them", async () => {
+    await as("field");
+    const mine = await tasksRepo.list("mine", { me: PEOPLE.field.id });
+    const wantMine = (await sql(`select id from public.tasks where status = 'open' and (assigned_to = $1 or (assigned_to is null and created_by = $1)) order by id`,
+      [PEOPLE.field.id])).map((r) => Number(r.id));
+    same(mine.map((t) => Number(t.id)).sort((a, b) => a - b), wantMine, "field: assigned, and made for nobody");
+    ok([T3.forField.id, T3.fieldOwn.id, T3.fieldNobody.id].every((id) => wantMine.includes(Number(id))), "this phase's three");
+    const t = mine.find((x) => x.id === T3.forField.id);
+    same([t.projectNumber, t.address, t.city, t.assigneeName, t.requestedBy, t.mine, t.priority, t.dueTime, t.subCategory],
+      [S.p1.internalIDNumber, "100 Sample Rd", "Paso Robles", "Flo Field", "Lee Lead", true, "high", "07:30", "Review"], "the task as My Tasks draws it");
+    same([t.daysSinceUpdate, t.lastUpdateSource, t.needsUpdate], [0, "requested", false], "a new task's clock");
+    await refused(() => tasksRepo.list("everyone"), "42501", "field: everyone's");
+    await refused(() => tasksRepo.list("crew"), "42501", "field: a crew");
+    await as("lead");
+    const crew = await tasksRepo.list("crew", { me: PEOPLE.lead.id });
+    ok(crew.some((x) => x.id === T3.forField.id) && crew.some((x) => x.id === T3.forLead.id), "a lead's crew list: their own and their crew's");
+    ok(!crew.some((x) => x.id === T3.acctOwn.id), "not someone outside the crew");
+    const every = await tasksRepo.list("everyone", { me: PEOPLE.lead.id });
+    ok(every.some((x) => x.id === T3.acctOwn.id), "everyone's: a lead (Q3)");
+    for (const k of ["accountant", "manager"]) {
+      await as(k);
+      ok((await tasksRepo.list("everyone")).length === every.length, k + " everyone");
+      await refused(() => tasksRepo.list("crew"), "42501", k + ": crew is a lead's");
+    }
+    await as("viewer");
+    same((await tasksRepo.list("mine")).length, 0, "a viewer with nothing given to them");
+    await as("lead");
+    const s = tmap.summaryOf(await tasksRepo.summary());
+    const mineOf = async (k) => (await sql(`select count(*)::int as n from public.tasks where status = 'open' and (assigned_to = $1 or (assigned_to is null and created_by = $1))`,
+      [PEOPLE[k].id]))[0].n;
+    const leadMine = await mineOf("lead");
+    ok(s.open === leadMine && s.open === (await tasksRepo.list("mine")).length && s.crew === crew.length && s.everyone === every.length,
+      "summary for a lead (mine, crew, everyone as the lists): " + JSON.stringify(s));
+    await as("field");
+    const fs = tmap.summaryOf(await tasksRepo.summary());
+    const fieldMine = await mineOf("field");
+    same([fs.open, fs.crew, fs.everyone], [fieldMine, null, null], "summary for field");
+    same(tmap.badgeOf(fs), { text: fieldMine + " open", cls: "dim" }, "field's badge");
+  });
+
+  await check("addNote() (P3 check 2): one line; the same client key adds ONE note; refused on a done task with 'already complete' (the page shows the words back); a viewer and a stranger refused", async () => {
+    await as("field");
+    const t = (await tasksRepo.list("mine", { me: PEOPLE.field.id })).find((x) => x.id === T3.forField.id);
+    const key = tmap.clientKey();
+    const a = await tasksRepo.addNote(t, "  Started\n the north wall  ", key);
+    const b = await tasksRepo.addNote(t, "Started the north wall", key);
+    same(a.id, b.id, "the resend answers the note already written");
+    const rows = await sql("select text, via, source_key, created_by::text as by from public.task_notes where task_id = $1", [t.id]);
+    same(rows.map((r) => [r.text, r.via, r.source_key, r.by]), [["Started the north wall", "portal", "portal:" + key, PEOPLE.field.id]], "one note, one line, via portal");
+    await refused(() => tasksRepo.addNote(t, "x".repeat(2001), tmap.clientKey()), "22023", "more than 2,000 characters");
+    const raw = await client.from("task_notes").insert({ task_id: t.id, text: "texted", via: "sms" }).select("*");
+    same(raw.error && raw.error.code, "42501", "a person never files a channel's words");
+    await as("field2");
+    await refused(() => tasksRepo.addNote({ id: t.id }, "not mine", tmap.clientKey()), "PT404", "someone else's task: not on my list");
+    await as("viewer");
+    await refused(() => tasksRepo.addNote({ id: t.id }, "x"), "PT404", "a viewer does not read it");
+    await as("lead");
+    const own = (await tasksRepo.list("mine", { me: PEOPLE.lead.id })).find((x) => x.id === T3.forLead.id);
+    await tasksRepo.complete(own, "");
+    const e = await refused(() => tasksRepo.addNote(own, "Too late", tmap.clientKey()), "23514", "a done task");
+    ok(e.complete === true && /already complete/i.test(e.message), "err.complete: " + e.message);
+  });
+
+  await check("complete() (one transaction): a moved version is PT409 and nothing is written; the status and the closing note together (via portal); done again writes nothing; reopen() is versioned", async () => {
+    await as("field");
+    let t = (await tasksRepo.list("mine", { me: PEOPLE.field.id })).find((x) => x.id === T3.fieldOwn.id);
+    await as("manager");
+    const bump = await client.from("tasks").update({ priority: "urgent" }).eq("id", t.id).select("version");
+    ok(!bump.error && bump.data.length === 1, "someone else changed it");
+    await as("field");
+    const n0 = (await sql("select count(*)::int as n from public.task_notes where task_id = $1", [t.id]))[0].n;
+    await refused(() => tasksRepo.complete(t, "All done"), "PT409", "the version the page read");
+    same((await sql("select status from public.tasks where id = $1", [t.id]))[0].status, "open", "nothing written");
+    t = (await tasksRepo.list("mine", { me: PEOPLE.field.id })).find((x) => x.id === T3.fieldOwn.id);
+    const done = await tasksRepo.complete(t, "All done\nladder back on the truck");
+    same(done.status, "done", "done");
+    const notes = await sql("select text, via from public.task_notes where task_id = $1 order by id", [t.id]);
+    same(notes.length, n0 + 1, "one closing note");
+    same([notes[notes.length - 1].text, notes[notes.length - 1].via], ["All done ladder back on the truck", "portal"], "one line, via portal");
+    const again = await tasksRepo.complete(t, "All done\nladder back on the truck", PEOPLE.field.id);
+    same([again.status, again.already], ["done", undefined], "done again (a lost answer, mine)");
+    same((await sql("select count(*)::int as n from public.task_notes where task_id = $1", [t.id]))[0].n, n0 + 1, "no second note");
+    const row = (await client.from("tasks").select("*").eq("id", t.id)).data[0];
+    const back = await tasksRepo.reopen({ id: t.id, version: row.version });
+    same([back.status, back.completed_at], ["open", null], "open again");
+    // completed elsewhere first (the office, no live event on the phone): the page is told, the words kept once
+    await as("manager");
+    const byOffice = await client.rpc("complete_task", { p_id: t.id, p_version: back.version, p_note: null });
+    ok(!byOffice.error, "the office completed it: " + JSON.stringify(byOffice.error));
+    await as("field");
+    const words = "Garage sheathing finished, nails short by one box";
+    const late = await tasksRepo.complete({ id: t.id, version: back.version, title: t.title }, words, PEOPLE.field.id);
+    same([late.status, late.already, late.completed_by], ["done", true, PEOPLE.manager.id], "already: someone else completed it first");
+    await tasksRepo.complete({ id: t.id, version: back.version, title: t.title }, words, PEOPLE.field.id);
+    const kept = await sql("select text, via, created_by from public.task_notes where task_id = $1 and text = $2", [t.id, words]);
+    same(kept.map((n) => [n.text, n.via, n.created_by]), [[words, "portal", PEOPLE.field.id]], "the closing words kept once, as the field person's");
+    const now = (await client.from("tasks").select("version").eq("id", t.id)).data[0];
+    same((await tasksRepo.reopen({ id: t.id, version: now.version })).status, "open", "open again for the checks below");
+    await as("viewer");
+    await refused(() => tasksRepo.complete({ id: t.id, version: back.version }, ""), "PT404", "a viewer does not read it");
+  });
+
+  await check("the clock (P3 check 3): app.task_clock and Portal 2's clockOf agree on DCR Desktop 2's shared cases (the 5-day edge at 11:30 pm Pacific, notes, shoots)", async () => {
+    const file = path.join(D2, "tools", "pglite_check", "task_clock_cases.json");
+    ok(existsSync(file), "tools/pglite_check/task_clock_cases.json");
+    const spec = JSON.parse(readFileSync(file, "utf8"));
+    await sql("alter table public.tasks disable trigger t90_audit");
+    await sql("alter table public.task_notes disable trigger t90_audit");
+    try {
+      for (const c of spec.cases) {
+        const t = (await sql(`insert into public.tasks (title, status, created_at, agent_kind, agent_ref, agent_date)
+                              values ('clock case', 'open', $1::timestamptz, $2, $3, $4::date) returning *`,
+          [c.task.created_at, c.task.agent_kind || null, c.task.agent_kind ? "case" : null, c.task.agent_date || null]))[0];
+        const notes = [];
+        for (const n of c.notes || []) {
+          notes.push((await sql("insert into public.task_notes (task_id, text, via, created_at) values ($1, $2, 'import', $3::timestamptz) returning *",
+            [t.id, n.text, n.created_at]))[0]);
+        }
+        const db = (await sql(`select c.last_update::text as last_update, c.last_update_source, c.days_since_update, c.last_note, c.needs_update
+                                 from public.tasks t, app.task_clock(t, $2::timestamptz) c where t.id = $1`, [t.id, c.at]))[0];
+        const js = tmap.clockOf(Object.assign({}, t, { created_at: new Date(t.created_at).toISOString(), agent_date: c.task.agent_date || null }),
+          notes.map((n) => Object.assign({}, n, { created_at: new Date(n.created_at).toISOString() })), tmap.dayOf(c.at));
+        same([js.last_update_source, js.days_since_update, js.last_note, js.needs_update], [db.last_update_source, db.days_since_update, db.last_note, db.needs_update], c.name);
+        ok(Date.parse(js.last_update) === Date.parse(db.last_update), c.name + ": last_update");
+        await sql("delete from public.tasks where id = $1", [t.id]);
+      }
+    } finally {
+      await sql("alter table public.tasks enable trigger t90_audit");
+      await sql("alter table public.task_notes enable trigger t90_audit");
+    }
+  });
+
+  await check("a task handed AWAY from a field person leaves the 'no longer yours' tombstone only they read (M1 7b; live.js turns it into a DELETE); the new assignee gets a notice", async () => {
+    await as("manager");
+    const row = (await client.from("tasks").select("*").eq("id", T3.forField.id)).data[0];
+    const moved = await client.from("tasks").update({ assigned_to: PEOPLE.field2.id }).eq("id", row.id).eq("version", row.version).select("*");
+    ok(!moved.error && moved.data.length === 1, "reassigned " + JSON.stringify(moved.error));
+    await as("field");
+    const tomb = (await client.from("deletions").select("*").eq("table_name", "tasks").eq("row_id", row.id)).data;
+    ok(tomb.length === 1 && tomb[0].for_user === PEOPLE.field.id, "the field person reads it: " + JSON.stringify(tomb));
+    ok(!(await tasksRepo.list("mine", { me: PEOPLE.field.id })).some((t) => t.id === row.id), "it left their list");
+    await as("lead");
+    same((await client.from("deletions").select("*").eq("table_name", "tasks").eq("row_id", row.id)).data.length, 0, "nobody else reads it");
+    same((await sql("select count(*)::int as n from public.notifications_outbox where task_id = $1 and to_profile_id = $2", [row.id, PEOPLE.field2.id]))[0].n, 1,
+      "a notice for the new person");
+  });
+
+  await check("forProject() / getOne() name only real columns: a project's tasks open and done with notes; one task (done reads as done; not readable is null)", async () => {
+    await as("lead");
+    const list = await tasksRepo.forProject(S.p1.id, { me: PEOPLE.lead.id, project: S.p1 });
+    ok(list.length >= 3 && list.every((t) => t.projectNumber === S.p1.internalIDNumber), "the project's tasks: " + list.length);
+    const withNotes = list.find((t) => t.id === T3.forField.id);
+    ok(withNotes && withNotes.notes.length === 1 && withNotes.notes[0].who === "Flo Field", "notes and their author");
+    await as("field");
+    const done = await tasksRepo.getOne(T3.forLead.id);
+    same(done, null, "not readable by field: null");
+    await as("lead");
+    const d = await tasksRepo.getOne(T3.forLead.id, { me: PEOPLE.lead.id });
+    same([d.done, d.projectNumber], [true, S.p2.internalIDNumber], "a done task, with its project");
+  });
+
+  await check("watch('tasks') / watch('task_notes') — My Tasks' and the map's live channels: every active role joins; the agents account cannot", async () => {
+    const join = (table) => new Promise((res) => {
+      let stop = null;
+      const t = setTimeout(() => { if (stop) stop(); res("timeout"); }, 3000);
+      stop = live.watch(table, null, (evt) => { if (evt.type === "SUBSCRIBED") { clearTimeout(t); stop(); res("SUBSCRIBED"); } });
+    });
+    for (const k of ["admin", "lead", "field", "viewer"]) {
+      await as(k);
+      same([await join("tasks"), await join("task_notes")], ["SUBSCRIBED", "SUBSCRIBED"], k);
+    }
+    await as("agents");
+    same(await join("tasks"), "timeout", "agents never joins");
+    for (const ch of client.channels) ch.unsubscribe();
+  });
+
+  await check("the agents account (P1 check 10, the M3 objects): zero rows from tasks, task_notes, notifications_outbox, push_subscriptions; refused by my_tasks, my_tasks_summary, add_task_note, complete_task", async () => {
+    await as("agents");
+    for (const t of ["tasks", "task_notes", "notifications_outbox", "push_subscriptions"]) {
+      const r = await client.from(t).select("id").limit(5);
+      ok(r.error || (r.data && r.data.length === 0), t + ": " + JSON.stringify(r.error || r.data));
+    }
+    await refused(() => tasksRepo.list("mine"), "42501", "my_tasks");
+    await refused(() => tasksRepo.summary(), "42501", "my_tasks_summary");
+    await refused(() => tasksRepo.addNote({ id: T3.fieldOwn.id }, "x", tmap.clientKey()), "42501", "add_task_note");
+    await refused(() => tasksRepo.complete({ id: T3.fieldOwn.id, version: 1 }, ""), "42501", "complete_task");
+    await as("admin");
+    same((await client.from("notifications_outbox").insert({ subject: "x", body: "y" }).select()).error.code, "42501", "nobody writes the outbox, an admin neither");
+    for (const k of ["lead", "field"]) {
+      await as(k);
+      same(((await client.from("notifications_outbox").select("id")).data || []).length, 0, k + " reads no notice (admins only)");
+    }
+    await as("agents");
+    same(((await client.from("task_clocks").select("task_id")).data || []).length, 0, "agents: no task clock");
+  });
+
+  await check("no priced task column in any answer a lead gets (P3 check 6): tasks, task_notes, task_clocks, my_tasks (mine, crew, everyone), a project's tasks, one task", async () => {
+    await as("lead");
+    const keysOf = (rows) => Array.from(new Set((rows || []).flatMap((r) => Object.keys(r || {}))));
+    const answers = {
+      tasks: (await client.from("tasks").select("*")).data,
+      task_notes: (await client.from("task_notes").select("*")).data,
+      task_clocks: (await client.from("task_clocks").select("*")).data,
+      my_tasks_mine: (await client.rpc("my_tasks", { p_view: "mine" })).data,
+      my_tasks_crew: (await client.rpc("my_tasks", { p_view: "crew" })).data,
+      my_tasks_everyone: (await client.rpc("my_tasks", { p_view: "everyone" })).data,
+    };
+    for (const [k, rows] of Object.entries(answers)) {
+      ok(Array.isArray(rows) && rows.length > 0, k + ": the lead reads rows");
+      same(keysOf(rows).filter((c) => PRICED.test(c)), [], k + ": priced keys");
+      const notes = rows.flatMap((r) => (Array.isArray(r.notes) ? r.notes : []));
+      same(keysOf(notes).filter((c) => PRICED.test(c)), [], k + ": priced keys in the notes");
+    }
+    const tab = await tasksRepo.forProject(S.p1.id, { me: PEOPLE.lead.id, project: S.p1 });
+    const one = await tasksRepo.getOne(T3.fieldOwn.id, { me: PEOPLE.lead.id });
+    ok(tab.length > 0 && one, "the tab and one task read");
+    same(keysOf(tab.concat([one])).filter((c) => PRICED.test(c)), [], "the project's Tasks tab and one task (as the pages hold them)");
+    same(keysOf(tab.concat([one]).flatMap((t) => t.notes || [])).filter((c) => PRICED.test(c)), [], "their notes");
+  });
+
+  await check("signed out (anon): every P3 table and view answers nothing, every P3 RPC is refused", async () => {
+    await as(null);
+    for (const t of ["tasks", "task_notes", "task_clocks", "notifications_outbox", "push_subscriptions"]) {
+      const r = await client.from(t).select("*").limit(5);
+      ok(r.error || (r.data && r.data.length === 0), "anon reads " + t + ": " + JSON.stringify(r.error || r.data).slice(0, 160));
+    }
+    for (const [fn, args] of [["my_tasks", { p_view: "mine" }], ["my_tasks_summary", {}], ["add_task_note", { p_task_id: T3.fieldOwn.id, p_text: "x", p_client_key: "anon-1" }],
+      ["complete_task", { p_id: T3.fieldOwn.id, p_version: 1, p_note: null, p_via: "portal" }]]) {
+      const r = await client.rpc(fn, args);
+      same(r.error && r.error.code, "42501", "anon calls " + fn);
+    }
+    const w = await client.from("push_subscriptions").insert({ endpoint: "https://fcm.googleapis.com/fcm/send/anon", p256dh: "B" + "x".repeat(86), auth: "y".repeat(22) });
+    ok(w.error, "anon adds no subscription");
+    same((await sql("select count(*)::int as n from public.task_notes where source_key = 'portal:anon-1'"))[0].n, 0, "nothing written");
+  });
+
+  /* ── P3 check 4: phone reminders end to end over this database ─────────────────────────────── */
+  const HANDLER = path.join(D2, "supabase", "functions", "push", "handler.ts");
+  const SQLTS = path.join(D2, "supabase", "functions", "push", "sql.ts");
+  const VAPIDMJS = path.join(D2, "tools", "push", "vapid.mjs");
+  if (!existsSync(HANDLER) || !existsSync(SQLTS) || !existsSync(VAPIDMJS)) {
+    results.push({ section, name: "the push function (DCR Desktop 2 supabase/functions/push) is not there: the phone-reminder checks wait for it", ok: true });
+  } else {
+    const fn = await import(pathToFileURL(HANDLER).href);
+    const { SQL: PSQL, SERVICE_ROLE, jsonList } = await import(pathToFileURL(SQLTS).href);
+    const { generateVapidKeys } = await import(pathToFileURL(VAPIDMJS).href);
+    const push2 = await site("push2.js");
+    const SITE_URL = "https://portal.dcrframing.com";
+    const b64u = (b) => Buffer.from(b).toString("base64url");
+    const hkdf = (salt, ikm, info, len) => Buffer.from(crypto.hkdfSync("sha256", ikm, salt, info, len));
+
+    /* the push service a browser hands its endpoint to: records what it is sent; a "dead" endpoint answers 410 */
+    const pushSvc = { calls: [], dead: new Set() };
+    /* the browsers: each subscription has its own P-256 key pair and auth secret, as a real one does */
+    let device = null;
+    const devices = [];
+    function newDevice(label, ua) {
+      const d = { label, ua, sub: null };
+      const subObj = () => {
+        const s = d.sub;
+        return {
+          endpoint: s.endpoint,
+          options: { userVisibleOnly: true, applicationServerKey: Uint8Array.from(s.key).buffer },
+          toJSON: () => ({ endpoint: s.endpoint, expirationTime: null, keys: { p256dh: b64u(s.pub), auth: b64u(s.auth) } }),
+          unsubscribe: async () => { if (d.sub && d.sub.endpoint === s.endpoint) d.sub = null; return true; },
+        };
+      };
+      const reg = {
+        pushManager: {
+          getSubscription: async () => (d.sub ? subObj() : null),
+          subscribe: async (o) => {
+            const key = Buffer.from(o.applicationServerKey);
+            if (!o.userVisibleOnly || key.length !== 65 || key[0] !== 4) throw new Error("bad subscribe options");
+            if (d.sub && !Buffer.from(d.sub.key).equals(key)) throw new Error("InvalidStateError: a subscription with another key exists");
+            if (!d.sub) {
+              const e = crypto.createECDH("prime256v1");
+              e.generateKeys();
+              d.sub = { endpoint: "https://fcm.googleapis.com/fcm/send/schema-check-" + crypto.randomBytes(12).toString("hex"),
+                key, priv: e.getPrivateKey(), pub: e.getPublicKey(), auth: crypto.randomBytes(16) };
+            }
+            return subObj();
+          },
+        },
+      };
+      d.nav = { userAgent: ua, platform: /Android/.test(ua) ? "Linux armv8l" : "Win32", maxTouchPoints: /Android/.test(ua) ? 5 : 0,
+        serviceWorker: { ready: Promise.resolve(reg) } };
+      devices.push(d);
+      return d;
+    }
+    const PHONE = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
+    const DESK = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+    const navBefore = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    const winBefore = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "navigator", { configurable: true, get: () => (device ? device.nav : {}) });
+    Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: {
+      isSecureContext: true, PushManager: function PushManager() {}, matchMedia: () => ({ matches: false }),
+      Notification: { permission: "granted", requestPermission: async () => "granted" } } });
+    const use = (d) => { device = d; return d; };
+
+    /** What a device's push service received, decrypted with that subscription's own keys (RFC 8291). */
+    function decrypt(body, s) {
+      const b = Buffer.from(body);
+      const salt = b.subarray(0, 16), idlen = b[20], asPub = b.subarray(21, 21 + idlen), ct = b.subarray(21 + idlen);
+      const e = crypto.createECDH("prime256v1");
+      e.setPrivateKey(s.priv);
+      const ikm = hkdf(s.auth, e.computeSecret(asPub), Buffer.concat([Buffer.from("WebPush: info\0"), s.pub, asPub]), 32);
+      const d = crypto.createDecipheriv("aes-128-gcm", hkdf(salt, ikm, Buffer.from("Content-Encoding: aes128gcm\0"), 16),
+        hkdf(salt, ikm, Buffer.from("Content-Encoding: nonce\0"), 12));
+      d.setAuthTag(ct.subarray(ct.length - 16));
+      const pt = Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()]);
+      let end = pt.length - 1;
+      while (end >= 0 && pt[end] === 0) end--;
+      if (pt[end] !== 2) throw new Error("the record's padding delimiter is missing");
+      return JSON.parse(pt.subarray(0, end).toString("utf8"));
+    }
+    /** The VAPID header: "vapid t=<ES256 JWT for the endpoint's origin>, k=<the public key>", the JWT verified with k alone. */
+    function vapidOk(header, endpoint, publicKey) {
+      const m = /^vapid t=([^,\s]+), k=([A-Za-z0-9_-]+)$/.exec(String(header || ""));
+      if (!m || m[2] !== publicKey) return false;
+      const [h, p, s] = m[1].split(".");
+      const claims = JSON.parse(Buffer.from(p, "base64url").toString("utf8"));
+      const pub = Buffer.from(publicKey, "base64url");
+      const key = crypto.createPublicKey({ format: "jwk", key: { kty: "EC", crv: "P-256", x: b64u(pub.subarray(1, 33)), y: b64u(pub.subarray(33, 65)) } });
+      return claims.aud === new URL(endpoint).origin && claims.sub === SITE_URL && claims.exp > Date.now() / 1000 &&
+        crypto.verify("sha256", Buffer.from(h + "." + p), { key, dsaEncoding: "ieee-p1363" }, Buffer.from(s, "base64url"));
+    }
+
+    const vapid = await generateVapidKeys();                                   // this run only, in memory
+    let vapidSet = true;
+    /** index.ts's run(): its own transaction, `set local role service_role`, no JWT */
+    const service = async (statement, param) => client.run(async () => {
+      await db.exec("begin");
+      try {
+        await db.exec(SERVICE_ROLE);
+        const rows = (await db.query(statement, [param])).rows;
+        await db.exec("commit");
+        return rows;
+      } catch (e) { await db.exec("rollback"); throw e; }
+    }, "owner");
+    const deps = {
+      vapid: () => (vapidSet ? { publicKey: vapid.publicKey, privateKey: vapid.privateKey, subject: SITE_URL } : null),
+      // index.ts: Auth knows the token, then the caller's OWN profiles row read with the caller's token
+      async caller(jwt) {
+        const sub = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString("utf8")).sub;
+        const rows = await client.run(async () => (await db.query("select id::text as id, role, active from public.profiles where id = auth.uid()")).rows, sub);
+        return rows[0] ? { id: rows[0].id, role: rows[0].role, active: !!rows[0].active } : { id: sub, role: "", active: false };
+      },
+      activeProfiles: async (ids) => (await service(PSQL.activeProfiles, jsonList(ids))).map((r) => String(r.id)),
+      employeeProfile: async (id) => { const r = await service(PSQL.employeeProfile, String(id)); return r.length ? String(r[0].id) : null; },
+      pushTargets: async (ids) => (await service(PSQL.pushTargets, jsonList(ids))).map((r) => ({ endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth, profile_id: r.profile_id })),
+      pushPrune: async (eps) => { await service(PSQL.pushPrune, jsonList(eps)); },
+      takeNewTaskNotices: async (n) => (await service(PSQL.takeNotices, String(n))).map((r) => ({ task_id: r.task_id, to_profile_id: r.to_profile_id, title: r.title })),
+      markOk: async (eps) => { await service(PSQL.markOk, jsonList(eps)); },
+      fetch: async (url, init) => {
+        pushSvc.calls.push({ url, headers: init.headers, body: init.body });
+        return new Response(null, { status: pushSvc.dead.has(url) ? 410 : 201 });
+      },
+      log: () => {},
+    };
+    /* supabase-js functions.invoke over the handler: the person's token (signed out: the publishable key, no person) */
+    const inflight = new Set();
+    const jwtOf = (uid) => b64u(JSON.stringify({ alg: "ES256", typ: "JWT" })) + "." + b64u(JSON.stringify(uid ? { sub: uid, role: "authenticated" } : { role: "anon" })) + ".sig";
+    client.functions = {
+      invoke(name, o) {
+        const p = (async () => {
+          if (name !== "push") return { data: null, error: Object.assign(new Error("Edge Function returned a non-2xx status code"), { context: new Response("{}", { status: 404 }) }) };
+          const res = await fn.handle(new Request("https://pglite.invalid/functions/v1/push", { method: "POST",
+            headers: { "Content-Type": "application/json", Origin: SITE_URL, Authorization: "Bearer " + jwtOf(client.uid) },
+            body: JSON.stringify((o && o.body) || {}) }), deps);
+          if (res.ok) return { data: await res.json(), error: null };
+          return { data: null, error: Object.assign(new Error("Edge Function returned a non-2xx status code"), { name: "FunctionsHttpError", context: res }) };
+        })();
+        inflight.add(p);
+        p.finally(() => inflight.delete(p)).catch(() => {});
+        return p;
+      },
+    };
+    /** Waits for the fire-and-forget calls a page made (they start a moment after the call that made them). */
+    const settle = async () => {
+      do {
+        await new Promise((r) => setTimeout(r, 25));
+        await Promise.allSettled(Array.from(inflight));
+      } while (inflight.size);
+    };
+    const call = async (body) => {
+      const r = await client.functions.invoke("push", { body });
+      return { status: r.error ? r.error.context.status : 200, data: r.error ? await r.error.context.json().catch(() => null) : r.data };
+    };
+    const rowsOf = async (k) => (await sql("select endpoint, device from public.push_subscriptions where profile_id = $1 order by id", [PEOPLE[k].id]));
+    const P = {};
+
+    try {
+      await check("phone reminders on and off (push2.js over the real push_subscriptions rules): every active role keeps its OWN row; nobody, an admin included, reads, changes or removes anyone else's; off removes it; the agents account cannot (P3 check 4)", async () => {
+        for (const k of ROLES) {
+          await as(k);
+          P[k] = use(newDevice(k + " phone", PHONE));
+          same((await push2.state()).status, "off", k + ": off at first");
+          same(await push2.enable(), true, k + ": turned on");
+          same((await push2.state()).status, "on", k + ": on");
+          const mine = await rowsOf(k);
+          same(mine.map((r) => [r.endpoint, r.device]), [[P[k].sub.endpoint, "Android (browser)"]], k + ": one row, this device's, nothing personal in its name");
+        }
+        for (const k of ROLES) {
+          await as(k);
+          const r = await client.from("push_subscriptions").select("*");
+          same((r.data || []).map((x) => x.profile_id), [PEOPLE[k].id], k + " reads its own row only");
+        }
+        await as("admin");
+        await client.from("push_subscriptions").delete().eq("endpoint", P.field.sub.endpoint);
+        const ch = await client.from("push_subscriptions").update({ device: "taken" }).eq("endpoint", P.field.sub.endpoint).select("id");
+        same([(await rowsOf("field")).length, ((ch.data) || []).length], [1, 0], "an admin can neither remove nor change the field person's row");
+        const forged = await client.from("push_subscriptions").insert({ profile_id: PEOPLE.field.id, endpoint: "https://fcm.googleapis.com/fcm/send/forged", p256dh: "B" + "x".repeat(86), auth: "y".repeat(22) });
+        same(forged.error && forged.error.code, "42501", "an admin subscribes nobody else");
+        await as("agents");
+        use(newDevice("agents pc", DESK));
+        await refused(() => push2.enable(), null, "the agents account keeps no subscription");
+        same((await rowsOf("agents")).length, 0, "agents: no row");
+        await as("viewer");
+        use(P.viewer);
+        await push2.disable();
+        same([(await rowsOf("viewer")).length, P.viewer.sub], [0, null], "viewer: off removes the row and the browser's subscription");
+      });
+
+      await check("the push function over this database (DCR Desktop 2's handler.ts + sql.ts as the service role): the key for every active account (the agents account too), 403 inactive, 401 signed out, 503 without keys; send only by an admin or the agents account (403 for every other role); the test notice reaches the caller's OWN devices only; app.push_* not reachable through the Data API", async () => {
+        for (const k of [...ROLES, "agents"]) {
+          await as(k);
+          const r = await call({ op: "public_key" });
+          same([r.status, r.data && r.data.key], [200, vapid.publicKey], k + ": op public_key");
+        }
+        await as("inactive");
+        same((await call({ op: "public_key" })).status, 403, "an inactive account");
+        await as(null);
+        same((await call({ op: "public_key" })).status, 401, "signed out");
+        await as("field");
+        vapidSet = false;
+        same((await call({ op: "drain" })).status, 503, "no keys yet: 503 (nothing claimed)");
+        vapidSet = true;
+        for (const k of ["manager", "manager2", "accountant", "lead", "field", "viewer"]) {
+          await as(k);
+          const r = await call({ op: "send", profile_ids: [PEOPLE.field.id], title: "Not from you" });
+          same([r.status, r.data && r.data.error], [403, "forbidden"], k + ": op send");
+        }
+        same(pushSvc.calls.length, 0, "nothing was sent so far");
+        await as("admin");
+        const sent = await call({ op: "send", employee_id: E.field.id, title: "From the office", body: "Gate code changed", url: SITE_URL + "/my-tasks.html", tag: "office" });
+        same([sent.status, sent.data], [200, { sent: 1, gone: 0, failed: 0, none: false }], "an admin sends to the field person's employee");
+        same(pushSvc.calls.map((c) => c.url), [P.field.sub.endpoint], "to the field person's phone only");
+        const got = decrypt(pushSvc.calls[0].body, P.field.sub);
+        same(got, { title: "From the office", body: "Gate code changed", url: SITE_URL + "/my-tasks.html", tag: "office" }, "what the phone decrypts");
+        ok(vapidOk(pushSvc.calls[0].headers.Authorization, P.field.sub.endpoint, vapid.publicKey), "the VAPID token: this key, the push service's origin, verified with the public key");
+        same([pushSvc.calls[0].headers.TTL, pushSvc.calls[0].headers["Content-Encoding"]], ["21600", "aes128gcm"], "TTL 6 h, aes128gcm");
+        same((await call({ op: "send", profile_ids: [PEOPLE.field.id], title: "x", url: "https://evil.example/x" })).status, 400, "a link off Portal 2 is refused");
+        await as("agents");
+        same((await call({ op: "send", profile_ids: [PEOPLE.field.id, PEOPLE.inactive.id], title: "Reminder" })).data, { sent: 1, gone: 0, failed: 0, none: false }, "the agents account sends (an inactive person is skipped)");
+        pushSvc.calls = [];
+        await as("lead");
+        same((await push2.sendTest()).message, "Sent to 1 device. It should arrive within a few seconds.", "the lead's test notice (push2.sendTest)");
+        same(pushSvc.calls.map((c) => c.url), [P.lead.sub.endpoint], "to the lead's own device only");
+        same(decrypt(pushSvc.calls[0].body, P.lead.sub).url, SITE_URL + "/settings.html", "the test notice opens Settings");
+        await as("viewer");
+        same((await push2.sendTest()).message, "None of your devices has reminders on yet. Turn them on above first.", "a person with reminders off");
+        await as("admin");
+        const api = await client.rpc("push_targets", { p_profile_ids: [PEOPLE.field.id] });
+        same(api.error && api.error.code, "PGRST202", "push_targets is not in the Data API");
+        const grants = await sql(`select r.rolname, bool_and(has_function_privilege(r.rolname, p.oid, 'execute')) as can
+            from pg_proc p join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'app'
+            cross join (select rolname from pg_roles where rolname in ('anon', 'authenticated', 'service_role')) r
+           where p.proname in ('push_targets', 'push_prune', 'push_take_new_task_notices') group by r.rolname order by r.rolname`);
+        same(grants.map((g) => [g.rolname, g.can]), [["anon", false], ["authenticated", false], ["service_role", true]], "app.push_*: service_role only");
+      });
+
+      await check("a new task for someone with reminders on reaches their phone: the lead's tasksRepo.create -> the page's drain -> 'New task' with my-tasks.html?task=<id> to each of their devices (decrypted); taken once; a dead device (410) is pruned (P3 check 4)", async () => {
+        await as("admin");
+        await call({ op: "drain" });                                       // the notices the earlier checks queued
+        await as("field");
+        P.fieldDesk = use(newDevice("field desk", DESK));
+        same(await push2.enable(), true, "the field person's second device");
+        same((await rowsOf("field")).map((r) => r.device), ["Android (browser)", "Windows (browser)"], "two devices");
+        pushSvc.dead.add(P.fieldDesk.sub.endpoint);                         // that browser's data was cleared since
+        pushSvc.calls = [];
+        await as("lead");
+        const me = await sbm.me();
+        const t = await tasksRepo.create({ title: "Bring the moisture meter", assignedTo: PEOPLE.field.id, projectId: S.p1.id }, me);
+        await settle();
+        const byUrl = Object.fromEntries(pushSvc.calls.map((c) => [c.url, c]));
+        ok(byUrl[P.field.sub.endpoint] && byUrl[P.fieldDesk.sub.endpoint] && pushSvc.calls.length === 2, "both of the field person's devices were tried: " + pushSvc.calls.length);
+        same(decrypt(byUrl[P.field.sub.endpoint].body, P.field.sub),
+          { title: "New task", body: "Bring the moisture meter", url: SITE_URL + "/my-tasks.html?task=" + t.id, tag: "task-" + t.id }, "the phone's notice opens the task");
+        same((await rowsOf("field")).map((r) => r.endpoint), [P.field.sub.endpoint], "the dead device's row was pruned");
+        const ob = await sql("select push_result, push_sent_at is not null as taken from public.notifications_outbox where task_id = $1", [t.id]);
+        same(ob.map((r) => [r.push_result, r.taken]), [["claimed", true]], "the notice was taken");
+        await as("field");
+        same((await call({ op: "drain" })).data, { notices: 0, sent: 0, gone: 0, failed: 0, none: 0 }, "a second drain sends nothing again");
+        // an amount typed in the title never reaches the lock screen (BLUEPRINT principle 8); the page masks it too
+        pushSvc.calls = [];
+        await as("lead");
+        const money = await tasksRepo.create({ title: "Pick up the $4,500 deposit check from the client", assignedTo: PEOPLE.field.id, projectId: S.p1.id }, await sbm.me());
+        await settle();
+        const got = pushSvc.calls.filter((c) => c.url === P.field.sub.endpoint).map((c) => decrypt(c.body, P.field.sub));
+        same(got.map((g) => g.body), ["Pick up the (amount hidden) deposit check from the client"], "the push body is masked");
+        same(got[0] && got[0].url, SITE_URL + "/my-tasks.html?task=" + money.id, "and still opens the task");
+        pushSvc.dead.clear();
+      });
+
+      await check("a shared device: another person signs in on the field person's phone — off for them ('set up for another account'); on takes the device over (the field person's row for it goes); at most 5 devices a person", async () => {
+        await as("field2");
+        use(P.field);
+        const st = await push2.state();
+        same([st.status, st.other], ["off", true], "the phone is someone else's");
+        same(await push2.enable(), true, "turned on for field2");
+        const owner = await sql("select profile_id::text as p from public.push_subscriptions where endpoint = $1", [P.field.sub.endpoint]);
+        same(owner.map((r) => r.p), [PEOPLE.field2.id], "the endpoint is field2's now");
+        same((await rowsOf("field")).filter((r) => r.endpoint === P.field.sub.endpoint).length, 0, "the field person's row for that phone is gone");
+        await as("field");
+        same((await push2.state()).status, "off", "and the field person's state says off there");
+        await as("field2");
+        for (let i = 0; i < 6; i++) { use(newDevice("field2 #" + i, DESK)); await push2.enable(); }
+        same((await rowsOf("field2")).length, 5, "the newest 5 are kept");
+      });
+    } finally {
+      delete client.functions;
+      if (navBefore) Object.defineProperty(globalThis, "navigator", navBefore); else delete globalThis.navigator;
+      if (winBefore) Object.defineProperty(globalThis, "window", winBefore); else delete globalThis.window;
+    }
+  }
 }
 
 /* ── summary ──────────────────────────────────────────────────────────── */

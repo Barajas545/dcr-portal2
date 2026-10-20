@@ -11,9 +11,12 @@
    every write, presence:dcr shared between tabs, two made-up colleagues online), with a small delay.
    Writes are kept in this browser (localStorage "dcr2-demo-ops"), so pages, tabs and reloads agree.
    NO request ever leaves for Supabase: anything else sent to a *.supabase.co address fails as offline.
+   The tasks map's tiles (*.tile.openstreetmap.org) are drawn here too (a made-up tile per address), so
+   nothing goes to OpenStreetMap either.
 
    window.DCR2Demo and the "DEMO" button (bottom right) offer: sign in as any role, offline on/off,
-   colleagues on/off, "someone else edits this", and reset.                                          */
+   colleagues on/off, "someone else edits this", on the task pages "someone else adds an update /
+   finishes a task" and "the office gives you a new task", and reset.                                */
 (function (root) {
   "use strict";
   const F = root.DCR2Fake;
@@ -474,7 +477,7 @@
 
   /* ── realtime: changes and presence ────────────────────────────────── */
   const joined = new Set();
-  const REPLICA_FULL = new Set(["activity", "timesheets"]);
+  const REPLICA_FULL = new Set(["activity", "timesheets", "tasks", "task_notes"]);
 
   function parseRtFilter(f) {
     const m = /^([a-z_][a-z0-9_]*)=(eq|neq|lt|lte|gt|gte|in)\.(.*)$/i.exec(String(f || ""));
@@ -632,7 +635,23 @@
       const self = this;
       this.storage = { from: (bucket) => bucketApi(self, bucket) };
       this.realtime = { setAuth: async () => {}, channels: this.channelsList };
-      this.functions = { invoke: async () => ({ data: null, error: { name: "FunctionsHttpError", message: "Edge Functions are not part of the demo", context: { status: 501 } } }) };
+      // Edge Functions: "push" is imitated by the engine (engine.invoke); answered the way supabase-js
+      // answers: {data, error}, error.context = the Response of a non-2xx answer, FunctionsFetchError offline
+      this.functions = {
+        invoke: async (name, opts) => {
+          await delay();
+          if (state.offline) {
+            return { data: null, error: { name: "FunctionsFetchError", message: "Failed to send a request to the Edge Function",
+              context: new TypeError("Failed to fetch (demo: offline)") } };
+          }
+          let body = opts && opts.body;
+          if (typeof body === "string") { try { body = JSON.parse(body); } catch (e) { body = null; } }
+          const r = engine.invoke(self._ctx(), String(name), body === undefined ? {} : body);
+          if (r.status >= 200 && r.status < 300) return { data: r.data, error: null };
+          return { data: null, error: { name: "FunctionsHttpError", message: "Edge Function returned a non-2xx status code",
+            context: new Response(JSON.stringify(r.data), { status: r.status, headers: { "content-type": "application/json" } }) } };
+        },
+      };
       clients.push(this);
     }
     _ctx() {
@@ -788,6 +807,36 @@
     root.XMLHttpRequest = DemoXHR;
   }
 
+  /* ── map tiles (the tasks map): drawn here, so the demo sends nothing to OpenStreetMap ───────────
+     Leaflet sets each tile's <img>.src to https://{a|b|c}.tile.openstreetmap.org/z/x/y.png; in demo
+     pages that address becomes a made-up tile (a data: picture, which the pages' policy allows). */
+  const TILE_RE = /^https:\/\/[abc]\.tile\.openstreetmap\.org\/(\d+)\/(\d+)\/(\d+)\.png$/;
+  function demoTile(z, x, y) {
+    const h = hash(z + "/" + x + "/" + y);
+    const roads = [];
+    for (let i = 0; i < 3; i++) {
+      const a = (h >>> (i * 5)) % 256, b = (h >>> (i * 7 + 3)) % 256;
+      roads.push(i % 2 ? '<path d="M0 ' + a + " L256 " + b + '" stroke="#fff" stroke-width="' + (3 + (i % 3)) + '" fill="none"/>'
+        : '<path d="M' + a + " 0 L" + b + ' 256" stroke="#fff" stroke-width="' + (2 + (i % 2)) + '" fill="none"/>');
+    }
+    const green = (h % 7 === 0) ? '<rect x="' + (h % 160) + '" y="' + ((h >>> 8) % 160) + '" width="80" height="60" rx="10" fill="#cfe3c4"/>' : "";
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#ece8df"/>' + green +
+      roads.join("") + '<path d="M0 0H256V256" stroke="#e2ddd2" fill="none"/>' +
+      '<text x="6" y="250" font-family="Segoe UI,Arial" font-size="9" fill="#b9b2a4">demo map ' + esc(z + "/" + x + "/" + y) + "</text></svg>";
+    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  }
+  try {
+    const IMG = root.HTMLImageElement && root.HTMLImageElement.prototype;
+    const desc = IMG && Object.getOwnPropertyDescriptor(IMG, "src");
+    if (desc && desc.set && desc.get) {
+      Object.defineProperty(IMG, "src", {
+        configurable: true, enumerable: desc.enumerable,
+        get() { return desc.get.call(this); },
+        set(v) { const m = TILE_RE.exec(String(v)); desc.set.call(this, m ? demoTile(m[1], m[2], m[3]) : v); },
+      });
+    }
+  } catch (e) { /* this browser draws the real tiles */ }
+
   /* ── the demo panel ────────────────────────────────────────────────── */
   function setOffline(on) {
     state.offline = !!on;
@@ -897,6 +946,29 @@
         const list = engine.rows.timesheets.filter((t) => t.kind === "work" && t.work_date >= lastSat);
         const t = list[Math.floor(Math.random() * list.length)];
         if (t) remoteEdit("timesheets", t.id, { hours: Number(t.hours) === 8 ? 8.5 : 8 });
+      });
+    }
+    if (/my-tasks|tasks-map|project/.test(location.pathname)) {
+      const openTask = () => {
+        const want = Number(new URLSearchParams(location.search).get("task")) || null;
+        const me = current();
+        const open = engine.rows.tasks.filter((t) => t.status === "open");
+        return open.find((t) => t.id === want) || open.find((t) => me && t.assigned_to === me.id) || open[0] || null;
+      };
+      act("Someone else adds an update to a task", () => {
+        const t = openTask();
+        if (t) engine.insert({ uid: byKey("manager").id }, "task_notes", { task_id: t.id, text: "Checked from the office at " + new Date().toLocaleTimeString() + ".", via: "desktop" });
+      });
+      act("Someone else finishes a task", () => {
+        const t = openTask();
+        if (t) engine.rpc({ uid: byKey("manager").id }, "complete_task", { p_id: t.id, p_version: null, p_note: "Finished from the office." });
+      });
+      act("The office gives you a new task", () => {
+        const me = current();
+        if (me && me.role !== "agents") {
+          engine.insert({ uid: byKey("manager").id }, "tasks", { project_id: sandbox ? sandbox.id : null, title: "Demo: check the north wall blocking",
+            priority: "high", category: "General Task", assigned_to: me.id });
+        }
       });
     }
     act("Someone else moves a Board card", () => {

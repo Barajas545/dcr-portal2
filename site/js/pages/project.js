@@ -8,11 +8,13 @@
    round: view "project:<id>", project "<id>").
 
    Tabs (P1): Overview (Desktop 2's fields, autosaved with versions; the labor rate only with the
-   prices switch), Log, Journal, Mailing, Files (with the capture bar). The money and estimate tabs
-   come with P5, Tasks with P3.
+   prices switch), Log, Journal, Mailing, Files (with the capture bar); P3: Tasks (the project's
+   tasks, the tick through complete_task, a new task, the updates). The money and estimate tabs come
+   with P5.
 
-   Live: the project row, its activity, journal and files are watched; a change made elsewhere
-   lands in place (an untouched field takes it, a field being edited meets the conflict rule). */
+   Live: the project row, its activity, journal, files and tasks (and their notes) are watched; a
+   change made elsewhere lands in place (an untouched field takes it, a field being edited meets the
+   conflict rule). */
 
 import { boot, el, esc, toast, confirmBox, errorText, can, maskFor, seesPrices, qs, setQs, D } from "./shell.js";
 import { presenceColor } from "../common2.js";
@@ -27,9 +29,10 @@ import * as logTab from "./project-log.js";
 import * as journalTab from "./project-journal.js";
 import * as mailingTab from "./project-mailing.js";
 import * as filesTab from "./project-files.js";
+import * as tasksTab from "./project-tasks.js";
 import { startSweeper } from "./journal-sync.js";
 
-const TABS = ["overview", "log", "journal", "mailing", "files"];
+const TABS = ["overview", "log", "journal", "mailing", "files", "tasks"];
 const ALIASES = { logs: "log" };
 
 const ctx = {
@@ -146,7 +149,12 @@ function activeTab() {
 function switchTab(name) {
   name = ALIASES[name] || name;
   if (TABS.indexOf(name) === -1) name = "overview";
-  document.querySelectorAll(".pj-tab").forEach(function (t) { t.classList.toggle("active", t.getAttribute("data-tab") === name); });
+  document.querySelectorAll(".pj-tab").forEach(function (t) {
+    const on = t.getAttribute("data-tab") === name;
+    t.classList.toggle("active", on);
+    // a phone's tab strip scrolls: the open tab (Tasks, from a link) is brought into view
+    if (on && t.scrollIntoView) { try { t.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) { /* */ } }
+  });
   document.querySelectorAll(".pj-pane").forEach(function (p) { p.classList.toggle("active", p.id === "pane-" + name); });
   setQs("tab", name === "overview" ? "" : name);
   loadTab(name);
@@ -160,6 +168,23 @@ function loadTab(name) {
   else if (name === "journal") journalTab.render(ctx, el("pane-journal"));
   else if (name === "mailing") mailingTab.render(ctx, el("pane-mailing"));
   else if (name === "files") filesTab.render(ctx, el("pane-files"));
+  else if (name === "tasks") { tasksTab.render(ctx, el("pane-tasks")); watchTasks(); }
+}
+
+/* the Tasks tab's live channels, only once the tab has been opened (a phone holds no channel it does
+   not need): the project's tasks, and notes of the tasks the tab shows */
+let tasksWatched = false;
+function watchTasks() {
+  const live = ctx.live;
+  if (tasksWatched || !live || typeof live.watch !== "function") return;
+  tasksWatched = true;
+  try {
+    live.watch("tasks", "project_id=eq." + ctx.pid, function () { tasksTab.reload(ctx); });
+    live.watch("task_notes", null, function (evt) {
+      const row = evt && (evt.new || evt.old);
+      if (!row || evt.type === "SUBSCRIBED" || tasksTab.hasTask(row.task_id)) tasksTab.reload(ctx);
+    });
+  } catch (e) { /* the tab reads again when opened */ }
 }
 
 /* ── presence ───────────────────────────────────────────────────────── */
@@ -271,6 +296,7 @@ async function startLive() {
       live.watch("activity", f, function () { logTab.reload(ctx); });
       live.watch("journal_entries", f, function () { journalTab.reload(ctx); });
       live.watch("files", f, function () { filesTab.reload(ctx); journalTab.reload(ctx, { media: true }); });
+      if (loaded.tasks) watchTasks();
     }
     if (typeof live.onPresence === "function") live.onPresence(paintPresence);
   } catch (e) { /* live updates are a nicety; the page works without them */ }

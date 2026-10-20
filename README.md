@@ -3,7 +3,7 @@
 A static website for the crew and the office, over the **DCR Desktop 2 database** (Supabase).
 It keeps the old portal's look and habits; the data, the sign-in and every rule live in the
 database (row level security, triggers, functions). The website holds only the project URL, the
-publishable key and, later, the VAPID public key. No secret is ever stored here.
+publishable key (phone reminders ask the push function for its public VAPID key). No secret is ever stored here.
 
 Published at `https://portal.dcrframing.com` by GitHub Pages (`.github/workflows/pages.yml`
 publishes `site/` only, after the tests pass). The design documents stay on the office PC: `docs/`
@@ -24,7 +24,10 @@ site/                       published as is
   timesheet-manager.html    Team Sheets (the week grid, overtime / weekend marks, CSV, sign-off, live)
   report-timecard.html      the printable weekly Time Card
   admin.html                Employees & crews (admin, manager): employees, account links, each lead's crew
+  my-tasks.html             My Tasks (P3: your open tasks, ?task= from a reminder, updates, Mark complete)
+  tasks-map.html            Tasks on Map (P3: Leaflet 1.9.4, a pin per job, New task here, moving a pin)
   css/styles.css            the old portal's styles plus the Portal 2 accent
+  css/tasks.css             the task pieces My Tasks, the map and the project's Tasks tab share
   js/config.js              DCR2_CONFIG (public values only) + the theme before first paint
   js/sb.js                  the one supabase-js client, its sign-in storage, me(), signIn/signOut
   js/common2.js             window.DCR2: dialogs, toasts, dates (America/Los_Angeles), money and
@@ -46,6 +49,7 @@ tools/fake/                 the demo database (development only, never published
 tools/check-pages.mjs       a headless look at the demo site (sign-in rules, service worker, queue)
 tools/e2e-demo.mjs          the end-to-end walk of every P1 flow in the demo, with screenshots, then the P2 walk
 tools/e2e-p2.mjs            the P2 timesheet pages (every role, phone and desk, light and dark); e2e-demo runs it
+tools/e2e-p3.mjs            the P3 task pages (every role, phone and desk, light and dark); e2e-demo runs it
 tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite)
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
@@ -63,7 +67,14 @@ address search of Site Photos is answered from made-up towns (nothing goes to Op
 Sign in with any demo account from the orange **DEMO** button (any password except `wrong`):
 `admin@`, `manager@` (no prices: the owner's Q1), `manager2@` (prices switched on), `accountant@`,
 `lead@`, `field@`, `viewer@`, `agents@` (refused), `inactive@` (refused), `newhire@` (temporary
-password), all `@demo.test`. For the timesheets the demo has eleven made-up employees (five linked to
+password), all `@demo.test`. For the tasks the demo has two dozen made-up tasks over the sandbox and the
+busy jobs: quiet ones ("needs an update"), a task due tomorrow morning, a Photo & Video Agent shoot with
+its brief and shot list, a Recurring Tasks agent task ("Weekly on Mondays"), a task imported from the old
+portal with its old notes and a texted reply filed for Jordan, an amount in a task's words (hidden without
+the prices switch), tasks without a project and finished ones; on a task page the DEMO button also offers
+"Someone else adds an update", "Someone else finishes a task" and "The office gives you a new task" (live
+updates, the finished-elsewhere notice). The map's tiles are drawn in the page (nothing goes to
+OpenStreetMap). For the timesheets the demo has eleven made-up employees (five linked to
 those accounts; Riley Lead's crew of five; one who has left), four weeks of hours with overtime, a
 Saturday, leave days, a day split across two jobs and one imported row whose job matched no project,
 and last week's sign-offs (one gone stale because an hour changed after it). On a timesheet page the
@@ -82,7 +93,9 @@ node --test                                        # pure modules, the demo engi
 node tools/check-pages.mjs --out <folder>          # headless Chrome/Edge: sign-in rules, service worker, queue
 node tools/e2e-demo.mjs --out <folder>             # every P1 flow as every role + screenshots (final_*.png),
                                                    # then the P2 walk (--p2 checks | shots | none)
+                                                   # and the P3 walk (--p3 checks | shots | none)
 node tools/e2e-p2.mjs --out <folder>               # the P2 walk alone + screenshots (p2_*.png; --shots none)
+node tools/e2e-p3.mjs --out <folder>               # the P3 walk alone + screenshots (p3_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
 ```
 
@@ -107,12 +120,44 @@ PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against 
   scope never shows one's own card), a lead without a crew (no Batch Entry), the desk Time Sheet's card
   buttons at tablet widths, the top bar on one row at 1366 / 1280 / 1100 / 900 px. It needs jsDelivr for
   jsPDF; nothing goes to Supabase. Screenshots: `p2_<page>_<role>_<light|dark>_<desktop|phone>.png`.
+- `tools/e2e-p3.mjs` signs in as admin, manager, accountant, lead, field and viewer and checks the home
+  cards (My Tasks with the badge the summary gives, Tasks on Map) and the top bar, My Tasks (the lists each
+  role has; read only for a viewer; on a phone a task is the whole screen), the map (Leaflet, the pins,
+  the person picker, a pin's sheet, New task here only for those who may create) and the project's Tasks
+  tab; then, as field on the phone, the reminder link to a shoot (brief, shot list ticked on the phone), a
+  quick phrase sent (via portal, the client key), no signal (the words and the key stay; the resend adds
+  ONE note), Mark complete with a closing note, a task finished elsewhere while open (the words typed
+  shown back), a note refused on a task finished with no live event ("already complete", the words shown
+  back), a task handed away, a new task arriving live; as lead the crew's list, a new task for Jordan (one
+  outbox row, the Access wording, the link, drained by the push function) and the project tab's tick,
+  untick and a note; as manager the map's filters, New task here and a pin moved by hand (manual); Q3 in
+  the pages (the project's Tasks tab shows a field person and a viewer only theirs and the ones they made);
+  an amount in a task masked for a field person; the reminder link through the sign-in (signed out ->
+  `index.html?next=` -> the task); Settings → Phone reminders on an Android phone (on, the test notice,
+  the home switch, a lead's new task drained to the phone, off) and an iPhone in Safari ("Add to Home
+  Screen first"). It needs jsDelivr for Leaflet; nothing goes to Supabase or OpenStreetMap. Screenshots:
+  `p3_<page>_<role>_<light|dark>_<desktop|phone>.png`.
 - `tools/schema-check.mjs` loads every migration of DCR Desktop 2 (`DCR_DESKTOP2_DIR`, default
   `../DCR Desktop 2`) into PGlite (`PGLITE_DIR`: a folder whose `node_modules` has
   `@electric-sql/pglite`) and runs Portal 2's own `sb.js`, `repo/*.js`, upload queue and `live.js`
   over `tools/pglite-rest.mjs`, as made-up people of every role (and the agents account, an
   inactive one, a temporary password). Every table, column, embed, RPC parameter name, trigger and
-  policy is the database's own; the expected rows and refusals are asserted per role.
+  policy is the database's own; the expected rows and refusals are asserted per role. With M3 it also
+  checks the task pieces: who reads which task through REST (Q3), the lists and the summary, Q8's
+  creation rules and the guards, the outbox notice, add_task_note (one note per key, "already complete"),
+  complete_task (one transaction, PT409), the "no longer yours" tombstone, the live channels, the agents
+  account, and that `map/tasks.js clockOf` answers DCR Desktop 2's shared clock cases
+  (`tools/pglite_check/task_clock_cases.json`) exactly as `app.task_clock` does. Signed out (anon) every P3
+  table answers nothing and every P3 RPC is refused; no answer a lead gets carries a priced task column.
+  **Phone reminders end to end**: `push2.js` on a stand-in browser (real P-256 subscription keys) calls DCR
+  Desktop 2's own push function (`supabase/functions/push/handler.ts` and `sql.ts`, its SQL run as the
+  service role with no JWT, as `index.ts` does) over the same database, with a stand-in push service that
+  decrypts what it receives and verifies the VAPID token (a key pair made in memory for the run): every
+  role keeps its own subscription row and nobody, an admin included, reads or removes another's; the key
+  for every active account, 403 for an inactive one, 401 signed out, 503 without keys; `send` only for an
+  admin or the agents account; the test notice reaches the caller's own devices only; a lead's new task
+  reaches the field person's phone as "New task" with `my-tasks.html?task=<id>`, once, and a dead device
+  (410) is pruned; a shared phone moves to the person who turns reminders on there; five devices at most.
 
 The money mask, the file-name rules and the project-location rules are checked against vectors
 taken from DCR Desktop 2 (`tests/vectors/`). `tests/core-site-guard.test.mjs` checks every page for
@@ -144,18 +189,55 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   office and one lead on the live test project A000T2 (A267 is the demo's sandbox only); the history
   import waits for that evening.
 
+## Tasks (P3) in short
+
+- The pages read and write tasks under migration M3 (`20261022000100_tasks_push`) and the read rule of M1
+  (Q3): the office and leads read every task; field and view-only people the ones given to them or made
+  by them. A task is given to anyone by admin, manager and lead, by field and the accountant only to
+  themselves or nobody (Q8); a view-only account creates and updates nothing. The pages only hide what the
+  database would refuse (`map/tasks.js canCreate / canAssignAnyone / canWork`).
+- **My Tasks** (`my-tasks.html`, the old page and its habits) reads `rpc my_tasks`: 'mine' for everyone,
+  a lead's 'crew' (their crew's accounts through `crew_members` / `employees.profile_id`) and the
+  office's 'everyone'; needs-an-update first, with the database's clock (`app.task_clock`: more than five
+  Pacific days without a note; a shoot is never stale through its day). `?task=<id>` (the reminders' and
+  the new-task notice's link) opens the task: a task finished since says so, one that is not the
+  person's says "not on your list" (the same answer as one that does not exist).
+- An update is `rpc add_task_note`: one line, at most 2,000 characters, written as a `task_notes` row
+  (via `portal`). What is typed is a draft on this phone (`dcr2:taskDraft:<profile>:<task>`) until the
+  database has it; each send carries a key kept with the draft, so the resend after a lost answer adds
+  nothing twice. A note on a task finished meanwhile is refused ("already complete") and the words are
+  shown back. Mark complete is `rpc complete_task`: the status and the closing note in one step.
+- Live: tasks, notes and the "no longer yours" tombstone (`deletions.for_user`, M1) arrive through
+  Realtime; a task finished or given away while open closes with a notice that shows what was typed.
+- **Tasks on Map** (`tasks-map.html`): the old map's script moved into `js/pages/tasks-map.js`, its 36
+  inline handlers (also the ones inside the popup HTML) are listeners, every word is escaped. Leaflet
+  1.9.4 comes from jsDelivr with its integrity hashes (named in this page's `script-src` only); the pins
+  are CSS (no picture from the CDN). One pin per project (`projects.lat` / `lng`); a project without a
+  point is placed from its address (OpenStreetMap's search, one a second) and offered to
+  `set_project_location` (geocode: it only fills an empty point). Moving a pin by hand is for managers
+  and admins (`manual`).
+- **The project's Tasks tab**: Pending / Completed / All, the tick (`complete_task`) and untick (a
+  versioned PATCH), a row opens its updates and a box for one. The old tab's priced columns do not exist
+  in this database.
+- **The home page's badge**: `rpc my_tasks_summary` — one's own tasks needing an update in red, else
+  one's own open tasks, else a lead's crew's (the office's everyone's) needing an update, dimmed.
+- A new task given to someone else writes its notice into `notifications_outbox` (the tasks trigger, the
+  Access wording, the `my-tasks.html?task=<id>` link); the page then asks the `push` function to send the
+  waiting notices (`{op: 'drain'}`, fire-and-forget). The e-mail is DCR Agents 2's (P4), off until the
+  owner turns `task_email_enabled` on.
+
 ## Rules for every page
 
 - The `Content-Security-Policy` meta tag of `index.html`, word for word, first in `<head>` after
   the charset. No inline `<script>` and no `on…=` attribute: scripts are files, handlers are
   `addEventListener`. Inline `style` is allowed. `script-src` names the one library file
   (`…/@supabase/supabase-js@2.117.2/dist/umd/supabase.js`), never the whole of jsDelivr (which serves
-  anyone's npm or GitHub code); a page that needs another library (Leaflet 1.9.4 later) adds its exact
-  file there. `worker-src` has no CDN.
+  anyone's npm or GitHub code); a page that needs another library (Leaflet 1.9.4 on the tasks map) adds
+  its exact file there. `worker-src` has no CDN.
 - `<script src="js/config.js">`, then the pinned supabase-js
   (`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js`, `defer`),
   then the page's `<script type="module">`. Every CDN script names an exact version.
-- Browser-side names are Portal 2's own: session `dcr2-auth`, cache `dcr-portal2-v1`, IndexedDB
+- Browser-side names are Portal 2's own: session `dcr2-auth`, cache `dcr-portal2-v2` (P3), IndexedDB
   `dcr2Uploads`, drafts `dcr2JrnDraft:<profile>:<project>`, theme `dcr2_theme`, city cache
   `dcr2CityGeo`, Site Photos' last job list `dcr2CaptureJobs:<profile>`, locks
   `dcr-portal2-single-instance`, `dcr2-upload-queue` and `dcr2-journal-drafts`. Never the old portal's
@@ -167,8 +249,10 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   home page, Site Photos and the project page create entries written with no signal, even after the
   app was killed), only the fields a person changed are sent, and someone else's change of the same
   entry is taken in ("Use mine" for a field both changed).
-- Signing out ends this device's session only. Amounts in free text are masked on screen for
-  people without the prices switch (display only).
+- Signing out ends this device's session only, and turns this device's phone reminders off for that
+  person first (a shared phone never shows their task titles afterwards). Amounts in free text are masked
+  on screen for people without the prices switch (display only); a push never carries one (the push
+  function masks every title and body).
 - Test data is made up (`@demo.test`, `@example.com`, 555-01xx numbers, A267 as the sandbox). No page
   names A267 to people (it is not in the live database).
 - The top bar is one row on every desk width: when the links do not fit (a long name, people online,
@@ -176,7 +260,11 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   links into the ☰ menu (`common2.js fitTopbar`, measured, not a fixed width); below 861 px the menu
   is always used.
 - A page that needs another CDN library names its exact file in its own `script-src` and nowhere else
-  (`tests/core-site-guard.test.mjs PAGE_LIBS`): today the two Time Sheet pages and jsPDF.
+  (`tests/core-site-guard.test.mjs PAGE_LIBS`): today the two Time Sheet pages and jsPDF, and the tasks
+  map and Leaflet (with its integrity hashes).
+- The service worker precaches every page with everything it loads (`tests/core-sw.test.mjs` checks the
+  whole import graph), so the installed app also opens offline from a cold start; a new page or module is
+  added to `SHELL` in `site/sw.js` (and the cache name bumped with each release that changes the worker).
 
 ## Publishing (go-live)
 
@@ -204,6 +292,35 @@ database do not match; Settings and the home page carry on).
 The crews keep filing hours in the old portal until they switch to Portal 2, on a Saturday the owner
 picks once it is ready (texted hours need DCR Agents 2). The old hours are not imported (owner's
 decision 2026-10-20): they stay in the old portal.
+
+**P3 (tasks and phone reminders) go-live, in order, each live step after the owner's OK.** The full
+runbook with every command and the expected counts is DCR Desktop 2's `tools/legacy_import/README.md`,
+"Portal 2 phase 3" → "Phase 3 go-live: everything, in order". In short:
+
+1. Both repositories committed; the offline checks green (DCR Desktop 2: the suite, PGlite, the Edge Function
+   tests including the push function's, the self-test, `rehearse_p3.mjs`; here `node --test`,
+   `schema-check` (it runs `push2.js` through the real push function over the real migrations),
+   `check-pages`, `e2e-demo` with its P2 and P3 walks). The owner decides about the old portal's agent tasks
+   (import them, the default, or leave them there).
+2. A backup from today.
+3. Database change M3 (`20261022000100_tasks_push`): `npx supabase db push` from DCR Desktop 2; the check
+   gate query `select set_config('role', 'service_role', true) as push_can_set_role` must answer
+   `service_role` (an error 42501: stop).
+4. The `push` function: `npx supabase functions deploy push --use-api`, then its keys with
+   `node tools/push/vapid.mjs --project-ref <ref> --yes` (DCR Desktop 2; prints the public key only).
+   Portal 2 asks the function for the public key, so nothing changes here.
+5. DCR Desktop 2 2.16.0 on every office PC the same day.
+6. The invites and account links (each person who has old tasks needs an active, linked account first).
+7. A fresh read of the old portal's open tasks, the build and the rehearsal; then the import (`tasks.sql`)
+   and its verify queries.
+8. The owner marks each moved task done in the old portal ("moved to Desktop 2", `tasks_closeout.md`).
+9. Push this repository's `main` (the workflow runs the tests and publishes `site/`).
+10. Smoke test on **A000T2** (never A267): reminders on an Android phone and on an iPhone from the Home
+    Screen app, "Send me a test notice"; a task given to someone else on A000T2 reaches their phone and the
+    tap opens `my-tasks.html?task=<id>`; an update and Mark complete from the phone show in DCR Desktop 2; a
+    phone whose site data was cleared (reminders not turned off) is pruned on the next notice.
+11. Delete the smoke test's tasks (DCR Desktop 2 → the task → Delete task). Tell the crews: Add to Home
+    Screen, turn reminders on (the old portal's subscriptions cannot move).
 
 **Owner, once (any time before the first publish)**
 

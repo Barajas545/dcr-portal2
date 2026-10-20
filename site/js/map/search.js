@@ -52,7 +52,9 @@ export function toGroups(res, opts) {
     return {
       title: t.title ? mask(t.title) : "(no title)",
       sub: join([numberOf(t.project_id), t.status === "done" ? "Done" : "Open", t.due_date ? "due " + t.due_date : ""]),
-      href: t.project_id != null ? "project.html?id=" + encodeURIComponent(t.project_id) : "",
+      // P3: an open task opens on My Tasks (its updates, a box for one); a done one on its project's Tasks tab
+      href: t.status !== "done" && t.id != null ? "my-tasks.html?task=" + encodeURIComponent(t.id)
+        : t.project_id != null ? "project.html?id=" + encodeURIComponent(t.project_id) + "&tab=tasks" : "",
     };
   });
   add("Files", "files", res.files, function (f) {

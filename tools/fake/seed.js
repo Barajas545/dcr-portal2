@@ -326,19 +326,97 @@
     out.activity.push(Object.assign({ id: nid("activity"), project_id: sandbox.id, kind: "system", text: "Files uploaded to " + today,
       from_status: null, to_status: null, author_name: null, legacy_sp_id: null }, audit(minutesAgo(41), P.field)));
 
-    // tasks
-    const taskTitles = ["Photograph the shear walls before drywall", "Order hold-downs", "Confirm truss delivery", "Send the punch list",
-      "Measure the deck ledger", "Check the beam size with the supplier", "Pick up the permit card", "Schedule the framing inspection"];
-    for (let i = 0; i < 26; i++) {
-      const p = recentProjects[i % recentProjects.length];
-      const assigned = [P.field, P.lead, P.manager, P.newhire, null][i % 5];
-      const done = i % 6 === 5;
-      const ts = daysAgo(between(1, 20));
-      out.tasks.push(Object.assign({ id: nid("tasks"), project_id: p.id, estimate_item_id: null, title: taskTitles[i % taskTitles.length],
-        description: i % 3 === 0 ? "Before Friday." : null, category: pick(["photo", "site", "office"]), priority: pick(["low", "normal", "normal", "high"]),
-        assigned_to: assigned, due_date: dayOf(now.getTime() + between(-3, 10) * 86400000), status: done ? "done" : "open",
-        completed_at: done ? ts : null, completed_by: done ? assigned : null }, audit(ts, i % 4 === 0 ? P.lead : P.manager)));
-    }
+    /* ── phase 3: tasks and their updates (M3) ───────────────────────────
+       Made-up work for the demo accounts, spread over the sandbox and the busy jobs so the tasks map
+       has several pins: quiet tasks (more than five days: "needs an update"), new ones, a task due
+       tomorrow morning, a Photo & Video Agent shoot (agent_kind photo, its brief and shot list), a
+       Recurring Tasks agent task ("Weekly on Mondays"), a task imported from the old portal with its
+       old notes (via import) and a texted reply DCR Agents filed for Jordan (via sms, on his behalf),
+       a task with an amount in its words (masked without the prices switch), tasks without a project,
+       finished ones, and the ones a field person made for nobody. The old generator's random draws
+       are spent as before, so the later sections' made-up values stay as they were. */
+    for (let i = 0; i < 104; i++) rnd();
+    const AG = PEOPLE.find((x) => x.key === "agents").id;
+    const tAt = (d, hour, minute) => {
+      const base = new Date(now.getTime() - d * 86400000);
+      base.setUTCHours(15 + (hour || 0), minute || 7, 0, 0);
+      return base.getTime() > now.getTime() ? iso(now.getTime() - (d === 0 ? 20 : 5) * 60000) : iso(base);
+    };
+    const pinned = busy.filter((p) => p.lat !== null && p.lng !== null);
+    const unpinned = busy.filter((p) => p.lat === null || p.lng === null);
+    const J = (k) => (pinned.length ? pinned[k % pinned.length] : busy[k % busy.length]);
+    const noteRow = (t, d, hour, by, words, extra) => {
+      const at = tAt(d, hour, 31);
+      out.task_notes.push(Object.assign({ id: nid("task_notes"), task_id: t.id, text: words, via: "portal", on_behalf_of: null,
+        source_key: null, author_name: null }, audit(at, by), extra || {}));
+    };
+    const addTask = (o) => {
+      const at = o.at || tAt(o.ago, o.hour === undefined ? 1 : o.hour);
+      const t = Object.assign({ id: nid("tasks"), project_id: o.p === null ? null : (o.p || sandbox).id, estimate_item_id: null,
+        title: o.title, description: o.desc || null, category: o.cat || null, sub_category: o.sub || null, priority: o.pri || "normal",
+        assigned_to: o.to === undefined ? null : o.to, due_date: o.due || null, due_time: o.dueTime || null, status: o.done ? "done" : "open",
+        completed_at: null, completed_by: null, legacy_sp_id: o.legacy || null, author_name: o.author || null,
+        agent_kind: o.kind || null, agent_ref: o.ref || null, agent_date: o.agentDate || null }, audit(at, o.by === undefined ? P.manager : o.by));
+      if (o.done) {
+        t.completed_at = tAt(o.done, 3);
+        t.completed_by = o.to || P.manager;
+        t.updated_at = t.completed_at; t.updated_by = t.completed_by; t.version = 2;
+      }
+      out.tasks.push(t);
+      (o.notes || []).forEach((n) => noteRow(t, n[0], n[1], n[2], n[3], n[4]));
+      return t;
+    };
+    const shootDay = dayOf(now.getTime() + 2 * 86400000);
+    const pastShoot = dayOf(now.getTime() - 2 * 86400000);
+    const monday = (() => { const d = new Date(today + "T12:00:00Z"); const back = (d.getUTCDay() + 6) % 7; return dayOf(now.getTime() - back * 86400000); })();
+    // Jordan Field (field)
+    addTask({ title: "Shoot the framing progress", p: sandbox, to: P.field, by: AG, cat: "Photos & Video", sub: "Photo Agent", pri: "high", ago: 1,
+      kind: "photo", ref: "PV-A267-03", agentDate: shootDay,
+      desc: "WHEN: " + shootDay + ", morning light\nWHERE: 1 Test Way, Sandbox\n• Map: https://www.google.com/maps/search/?api=1&query=1+Test+Way+Sandbox\n\n" +
+        "SHOT LIST\n• Wide shot of the street side\n• Second-floor walls from the north corner\n• Hold-downs and straps close up\n• Crew at work (ask first)\n\n" +
+        "TIPS\n• Keep the horizon level\n• No faces without asking\n\nShoot date: " + shootDay + " · Ref: PV-A267-03 · Planned by the DCR Photo & Video Agent" });
+    addTask({ title: "Measure the deck ledger", p: J(0), to: P.field, by: P.lead, cat: "General Task", ago: 9,
+      notes: [[7, 2, P.field, "Measured the north side, 18 ft 4 in. South side next."]] });
+    addTask({ title: "Pick up the permit card", p: J(1), to: P.field, by: P.manager, cat: "Office Work", pri: "urgent", ago: 2, due: dayOf(now.getTime() + 86400000) });
+    addTask({ title: "Order hold-downs ($1,240 at the yard)", p: J(2), to: P.field, by: null, author: "Lee Office", legacy: 4001, cat: "Change Order", pri: "high", ago: 30,
+      desc: "Simpson HDU5 x 12. Ask for the contractor price.<br>Pick up at the yard &amp; bring the receipt.",
+      notes: [[20, 1, null, "Called the yard, back-ordered.", { via: "import", author_name: "Ana Crew", source_key: "import:4001:1" }],
+        [14, 2, null, "Yard says Thursday.", { via: "import", author_name: "Lee Office", source_key: "import:4001:2" }],
+        [3, 4, AG, "Got them, in the truck now", { via: "sms", on_behalf_of: P.field, source_key: "sms:demo-1" }]] });
+    addTask({ title: "Send this week's site photos to the office", p: J(3), to: P.field, by: AG, cat: "Office Work", sub: "Recurring Agent", ago: 0, hour: 0,
+      kind: "recurring", ref: "ag_3f9c", agentDate: monday,
+      desc: "Upload this week's photos from every job you were on.\nRecurring: ag_3f9c · " + monday + " · Weekly on Mondays · Made by the DCR Recurring Tasks agent" });
+    addTask({ title: "Clean up the lumber pile", p: J(0), to: P.field, by: P.lead, ago: 8, done: 3,
+      notes: [[3, 3, P.field, "Done, the scraps went to the bin."]] });
+    addTask({ title: "Bring the long ladder back", p: null, to: null, by: P.field, cat: "General Task", pri: "low", ago: 1 });
+    // Riley Lead (lead)
+    addTask({ title: "Schedule the framing inspection", p: sandbox, to: P.lead, by: P.manager, cat: "General Task", pri: "urgent", ago: 3,
+      due: dayOf(now.getTime() + 86400000), dueTime: "07:30:00", notes: [[1, 2, P.manager, "The inspector prefers mornings.", { via: "desktop" }]] });
+    addTask({ title: "Confirm truss delivery", p: J(4), to: P.lead, by: P.manager, cat: "Sales", ago: 8 });
+    addTask({ title: "Check the beam size with the supplier", p: null, to: P.lead, by: P.lead, pri: "low", ago: 1,
+      desc: "Plans call for a 4x12; the delivered one is a 4x10." });
+    addTask({ title: "Walk the punch list with the client", p: J(5), to: P.lead, by: P.manager, cat: "Customer Relations", ago: 11, done: 2 });
+    // Pat Newhire (field, in Riley's crew)
+    addTask({ title: "Stack the second lumber drop", p: J(1), to: P.newhire, by: P.lead, cat: "General Task", ago: 6 });
+    addTask({ title: "Photograph the north wall", p: J(2), to: P.newhire, by: AG, cat: "Photos & Video", sub: "Photo Agent", ago: 10,
+      kind: "photo", ref: "PV-DEMO-07", agentDate: pastShoot,
+      desc: "WHEN: " + pastShoot + "\nSHOT LIST\n• The north wall, straight on\n• The window openings\n\nShoot date: " + pastShoot + " · Ref: PV-DEMO-07 · Planned by the DCR Photo & Video Agent" });
+    // Morgan Manager (manager)
+    addTask({ title: "Send the punch list to the GC", p: J(3), to: P.manager, by: P.admin, cat: "Customer Relations", pri: "high", ago: 15,
+      notes: [[9, 3, P.manager, "Draft done, waiting on the photos."], [2, 5, P.manager, "Sent to the GC; they answer Friday.", { via: "desktop" }]] });
+    addTask({ title: "Call the client about the extra window", p: J(4), to: P.manager, by: P.admin, cat: "Change Order", ago: 6 });
+    addTask({ title: "Review the change order wording", p: sandbox, to: P.manager, by: P.admin, cat: "Estimate", pri: "low", ago: 1 });
+    // Quinn Manager, Casey Accounts, Taylor Viewer
+    addTask({ title: "Quote the pergola framing", p: unpinned[0] || J(5), to: P.manager_prices, by: P.admin, cat: "Estimate", ago: 4 });
+    addTask({ title: "Collect the lumber yard receipts", p: J(5), to: P.accountant, by: P.manager, cat: "Office Work", ago: 4 });
+    addTask({ title: "Read the new safety plan", p: null, to: P.viewer, by: P.admin, cat: "General Task", pri: "low", ago: 2 });
+    // nobody's yet; more jobs on the map
+    addTask({ title: "Find a crew for the pergola", p: unpinned[1] || J(6), to: null, by: P.manager, cat: "General Task", ago: 3 });
+    addTask({ title: "Sheathing on the garage", p: J(6), to: P.field, by: P.lead, cat: "General Task", ago: 4,
+      notes: [[2, 1, P.field, "Half done, finishing tomorrow."]] });
+    addTask({ title: "Fix the blocking the inspector flagged", p: J(7), to: P.newhire, by: P.lead, pri: "urgent", ago: 1 });
+    addTask({ title: "Deliver the stair stringers", p: J(8), to: P.lead, by: P.manager, ago: 7, notes: [[6, 2, P.lead, "Cut two of three."]] });
+    addTask({ title: "Order the porch posts", p: J(9), to: P.manager, by: P.admin, cat: "Sales", ago: 2, done: 1 });
 
     /* ── phase 2: employees, crews, timesheets and sign-offs (M2) ─────────
        Made-up people: five linked to the demo accounts, the rest crew without an account (they file
