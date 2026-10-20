@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "DCR Framing Portal 2",
+  "short_name": "Portal 2",
+  "description": "DCR Framing employee portal 2: projects, Board, site photos and the project log, on the DCR Desktop 2 database.",
+  "start_url": "dashboard.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "launch_handler": { "client_mode": "focus-existing" },
+  "background_color": "#0f141a",
+  "theme_color": "#0f8b7d",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

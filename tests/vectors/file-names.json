@@ -1,0 +1,184 @@
+{
+ "source": "dcrdesk/backend/files.py safe_name(name, 'File') / ascii_slug(name); dcrdesk/domain/money.py fmt (DCR Desktop 2 v2.13.0)",
+ "money_fmt": [
+  {
+   "in": 0,
+   "out": "$0.00"
+  },
+  {
+   "in": 1,
+   "out": "$1.00"
+  },
+  {
+   "in": 1.005,
+   "out": "$1.01"
+  },
+  {
+   "in": 1234.5,
+   "out": "$1,234.50"
+  },
+  {
+   "in": -1234.567,
+   "out": "-$1,234.57"
+  },
+  {
+   "in": 1000000,
+   "out": "$1,000,000.00"
+  },
+  {
+   "in": 0.004,
+   "out": "$0.00"
+  },
+  {
+   "in": -0.005,
+   "out": "-$0.01"
+  },
+  {
+   "in": 12.345,
+   "out": "$12.35"
+  },
+  {
+   "in": "1,234",
+   "out": "$1,234.00"
+  },
+  {
+   "in": null,
+   "out": ""
+  },
+  {
+   "in": 2.675,
+   "out": "$2.68"
+  },
+  {
+   "in": -0.0,
+   "out": "$0.00"
+  }
+ ],
+ "names": [
+  {
+   "in": "IMG 2026-10-19 14.30.12-2.jpg",
+   "safe": "IMG 2026-10-19 14.30.12-2.jpg",
+   "slug": "IMG 2026-10-19 14.30.12-2.jpg"
+  },
+  {
+   "in": "  plan: level 1?.pdf  ",
+   "safe": "plan level 1.pdf",
+   "slug": "plan level 1.pdf"
+  },
+  {
+   "in": "a/b\\c.txt",
+   "safe": "abc.txt",
+   "slug": "abc.txt"
+  },
+  {
+   "in": "R\u00e9sum\u00e9 caf\u00e9.pdf",
+   "safe": "R\u00e9sum\u00e9 caf\u00e9.pdf",
+   "slug": "Resume cafe.pdf"
+  },
+  {
+   "in": "\u200eevil\u202egpj.exe",
+   "safe": "evilgpj.exe",
+   "slug": "evilgpj.exe"
+  },
+  {
+   "in": "",
+   "safe": "File",
+   "slug": "file"
+  },
+  {
+   "in": "...",
+   "safe": "File",
+   "slug": "file"
+  },
+  {
+   "in": "trailing dot.",
+   "safe": "trailing dot",
+   "slug": "trailing dot"
+  },
+  {
+   "in": "\u65e5\u672c\u8a9e.jpg",
+   "safe": "\u65e5\u672c\u8a9e.jpg",
+   "slug": "jpg"
+  },
+  {
+   "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jpg",
+   "safe": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jpg",
+   "slug": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "in": "  .hidden  ",
+   "safe": ".hidden",
+   "slug": "hidden"
+  },
+  {
+   "in": "tab\there.jpg",
+   "safe": "tabhere.jpg",
+   "slug": "tabhere.jpg"
+  },
+  {
+   "in": "emoji \ud83d\ude00 photo.jpg",
+   "safe": "emoji \ud83d\ude00 photo.jpg",
+   "slug": "emoji  photo.jpg"
+  },
+  {
+   "in": "a<b>c|d\"e*f.jpg",
+   "safe": "abcdef.jpg",
+   "slug": "abcdef.jpg"
+  },
+  {
+   "in": "Voice note 2026-10-19 08.01.02.webm",
+   "safe": "Voice note 2026-10-19 08.01.02.webm",
+   "slug": "Voice note 2026-10-19 08.01.02.webm"
+  },
+  {
+   "in": "\u00dcn\u00efc\u00f6d\u00e9 \u00d1ame (1).HEIC",
+   "safe": "\u00dcn\u00efc\u00f6d\u00e9 \u00d1ame (1).HEIC",
+   "slug": "Unicode Name (1).HEIC"
+  },
+  {
+   "in": "con.txt",
+   "safe": "con.txt",
+   "slug": "con.txt"
+  },
+  {
+   "in": "  ",
+   "safe": "File",
+   "slug": "file"
+  },
+  {
+   "in": "file.name.with.dots...",
+   "safe": "file.name.with.dots",
+   "slug": "file.name.with.dots"
+  },
+  {
+   "in": "\ufb01le ligature.pdf",
+   "safe": "\ufb01le ligature.pdf",
+   "slug": "file ligature.pdf"
+  },
+  {
+   "in": "a\ud83db.jpg",
+   "safe": "a_b.jpg",
+   "slug": "a_b.jpg"
+  },
+  {
+   "in": "  ._x_.  ",
+   "safe": "._x_",
+   "slug": "x"
+  },
+  {
+   "in": "image.jpg",
+   "safe": "image.jpg",
+   "slug": "image.jpg"
+  },
+  {
+   "in": "\u00bd inch bolts.pdf",
+   "safe": "\u00bd inch bolts.pdf",
+   "slug": "12 inch bolts.pdf"
+  },
+  {
+   "in": "caf\u00e9 \u2013 notes.txt",
+   "safe": "caf\u00e9 \u2013 notes.txt",
+   "slug": "cafe  notes.txt"
+  }
+ ]
+}

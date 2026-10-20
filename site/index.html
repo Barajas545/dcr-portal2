@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Sign In</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <script type="module" src="js/shell/index.js"></script>
+    <style>
+      /* The whole label is the hit target: a 16px tick box is a poor one on a phone, which is
+         where most of these sign-ins happen. */
+      .keepme { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0 4px;
+        font-size: 13.5px; font-weight: 500; cursor: pointer; line-height: 1.45; }
+      .keepme input { width: 18px; height: 18px; margin: 1px 0 0; flex: none; cursor: pointer; }
+      .keepme small { color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
+      .noacct, .forgot { margin: 14px 0 0; font-size: 12.5px; color: var(--text-muted); text-align: center; }
+      .auth-card { border-top: 4px solid var(--p2); }
+      .auth-brand { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 4px; }
+      .auth-brand .mark { background: #fff; border-radius: 14px; padding: 10px; display: inline-flex; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+      .auth-brand .mark img { height: 74px; width: auto; }
+      .auth-brand h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+      .auth-card .btn-block { background: var(--p2); }
+      .auth-card .btn-block:hover { background: var(--p2-dark); }
+      .subtitle { text-align: center; }
+      .auth-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+      .auth-fields[disabled] { opacity: .6; }
+      .auth-loading { margin: 10px 0 0; font-size: 12.5px; color: var(--text-muted); text-align: center; }
+      .auth-loading[hidden] { display: none; }
+      /* no script needed: the longer note shows by itself if the page never takes over */
+      .auth-loading .late { display: block; visibility: hidden; animation: dcr2-late 0s 12s forwards; }
+      @keyframes dcr2-late { to { visibility: visible; } }
+    </style>
+  </head>
+  <body>
+    <div class="auth-wrap">
+      <div style="width:100%;max-width:380px">
+        <!-- The form ships inert (disabled fieldset, no name attributes, POST): until js/shell/index.js has
+             taken over, Enter or Sign In can never send the password anywhere (a native GET would put it in
+             the address, the history and the service worker's cache). -->
+        <form class="auth-card" id="loginForm" method="post" action="index.html" autocomplete="on" novalidate>
+          <div class="auth-brand">
+            <span class="mark"><img id="companyLogo" src="icons/logo.jpg" alt="" /></span>
+            <h1><span id="companyName">DCR Portal</span> <span class="p2-badge">Portal 2</span></h1>
+          </div>
+          <p class="subtitle" id="subtitle">Sign in with your DCR Desktop 2 account.</p>
+
+          <fieldset id="loginFields" class="auth-fields" disabled>
+          <label for="email">Email</label>
+          <input id="email" type="email" required autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" />
+
+          <label for="password">Password</label>
+          <input id="password" type="password" required autocomplete="current-password" />
+
+          <label class="keepme">
+            <input type="checkbox" id="remember" />
+            <span>Keep me signed in on this device<br />
+              <small>Stay signed in until you sign out. Don’t tick this on a shared computer.</small></span>
+          </label>
+
+          <button class="btn btn-block" type="submit" id="submitBtn">Sign In</button>
+          </fieldset>
+          <p class="auth-loading" id="authLoading" role="status"><span>Getting the sign-in ready…</span><span class="late">Still loading. Check the connection, or update this phone's browser.</span></p>
+          <div class="msg error" id="err" role="alert"></div>
+          <p class="forgot">Forgot your password? Ask the office: they set a temporary one in DCR Desktop 2.</p>
+          <p class="noacct" id="noAccount" hidden>No account? Reply to the reminder you got — the office will see your answer.</p>
+        </form>
+        <div id="installSlot" style="text-align:center;margin-top:14px"></div>
+      </div>
+    </div>
+  </body>
+</html>

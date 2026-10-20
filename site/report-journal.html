@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Daily Report</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      .rp-controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px; background:var(--surface);
+        border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10;}
+      .rp-btn{padding:8px 14px; font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;
+        border:1px solid var(--border); background:var(--surface); color:var(--text); text-decoration:none;}
+      .rp-btn:hover{background:var(--surface-2);}
+      .rp-btn-primary{background:#2f80d8; border-color:#2f80d8; color:#fff;}
+      .rp-date{padding:7px 10px; font-size:13px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); color-scheme:light dark; width:auto;}
+      .rp-lbl{font-size:12.5px; color:var(--text-muted); margin:0;}
+      .rp-badge{font-size:10.5px; font-weight:800; letter-spacing:.04em; padding:2px 8px; border-radius:9px; background:#0f766e; color:#fff;}
+      .rp-loading{text-align:center; color:var(--text-muted); padding:60px 0;}
+      .rp-note{font-size:12px; color:var(--text-muted); padding:8px 16px; line-height:1.5; background:var(--surface-2); border-bottom:1px solid var(--border);}
+      .sheet{max-width:8.5in; margin:18px auto; background:#fff; color:#111; padding:0.55in 0.6in; box-shadow:0 3px 20px rgba(0,0,0,.25);
+        font-family:Arial,Helvetica,sans-serif; font-size:11.5px; line-height:1.45; min-width:8.5in; box-sizing:border-box;}
+      .dr-top{display:flex; align-items:flex-start; gap:16px; border-bottom:3px solid #111; padding-bottom:12px; margin-bottom:14px;}
+      .dr-topl{flex:1; min-width:0;}
+      .dr-h1{font-size:22px; font-weight:700; margin:0 0 8px;}
+      .dr-meta{font-size:12.5px; line-height:1.6;}
+      .dr-logo{flex-shrink:0; display:flex; align-items:center; gap:11px;}
+      .dr-logo img{width:78px; height:auto;}
+      .dr-co{font-size:8.5px; color:#444; line-height:1.5; text-align:right;}
+      .dr-day{margin:0 0 6px; padding:5px 9px; background:#000; color:#fff; font-size:13px; font-weight:700;}
+      .dr-sum{display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 14px;}
+      .dr-sum div{flex:1 1 120px; border:1px solid #ccc; border-radius:6px; padding:6px 10px;}
+      .dr-sum span{display:block; font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:#666;}
+      .dr-sum b{font-size:14px;}
+      .dr-e{border:1px solid #d6d6d6; border-radius:7px; padding:10px 12px; margin-bottom:10px; break-inside:avoid;}
+      .dr-e-top{display:flex; align-items:baseline; gap:8px; margin-bottom:4px;}
+      .dr-cat{font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:2px 7px; border-radius:9px; background:#eee; color:#222;}
+      .dr-flag{background:#fde9c8; color:#7a4a00;}
+      .dr-who{margin-left:auto; font-size:10.5px; color:#666;}
+      .dr-h{font-size:13.5px; font-weight:700; margin-bottom:3px;}
+      .dr-body{white-space:pre-wrap; line-height:1.55;}
+      .dr-facts{margin-top:5px; font-size:10.5px; color:#555;}
+      .dr-pics{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;}
+      .dr-pic{width:150px; margin:0;}
+      .dr-pic img, .dr-noimg{width:150px; height:112px; object-fit:cover; border-radius:5px; border:1px solid #ccc; display:block; background:#f0f0f0;}
+      .dr-noimg{display:flex; align-items:center; justify-content:center; font-size:10px; color:#777;}
+      .dr-pic figcaption{font-size:9.5px; color:#555; line-height:1.35; margin-top:2px; word-break:break-word;}
+      .dr-none{padding:22px 4px; text-align:center; color:#777; font-style:italic;}
+      .foot{display:flex; justify-content:space-between; margin-top:20px; padding-top:6px; border-top:1px solid #bbb; font-size:10px; color:#555;}
+      @media (max-width:900px){ .sheet{min-width:0; padding:0.3in;} }
+      @media print{
+        .rp-controls,.rp-note,.topbar{display:none !important;}
+        body{background:#fff !important;}
+        .sheet{box-shadow:none; margin:0; max-width:none; min-width:0; padding:0;}
+        *{-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;}
+        @page{margin:0.5in 0.5in 0.55in;}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="rp-controls">
+      <a class="rp-btn" id="rpBack" href="board.html">← Back</a>
+      <span class="rp-badge">Portal 2</span>
+      <label class="rp-lbl" for="rpDay">Day</label>
+      <input type="date" class="rp-date" id="rpDay" />
+      <label class="rp-lbl" for="rpTo">to</label>
+      <input type="date" class="rp-date" id="rpTo" />
+      <button class="rp-btn" id="rpApply" type="button">Show</button>
+      <button class="rp-btn rp-btn-primary" id="rpPrint" type="button" style="margin-left:auto">🖨 Save as PDF</button>
+      <button class="rp-btn" id="rpMail" type="button">✉ Email this report</button>
+    </div>
+    <div class="rp-note"><b>To send this:</b> press <b>Save as PDF</b> (choose “Save as PDF” as the printer), then press
+      <b>Email this report</b> — your mail app opens with the message written, and you attach the PDF you just saved.
+      The portal does not send mail on its own.</div>
+
+    <div id="rpSheet" class="sheet"><div class="rp-loading">Loading the day…</div></div>
+
+    <script type="module" src="js/pages/report-journal.js"></script>
+  </body>
+</html>

@@ -1,0 +1,351 @@
+/* DCR Portal 2 — DEMO MODE ONLY: made-up data for the in-memory database.
+
+   Everything here is invented: people (@demo.test), clients (@example.com, 555-01xx phone numbers),
+   streets and towns. No real client, name, address, amount or password. Project numbers follow the
+   real pattern (A000…A296 imported from the old portal with legacy ids, suffixed numbers such as
+   A024-B … A024-G, A056-AB, A000T1 and A004-B, then A300… made in DCR Desktop 2), and A267 is the
+   sandbox project, as in both systems.
+
+   Deterministic for a given company day: the same ids every time the page loads, so the demo's
+   change log (kept in the browser) applies cleanly on top. Dates are spread back from today so the
+   Log History windows (today, morning, afternoon, yesterday, this week …) always have something. */
+(function (root) {
+  "use strict";
+  const NS = (root.DCR2Fake = root.DCR2Fake || {});
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const UID = (n) => "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
+
+  /** The demo accounts. Any password works except "wrong" (to see the refusal). */
+  const PEOPLE = [
+    { key: "admin", id: UID(1), full_name: "Avery Admin", email: "admin@demo.test", role: "admin", color: "#c8371f", phone: "(805) 555-0101" },
+    { key: "manager", id: UID(2), full_name: "Morgan Manager", email: "manager@demo.test", role: "manager", color: "#2f80d8", phone: "(805) 555-0102" },
+    { key: "manager_prices", id: UID(3), full_name: "Quinn Manager", email: "manager2@demo.test", role: "manager", color: "#7b5cd6", phone: "(805) 555-0103", can_see_prices: true },
+    { key: "accountant", id: UID(4), full_name: "Casey Accounts", email: "accountant@demo.test", role: "accountant", color: "#b8860b", phone: "(805) 555-0104" },
+    { key: "lead", id: UID(5), full_name: "Riley Lead", email: "lead@demo.test", role: "lead", color: "#1f9d55", phone: "(805) 555-0105" },
+    { key: "field", id: UID(6), full_name: "Jordan Field", email: "field@demo.test", role: "field", color: "#0f8b7d", phone: "(805) 555-0106" },
+    { key: "viewer", id: UID(7), full_name: "Taylor Viewer", email: "viewer@demo.test", role: "viewer", color: "#6b7a8c", phone: null },
+    { key: "agents", id: UID(8), full_name: "", email: "agents@demo.test", role: "agents", color: "#444444", phone: null },
+    { key: "inactive", id: UID(9), full_name: "Sam Former", email: "inactive@demo.test", role: "field", color: "#999999", phone: null, active: false },
+    { key: "newhire", id: UID(10), full_name: "Pat Newhire", email: "newhire@demo.test", role: "field", color: "#d4652f", phone: "(805) 555-0110", must_change_password: true },
+  ];
+  const DEFAULTS = {   // Q1: managers do not see prices unless switched on per person
+    admin: [true, true, true], manager: [false, false, false], accountant: [true, true, false],
+    lead: [false, false, false], field: [false, false, false], viewer: [false, false, false], agents: [false, false, false],
+  };
+
+  const SURNAMES = ["Oakfield", "Brightwater", "Stonebrook", "Fernhill", "Ashgrove", "Kestrel", "Wilder", "Marlow", "Hollis",
+    "Larkspur", "Quillon", "Thornbury", "Redcliff", "Silverton", "Pinecrest", "Ravensworth", "Elmstead", "Sagebrook", "Westerly",
+    "Coldwater", "Amberly", "Birchwood", "Calloway", "Dunmore", "Everly", "Foxglove", "Greystone", "Harrowgate", "Ironwood",
+    "Juniperhill", "Kingsley", "Lockridge", "Meadowlark", "Northcote", "Orchardson", "Primrose", "Quarryman", "Rosewell"];
+  const FIRST = ["Alex", "Blair", "Cameron", "Devon", "Emery", "Finley", "Harper", "Jamie", "Kendall", "Logan", "Marley",
+    "Noel", "Parker", "Reese", "Rowan", "Skyler", "Sydney", "Teagan", "Toby", "Wren"];
+  const KINDS = ["Residence", "Remodel", "ADU", "Addition", "Barn", "Garage", "Deck", "Kitchen", "Roof", "Shop", "Studio",
+    "Cabin", "Porch", "Second Story", "Tenant Improvement", "Pergola", "Carport"];
+  const STREETS = ["Juniper", "Oak Hollow", "Sycamore", "Cedar Ridge", "Manzanita", "Vista", "Ranchita", "Laurel", "Madrone",
+    "Chaparral", "Coyote", "Alder", "Hillcrest", "Mesa", "Willow Creek", "Quail Run", "Sunset", "Granite"];
+  const SUFFIX = ["Ln", "Rd", "Ave", "Way", "Ct", "Dr"];
+  const TOWNS = [
+    ["Pine Hollow", 35.49, -120.67], ["Cedar Flats", 35.56, -120.71], ["Oak Vista", 35.63, -120.69], ["Mesa Verde", 35.28, -120.66],
+    ["Coyote Springs", 35.36, -120.85], ["Laurel Bay", 35.37, -120.84], ["Sage Valley", 35.45, -120.60], ["Willow Creek", 35.12, -120.58],
+    ["Juniper Hills", 35.73, -120.75], ["Rocky Point", 35.22, -120.63],
+  ];
+  const OLD_AUTHORS = ["Lee Office", "Ana Crew", "Max Estimator", "Office"];
+  const NOTE_LINES = [
+    "Called the client, walk-through set for next week.", "Plans received, takeoff started.", "Lumber package ordered.",
+    "Inspection passed for framing.", "Waiting on the engineer's revision.", "Client asked about adding a covered porch.",
+    "Crew on site, walls going up.", "Trusses delivered, set tomorrow.", "Hold-downs ordered ($1,240 at the yard).",
+    "Change order discussed: extra window on the north wall.", "Roof sheathing done, ready for nailing inspection.",
+    "Punch list sent to the GC.", "Final walk-through done, client happy.", "Rain day, no work on site.",
+    "Quoted $8,900 for the deck framing.", "Permit pulled.", "Shear wall nailing corrected per inspector.",
+  ];
+  const JOURNAL = [
+    ["progress", "Walls framed", "First-floor walls framed and braced. Top plates nailed off."],
+    ["delivery", "Lumber drop", "Second lumber drop arrived; stacked on the north side."],
+    ["inspection", "Framing inspection", "Inspector signed off on the framing. Two notes on blocking, fixed same day."],
+    ["weather", "Rain", "Rain from 10am; covered the deck and sent the crew home at noon."],
+    ["issue", "Wrong beam size", "The delivered beam is a 4x10, plans call for 4x12. Supplier is swapping it."],
+    ["safety", "Toolbox talk", "Ladder safety reviewed with the crew."],
+    ["visitor", "Client visit", "Client walked the site with the designer."],
+    ["change_order", "Extra window", "Client asked for an extra window on the north wall; waiting for the office."],
+    ["delay", "Waiting on trusses", "Truss delivery pushed two days."],
+    ["progress", "Roof sheathing", "Roof sheathed; ready for nailing inspection."],
+  ];
+
+  function seed(options) {
+    const o = options || {};
+    const now = o.now ? new Date(o.now) : new Date();
+    const companyDay = NS.companyDay || ((d) => d.toISOString().slice(0, 10));
+    const today = companyDay(now);
+    const dayNum = Number(today.replace(/-/g, ""));
+    const rnd = mulberry32(o.seed || dayNum);
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+    const between = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+    const iso = (d) => new Date(d).toISOString();
+    const minutesAgo = (m) => iso(now.getTime() - m * 60000);
+    const daysAgo = (d, hour) => {
+      const base = new Date(now.getTime() - d * 86400000);
+      base.setUTCHours(15 + (hour === undefined ? between(0, 8) : hour), between(0, 59), between(0, 59), 0);
+      return base.getTime() > now.getTime() ? iso(now.getTime() - between(5, 300) * 60000) : iso(base);
+    };
+    const dayOf = (ts) => companyDay(new Date(ts));
+    // minutes since midnight, company time: "today" rows stay inside today
+    const sinceMidnight = (() => {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "2-digit", minute: "2-digit",
+        hourCycle: "h23" }).formatToParts(now);
+      const get = (k) => Number((parts.find((x) => x.type === k) || {}).value || 0);
+      return (get("hour") % 24) * 60 + get("minute");
+    })();
+    const todayAgo = () => minutesAgo(between(1, Math.max(2, sinceMidnight - 1)));
+    const hex = (n) => {
+      let s = "";
+      for (let i = 0; i < n; i++) s += Math.floor(rnd() * 16).toString(16);
+      return s;
+    };
+
+    const audit = (created_at, created_by) => ({ created_at, created_by: created_by || null, updated_at: created_at, updated_by: null, version: 1 });
+    const out = { profiles: [], settings: [], settings_prices: [], contacts: [], projects: [], project_prices: [], activity: [],
+      journal_entries: [], files: [], tasks: [], task_notes: [], deletions: [], objects: {} };
+    const ids = { contacts: 0, projects: 0, activity: 0, journal_entries: 0, files: 0, tasks: 0, task_notes: 0 };
+    const nid = (t) => ++ids[t];
+    const P = {};
+    for (const p of PEOPLE) {
+      const d = DEFAULTS[p.role];
+      P[p.key] = p.id;
+      out.profiles.push(Object.assign({
+        id: p.id, full_name: p.full_name, email: p.email, phone: p.phone, role: p.role, color: p.color,
+        can_see_prices: p.can_see_prices !== undefined ? p.can_see_prices : d[0], can_see_financials: d[1], can_approve_payments: d[2],
+        active: p.active !== false, must_change_password: !!p.must_change_password,
+      }, audit(iso(now.getTime() - 400 * 86400000), PEOPLE[0].id)));
+    }
+    const staff = [P.admin, P.manager, P.manager_prices, P.lead, P.field, P.accountant];
+
+    out.settings.push(Object.assign({ id: 1, company_name: "DCR Framing LLC", address: null, phone: null, email: null, license: null,
+      tax_rate: 8, next_project_number: 306, invoice_terms: null, agents_checks_enabled: false }, audit(iso(now.getTime() - 400 * 86400000))));
+    out.settings_prices.push(Object.assign({ id: 1, default_labor_rate: 110, local_labor_rate: 90, out_of_area_labor_rate: 110 },
+      audit(iso(now.getTime() - 400 * 86400000))));
+
+    // contacts: clients and a few subcontractors and suppliers
+    for (let i = 0; i < 48; i++) {
+      const first = pick(FIRST), last = SURNAMES[i % SURNAMES.length];
+      const kind = i < 36 ? "client" : i < 43 ? "subcontractor" : "supplier";
+      out.contacts.push(Object.assign({
+        id: nid("contacts"), name: first + " " + last, company: kind === "client" ? null : last + (kind === "supplier" ? " Lumber Supply" : " Concrete"),
+        kind, trade: kind === "subcontractor" ? pick(["Concrete", "Electrical", "Plumbing", "Roofing"]) : null,
+        phone: "(805) 555-01" + String(10 + (i % 90)).padStart(2, "0"), email: (first + "." + last).toLowerCase() + "@example.com",
+        address: between(100, 9800) + " " + pick(STREETS) + " " + pick(SUFFIX), city: pick(TOWNS)[0], notes: null, deleted_at: null,
+      }, audit(iso(now.getTime() - between(200, 700) * 86400000), P.admin)));
+    }
+
+    // projects
+    const numbers = [];
+    for (let i = 0; i <= 296; i++) numbers.push({ n: "A" + String(i).padStart(3, "0"), legacy: true, i });
+    ["B", "C", "D", "E", "F", "G"].forEach((s) => numbers.push({ n: "A024-" + s, legacy: true, i: 24 }));
+    numbers.push({ n: "A056-AB", legacy: true, i: 56 }, { n: "A000T1", legacy: true, i: 0 }, { n: "A004-B", legacy: true, i: 4 });
+    for (let i = 300; i <= 305; i++) numbers.push({ n: "A" + i, legacy: false, i });
+    let legacyId = 1000, logLegacy = 50000;
+
+    const statusFor = (x) => {
+      if (!x.legacy) return ["new_request", "estimating", "sent", "approved", "in_progress", "in_progress"][x.i - 300];
+      if (x.n === "A267") return "in_progress";
+      const r = rnd();
+      if (x.i < 200) return r < 0.68 ? "completed" : r < 0.88 ? "closed" : r < 0.94 ? "on_hold" : "follow_up";
+      return r < 0.1 ? "new_request" : r < 0.25 ? "estimating" : r < 0.4 ? "sent" : r < 0.55 ? "approved" : r < 0.8 ? "in_progress"
+        : r < 0.85 ? "on_hold" : r < 0.9 ? "follow_up" : "completed";
+    };
+
+    for (const x of numbers) {
+      const id = nid("projects");
+      const town = pick(TOWNS);
+      const sandbox = x.n === "A267";
+      const contact = out.contacts[between(0, 35)];
+      const name = sandbox ? "Sandbox — test project" : contact.name.split(" ")[1] + " " + pick(KINDS);
+      const address = sandbox ? "1 Test Way" : between(100, 9800) + " " + pick(STREETS) + " " + pick(SUFFIX);
+      const city = sandbox ? "Sandbox" : town[0];
+      const status = statusFor(x);
+      const ageDays = x.legacy ? Math.max(1, Math.round((300 - x.i) * 2.3) + between(0, 20)) : 30 - (x.i - 300) * 4;
+      const created = iso(now.getTime() - ageDays * 86400000);
+      const hasPin = sandbox || (x.legacy ? rnd() < 0.42 : rnd() < 0.5);
+      const gps = hasPin && rnd() < 0.25;
+      const p = Object.assign({
+        id, number: x.n, name, address, city, state: "CA", zip: "934" + between(10, 99),
+        client_contact_id: sandbox ? null : contact.id, client_name: sandbox ? "Sandbox client" : contact.name,
+        client_phone: sandbox ? null : contact.phone, client_email: sandbox ? null : contact.email,
+        status, status_note: rnd() < 0.2 ? pick(["Waiting on plans", "Client reviewing the estimate", "Crew starts Monday", "Quoted $12,400 to the client"]) : null,
+        scope: pick(["Framing", "Framing and sheathing", "Framing, sheathing and roof", "Deck framing", "Remodel framing"]),
+        tags: rnd() < 0.3 ? [pick(["residential", "commercial", "repeat client", "rush"])] : [],
+        plans_url: null, start_date: ["in_progress", "completed", "closed"].includes(status) ? dayOf(now.getTime() - (ageDays - 5) * 86400000) : null,
+        completed_date: status === "completed" || status === "closed" ? dayOf(now.getTime() - Math.max(0, ageDays - 40) * 86400000) : null,
+        lat: hasPin ? +(town[1] + (rnd() - 0.5) * 0.06).toFixed(6) : null,
+        lng: hasPin ? +(town[2] + (rnd() - 0.5) * 0.06).toFixed(6) : null,
+        location_source: hasPin ? (gps ? "gps" : "geocode") : null,
+        thumbnail_file_id: null,
+        folder_name: (x.n + " - " + address + " - " + city + " - " + name).replace(/[\\/:*?"<>|—]/g, "-").slice(0, 120),
+        legacy_sp_id: x.legacy ? ++legacyId : null, deleted_at: null,
+      }, audit(created, x.legacy ? null : pick([P.admin, P.manager])));
+      if (!x.legacy && x.i === 305) p.lat = p.lng = p.location_source = null;
+      out.projects.push(p);
+      out.project_prices.push(Object.assign({ project_id: id, labor_rate: ["Pine Hollow", "Cedar Flats", "Oak Vista", "Sage Valley", "Sandbox"].includes(city) ? 90 : 110,
+        rate_source: ["Pine Hollow", "Cedar Flats", "Oak Vista", "Sage Valley", "Sandbox"].includes(city) ? "local" : "out_of_area" }, audit(created)));
+
+      // the activity of the project
+      const act = (ts, kind, text, by, extra) => out.activity.push(Object.assign({ id: nid("activity"), project_id: id, kind, text,
+        from_status: null, to_status: null, author_name: null, legacy_sp_id: null }, audit(ts, by), extra || {}));
+      if (x.legacy) {
+        const author = pick(OLD_AUTHORS);
+        let notes = "Client: " + p.client_name + ". Scope: " + p.scope + ".";
+        if (x.i % 41 === 7) notes += "\n\n" + Array.from({ length: 140 }, () => pick(NOTE_LINES)).join(" ");   // long imported notes fold with "more"
+        act(created, "note", "Notes from the old portal\n" + notes, null, { author_name: author, legacy_sp_id: ++logLegacy });
+        const lines = between(1, 7);
+        for (let k = 0; k < lines; k++) {
+          act(iso(Date.parse(created) + (k + 1) * between(1, 9) * 86400000), "note", pick(NOTE_LINES), null,
+            { author_name: pick(OLD_AUTHORS), legacy_sp_id: ++logLegacy });
+        }
+      } else {
+        act(created, "system", "Project " + x.n + " created", p.created_by);
+      }
+    }
+
+    const byNumber = (n) => out.projects.find((p) => p.number === n);
+    const sandbox = byNumber("A267");
+    const busy = out.projects.filter((p) => ["in_progress", "approved", "estimating", "sent"].includes(p.status) && p.id !== sandbox.id);
+    const recentProjects = [sandbox].concat(busy.slice(-14));
+
+    // recent activity across projects (today, yesterday, this week, last week, this month)
+    const statusSteps = ["estimating", "sent", "approved", "in_progress"];
+    const label = (s) => s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const plan = [[0, 14], [1, 8], [2, 6], [3, 5], [5, 6], [8, 8], [12, 8], [20, 10]];
+    for (const [d, n] of plan) {
+      for (let k = 0; k < n; k++) {
+        const p = recentProjects[(k + d) % recentProjects.length];
+        const ts = d === 0 ? todayAgo() : daysAgo(d);
+        if (k % 4 === 3) {
+          const from = statusSteps[k % 3], to = statusSteps[(k % 3) + 1];
+          out.activity.push(Object.assign({ id: nid("activity"), project_id: p.id, kind: "status",
+            text: "Status: " + label(from) + " → " + label(to), from_status: from, to_status: to, author_name: null, legacy_sp_id: null },
+          audit(ts, pick([P.admin, P.manager]))));
+        } else {
+          out.activity.push(Object.assign({ id: nid("activity"), project_id: p.id, kind: "note", text: pick(NOTE_LINES),
+            from_status: null, to_status: null, author_name: null, legacy_sp_id: null }, audit(ts, pick([P.admin, P.manager, P.lead, P.accountant]))));
+        }
+      }
+    }
+    // this morning and this afternoon (company time) so both windows always show something
+    out.activity.push(Object.assign({ id: nid("activity"), project_id: sandbox.id, kind: "note", text: "Morning check-in on the sandbox project.",
+      from_status: null, to_status: null, author_name: null, legacy_sp_id: null }, audit(minutesAgo(2), P.lead)));
+
+    // journal entries
+    const jProjects = [sandbox].concat(busy.slice(-10));
+    jProjects.forEach((p, pi) => {
+      const n = p === sandbox ? 8 : between(2, 5);
+      for (let k = 0; k < n; k++) {
+        const [category, title, body] = JOURNAL[(pi + k) % JOURNAL.length];
+        const d = k * between(1, 3);
+        const ts = d === 0 ? todayAgo() : daysAgo(d);
+        const by = pick([P.lead, P.field, P.manager]);
+        const j = Object.assign({ id: nid("journal_entries"), project_id: p.id, entry_date: dayOf(ts), category, title, body,
+          weather: pick(["Sunny", "Overcast", "Windy", "Rain", null]), crew_size: between(2, 6), hours: between(4, 9),
+          follow_up: category === "issue" || category === "change_order", deleted_at: null }, audit(ts, by));
+        out.journal_entries.push(j);
+        out.activity.push(Object.assign({ id: nid("activity"), project_id: p.id, kind: "system", text: "Journal entry: " + title,
+          from_status: null, to_status: null, author_name: null, legacy_sp_id: null }, audit(ts, by)));
+        if (k < 2) {
+          for (let m = 0; m < 2; m++) addFile(p, "journal", dayOf(ts), "IMG " + dayOf(ts) + " 0" + (8 + m) + ".1" + m + ".2" + k + ".jpg",
+            "image/jpeg", by, ts, { journal_entry_id: j.id, description: m === 0 ? "Before" : "After", preview: true });
+        }
+      }
+    });
+
+    function addFile(p, folder, subpath, name, mime, by, ts, extra) {
+      const e = extra || {};
+      const uid = hex(32);
+      const local = e.local;
+      const slug = name.normalize("NFKD").replace(/[^\x00-\x7f]/g, "").replace(/[^A-Za-z0-9._ ()-]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "") || "file";
+      const key = local ? null : (folder === "receipts" ? "f/" : "p/") + p.id + "/" + folder + "/" + uid + "/" + slug;
+      const f = Object.assign({
+        id: nid("files"), project_id: p.id, estimate_item_id: null, journal_entry_id: e.journal_entry_id || null, bill_id: null,
+        folder, subpath: subpath || "", name, storage_path: key, size: e.size || between(800000, 4800000), mime,
+        version_no: e.version_no || 1, previous_id: e.previous_id || null, is_financial: folder === "receipts",
+        storage: local ? "local" : "cloud", rel_path: local ? p.folder_name + "/" + (subpath ? subpath + "/" : "") + name : null,
+        modified_at: local ? ts : null, description: e.description || null,
+        preview_path: e.preview && key ? key.slice(0, key.lastIndexOf("/")) + "/preview-320.jpg" : null,
+        source: local ? "desktop" : e.source || "portal2", deleted_at: null,
+      }, audit(ts, by));
+      out.files.push(f);
+      if (key) out.objects[key] = { size: f.size, mime, owner: by, created_at: ts };
+      if (f.preview_path) out.objects[f.preview_path] = { size: 24000, mime: "image/jpeg", owner: by, created_at: ts };
+      return f;
+    }
+
+    // project pictures for about two projects in three
+    out.projects.forEach((p, i) => {
+      if (i % 3 === 2) return;
+      const f = addFile(p, "thumbnail", "", "Project picture.jpg", "image/jpeg", P.admin, p.created_at, { size: between(60000, 180000), source: "import" });
+      p.thumbnail_file_id = f.id;
+    });
+
+    // site photos (cloud, uploaded from phones) and plans and documents on the office PCs (local)
+    recentProjects.forEach((p, pi) => {
+      const days = p === sandbox ? 4 : between(1, 3);
+      for (let d = 0; d < days; d++) {
+        const ts = d === 0 ? todayAgo() : daysAgo(d * between(2, 6));
+        const day = dayOf(ts);
+        const n = between(2, 6);
+        for (let k = 1; k <= n; k++) {
+          addFile(p, "photos", day, "IMG " + day + " 1" + (pi % 10) + "." + String(10 + k).slice(-2) + ".0" + k + (k > 1 ? "-" + k : "") + ".jpg",
+            "image/jpeg", pick([P.lead, P.field]), ts, { preview: true, description: k === 1 && d === 0 ? "North wall before sheathing" : null });
+        }
+        if (d === 0 && pi % 3 === 0) addFile(p, "photos", day, "VID " + day + " 11.02.33.mov", "video/quicktime", P.field, ts, { size: 38000000 });
+      }
+      addFile(p, "documents", "Site Notes", "Voice note " + dayOf(now) + " 07.45.10.webm", "audio/webm", P.lead, minutesAgo(90 + pi), { size: 240000 });
+      const v1 = addFile(p, "plans", "Floor Plans", "A1 - Floor plan.pdf", "application/pdf", P.manager, daysAgo(30), { local: true, size: 2400000 });
+      v1.deleted_at = null;
+      if (p === sandbox) {
+        const v2 = addFile(p, "plans", "Floor Plans", "A1 - Floor plan.pdf", "application/pdf", P.manager, daysAgo(4),
+          { local: true, size: 2500000, version_no: 2, previous_id: v1.id });
+        v2.rel_path = v1.rel_path;
+      }
+      addFile(p, "documents", "", "Contract signed.pdf", "application/pdf", P.manager, daysAgo(25), { local: true, size: 300000 });
+      addFile(p, "estimates", "", "Estimate 1.pdf", "application/pdf", P.manager, daysAgo(20), { size: 180000, source: "desktop" });
+      if (pi % 2 === 0) addFile(p, "receipts", "", "Receipt lumber yard.jpg", "image/jpeg", P.accountant, daysAgo(10), { size: 900000, source: "desktop" });
+    });
+    // a deleted photo (only an admin sees it)
+    const gone = addFile(sandbox, "photos", dayOf(daysAgo(6)), "IMG deleted by mistake.jpg", "image/jpeg", P.field, daysAgo(6));
+    gone.deleted_at = daysAgo(5);
+    out.deletions.push({ id: 1, table_name: "files", row_id: gone.id, project_id: sandbox.id, deleted_at: gone.deleted_at, deleted_by: P.field });
+
+    // a few uploads in the last hour on the sandbox, with their "Files uploaded to" lines
+    out.activity.push(Object.assign({ id: nid("activity"), project_id: sandbox.id, kind: "system", text: "Files uploaded to " + today,
+      from_status: null, to_status: null, author_name: null, legacy_sp_id: null }, audit(minutesAgo(41), P.field)));
+
+    // tasks
+    const taskTitles = ["Photograph the shear walls before drywall", "Order hold-downs", "Confirm truss delivery", "Send the punch list",
+      "Measure the deck ledger", "Check the beam size with the supplier", "Pick up the permit card", "Schedule the framing inspection"];
+    for (let i = 0; i < 26; i++) {
+      const p = recentProjects[i % recentProjects.length];
+      const assigned = [P.field, P.lead, P.manager, P.newhire, null][i % 5];
+      const done = i % 6 === 5;
+      const ts = daysAgo(between(1, 20));
+      out.tasks.push(Object.assign({ id: nid("tasks"), project_id: p.id, estimate_item_id: null, title: taskTitles[i % taskTitles.length],
+        description: i % 3 === 0 ? "Before Friday." : null, category: pick(["photo", "site", "office"]), priority: pick(["low", "normal", "normal", "high"]),
+        assigned_to: assigned, due_date: dayOf(now.getTime() + between(-3, 10) * 86400000), status: done ? "done" : "open",
+        completed_at: done ? ts : null, completed_by: done ? assigned : null }, audit(ts, i % 4 === 0 ? P.lead : P.manager)));
+    }
+
+    out.activity.sort((a, b) => a.id - b.id);
+    return out;
+  }
+
+  NS.seed = seed;
+  NS.TOWNS = TOWNS.map((t) => ({ name: t[0], lat: t[1], lng: t[2] }));
+  NS.PEOPLE = PEOPLE.map((p) => ({ key: p.key, id: p.id, email: p.email, name: p.full_name || "DCR Agents PC", role: p.role,
+    note: p.active === false ? "deactivated" : p.must_change_password ? "temporary password" : p.can_see_prices ? "prices switched on" : "" }));
+})(typeof globalThis !== "undefined" ? globalThis : this);

@@ -1,0 +1,19 @@
+{
+  "name": "dcr-portal2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DCR Employee Portal 2: a static website over the DCR Desktop 2 database (Supabase). site/ is published; tests/ and tools/ are for development only.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "dev": "node tools/devserve.mjs",
+    "guard": "node --test tests/core-site-guard.test.mjs",
+    "pages": "node tools/check-pages.mjs",
+    "e2e": "node tools/e2e-demo.mjs",
+    "schema": "node tools/schema-check.mjs"
+  }
+}

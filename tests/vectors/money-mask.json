@@ -1,0 +1,205 @@
+{
+ "source": "dcrdesk/domain/money.py mask_amounts (DCR Desktop 2 v2.13.0)",
+ "cases": [
+  {
+   "in": "quoted $8,900 and $12.50/ft",
+   "out": "quoted (amount hidden) and (amount hidden)/ft"
+  },
+  {
+   "in": "hold-downs ($1,240 at Simpson)",
+   "out": "hold-downs (amount hidden at Simpson)"
+  },
+  {
+   "in": "($300)",
+   "out": "(amount hidden)"
+  },
+  {
+   "in": "US$5, -$40 and $12k",
+   "out": "(amount hidden), (amount hidden) and (amount hidden)"
+  },
+  {
+   "in": "Framer quoted $8,900",
+   "out": "Framer quoted (amount hidden)"
+  },
+  {
+   "in": "Quoted $1,250.00 and $90",
+   "out": "Quoted (amount hidden) and (amount hidden)"
+  },
+  {
+   "in": "Pay $1,250.50 deposit",
+   "out": "Pay (amount hidden) deposit"
+  },
+  {
+   "in": "Receipt $1,234.50 lumber",
+   "out": "Receipt (amount hidden) lumber"
+  },
+  {
+   "in": "Quote $2,400.pdf",
+   "out": "Quote (amount hidden).pdf"
+  },
+  {
+   "in": "Walls ($1,200 allowance)",
+   "out": "Walls (amount hidden allowance)"
+  },
+  {
+   "in": "Ordered hold-downs ($1,240 at Simpson)",
+   "out": "Ordered hold-downs (amount hidden at Simpson)"
+  },
+  {
+   "in": "Quoted $1,250 to the client",
+   "out": "Quoted (amount hidden) to the client"
+  },
+  {
+   "in": "Collect $500 deposit",
+   "out": "Collect (amount hidden) deposit"
+  },
+  {
+   "in": "Client OK'd the $1,800 extra",
+   "out": "Client OK'd the (amount hidden) extra"
+  },
+  {
+   "in": "no money here",
+   "out": "no money here"
+  },
+  {
+   "in": "",
+   "out": ""
+  },
+  {
+   "in": "$ 45.50 and $1.5M budget",
+   "out": "(amount hidden) and (amount hidden) budget"
+  },
+  {
+   "in": "price$5",
+   "out": "price$5"
+  },
+  {
+   "in": "A$5 and CAD$10 and ABCD$7",
+   "out": "(amount hidden) and (amount hidden) and ABCD$7"
+  },
+  {
+   "in": "$12 k and $3m",
+   "out": "(amount hidden) and (amount hidden)"
+  },
+  {
+   "in": "$1,2345",
+   "out": "(amount hidden)5"
+  },
+  {
+   "in": "cost: $1,000,000.99!",
+   "out": "cost: (amount hidden)!"
+  },
+  {
+   "in": "$",
+   "out": "$"
+  },
+  {
+   "in": "5$",
+   "out": "5$"
+  },
+  {
+   "in": "-$300 credit",
+   "out": "(amount hidden) credit"
+  },
+  {
+   "in": "$12kg of nails",
+   "out": "(amount hidden)kg of nails"
+  },
+  {
+   "in": "($12)",
+   "out": "(amount hidden)"
+  },
+  {
+   "in": "(about $12)",
+   "out": "(about amount hidden)"
+  },
+  {
+   "in": "caf\u00e9$5",
+   "out": "caf\u00e9$5"
+  },
+  {
+   "in": "\u00e9$5 and \u00c9$6",
+   "out": "\u00e9$5 and \u00c9$6"
+  },
+  {
+   "in": "$\u0661\u0662\u0663",
+   "out": "(amount hidden)"
+  },
+  {
+   "in": "Line one $10\nLine two $20",
+   "out": "Line one (amount hidden)\nLine two (amount hidden)"
+  },
+  {
+   "in": "50% off $99",
+   "out": "50% off (amount hidden)"
+  },
+  {
+   "in": "$.50",
+   "out": "$.50"
+  },
+  {
+   "in": "$0.50",
+   "out": "(amount hidden)"
+  },
+  {
+   "in": "x$5",
+   "out": "x$5"
+  },
+  {
+   "in": "_$5",
+   "out": "_$5"
+  },
+  {
+   "in": "$5_000",
+   "out": "(amount hidden)_000"
+  },
+  {
+   "in": "$5,000k",
+   "out": "(amount hidden)"
+  },
+  {
+   "in": "Paid $1,250,000 total",
+   "out": "Paid (amount hidden) total"
+  },
+  {
+   "in": "#$5",
+   "out": "#(amount hidden)"
+  },
+  {
+   "in": "$12k\u00e9",
+   "out": "(amount hidden)k\u00e9"
+  },
+  {
+   "in": "$12 \u00e9",
+   "out": "(amount hidden) \u00e9"
+  },
+  {
+   "in": "$\u00a012",
+   "out": "(amount hidden)"
+  },
+  {
+   "in": "tab$\t5",
+   "out": "tab$\t5"
+  },
+  {
+   "in": "$5.",
+   "out": "(amount hidden)."
+  },
+  {
+   "in": "$5.5.5",
+   "out": "(amount hidden).5"
+  },
+  {
+   "in": "($5",
+   "out": "(amount hidden"
+  },
+  {
+   "in": "$5)",
+   "out": "amount hidden)"
+  },
+  {
+   "in": "US $5",
+   "out": "US (amount hidden)"
+  }
+ ]
+}

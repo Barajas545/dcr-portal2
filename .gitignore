@@ -1,0 +1,16 @@
+# The repository is PUBLIC (GitHub Pages on a free plan). The design documents stay on this PC.
+docs/
+/docs
+
+# Local tooling and scratch
+node_modules/
+.claude/settings.local.json
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+
+# Screenshots and test output never go into the repository
+screens/
+*.png.tmp

@@ -1,0 +1,530 @@
+{
+ "source": "DCR Desktop 2 tools/pglite_check/project_location_cases.json (v2.14.0; migration 20261020000100_portal2_foundation.sql). Keep the two copies equal: tests/core-fake-engine.test.mjs compares them when Desktop 2 sits next to this repository.",
+ "comment": "set_project_location(project_id, lat, lng, accuracy_m, source) - migration 20261020000100_portal2_foundation.sql. Each case: a project whose point is 'start' (null = no point; otherwise the point's location_source, 'unknown' = a point from before Portal 2 with no source), the caller's role, the call [lat, lng, accuracy_m, source] and what it answers: {stored, reason, source} (source = the project's location_source afterwards) or {error: SQLSTATE}. A case with legacy = true starts from an untouched import from the old portal (legacy_sp_id set, still the import's version 1), which takes no gps / geocode point (reason old_portal). The same cases run in PGlite (tools/pglite_check/portal2_foundation.mjs) and against the fake backend (tests/test_portal2_foundation.py).",
+ "start_point": [
+  35.4894,
+  -120.6707
+ ],
+ "cases": [
+  {
+   "name": "field fills an empty point with a GPS fix",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5011,
+    -120.7022,
+    12,
+    "gps"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "a 250 m fix is no evidence",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    250,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "accuracy",
+    "source": null
+   }
+  },
+  {
+   "name": "a GPS fix without an accuracy",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    null,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "accuracy",
+    "source": null
+   }
+  },
+  {
+   "name": "accuracy 0 is no fix",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    0,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "accuracy",
+    "source": null
+   }
+  },
+  {
+   "name": "accuracy 100 m still counts",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    100,
+    "gps"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "even a manager's fix needs the accuracy",
+   "start": null,
+   "who": "manager",
+   "call": [
+    35.5,
+    -120.7,
+    150,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "accuracy",
+    "source": null
+   }
+  },
+  {
+   "name": "field fills an empty point from the address",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    null,
+    "geocode"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "geocode"
+   }
+  },
+  {
+   "name": "a lead fills an empty point from the address",
+   "start": null,
+   "who": "lead",
+   "call": [
+    35.5,
+    -120.7,
+    null,
+    "geocode"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "geocode"
+   }
+  },
+  {
+   "name": "an accountant places a project too (any active person but a viewer)",
+   "start": null,
+   "who": "accountant",
+   "call": [
+    35.5,
+    -120.7,
+    5,
+    "gps"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "a real fix upgrades a geocoded point",
+   "start": "geocode",
+   "who": "field",
+   "call": [
+    35.49,
+    -120.671,
+    30,
+    "gps"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "a real fix upgrades a point of unknown origin",
+   "start": "unknown",
+   "who": "field",
+   "call": [
+    35.49,
+    -120.671,
+    20,
+    "gps"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "a GPS point is never overwritten by field",
+   "start": "gps",
+   "who": "field",
+   "call": [
+    35.6,
+    -120.8,
+    5,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "exists",
+    "source": "gps"
+   }
+  },
+  {
+   "name": "nor by a geocode",
+   "start": "gps",
+   "who": "field",
+   "call": [
+    35.6,
+    -120.8,
+    null,
+    "geocode"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "exists",
+    "source": "gps"
+   }
+  },
+  {
+   "name": "a guess never replaces a guess",
+   "start": "geocode",
+   "who": "field",
+   "call": [
+    35.6,
+    -120.8,
+    null,
+    "geocode"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "exists",
+    "source": "geocode"
+   }
+  },
+  {
+   "name": "not even a manager's guess (background geocoding may run late)",
+   "start": "geocode",
+   "who": "manager",
+   "call": [
+    35.6,
+    -120.8,
+    null,
+    "geocode"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "exists",
+    "source": "geocode"
+   }
+  },
+  {
+   "name": "a manager's guess never replaces a manual point",
+   "start": "manual",
+   "who": "manager",
+   "call": [
+    35.6,
+    -120.8,
+    null,
+    "geocode"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "exists",
+    "source": "manual"
+   }
+  },
+  {
+   "name": "a manager's fix replaces a GPS point",
+   "start": "gps",
+   "who": "manager",
+   "call": [
+    35.5012,
+    -120.7023,
+    4,
+    "gps"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "a manager places a point by hand (no accuracy needed)",
+   "start": "gps",
+   "who": "manager",
+   "call": [
+    35.5013,
+    -120.7024,
+    null,
+    "manual"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "manual"
+   }
+  },
+  {
+   "name": "field never moves a manual point",
+   "start": "manual",
+   "who": "field",
+   "call": [
+    35.6,
+    -120.8,
+    5,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "exists",
+    "source": "manual"
+   }
+  },
+  {
+   "name": "an admin's fix replaces a manual point",
+   "start": "manual",
+   "who": "admin",
+   "call": [
+    35.6,
+    -120.8,
+    5,
+    "gps"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "the source in any case, trimmed",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    5,
+    " GPS "
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "gps"
+   }
+  },
+  {
+   "name": "only a manager or an admin places a point by hand",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    null,
+    "manual"
+   ],
+   "want": {
+    "error": "42501"
+   }
+  },
+  {
+   "name": "a view-only account places nothing",
+   "start": null,
+   "who": "viewer",
+   "call": [
+    35.5,
+    -120.7,
+    5,
+    "gps"
+   ],
+   "want": {
+    "error": "42501"
+   }
+  },
+  {
+   "name": "latitude out of range",
+   "start": null,
+   "who": "field",
+   "call": [
+    91,
+    -120.7,
+    5,
+    "gps"
+   ],
+   "want": {
+    "error": "22023"
+   }
+  },
+  {
+   "name": "longitude out of range",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -180.5,
+    5,
+    "gps"
+   ],
+   "want": {
+    "error": "22023"
+   }
+  },
+  {
+   "name": "no latitude",
+   "start": null,
+   "who": "field",
+   "call": [
+    null,
+    -120.7,
+    5,
+    "gps"
+   ],
+   "want": {
+    "error": "22023"
+   }
+  },
+  {
+   "name": "an unknown source",
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5,
+    -120.7,
+    5,
+    "wifi"
+   ],
+   "want": {
+    "error": "22023"
+   }
+  },
+  {
+   "name": "an untouched import takes no GPS fix (it would stop being untouched)",
+   "legacy": true,
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5011,
+    -120.7022,
+    12,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "old_portal",
+    "source": null
+   }
+  },
+  {
+   "name": "nor a background geocode",
+   "legacy": true,
+   "start": null,
+   "who": "lead",
+   "call": [
+    35.5,
+    -120.7,
+    null,
+    "geocode"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "old_portal",
+    "source": null
+   }
+  },
+  {
+   "name": "an untouched import's geocoded point is not upgraded by GPS",
+   "legacy": true,
+   "start": "geocode",
+   "who": "field",
+   "call": [
+    35.5011,
+    -120.7022,
+    8,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "old_portal",
+    "source": "geocode"
+   }
+  },
+  {
+   "name": "not even an admin's GPS fix",
+   "legacy": true,
+   "start": null,
+   "who": "admin",
+   "call": [
+    35.5011,
+    -120.7022,
+    5,
+    "gps"
+   ],
+   "want": {
+    "stored": false,
+    "reason": "old_portal",
+    "source": null
+   }
+  },
+  {
+   "name": "a manager places an untouched import by hand (that is a change)",
+   "legacy": true,
+   "start": null,
+   "who": "manager",
+   "call": [
+    35.5011,
+    -120.7022,
+    null,
+    "manual"
+   ],
+   "want": {
+    "stored": true,
+    "reason": null,
+    "source": "manual"
+   }
+  },
+  {
+   "name": "an import's manual place still needs a manager",
+   "legacy": true,
+   "start": null,
+   "who": "field",
+   "call": [
+    35.5011,
+    -120.7022,
+    null,
+    "manual"
+   ],
+   "want": {
+    "error": "42501"
+   }
+  }
+ ]
+}

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Your settings</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <script type="module" src="js/shell/settings.js"></script>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      .st { max-width: 720px; margin: auto; padding: 20px 16px 60px; --acc: var(--p2); --gold: #b8860b; --ok: #1f9d55; --err: #c8371f; }
+      .st-head h2 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+      .st-lead { color: var(--text-muted); font-size: 13.5px; margin: 0 0 20px; }
+      .st-sec { border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
+        padding: 18px; margin-bottom: 16px; box-shadow: var(--shadow); }
+      .st-sec h3 { margin: 0 0 3px; font-size: 16px; font-weight: 700; }
+      .st-sec .why { font-size: 12.5px; color: var(--text-muted); margin: 0 0 14px; }
+      .st-f { margin-bottom: 13px; }
+      .st-f label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+        text-transform: uppercase; color: var(--text-muted); margin: 0 0 5px; }
+      .st-f input { width: 100%; padding: 10px 11px; border: 1px solid var(--border);
+        border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 14px; }
+      .st-f input:disabled { opacity: .65; cursor: not-allowed; }
+      .st-f .sub { font-size: 11.5px; color: var(--text-muted); margin-top: 5px; }
+      .st-row { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+      @media (max-width: 520px) { .st-row { grid-template-columns: 1fr; } }
+      .st-colors { display: flex; gap: 8px; flex-wrap: wrap; }
+      .st-colors button { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--surface);
+        box-shadow: 0 0 0 1px var(--border); cursor: pointer; padding: 0; }
+      .st-colors button[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--acc); }
+      .st-theme { display: flex; gap: 8px; flex-wrap: wrap; }
+      .st-theme button { flex: 1; min-width: 96px; padding: 11px 8px; border-radius: 9px; cursor: pointer;
+        border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; }
+      .st-theme button[aria-pressed="true"] { border-color: var(--acc); color: var(--acc); background: var(--p2-tint); }
+      .st-theme .sw { display: block; height: 26px; border-radius: 6px; margin-bottom: 7px; border: 1px solid rgba(127,127,127,.35); }
+      .st-theme .sw.sys { background: linear-gradient(90deg, #f4f5f7 50%, #15181d 50%); }
+      .st-theme .sw.lt { background: #f4f5f7; }
+      .st-theme .sw.dk { background: #15181d; }
+      .st-acts { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+      .st-save { background: var(--acc); color: #fff; border: 0; padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 700; font-size: 13.5px; cursor: pointer; }
+      .st-save:disabled { opacity: .5; cursor: not-allowed; }
+      .st-msg { font-size: 12.5px; }
+      .st-msg.ok { color: var(--ok); font-weight: 600; }
+      .st-msg.err { color: var(--err); font-weight: 600; }
+      .st-kv { font-size: 13px; color: var(--text-muted); margin: 0 0 10px; }
+      .st-kv b { color: var(--text); }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="st">
+      <div class="st-head">
+        <h2>Your settings</h2>
+        <p class="st-lead">Your details, how Portal 2 looks on this device, and your password.</p>
+      </div>
+
+      <section class="st-sec" aria-labelledby="stDetailsH">
+        <h3 id="stDetailsH">Your details</h3>
+        <p class="why">Your name and colour are what the others see beside your notes and on their screens.</p>
+        <div class="st-f">
+          <label for="stName">Your name</label>
+          <input id="stName" maxlength="120" autocomplete="name" />
+        </div>
+        <div class="st-row">
+          <div class="st-f">
+            <label for="stEmail">Sign-in email</label>
+            <input id="stEmail" disabled />
+            <div class="sub">This is how you sign in. Ask an admin to change it.</div>
+          </div>
+          <div class="st-f">
+            <label for="stRole">Role</label>
+            <input id="stRole" disabled />
+          </div>
+        </div>
+        <div class="st-f">
+          <label for="stPhone">Phone</label>
+          <input id="stPhone" maxlength="40" autocomplete="tel" inputmode="tel" />
+        </div>
+        <div class="st-f">
+          <label>Your colour</label>
+          <div class="st-colors" id="stColors" role="group" aria-label="Your colour"></div>
+        </div>
+        <div class="st-acts">
+          <button class="st-save" id="stSave" type="button">Save my details</button>
+          <span class="st-msg" id="stMsg" role="status"></span>
+        </div>
+      </section>
+
+      <section class="st-sec" aria-labelledby="stThemeH">
+        <h3 id="stThemeH">Appearance</h3>
+        <p class="why">Applies to this device only, and takes effect straight away.</p>
+        <div class="st-theme" id="stTheme">
+          <button type="button" data-theme="system" aria-pressed="false"><span class="sw sys"></span>Match device</button>
+          <button type="button" data-theme="light" aria-pressed="false"><span class="sw lt"></span>Light</button>
+          <button type="button" data-theme="dark" aria-pressed="false"><span class="sw dk"></span>Dark</button>
+        </div>
+      </section>
+
+      <section class="st-sec" aria-labelledby="stPwH">
+        <h3 id="stPwH">Password</h3>
+        <p class="why">The same password as DCR Desktop 2. You will need your current one. When it changes, every
+          other device where you are signed in (phones, other browsers, DCR Desktop 2) is signed out.</p>
+        <form id="stPwForm" autocomplete="on" novalidate>
+          <input type="email" id="stPwUser" autocomplete="username" hidden />
+          <div class="st-f">
+            <label for="stCur">Current password</label>
+            <input id="stCur" type="password" autocomplete="current-password" />
+          </div>
+          <div class="st-row">
+            <div class="st-f">
+              <label for="stNew">New password</label>
+              <input id="stNew" type="password" autocomplete="new-password" placeholder="10+ characters, letters and digits" />
+            </div>
+            <div class="st-f">
+              <label for="stNew2">New password again</label>
+              <input id="stNew2" type="password" autocomplete="new-password" />
+            </div>
+          </div>
+          <div class="st-acts">
+            <button class="st-save" id="stPwSave" type="submit">Change my password</button>
+            <span class="st-msg" id="stPwMsg" role="status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="st-sec" aria-labelledby="stDevH">
+        <h3 id="stDevH">This device</h3>
+        <p class="st-kv" id="stKept"></p>
+        <div id="pushSlot" style="margin-bottom:10px"></div>
+        <div class="st-acts">
+          <button class="btn btn-ghost btn-sm" type="button" id="stSignOut">Sign out of this device</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,1235 @@
+/* DCR Portal 2 — DEMO MODE ONLY: an in-memory imitation of the DCR Desktop 2 database.
+
+   Never published: tools/ is not part of the site, and tools/devserve.mjs injects it into pages only
+   on 127.0.0.1. It answers the supabase-js calls the Portal 2 modules make (fake-supabase.js turns
+   them into calls here) with PostgREST's semantics as far as the pages can tell:
+   - select with columns, aliases and embeds ("*, prices:project_prices(*)", "projects(number,name)",
+     hints "files!thumbnail_file_id(*)", "!inner"), filters (eq neq gt gte lt lte like ilike is in
+     cs cd ov not or match), order (nulls last ascending, first descending), range / limit,
+     single / maybeSingle, count "exact"; ambiguous embeds fail with PGRST201 as the real one does;
+   - insert / update / upsert / delete with row level security in the spirit of Desktop 2 + M1:
+     an UPDATE the policy does not let through matches nothing ([]), an INSERT it refuses is 42501,
+     soft-delete tables are never really deleted, versions move by one on every update;
+   - the triggers the pages notice: project numbers, folder names, the prices row, activity lines
+     ("Project A306 created", "Status: New Request → In Progress", "Journal entry: …",
+     "Files uploaded to <folder>" once per person, folder and hour), file version chains, tombstones;
+   - the RPCs: create_project, search, soft_delete, set_project_location, password_changed,
+     next_project_number;
+   - Storage: simple uploads, TUS resumable uploads (6 MiB chunks), signed URLs, with the
+     project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read).
+   Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
+(function (root) {
+  "use strict";
+  const NS = (root.DCR2Fake = root.DCR2Fake || {});
+
+  const STATUSES = ["new_request", "estimating", "sent", "approved", "in_progress", "on_hold", "completed", "closed", "follow_up"];
+  const JOURNAL_CATS = ["progress", "delay", "issue", "safety", "inspection", "delivery", "visitor", "weather", "change_order", "other"];
+  const FOLDERS = ["plans", "photos", "documents", "estimates", "invoices", "receipts", "item", "journal", "thumbnail"];
+  const ROLES = ["admin", "manager", "lead", "accountant", "field", "viewer", "agents"];
+  const SOFT = new Set(["contacts", "projects", "journal_entries", "files"]);
+  const TABLES = ["profiles", "settings", "settings_prices", "contacts", "projects", "project_prices", "activity",
+    "journal_entries", "files", "tasks", "task_notes", "deletions"];
+  const VIEWS = { current_files: "files" };
+  const PK = { project_prices: "project_id" };
+  const UUID_PK = new Set(["profiles"]);
+  const NO_AUDIT = new Set(["deletions"]);
+  const LOCAL_CITIES = ["Pine Hollow", "Cedar Flats", "Oak Vista", "Sage Valley", "Sandbox"];
+  const TZ = "America/Los_Angeles";
+  const CHUNK = 6 * 1024 * 1024;
+  const BUCKET = "project-files";
+
+  const AUDIT = { created_at: null, created_by: null, updated_at: null, updated_by: null, version: 1 };
+  const COLS = {
+    profiles: Object.assign({ id: null, full_name: "", email: null, phone: null, role: "viewer", can_see_prices: false,
+      can_see_financials: false, can_approve_payments: false, active: true, color: null, must_change_password: false }, AUDIT),
+    settings: Object.assign({ id: 1, company_name: "DCR Framing LLC", address: null, phone: null, email: null, license: null,
+      tax_rate: 8, next_project_number: 291, invoice_terms: null, agents_checks_enabled: false }, AUDIT),
+    settings_prices: Object.assign({ id: 1, default_labor_rate: 110, local_labor_rate: 90, out_of_area_labor_rate: 110 }, AUDIT),
+    contacts: Object.assign({ id: null, name: null, company: null, kind: "client", trade: null, phone: null, email: null,
+      address: null, city: null, notes: null, deleted_at: null }, AUDIT),
+    projects: Object.assign({ id: null, number: null, name: null, address: null, city: null, state: "CA", zip: null,
+      client_contact_id: null, client_name: null, client_phone: null, client_email: null, status: "new_request",
+      status_note: null, scope: null, tags: [], plans_url: null, start_date: null, completed_date: null, lat: null, lng: null,
+      location_source: null, thumbnail_file_id: null, folder_name: null, legacy_sp_id: null, deleted_at: null }, AUDIT),
+    project_prices: Object.assign({ project_id: null, labor_rate: null, rate_source: null }, AUDIT),
+    activity: Object.assign({ id: null, project_id: null, kind: "note", text: null, from_status: null, to_status: null,
+      author_name: null, legacy_sp_id: null }, AUDIT),
+    journal_entries: Object.assign({ id: null, project_id: null, entry_date: null, category: "progress", title: "", body: null,
+      weather: null, crew_size: null, hours: null, follow_up: false, deleted_at: null }, AUDIT),
+    files: Object.assign({ id: null, project_id: null, estimate_item_id: null, journal_entry_id: null, bill_id: null, folder: null,
+      subpath: "", name: null, storage_path: null, size: null, mime: null, version_no: 1, previous_id: null, is_financial: false,
+      storage: "cloud", rel_path: null, modified_at: null, description: null, preview_path: null, source: null, deleted_at: null }, AUDIT),
+    tasks: Object.assign({ id: null, project_id: null, estimate_item_id: null, title: null, description: null, category: null,
+      priority: "normal", assigned_to: null, due_date: null, status: "open", completed_at: null, completed_by: null }, AUDIT),
+    task_notes: Object.assign({ id: null, task_id: null, text: null }, AUDIT),
+    deletions: { id: null, table_name: null, row_id: null, project_id: null, deleted_at: null, deleted_by: null },
+  };
+  COLS.current_files = COLS.files;
+
+  const FKS = [
+    ["projects", "client_contact_id", "contacts"],
+    ["projects", "thumbnail_file_id", "files"],
+    ["project_prices", "project_id", "projects", true],
+    ["activity", "project_id", "projects"],
+    ["journal_entries", "project_id", "projects"],
+    ["files", "project_id", "projects"],
+    ["files", "journal_entry_id", "journal_entries"],
+    ["files", "previous_id", "files"],
+    ["current_files", "project_id", "projects"],
+    ["current_files", "journal_entry_id", "journal_entries"],
+    ["tasks", "project_id", "projects"],
+    ["tasks", "assigned_to", "profiles"],
+    ["tasks", "completed_by", "profiles"],
+    ["task_notes", "task_id", "tasks"],
+  ].map(([table, column, ref, one]) => ({ table, column, ref, one: !!one }));
+
+  /* ── errors ─────────────────────────────────────────────────────────── */
+  const STATUS_OF = { "42501": 403, PT404: 404, PT409: 409, "23505": 409, PGRST116: 406, PGRST202: 404, PGRST201: 300,
+    PGRST200: 400, PGRST204: 400, PGRST100: 400, "42703": 400, "42P01": 404 };
+  class PgErr extends Error {
+    constructor(code, message, status, details, hint) {
+      super(message);
+      this.code = code;
+      this.status = status || STATUS_OF[code] || 400;
+      this.details = details === undefined ? null : details;
+      this.hint = hint === undefined ? null : hint;
+    }
+    toJSON() { return { code: this.code, message: this.message, details: this.details, hint: this.hint }; }
+  }
+  const deny = (msg) => new PgErr("42501", msg || "permission denied", 403);
+  const rule = (code, msg) => new PgErr(code, msg, 400);
+
+  /* ── time ───────────────────────────────────────────────────────────── */
+  const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+  function companyDay(d) { return dayFmt.format(d instanceof Date ? d : new Date(d)); }
+
+  /* ── small helpers ──────────────────────────────────────────────────── */
+  const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  const pkOf = (t) => PK[t] || "id";
+  const statusLabel = (s) => String(s || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  function numberParts(n) {
+    const m = /^([A-Z])([0-9]+)(.*)$/.exec(String(n || ""));
+    return m ? { letter: m[1], value: Number(m[2]), suffix: m[3] || "" } : { letter: "~", value: 0, suffix: String(n || "") };
+  }
+  /** app.project_number_sort: natural order (A999 before A1000, A024-B right after A024). */
+  function numberCmp(a, b) {
+    const x = numberParts(a), y = numberParts(b);
+    if (x.letter !== y.letter) return x.letter < y.letter ? -1 : 1;
+    if (x.value !== y.value) return x.value - y.value;
+    if (x.suffix === y.suffix) return 0;
+    if (!x.suffix) return -1;
+    if (!y.suffix) return 1;
+    return x.suffix < y.suffix ? -1 : 1;
+  }
+
+  function folderName(p) {
+    const parts = [p.number, p.address, p.city, p.name].map((s) => String(s || "").replace(/[\u0000-\u001f\\/<>:"|?*]/g, "").trim()).filter(Boolean);
+    return parts.join(" - ").slice(0, 120).replace(/[ .]+$/, "");
+  }
+
+  /* ── values and comparisons (PostgREST reads every filter value as text) ── */
+  const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+  function coerce(rowVal, v) {
+    if (v === null || v === undefined) return v;
+    if (typeof rowVal === "number" && typeof v === "string" && v.trim() !== "" && !isNaN(Number(v))) return Number(v);
+    if (typeof rowVal === "boolean" && typeof v === "string") return v === "true" ? true : v === "false" ? false : v;
+    return v;
+  }
+  function cmp(a, b) {
+    if (a === b) return 0;
+    if (typeof a === "string" && typeof b === "string" && ISO_TS.test(a) && ISO_TS.test(b)) {
+      const x = Date.parse(a), y = Date.parse(b);
+      if (!isNaN(x) && !isNaN(y)) return x < y ? -1 : x > y ? 1 : 0;
+    }
+    if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
+    const x = String(a), y = String(b);
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  /* LIKE: % (or * in a URL) any run, _ one character, \x the character x itself */
+  function likeRe(pat, ci) {
+    let src = "";
+    const s = String(pat);
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "\\" && i + 1 < s.length) { src += s[++i].replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"); continue; }
+      if (ch === "%" || ch === "*") src += ".*";
+      else if (ch === "_") src += ".";
+      else src += ch.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    }
+    return new RegExp("^" + src + "$", ci ? "is" : "s");
+  }
+  function asList(v) {
+    if (Array.isArray(v)) return v;
+    const s = String(v).trim().replace(/^\(|\)$/g, "").replace(/^\{|\}$/g, "");
+    return s ? s.split(",").map((x) => x.trim().replace(/^"|"$/g, "")) : [];
+  }
+  function test(op, val, arg) {
+    switch (op) {
+      case "eq": return val !== null && val !== undefined && cmp(val, coerce(val, arg)) === 0;
+      case "neq": return val !== null && val !== undefined && cmp(val, coerce(val, arg)) !== 0;
+      case "gt": return val !== null && val !== undefined && cmp(val, coerce(val, arg)) > 0;
+      case "gte": return val !== null && val !== undefined && cmp(val, coerce(val, arg)) >= 0;
+      case "lt": return val !== null && val !== undefined && cmp(val, coerce(val, arg)) < 0;
+      case "lte": return val !== null && val !== undefined && cmp(val, coerce(val, arg)) <= 0;
+      case "like": return val !== null && val !== undefined && likeRe(arg, false).test(String(val));
+      case "ilike": return val !== null && val !== undefined && likeRe(arg, true).test(String(val));
+      case "is": {
+        const a = String(arg).toLowerCase();
+        if (a === "null") return val === null || val === undefined;
+        if (a === "true") return val === true;
+        if (a === "false") return val === false;
+        return false;
+      }
+      case "in": return val !== null && val !== undefined && asList(arg).some((x) => cmp(val, coerce(val, x)) === 0);
+      case "cs": { const have = Array.isArray(val) ? val : []; return asList(arg).every((x) => have.map(String).includes(String(x))); }
+      case "cd": { const have = Array.isArray(val) ? val : []; const allow = asList(arg).map(String); return have.every((x) => allow.includes(String(x))); }
+      case "ov": { const have = Array.isArray(val) ? val.map(String) : []; return asList(arg).some((x) => have.includes(String(x))); }
+      case "fts": case "plfts": case "phfts": case "wfts":
+        return val !== null && val !== undefined && String(val).toLowerCase().includes(String(arg).toLowerCase());
+      default: throw new PgErr("PGRST100", "unknown operator " + op, 400);
+    }
+  }
+
+  /* "a.eq.1,and(b.gt.2,c.is.null),d.not.ilike.*x*" -> tree */
+  function splitTop(s) {
+    const out = [];
+    let depth = 0, cur = "", quote = false;
+    for (const ch of s) {
+      if (ch === '"') quote = !quote;
+      if (!quote && ch === "(") depth++;
+      if (!quote && ch === ")") depth--;
+      if (!quote && ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+      cur += ch;
+    }
+    if (cur !== "") out.push(cur);
+    return out;
+  }
+  function parseLogic(s) {
+    return splitTop(s).map((part) => {
+      const g = /^(not\.)?(and|or)\((.*)\)$/.exec(part.trim());
+      if (g) return { group: g[2], neg: !!g[1], items: parseLogic(g[3]) };
+      const m = /^([^.]+)\.(not\.)?([a-z]+)\.(.*)$/s.exec(part.trim());
+      if (!m) throw new PgErr("PGRST100", "failed to parse logic tree (" + part + ")", 400);
+      return { col: m[1], neg: !!m[2], op: m[3], val: m[4].replace(/^"|"$/g, "") };
+    });
+  }
+  function evalNode(row, n) {
+    const v = n.group
+      ? (n.group === "and" ? n.items.every((x) => evalNode(row, x)) : n.items.some((x) => evalNode(row, x)))
+      : test(n.op, row[n.col], n.val);
+    return n.neg ? !v : v;
+  }
+
+  /* ── select parsing ─────────────────────────────────────────────────── */
+  function parseSelect(str) {
+    const s = String(str === undefined || str === null || str === "" ? "*" : str).replace(/\s+/g, "");
+    return splitTop(s).filter(Boolean).map(parseItem);
+  }
+  function parseItem(tokIn) {
+    let tok = tokIn;
+    let alias = null;
+    if (tok.startsWith("...")) tok = tok.slice(3);
+    const a = /^([A-Za-z_][A-Za-z0-9_]*):(?!:)(.*)$/s.exec(tok);
+    if (a) { alias = a[1]; tok = a[2]; }
+    const p = tok.indexOf("(");
+    if (p !== -1 && tok.endsWith(")")) {
+      const head = tok.slice(0, p);
+      const parts = head.split("!");
+      const target = parts[0];
+      const flags = parts.slice(1);
+      const children = splitTop(tok.slice(p + 1, -1)).filter(Boolean).map(parseItem);
+      return { type: "embed", alias: alias || target, target, hint: flags.filter((f) => f !== "inner" && f !== "left")[0] || null,
+        inner: flags.includes("inner"), children };
+    }
+    if (tok === "*") return { type: "star" };
+    const col = tok.split("::")[0].split("->")[0];
+    return { type: "col", name: col, alias: alias || col };
+  }
+
+  /* ── the engine ─────────────────────────────────────────────────────── */
+  function createEngine(options) {
+    const opt = options || {};
+    const clock = opt.clock || (() => new Date());
+    const rows = {};
+    const seq = {};
+    for (const t of TABLES) { rows[t] = []; seq[t] = 0; }
+    const objects = new Map();    // key -> {size, mime, owner, created_at}
+    const blobs = new Map();      // key -> Blob (this process only)
+    const tus = new Map();        // id -> {key, length, offset, mime, chunks: [], owner}
+    let tusN = 0;
+    const listeners = new Set();
+    const opListeners = new Set();
+    let quiet = 0;
+
+    const nowIso = () => clock().toISOString();
+    const today = () => companyDay(clock());
+
+    function emitChange(evt) {
+      if (quiet) return;
+      for (const cb of Array.from(listeners)) { try { cb(evt); } catch (e) { /* */ } }
+    }
+    function emitOp(op) {
+      if (quiet) return;
+      for (const cb of Array.from(opListeners)) { try { cb(op); } catch (e) { /* */ } }
+    }
+
+    /* who is asking */
+    function profileOf(uid) { return uid ? rows.profiles.find((p) => p.id === uid) || null : null; }
+    function who(ctx) {
+      const uid = ctx && ctx.uid;
+      const p = profileOf(uid);
+      const active = !!(p && p.active && p.role !== "agents");
+      const role = active ? p.role : null;
+      const admin = role === "admin";
+      return {
+        uid, p, active, role, admin,
+        prices: active && (admin || !!p.can_see_prices),
+        financials: active && (admin || !!p.can_see_financials),
+        agents: !!(p && p.active && p.role === "agents"),
+      };
+    }
+    function canEdit(w, area) {
+      if (!w.active) return false;
+      const r = w.role;
+      switch (area) {
+        case "projects": case "estimates": case "catalog": case "all_files": return r === "admin" || r === "manager";
+        case "contacts": return ["admin", "manager", "accountant"].includes(r);
+        case "takeoffs": case "tasks": case "all_journal": return ["admin", "manager", "lead"].includes(r);
+        case "activity": return ["admin", "manager", "accountant", "lead"].includes(r);
+        case "own_tasks": return ["admin", "manager", "lead", "accountant", "field"].includes(r);
+        case "journal": return ["admin", "manager", "lead", "field"].includes(r);
+        case "files": return r !== "viewer";
+        case "money": return r === "admin" || ((r === "manager" || r === "accountant") && w.financials);
+        case "settings": case "users": return r === "admin";
+        default: return false;
+      }
+    }
+
+    function projectVisible(w, pid) {
+      if (pid === null || pid === undefined) return true;
+      const p = rows.projects.find((x) => x.id === Number(pid));
+      return !!p && (!p.deleted_at || w.admin);
+    }
+    function isCurrent(f) {
+      return !f.deleted_at && !rows.files.some((n) => n.previous_id === f.id && !n.deleted_at);
+    }
+
+    /* row level security: may this person read this row? */
+    function canRead(w, table, r) {
+      if (table === "profiles") return r.id === w.uid || w.active;
+      if (!w.active) return false;
+      switch (table) {
+        case "settings": return true;
+        case "settings_prices": return w.prices;
+        case "contacts": return !r.deleted_at || w.admin;
+        case "projects": return !r.deleted_at || w.admin;
+        case "project_prices": return w.prices && projectVisible(w, r.project_id);
+        case "activity": return projectVisible(w, r.project_id);
+        case "journal_entries": return (!r.deleted_at || w.admin) && projectVisible(w, r.project_id);
+        case "files": case "current_files":
+          return (!r.deleted_at || w.admin) && projectVisible(w, r.project_id) && (!r.is_financial || w.financials) &&
+            (r.folder !== "estimates" || w.prices) && (r.folder !== "invoices" || w.financials);
+        case "tasks":   // Q3: field and view-only people see their own tasks and the ones they created
+          if (w.role === "field" || w.role === "viewer") return r.assigned_to === w.uid || r.created_by === w.uid;
+          return projectVisible(w, r.project_id);
+        case "task_notes": { const t = rows.tasks.find((x) => x.id === r.task_id); return !!t && canRead(w, "tasks", t); }
+        case "deletions": return true;
+        default: return false;
+      }
+    }
+
+    function source(table) {
+      if (VIEWS[table]) return rows[VIEWS[table]].filter(isCurrent);
+      if (!rows[table]) throw new PgErr("42P01", 'relation "public.' + table + '" does not exist', 404);
+      return rows[table];
+    }
+    function readable(w, table) {
+      return source(table).filter((r) => canRead(w, table, r));
+    }
+
+    /* embeds */
+    function relation(from, target, hint) {
+      const cands = [];
+      for (const fk of FKS) {
+        if (fk.table === from && fk.ref === target) cands.push({ kind: "m2o", fk });
+        if (fk.table === target && fk.ref === from && fk.table !== fk.ref) cands.push({ kind: fk.one ? "o2o" : "o2m", fk });
+        if (fk.table === target && fk.ref === from && fk.table === fk.ref && fk.table === from) cands.push({ kind: "o2m", fk });
+      }
+      let list = cands;
+      if (hint) list = cands.filter((c) => c.fk.column === hint || hint === c.fk.table + "_" + c.fk.column + "_fkey");
+      if (!list.length) {
+        throw new PgErr("PGRST200", "Could not find a relationship between '" + from + "' and '" + target + "' in the schema cache", 400);
+      }
+      if (list.length > 1) {
+        throw new PgErr("PGRST201", "Could not embed because more than one relationship was found for '" + from + "' and '" + target + "'", 300,
+          list.map((c) => ({ cardinality: c.kind, relationship: c.fk.table + "_" + c.fk.column + "_fkey" })),
+          "Try changing '" + target + "' to one of the following: " + list.map((c) => "'" + target + "!" + c.fk.table + "_" + c.fk.column + "_fkey'").join(", "));
+      }
+      return list[0];
+    }
+
+    function project(w, table, row, items, q, path) {
+      const outRow = {};
+      const cols = COLS[table] || {};
+      for (const it of items) {
+        if (it.type === "star") Object.assign(outRow, clone(row));
+        else if (it.type === "col") {
+          if (!(it.name in cols) && !(it.name in row)) {
+            throw new PgErr("42703", "column " + table + "." + it.name + " does not exist", 400);
+          }
+          outRow[it.alias] = clone(row[it.name] === undefined ? null : row[it.name]);
+        }
+      }
+      for (const it of items) {
+        if (it.type !== "embed") continue;
+        const rel = relation(table, it.target, it.hint);
+        const subPath = path ? path + "." + it.alias : it.alias;
+        const pool = readable(w, it.target);
+        let val;
+        if (rel.kind === "m2o") {
+          const v = row[rel.fk.column];
+          const hit = v === null || v === undefined ? null : pool.find((t) => t[pkOf(it.target)] === v);
+          val = hit && passes(hit, q, subPath) ? project(w, it.target, hit, it.children, q, subPath) : null;
+        } else if (rel.kind === "o2o") {
+          const hit = pool.find((t) => t[rel.fk.column] === row[pkOf(table)]);
+          val = hit && passes(hit, q, subPath) ? project(w, it.target, hit, it.children, q, subPath) : null;
+        } else {
+          let arr = pool.filter((t) => t[rel.fk.column] === row[pkOf(table)] && passes(t, q, subPath));
+          arr = order(arr, (q.orders || []).filter((o) => o.foreign === subPath));
+          const lim = (q.foreignLimits || {})[subPath];
+          if (lim) arr = arr.slice(lim.offset || 0, (lim.offset || 0) + lim.limit);
+          val = arr.map((t) => project(w, it.target, t, it.children, q, subPath));
+        }
+        outRow[it.alias] = val;
+      }
+      return outRow;
+    }
+
+    function innerOk(row, items) {
+      for (const it of items) {
+        if (it.type !== "embed") continue;
+        const v = row[it.alias];
+        if (it.inner && (v === null || (Array.isArray(v) && !v.length))) return false;
+        if (v && !Array.isArray(v) && !innerOk(v, it.children)) return false;
+      }
+      return true;
+    }
+
+    function passes(row, q, path) {
+      for (const f of q.filters || []) {
+        const dot = f.col.lastIndexOf(".");
+        const fpath = dot === -1 ? "" : f.col.slice(0, dot);
+        const col = dot === -1 ? f.col : f.col.slice(dot + 1);
+        if (fpath !== (path || "")) continue;
+        if (f.op === "or" || f.op === "and") {
+          if (!evalNode(row, { group: f.op, items: parseLogic(f.val), neg: !!f.neg })) return false;
+          continue;
+        }
+        if (test(f.op, row[col], f.val) === !!f.neg) return false;
+      }
+      return true;
+    }
+
+    function order(arr, orders) {
+      if (!orders.length) return arr;
+      return arr.slice().sort((a, b) => {
+        for (const o of orders) {
+          const x = a[o.col], y = b[o.col];
+          const xn = x === null || x === undefined, yn = y === null || y === undefined;
+          const nullsFirst = o.nullsFirst === undefined ? !o.asc : o.nullsFirst;
+          if (xn || yn) {
+            if (xn && yn) continue;
+            return (xn ? -1 : 1) * (nullsFirst ? 1 : -1);
+          }
+          const c = cmp(x, y);           // text order, as PostgREST (no natural number sort over REST)
+          if (c) return o.asc ? c : -c;
+        }
+        return 0;
+      });
+    }
+
+    function checkColumns(table, obj) {
+      const cols = COLS[table] || {};
+      for (const k of Object.keys(obj)) {
+        if (!(k in cols)) throw new PgErr("PGRST204", "Could not find the '" + k + "' column of '" + table + "' in the schema cache", 400);
+      }
+    }
+
+    /** SELECT */
+    function select(ctx, table, q) {
+      const w = who(ctx);
+      if (!w.uid) throw new PgErr("42501", "permission denied for table " + table, 401);
+      const items = parseSelect(q.columns);
+      let base = readable(w, table).filter((r) => passes(r, q, ""));
+      base = order(base, (q.orders || []).filter((o) => !o.foreign));
+      let shaped = base.map((r) => ({ src: r, out: project(w, table, r, items, q, "") })).filter((x) => innerOk(x.out, items));
+      const count = shaped.length;
+      const from = q.offset || 0;
+      if (q.limit !== undefined && q.limit !== null) shaped = shaped.slice(from, from + q.limit);
+      else if (from) shaped = shaped.slice(from);
+      return { data: shaped.map((x) => x.out), count };
+    }
+
+    /* the audit trigger */
+    function auditInsert(w, table, r) {
+      if (NO_AUDIT.has(table)) return;
+      const t = nowIso();
+      r.created_at = r.created_at && quiet ? r.created_at : t;
+      r.created_by = quiet && r.created_by !== undefined ? r.created_by : (w.uid || null);
+      r.updated_at = r.created_at;
+      r.updated_by = null;
+      r.version = 1;
+    }
+    function auditUpdate(w, table, r, old) {
+      if (NO_AUDIT.has(table)) return;
+      r.created_at = old.created_at;
+      r.created_by = old.created_by;
+      r.updated_at = nowIso();
+      r.updated_by = w.uid || null;
+      r.version = (old.version || 1) + 1;
+    }
+
+    function nextId(table) { seq[table] += 1; return seq[table]; }
+
+    function commitInsert(table, r) {
+      rows[table].push(r);
+      emitOp({ k: "row", t: table, row: clone(r), seq: seq[table] });
+      emitChange({ table, type: "INSERT", new: clone(r), old: null });
+    }
+    function commitUpdate(table, old, r) {
+      const i = rows[table].indexOf(old);
+      rows[table][i] = r;
+      emitOp({ k: "row", t: table, row: clone(r), seq: seq[table] });
+      emitChange({ table, type: "UPDATE", new: clone(r), old: clone(old) });
+    }
+    function commitDelete(table, old) {
+      const i = rows[table].indexOf(old);
+      if (i !== -1) rows[table].splice(i, 1);
+      emitOp({ k: "del", t: table, id: old[pkOf(table)] });
+      emitChange({ table, type: "DELETE", new: null, old: clone(old) });
+    }
+
+    function logActivity(w, pid, kind, text, from, to) {
+      const r = Object.assign(clone(COLS.activity), { id: nextId("activity"), project_id: pid, kind, text, from_status: from || null, to_status: to || null });
+      auditInsert(w, "activity", r);
+      commitInsert("activity", r);
+      return r;
+    }
+
+    /* constraints and BEFORE triggers; return the row to store */
+    function beforeInsert(w, table, r, viaRpc) {
+      switch (table) {
+        case "projects": {
+          if (!r.name || !String(r.name).trim()) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_name_check"');
+          if (!STATUSES.includes(r.status)) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_status_check"');
+          if ((r.legacy_sp_id !== null && r.legacy_sp_id !== undefined) && !quiet) throw deny("only the import may set legacy columns");
+          if (!r.number || !w.admin) r.number = takeNumber();
+          if (rows.projects.some((p) => p.number === r.number)) throw new PgErr("23505", 'duplicate key value violates unique constraint "projects_number_key"', 409);
+          if (!r.folder_name || !w.admin) r.folder_name = folderName(r);
+          if (r.status === "completed" && !r.completed_date) r.completed_date = today();
+          if (!Array.isArray(r.tags)) r.tags = [];
+          // t14_projects_location: a new project's point comes from its address unless said otherwise
+          if (r.lat === null || r.lat === undefined || r.lng === null || r.lng === undefined) r.location_source = null;
+          else if (!quiet) r.location_source = r.location_source || "geocode";
+          break;
+        }
+        case "activity": {
+          const len = String(r.text || "").length;
+          if (len < 1 || (len > 4000 && !(quiet && r.author_name))) throw rule("23514", 'new row for relation "activity" violates check constraint "activity_text_check"');
+          if (!quiet && r.kind !== "note") throw deny("only notes are written by people");
+          if (!quiet && (r.author_name || r.legacy_sp_id)) throw deny("only the import may set legacy columns");
+          if (r.project_id !== null && !rows.projects.some((p) => p.id === r.project_id)) throw rule("23503", 'insert or update on table "activity" violates foreign key constraint "activity_project_id_fkey"');
+          break;
+        }
+        case "journal_entries": {
+          if (r.project_id === null || r.project_id === undefined) throw rule("23502", 'null value in column "project_id" of relation "journal_entries" violates not-null constraint');
+          if (!rows.projects.some((p) => p.id === r.project_id)) throw rule("23503", 'insert or update on table "journal_entries" violates foreign key constraint "journal_entries_project_id_fkey"');
+          if (!JOURNAL_CATS.includes(r.category)) throw rule("23514", 'new row for relation "journal_entries" violates check constraint "journal_entries_category_check"');
+          if (!r.entry_date) r.entry_date = today();
+          break;
+        }
+        case "files": filesBeforeInsert(w, r); break;
+        case "tasks": {
+          if (!r.title || !String(r.title).trim()) throw rule("23514", 'new row for relation "tasks" violates check constraint "tasks_title_check"');
+          if (r.status === "done") { r.completed_at = nowIso(); r.completed_by = w.uid; }
+          break;
+        }
+        case "contacts": {
+          if (!r.name || !String(r.name).trim()) throw rule("23514", 'new row for relation "contacts" violates check constraint "contacts_name_check"');
+          break;
+        }
+        default: break;
+      }
+      return r;
+    }
+
+    function filesBeforeInsert(w, r) {
+      if (!FOLDERS.includes(r.folder)) throw rule("23514", 'new row for relation "files" violates check constraint "files_folder_check"');
+      if (!r.name || !String(r.name).trim() || String(r.name).length > 255 || String(r.name).includes("/")) {
+        throw rule("23514", 'new row for relation "files" violates check constraint "files_name_check"');
+      }
+      r.is_financial = r.folder === "receipts" || (r.bill_id !== null && r.bill_id !== undefined);
+      if (r.storage === "cloud") {
+        const m = /^([pf])\/([0-9]+)\/([a-z]+)\/[^/]+\/[^/]+$/.exec(String(r.storage_path || ""));
+        if (!m || m[1] !== (r.is_financial ? "f" : "p") || Number(m[2]) !== Number(r.project_id) || m[3] !== r.folder) {
+          throw rule("23514", 'new row for relation "files" violates check constraint "files_storage_path_shape"');
+        }
+        if (rows.files.some((f) => f.storage_path === r.storage_path)) {
+          throw new PgErr("23505", 'duplicate key value violates unique constraint "files_storage_path_key"', 409);
+        }
+      }
+      if (r.subpath && (/^\/|\/$|\/\//.test(r.subpath) || /[\u0001-\u001f\u007f\\<>:"|?*]/.test(r.subpath))) {
+        throw rule("23514", 'new row for relation "files" violates check constraint "files_subpath_shape"');
+      }
+      if (r.journal_entry_id !== null && r.journal_entry_id !== undefined) {
+        const j = rows.journal_entries.find((x) => x.id === Number(r.journal_entry_id));
+        if (!j || j.project_id !== Number(r.project_id) || j.deleted_at) throw rule("23514", "the journal entry belongs to another project");
+      }
+      if (r.source === undefined || r.source === null) r.source = "desktop";        // the column default (M1)
+      if (!["desktop", "portal2", "agents", "import"].includes(r.source)) {
+        throw rule("23514", 'new row for relation "files" violates check constraint "files_source_check"');
+      }
+      if (r.description !== null && r.description !== undefined && String(r.description).length > 2000) {
+        throw rule("23514", 'new row for relation "files" violates check constraint "files_description_check"');
+      }
+      if (r.preview_path !== null && r.preview_path !== undefined) {
+        // files_preview_path_shape: same "<p|f>/<project>/<folder>/<uuid>/" place as the file, another
+        // name, a picture's extension, a cloud row; t11_files_preview: never another row's object
+        const pv = String(r.preview_path), sp = String(r.storage_path || "");
+        const same4 = pv.split("/").slice(0, 4).join("/") === sp.split("/").slice(0, 4).join("/");
+        if (r.storage !== "cloud" || !sp || pv === sp || !same4 || !/^[pf]\/[0-9]+\/[a-z]+\/[^/]+\/[^/]+\.(jpe?g|png|webp)$/i.test(pv)) {
+          throw rule("23514", 'new row for relation "files" violates check constraint "files_preview_path_shape"');
+        }
+        if (rows.files.some((f) => f.preview_path === pv)) {
+          throw new PgErr("23505", 'duplicate key value violates unique constraint "files_preview_path_key"', 409);
+        }
+        if (rows.files.some((f) => f.storage_path === pv)) throw rule("23514", "a preview is a picture of its own, not another file");
+      }
+      if (r.storage_path && rows.files.some((f) => f.preview_path === r.storage_path)) {
+        throw rule("23514", "that object is another file's preview");
+      }
+      // the version chain: same project, folder, sub-folder, links and name (any case)
+      const same = rows.files.filter((f) => !f.deleted_at && f.project_id === Number(r.project_id) && f.folder === r.folder &&
+        String(f.subpath || "").toLowerCase() === String(r.subpath || "").toLowerCase() &&
+        (f.journal_entry_id ?? null) === (r.journal_entry_id ?? null) && (f.estimate_item_id ?? null) === (r.estimate_item_id ?? null) &&
+        (f.bill_id ?? null) === (r.bill_id ?? null) && String(f.name).toLowerCase() === String(r.name).toLowerCase() && isCurrent(f));
+      if (same.length) {
+        const prev = same.sort((a, b) => b.version_no - a.version_no)[0];
+        r.previous_id = prev.id;
+        r.version_no = prev.version_no + 1;
+      } else {
+        r.previous_id = null;
+        r.version_no = 1;
+      }
+    }
+
+    function afterInsert(w, table, r, extra) {
+      if (table === "projects") {
+        const x = extra || {};
+        const city = String(r.city || "");
+        const local = LOCAL_CITIES.some((c) => c.toLowerCase() === city.toLowerCase());
+        const sp = rows.settings_prices[0] || COLS.settings_prices;
+        const pr = Object.assign(clone(COLS.project_prices), { project_id: r.id,
+          labor_rate: x.labor_rate !== undefined ? x.labor_rate : (local ? sp.local_labor_rate : sp.out_of_area_labor_rate),
+          rate_source: x.labor_rate !== undefined ? x.rate_source || "custom" : (local ? "local" : "out_of_area") });
+        auditInsert(w, "project_prices", pr);
+        commitInsert("project_prices", pr);
+        logActivity(w, r.id, "system", "Project " + r.number + " created");
+      }
+      if (table === "journal_entries") {
+        logActivity(w, r.project_id, "system", "Journal entry: " + (String(r.title || "").trim() || statusLabel(r.category)));
+      }
+      if (table === "files") {
+        if (r.is_financial || ["estimates", "invoices", "thumbnail"].includes(r.folder)) return;
+        if (!r.subpath) {
+          logActivity(w, r.project_id, "system", r.version_no > 1 ? "New version of " + r.name + " (v" + r.version_no + ")" : "File uploaded: " + r.name);
+          return;
+        }
+        const top = String(r.subpath).split("/")[0];
+        const text = "Files uploaded to " + top;
+        const hourAgo = clock().getTime() - 3600000;
+        const exists = rows.activity.some((a) => a.project_id === r.project_id && a.kind === "system" &&
+          a.text.toLowerCase() === text.toLowerCase() && a.created_by === (w.uid || null) && Date.parse(a.created_at) > hourAgo);
+        if (!exists) logActivity(w, r.project_id, "system", text);
+      }
+    }
+
+    function takeNumber() {
+      const s = rows.settings[0];
+      for (;;) {
+        const n = s.next_project_number;
+        s.next_project_number += 1;
+        const num = "A" + (n < 1000 ? String(n).padStart(3, "0") : String(n));
+        if (!rows.projects.some((p) => p.number === num)) {
+          emitOp({ k: "row", t: "settings", row: clone(s), seq: seq.settings });
+          return num;
+        }
+      }
+    }
+
+    function canInsert(w, table, r) {
+      switch (table) {
+        case "projects": return canEdit(w, "projects");
+        case "project_prices": return w.prices && canEdit(w, "projects");
+        case "activity": return canEdit(w, "activity");
+        case "journal_entries": return canEdit(w, "journal");
+        case "files": {
+          if (!canEdit(w, "files")) return false;
+          if (r.folder === "estimates" && !w.prices) return false;
+          if ((r.folder === "invoices" || r.folder === "receipts" || (r.bill_id !== null && r.bill_id !== undefined)) && !canEdit(w, "money")) return false;
+          if (r.folder === "thumbnail" && !canEdit(w, "projects")) return false;
+          return projectVisible(w, r.project_id);
+        }
+        case "contacts": return canEdit(w, "contacts");
+        case "tasks": return canEdit(w, "tasks") || (canEdit(w, "own_tasks") && (r.assigned_to === null || r.assigned_to === undefined || r.assigned_to === w.uid));
+        case "task_notes": { const t = rows.tasks.find((x) => x.id === r.task_id); return !!t && canUpdate(w, "tasks", t); }
+        case "settings": return w.admin;
+        default: return false;
+      }
+    }
+    function canUpdate(w, table, r) {
+      if (table === "profiles") return r.id === w.uid || w.admin;
+      if (!w.active) return false;
+      switch (table) {
+        case "projects": return canEdit(w, "projects") && (!r.deleted_at || w.admin);
+        case "project_prices": return w.prices && canEdit(w, "projects");
+        case "activity": return r.kind === "note" && (r.created_by === w.uid && canEdit(w, "activity") || w.admin);
+        case "journal_entries": return (!r.deleted_at || w.admin) && (canEdit(w, "all_journal") || (canEdit(w, "journal") && r.created_by === w.uid));
+        case "files": return canRead(w, "files", r) && (canEdit(w, "all_files") || (canEdit(w, "files") && r.created_by === w.uid));
+        case "contacts": return canEdit(w, "contacts");
+        case "tasks": return canEdit(w, "tasks") || (canEdit(w, "own_tasks") && (r.assigned_to === w.uid || r.created_by === w.uid));
+        case "task_notes": return r.created_by === w.uid || w.admin;
+        case "settings": case "settings_prices": return w.admin;
+        default: return false;
+      }
+    }
+
+    function guardUpdate(w, table, old, r, patch) {
+      if (table === "profiles" && !w.admin) {
+        const allowed = ["full_name", "phone", "color"];
+        for (const k of Object.keys(patch)) {
+          if (!allowed.includes(k) && JSON.stringify(patch[k]) !== JSON.stringify(old[k])) {
+            throw deny("only an admin can change role, switches, e-mail or active");
+          }
+        }
+        if (r.color && !/^#[0-9A-Fa-f]{6}$/.test(r.color)) throw rule("23514", 'new row for relation "profiles" violates check constraint "profiles_color_check"');
+        if (r.full_name && r.full_name.length > 120) throw rule("23514", 'new row for relation "profiles" violates check constraint "profiles_full_name_check"');
+      }
+      if (table === "projects") {
+        if (r.number !== old.number && !w.admin) throw deny("only an admin can change a project number");
+        if ("legacy_sp_id" in patch && patch.legacy_sp_id !== old.legacy_sp_id) throw deny("only the import may set legacy columns");
+        if (!r.name || !String(r.name).trim()) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_name_check"');
+        if (!STATUSES.includes(r.status)) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_status_check"');
+        if (r.lat !== null && (r.lat < -90 || r.lat > 90)) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_lat_check"');
+        if (r.lng !== null && (r.lng < -180 || r.lng > 180)) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_lng_check"');
+        if (r.status === "completed" && old.status !== "completed" && r.completed_date === old.completed_date) r.completed_date = today();
+        if (r.lat === null || r.lng === null || r.lat === undefined || r.lng === undefined) r.location_source = null;
+        else if ((r.lat !== old.lat || r.lng !== old.lng) && r.location_source === old.location_source) r.location_source = "manual";
+      }
+      if (table === "activity") {
+        if (r.kind !== old.kind || r.project_id !== old.project_id) throw deny("a log line keeps its kind and project");
+        const len = String(r.text || "").length;
+        if (len < 1 || len > 4000) throw rule("23514", 'new row for relation "activity" violates check constraint "activity_text_check"');
+      }
+      if (table === "journal_entries") {
+        if (r.project_id !== old.project_id) throw rule("23514", "a journal entry cannot move to another project");
+        if (!JOURNAL_CATS.includes(r.category)) throw rule("23514", 'new row for relation "journal_entries" violates check constraint "journal_entries_category_check"');
+      }
+      if (table === "files") {
+        for (const k of ["project_id", "folder", "storage_path", "storage"]) {
+          if (k in patch && patch[k] !== old[k]) throw deny("a file keeps its project, folder and object");
+        }
+        if ("source" in patch && patch.source !== old.source) throw deny("where a file came from does not change");
+        if (old.preview_path && "preview_path" in patch && patch.preview_path !== old.preview_path) throw deny("a file's preview is set once");
+        if (r.description !== null && r.description !== undefined && String(r.description).length > 2000) {
+          throw rule("23514", 'new row for relation "files" violates check constraint "files_description_check"');
+        }
+      }
+      if (table === "tasks") {
+        if (r.status === "done" && old.status !== "done") { r.completed_at = nowIso(); r.completed_by = w.uid; }
+        else if (r.status !== "done") { r.completed_at = null; r.completed_by = null; }
+      }
+    }
+
+    function afterUpdate(w, table, old, r) {
+      if (table === "projects" && r.status !== old.status) {
+        const note = r.status_note !== old.status_note && String(r.status_note || "").trim() ? " \u2014 " + r.status_note : "";
+        logActivity(w, r.id, "status", "Status: " + statusLabel(old.status) + " \u2192 " + statusLabel(r.status) + note, old.status, r.status);
+      }
+    }
+
+    function softDelete(w, table, old) {
+      const r = clone(old);
+      r.deleted_at = nowIso();
+      auditUpdate(w, table, r, old);
+      commitUpdate(table, old, r);
+      const tomb = { id: nextId("deletions"), table_name: table, row_id: r.id,
+        project_id: table === "projects" ? r.id : (r.project_id ?? null), deleted_at: r.deleted_at, deleted_by: w.uid };
+      commitInsert("deletions", tomb);
+      return r;
+    }
+
+    /** INSERT (rows already shaped by the client) */
+    function insert(ctx, table, input, q) {
+      const w = who(ctx);
+      if (!w.uid) throw new PgErr("42501", "permission denied for table " + table, 401);
+      if (VIEWS[table]) throw new PgErr("42501", "cannot insert into view " + table, 403);
+      const list = Array.isArray(input) ? input : [input];
+      const made = [];
+      const pk = pkOf(table);
+      for (const raw of list) {
+        checkColumns(table, raw);
+        const r = Object.assign(clone(COLS[table]), clone(raw));
+        if (q && q.upsert) {
+          const keys = q.onConflict ? String(q.onConflict).split(",").map((s) => s.trim()) : [pk];
+          const hit = keys.every((k) => r[k] !== null && r[k] !== undefined) ? rows[table].find((x) => keys.every((k) => cmp(x[k], r[k]) === 0)) : null;
+          if (hit) {
+            if (q.ignoreDuplicates) continue;
+            const patch = clone(raw);
+            delete patch[pk];
+            const done = update(ctx, table, patch, { filters: [{ col: pk, op: "eq", val: hit[pk] }] });
+            if (!done.length) throw new PgErr("42501", 'new row violates row-level security policy (USING expression) for table "' + table + '"', 403);
+            made.push(done[0]);
+            continue;
+          }
+        }
+        if (!canInsert(w, table, r)) throw new PgErr("42501", 'new row violates row-level security policy for table "' + table + '"', 403);
+        if (UUID_PK.has(table)) { if (!r.id) throw rule("23502", 'null value in column "id"'); }
+        else if (pk === "id") r.id = nextId(table);
+        else if (rows[table].some((x) => x[pk] === r[pk])) {
+          throw new PgErr("23505", 'duplicate key value violates unique constraint "' + table + '_pkey"', 409);
+        }
+        beforeInsert(w, table, r);
+        auditInsert(w, table, r);
+        commitInsert(table, r);
+        afterInsert(w, table, r);
+        made.push(r);
+      }
+      return made.filter(Boolean);
+    }
+
+    /** UPDATE: rows the policy does not let through are simply not matched. */
+    function update(ctx, table, patch, q) {
+      const w = who(ctx);
+      if (!w.uid) throw new PgErr("42501", "permission denied for table " + table, 401);
+      if (VIEWS[table]) throw new PgErr("42501", "cannot update view " + table, 403);
+      checkColumns(table, patch);
+      const p = clone(patch);
+      for (const k of ["id", "created_at", "created_by", "updated_at", "updated_by", "version", "is_financial"]) {
+        if (k in p && !(k === "version")) delete p[k];
+      }
+      delete p.version;
+      const targets = rows[table].filter((r) => canRead(w, table, r) && passes(r, q, "") && canUpdate(w, table, r));
+      const out = [];
+      for (const old of targets) {
+        const r = Object.assign(clone(old), p);
+        guardUpdate(w, table, old, r, p);
+        auditUpdate(w, table, r, old);
+        commitUpdate(table, old, r);
+        afterUpdate(w, table, old, r);
+        out.push(r);
+      }
+      return out;
+    }
+
+    /** DELETE: soft-delete tables are hidden, never removed; nothing comes back for them. */
+    function del(ctx, table, q) {
+      const w = who(ctx);
+      if (!w.uid) throw new PgErr("42501", "permission denied for table " + table, 401);
+      const targets = rows[table].filter((r) => canRead(w, table, r) && passes(r, q, "") && canDelete(w, table, r));
+      const out = [];
+      for (const old of targets) {
+        if (SOFT.has(table)) { if (!old.deleted_at) softDelete(w, table, old); continue; }
+        commitDelete(table, old);
+        out.push(old);
+      }
+      return out;
+    }
+    function canDelete(w, table, r) {
+      if (!w.active) return false;
+      switch (table) {
+        case "projects": return canEdit(w, "projects");
+        case "journal_entries": return canEdit(w, "all_journal") || (canEdit(w, "journal") && r.created_by === w.uid);
+        case "files": return canEdit(w, "all_files") || (canEdit(w, "files") && r.created_by === w.uid);
+        case "contacts": return canEdit(w, "contacts");
+        case "activity": return r.kind === "note" && (r.created_by === w.uid || w.admin);
+        case "tasks": return canEdit(w, "tasks") || r.created_by === w.uid;
+        case "task_notes": return r.created_by === w.uid || w.admin;
+        default: return false;
+      }
+    }
+
+    /* ── RPCs ───────────────────────────────────────────────────────── */
+    const arg = (a, name) => (a ? a[name] : undefined);
+    // the public functions' parameter names (supabase/migrations): PostgREST matches them by name
+    const SIGNATURES = {
+      create_project: { args: ["fields"], required: ["fields"] },
+      next_project_number: { args: [], required: [] },
+      search: { args: ["q"], required: ["q"] },
+      soft_delete: { args: ["tbl", "id", "version"], required: ["tbl", "id"] },
+      set_project_location: { args: ["project_id", "lat", "lng", "accuracy_m", "source"], required: ["project_id", "lat", "lng"] },
+      password_changed: { args: [], required: [] },
+    };
+    function checkArgs(name, args) {
+      const sig = SIGNATURES[name];
+      if (!sig) return;
+      const keys = Object.keys(args || {});
+      if (keys.some((k) => !sig.args.includes(k)) || sig.required.some((k) => !keys.includes(k))) {
+        throw new PgErr("PGRST202", "Could not find the function public." + name + "(" + keys.join(", ") + ") in the schema cache", 404,
+          "Searched for the function public." + name + " with parameters " + keys.join(", "));
+      }
+    }
+    const CREATE_KEYS = ["name", "address", "city", "state", "zip", "client_contact_id", "client_name", "client_phone", "client_email",
+      "status", "status_note", "scope", "tags", "plans_url", "start_date", "lat", "lng", "labor_rate", "rate_source"];
+
+    function rpc(ctx, name, args) {
+      const w = who(ctx);
+      if (!w.uid) throw new PgErr("42501", "permission denied for function " + name, 401);
+      checkArgs(name, args);
+      switch (name) {
+        case "create_project": {
+          if (!w.active) throw deny("not allowed");
+          if (!canEdit(w, "projects")) throw deny("not allowed to create projects");
+          const fields = (args && args.fields) || {};
+          for (const k of Object.keys(fields)) if (!CREATE_KEYS.includes(k)) throw rule("22023", "unknown field: " + k);
+          if (("labor_rate" in fields || "rate_source" in fields) && !w.prices) throw deny("the labor rate needs the prices switch");
+          const f = clone(fields);
+          const extra = { labor_rate: f.labor_rate, rate_source: f.rate_source };
+          delete f.labor_rate; delete f.rate_source;
+          if (f.status === undefined || f.status === null) delete f.status;
+          const r = Object.assign(clone(COLS.projects), f);
+          beforeInsert(w, "projects", r, true);
+          r.id = nextId("projects");
+          auditInsert(w, "projects", r);
+          commitInsert("projects", r);
+          afterInsert(w, "projects", r, extra);
+          return clone(r);
+        }
+        case "next_project_number": {
+          if (!canEdit(w, "projects")) throw deny("not allowed");
+          return takeNumber();
+        }
+        case "search":
+          if (w.agents) throw deny("the DCR Agents 2 account does not search");
+          return search(w, arg(args, "q"));
+        case "soft_delete": {
+          const tbl = arg(args, "tbl"), id = Number(arg(args, "id")), version = arg(args, "version");
+          if (!SOFT.has(tbl)) throw rule("22023", (tbl || "null") + " has no soft delete");
+          if (!w.active) throw deny("not allowed to delete this record");
+          const old = rows[tbl].find((r) => r.id === id && !r.deleted_at && canRead(w, tbl, r));
+          if (!old) throw new PgErr("PT404", "record not found", 404);
+          if (version !== undefined && version !== null && Number(version) !== old.version) {
+            throw new PgErr("PT409", "the record was changed by someone else", 409, JSON.stringify({ table: tbl, id, version: old.version }));
+          }
+          if (!canDelete(w, tbl, old)) throw deny("not allowed to delete this record");
+          softDelete(w, tbl, old);
+          return null;
+        }
+        case "set_project_location": {
+          // 20261020000100_portal2_foundation.sql: write-once, {stored, reason, id, lat, lng, location_source, version}
+          if (!w.active) throw deny("sign in first");
+          if (w.role === "viewer") throw deny("a view-only account cannot place a project");
+          const pidRaw = arg(args, "project_id");
+          if (pidRaw === null || pidRaw === undefined) throw rule("22023", "which project (project_id)?");
+          const pid = Number(pidRaw);
+          const latRaw = arg(args, "lat"), lngRaw = arg(args, "lng");
+          const lat = latRaw === null || latRaw === undefined ? NaN : Number(latRaw);
+          const lng = lngRaw === null || lngRaw === undefined ? NaN : Number(lngRaw);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            throw rule("22023", "lat must be -90 to 90 and lng -180 to 180");
+          }
+          const srcRaw = arg(args, "source");
+          const src = String(srcRaw === null || srcRaw === undefined ? "gps" : srcRaw).trim().toLowerCase();
+          if (!["gps", "geocode", "manual"].includes(src)) throw rule("22023", "source must be gps, geocode or manual");
+          const editor = canEdit(w, "projects");
+          if (src === "manual" && !editor) throw deny("only a manager or an admin places a project by hand");
+          const old = rows.projects.find((p) => p.id === pid && (!p.deleted_at || w.admin));
+          if (!old) throw new PgErr("PT404", "project not found", 404);
+          const accRaw = arg(args, "accuracy_m");
+          const acc = accRaw === null || accRaw === undefined ? null : Number(accRaw);
+          const hasPoint = old.lat !== null && old.lng !== null && old.lat !== undefined && old.lng !== undefined;
+          let reason = null;
+          // an untouched import from the old portal (legacy_sp_id, version 1) takes no automatic point
+          if (src !== "manual" && old.legacy_sp_id && Number(old.version || 1) <= 1) reason = "old_portal";
+          else if (src === "gps" && (acc === null || !(acc > 0 && acc <= 100))) reason = "accuracy";
+          else if (!hasPoint) reason = null;
+          else if (src === "geocode") reason = "exists";
+          else if (src === "gps" && (old.location_source || "geocode") === "geocode") reason = null;
+          else if (editor) reason = null;
+          else reason = "exists";
+          if (reason) {
+            return { stored: false, reason, id: old.id, lat: old.lat, lng: old.lng, location_source: old.location_source, version: old.version };
+          }
+          const r = Object.assign(clone(old), { lat, lng, location_source: src });
+          auditUpdate(w, "projects", r, old);
+          commitUpdate("projects", old, r);
+          return { stored: true, reason: null, id: r.id, lat: r.lat, lng: r.lng, location_source: r.location_source, version: r.version };
+        }
+        case "password_changed": {
+          if (!w.active) throw deny("sign in first");
+          const p = profileOf(w.uid);
+          if (!p || !p.must_change_password) return false;
+          const r = Object.assign(clone(p), { must_change_password: false });
+          auditUpdate(w, "profiles", r, p);
+          commitUpdate("profiles", p, r);
+          return true;
+        }
+        default:
+          throw new PgErr("PGRST202", "Could not find the function public." + name + " without parameters in the schema cache", 404,
+            "Searched for the function public." + name, null);
+      }
+    }
+
+    function search(w, qIn) {
+      const v = String(qIn ?? "").trim();
+      const empty = { projects: [], contacts: [], items: [], tasks: [], files: [] };
+      if (v.length < 2 || !w.active) return empty;
+      const pat = v.slice(0, 100).toLowerCase();
+      const has = (s) => s !== null && s !== undefined && String(s).toLowerCase().includes(pat);
+      const digits = /^[0-9 ()+.-]+$/.test(v) && v.replace(/[^0-9]/g, "").length >= 4 ? v.replace(/[^0-9]/g, "") : "";
+      const short = /^[Aa]?([0-9]{1,4})(-[A-Za-z]{1,2}|[Tt][0-9])?$/.exec(v);
+      const value = short ? Number(short[1]) : null;
+      const suffix = short && short[2] ? short[2].toUpperCase() : "";
+      const projects = readable(w, "projects").filter((p) => !p.deleted_at).map((p) => {
+        const np = numberParts(p.number);
+        const hit = value !== null && np.letter === "A" && np.value === value && (suffix === "" || np.suffix === suffix);
+        return { p, hit, ok: hit || has(p.number) || has(p.name) || has(p.address) || has(p.city) || has(p.client_name) || has(p.scope) };
+      }).filter((x) => x.ok).sort((a, b) => {
+        const ea = String(a.p.number).toUpperCase() === v.toUpperCase(), eb = String(b.p.number).toUpperCase() === v.toUpperCase();
+        if (ea !== eb) return ea ? -1 : 1;
+        if (a.hit !== b.hit) return a.hit ? -1 : 1;
+        if (a.hit && b.hit) return numberCmp(a.p.number, b.p.number);
+        return numberCmp(b.p.number, a.p.number);
+      }).slice(0, 20).map((x) => ({ id: x.p.id, number: x.p.number, name: x.p.name, address: x.p.address, city: x.p.city,
+        client_name: x.p.client_name, status: x.p.status }));
+      const contacts = readable(w, "contacts").filter((c) => !c.deleted_at && (has(c.name) || has(c.company) || has(c.trade) ||
+        has(c.email) || has(c.phone) || has(c.city) || (digits && String(c.phone || "").replace(/[^0-9]/g, "").includes(digits))))
+        .sort((a, b) => cmp(a.name, b.name)).slice(0, 20)
+        .map((c) => ({ id: c.id, name: c.name, company: c.company, kind: c.kind, trade: c.trade, phone: c.phone, email: c.email, city: c.city, trades: [] }));
+      const tasks = readable(w, "tasks").filter((t) => has(t.title) || has(t.description) || has(t.category))
+        .sort((a, b) => (a.status === "done") - (b.status === "done") || (a.due_date === null) - (b.due_date === null) ||
+          cmp(a.due_date || "", b.due_date || "") || b.id - a.id).slice(0, 20)
+        .map((t) => ({ id: t.id, project_id: t.project_id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date, assigned_to: t.assigned_to }));
+      const files = readable(w, "current_files").filter((f) => has(f.name)).sort((a, b) => cmp(b.created_at, a.created_at)).slice(0, 20)
+        .map((f) => ({ id: f.id, project_id: f.project_id, folder: f.folder, name: f.name, version_no: f.version_no, created_at: f.created_at }));
+      return { projects, contacts, items: [], tasks, files };
+    }
+
+    /* ── Storage (bucket project-files) ─────────────────────────────── */
+    const KEY_RE = /^([pf])\/([0-9]+)\/([a-z]+)\/[^/]+\/[^/]+$/;
+    function canUploadObject(w, key) {
+      const m = KEY_RE.exec(key);
+      if (!m || !w.active) return false;
+      const folder = m[3];
+      if (!FOLDERS.includes(folder) || !canEdit(w, "files") || !projectVisible(w, Number(m[2]))) return false;
+      if (m[1] === "f" && !canEdit(w, "money")) return false;
+      if (folder === "receipts" && m[1] !== "f") return false;
+      if (folder === "estimates" && !w.prices) return false;
+      if (folder === "invoices" && !canEdit(w, "money")) return false;
+      if (folder === "thumbnail" && !canEdit(w, "projects")) return false;
+      return true;
+    }
+    function canReadObject(w, key) {
+      return readable(w, "files").some((f) => f.storage_path === key || f.preview_path === key);
+    }
+    function storageErr(status, statusCode, error, message) {
+      const e = new Error(message);
+      e.status = status; e.statusCode = String(statusCode); e.error = error;
+      e.body = { statusCode: String(statusCode), error, message };
+      return e;
+    }
+    function putObject(w, key, size, mime, blob) {
+      objects.set(key, { size, mime, owner: w.uid, created_at: nowIso() });
+      if (blob) blobs.set(key, blob);
+      emitOp({ k: "obj", key, size, mime, owner: w.uid });
+    }
+    const storage = {
+      bucket: BUCKET,
+      upload(ctx, key, size, mime, blob, upsert) {
+        const w = who(ctx);
+        if (!w.uid) throw storageErr(400, 403, "Unauthorized", "new row violates row-level security policy");
+        if (!canUploadObject(w, key)) throw storageErr(400, 403, "Unauthorized", "new row violates row-level security policy");
+        if (objects.has(key) && !upsert) throw storageErr(400, 409, "Duplicate", "The resource already exists");
+        if (opt.maxFileSize && size > opt.maxFileSize) throw storageErr(413, 413, "Payload too large", "The object exceeded the maximum allowed size");
+        putObject(w, key, size, mime, blob);
+        return { Key: BUCKET + "/" + key, Id: "obj-" + objects.size };
+      },
+      tusCreate(ctx, key, length, mime) {
+        const w = who(ctx);
+        if (!w.uid || !canUploadObject(w, key)) throw storageErr(403, 403, "Unauthorized", "new row violates row-level security policy");
+        if (objects.has(key)) throw storageErr(409, 409, "Duplicate", "The resource already exists");
+        if (opt.maxFileSize && length > opt.maxFileSize) throw storageErr(413, 413, "Payload too large", "The object exceeded the maximum allowed size");
+        tusN += 1;
+        const id = "tus" + tusN + "x" + Math.random().toString(36).slice(2, 8);
+        tus.set(id, { key, length, offset: 0, mime, chunks: [], owner: w.uid });
+        return id;
+      },
+      tusPatch(ctx, id, offset, chunk, size) {
+        const w = who(ctx);
+        const u = tus.get(id);
+        if (!u) throw storageErr(404, 404, "Not found", "Upload not found");
+        if (!w.uid || w.uid !== u.owner) throw storageErr(403, 403, "Unauthorized", "not your upload");
+        if (Number(offset) !== u.offset) throw storageErr(409, 409, "Conflict", "Upload-Offset mismatch");
+        if (u.offset + size < u.length && size !== CHUNK) throw storageErr(460, 460, "Chunk size", "every chunk but the last must be 6 MiB");
+        if (u.offset + size > u.length) throw storageErr(400, 400, "Too long", "more bytes than Upload-Length");
+        u.chunks.push(chunk);
+        u.offset += size;
+        if (u.offset === u.length) {
+          let blob = null;
+          try { blob = typeof Blob !== "undefined" && u.chunks.every((c) => c && typeof c === "object") ? new Blob(u.chunks, { type: u.mime }) : null; } catch (e) { blob = null; }
+          putObject(w, u.key, u.length, u.mime, blob);
+          u.done = true;
+        }
+        return u.offset;
+      },
+      tusHead(ctx, id) {
+        const u = tus.get(id);
+        if (!u) throw storageErr(404, 404, "Not found", "Upload not found");
+        return { offset: u.offset, length: u.length };
+      },
+      tusInfo(id) {
+        const u = tus.get(id);
+        return u ? { key: u.key, done: !!u.done, offset: u.offset, length: u.length } : null;
+      },
+      /** forget an upload in progress (the tests: "the server lost it" -> 404) */
+      tusDrop(id) { tus.delete(id); },
+      /** -> {ok, blob?, meta} or throws (404 when not readable: no telling objects apart) */
+      sign(ctx, key) {
+        const w = who(ctx);
+        if (!w.uid || !canReadObject(w, key)) throw storageErr(400, 404, "not_found", "Object not found");
+        const meta = objects.get(key) || null;
+        return { meta, blob: blobs.get(key) || null };
+      },
+      remove(ctx, keys) {
+        const w = who(ctx);
+        if (!w.admin) return [];
+        const out = [];
+        for (const k of keys) if (objects.delete(k)) { blobs.delete(k); out.push({ name: k }); emitOp({ k: "objdel", key: k }); }
+        return out;
+      },
+      has: (key) => objects.has(key),
+      blob: (key) => blobs.get(key) || null,
+      setBlob: (key, blob) => blobs.set(key, blob),
+    };
+
+    /* Storage over HTTP, as Supabase answers it: POST /storage/v1/object/<bucket>/<key>,
+       POST /storage/v1/upload/resumable (TUS create), PATCH / HEAD …/resumable/<id>.
+       -> {status, headers, text}; anything else -> null (the caller treats it as no network). */
+    function b64dec(s) {
+      try {
+        if (typeof atob === "function") return new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+        return Buffer.from(String(s), "base64").toString("utf8");
+      } catch (e) { return ""; }
+    }
+    function storageRequest(method, path, hdrs, body) {
+      const headers = {};
+      for (const k of Object.keys(hdrs || {})) headers[k.toLowerCase()] = hdrs[k];
+      const tok = String(headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const ctx = { uid: opt.uidFromToken ? opt.uidFromToken(tok) : tok || null };
+      const size = body && body.size !== undefined ? body.size : body && body.byteLength !== undefined ? body.byteLength : 0;
+      const json = (status, obj, extra) => ({ status, headers: Object.assign({ "content-type": "application/json" }, extra || {}), text: obj === null ? "" : JSON.stringify(obj) });
+      const errOut = (e) => (e && e.body ? json(e.status || 400, e.body) : (() => { throw e; })());
+      let m = /^\/storage\/v1\/object\/([^/]+)\/(.+)$/.exec(path);
+      if (m && method === "POST") {
+        const key = m[2].split("/").map(decodeURIComponent).join("/");
+        try {
+          storage.upload(ctx, key, size, headers["content-type"] || "application/octet-stream", body, headers["x-upsert"] === "true");
+          return json(200, { Key: m[1] + "/" + key, Id: "obj-" + objects.size });
+        } catch (e) { return errOut(e); }
+      }
+      if (path === "/storage/v1/upload/resumable" && method === "POST") {
+        const meta = {};
+        String(headers["upload-metadata"] || "").split(",").forEach((kv) => {
+          const [k, v] = kv.trim().split(" ");
+          if (k) meta[k] = b64dec(v || "");
+        });
+        try {
+          const id = storage.tusCreate(ctx, meta.objectName, Number(headers["upload-length"]), meta.contentType || "application/octet-stream");
+          return { status: 201, headers: { location: "/storage/v1/upload/resumable/" + id, "tus-resumable": "1.0.0" }, text: "" };
+        } catch (e) { return errOut(e); }
+      }
+      m = /^\/storage\/v1\/upload\/resumable\/([^/]+)$/.exec(path);
+      if (m && method === "PATCH") {
+        try {
+          const off = storage.tusPatch(ctx, m[1], Number(headers["upload-offset"]), body, size);
+          return { status: 204, headers: { "upload-offset": String(off), "tus-resumable": "1.0.0" }, text: "" };
+        } catch (e) { return errOut(e); }
+      }
+      if (m && method === "HEAD") {
+        try {
+          const h = storage.tusHead(ctx, m[1]);
+          return { status: 200, headers: { "upload-offset": String(h.offset), "upload-length": String(h.length), "tus-resumable": "1.0.0" }, text: "" };
+        } catch (e) { return { status: (e && e.status) || 404, headers: {}, text: "" }; }
+      }
+      return null;
+    }
+    storage.request = storageRequest;
+
+    /* ── load, ops, inspection ──────────────────────────────────────── */
+    function load(data) {
+      quiet++;
+      try {
+        for (const t of TABLES) {
+          rows[t] = (data[t] || []).map((r) => Object.assign(clone(COLS[t]), r));
+          const pk = pkOf(t);
+          seq[t] = rows[t].reduce((m, r) => (typeof r[pk] === "number" && r[pk] > m ? r[pk] : m), 0);
+        }
+        for (const [k, v] of Object.entries(data.objects || {})) objects.set(k, v);
+      } finally { quiet--; }
+    }
+    function applyOps(ops, loud) {
+      if (!loud) quiet++;
+      try {
+        for (const op of ops || []) {
+          if (op.k === "row") {
+            const t = op.t, pk = pkOf(t);
+            const i = rows[t].findIndex((r) => r[pk] === op.row[pk]);
+            const old = i === -1 ? null : rows[t][i];
+            if (i === -1) rows[t].push(clone(op.row)); else rows[t][i] = clone(op.row);
+            if (typeof op.row[pk] === "number" && op.row[pk] > seq[t]) seq[t] = op.row[pk];
+            if (typeof op.seq === "number" && op.seq > seq[t]) seq[t] = op.seq;
+            if (loud) emitChangeLoud({ table: t, type: old ? "UPDATE" : "INSERT", new: clone(op.row), old: old ? clone(old) : null });
+          } else if (op.k === "del") {
+            const pk = pkOf(op.t);
+            const i = rows[op.t].findIndex((r) => r[pk] === op.id);
+            if (i !== -1) {
+              const old = rows[op.t][i];
+              rows[op.t].splice(i, 1);
+              if (loud) emitChangeLoud({ table: op.t, type: "DELETE", new: null, old: clone(old) });
+            }
+          } else if (op.k === "obj") {
+            objects.set(op.key, { size: op.size, mime: op.mime, owner: op.owner, created_at: nowIso() });
+          } else if (op.k === "objdel") {
+            objects.delete(op.key); blobs.delete(op.key);
+          }
+        }
+      } finally { if (!loud) quiet--; }
+    }
+    function emitChangeLoud(evt) {
+      for (const cb of Array.from(listeners)) { try { cb(evt); } catch (e) { /* */ } }
+    }
+
+    return {
+      PgErr, COLS, TABLES, FKS,
+      select, insert, update, delete: del, rpc, storage,
+      upsert: (ctx, table, input, q) => insert(ctx, table, input, Object.assign({}, q, { upsert: true })),
+      who, canRead, profileOf,
+      load, applyOps,
+      onChange(cb) { listeners.add(cb); return () => listeners.delete(cb); },
+      onOp(cb) { opListeners.add(cb); return () => opListeners.delete(cb); },
+      rows, seq, objects,
+      /** a write as somebody else (the demo's "someone else edits this") */
+      as(uid) { return { uid }; },
+    };
+  }
+
+  NS.createEngine = createEngine;
+  NS.PgErr = PgErr;
+  NS.parseSelect = parseSelect;
+  NS.parseLogic = parseLogic;
+  NS.numberCmp = numberCmp;
+  NS.companyDay = companyDay;
+  NS.STATUSES = STATUSES;
+  NS.CHUNK = CHUNK;
+})(typeof globalThis !== "undefined" ? globalThis : this);

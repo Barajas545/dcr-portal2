@@ -1,0 +1,53 @@
+# Publishes site/ (and nothing else) to GitHub Pages.
+# The custom domain (portal.dcrframing.com) and "Enforce HTTPS" are set in the repository's Pages
+# settings; with an Actions deploy no CNAME file is needed in the artifact.
+name: Publish Portal 2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests (pure modules, the demo fake, the site guard)
+        run: node --test
+      - name: Nothing from the demo mode is published
+        run: |
+          if grep -rIl -e "__dev/" -e "fake-supabase" -e "DCR2Fake" -e "DCR2Demo" site/; then
+            echo "site/ references the local demo mode"; exit 1
+          fi
+          if [ -d site/docs ] || ls site | grep -qi '\.md$'; then
+            echo "design documents must not be published"; exit 1
+          fi
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

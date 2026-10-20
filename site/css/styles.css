@@ -1,0 +1,517 @@
+/* DCR Employee Portal 2 — the old portal's styles.css (same look), plus the Portal 2 accent and the
+   shared pieces of common2.js at the end. Guided Assist styles are not carried (Q21). */
+
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #dfe3e8;
+  --text: #1b2733;
+  --text-muted: #61738a;
+  --brand: #c8371f;      /* DCR red */
+  --brand-dark: #a12c17;
+  --accent: #1f6fc8;
+  --danger: #c8371f;
+  --ok: #1f9d55;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 4px 16px rgba(16, 24, 40, 0.06);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+a { color: var(--accent); }
+button { font: inherit; cursor: pointer; }
+
+/* ---------- Login ---------- */
+.auth-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 32px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.brand-badge {
+  width: 40px; height: 40px;
+  border-radius: 9px;
+  background: var(--brand);
+  color: #fff;
+  display: grid; place-items: center;
+  font-weight: 800; letter-spacing: .5px;
+}
+.brand h1 { font-size: 18px; margin: 0; }
+/* The company mark in the top bar.
+
+   The artwork is black-on-transparent and nearly square, so it is sized by
+   height and left to find its own width. 26px sits on the cap-height of the
+   16px title beside it — big enough to read as a mark, small enough that the
+   bar stays a bar rather than a banner.
+
+   `.logo` is here because three screens were written against that name, and a
+   class with no rules behind it renders the image at its natural 192px. Sizing
+   both is cheaper than relying on everyone remembering which is which.
+
+   The invert is what makes it work on either theme: black artwork stays black
+   on the light one and becomes white on the dark. Slightly softened rather than
+   pure white, because a hard #fff mark next to muted grey text is the loudest
+   thing on the screen and it is only a logo. */
+.brand-logo, .topbar .logo {
+  height: 26px; width: auto; max-width: 150px;
+  object-fit: contain; display: block; flex-shrink: 0;
+}
+.subtitle { color: var(--text-muted); margin: 4px 0 24px; font-size: 14px; }
+
+label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+input, select, textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(31, 111, 200, 0.15);
+}
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+.btn:hover { background: var(--brand-dark); }
+.btn:disabled { opacity: .6; cursor: default; }
+.btn-block { width: 100%; margin-top: 20px; }
+.btn-ghost { background: var(--surface); color: var(--text); border-color: var(--border); }
+.btn-ghost:hover { background: var(--surface-2); }
+.btn-sm { padding: 6px 10px; font-size: 13px; }
+.btn-danger { background: var(--danger); }
+
+.msg { margin-top: 16px; padding: 10px 12px; border-radius: 8px; font-size: 14px; display: none; }
+.msg.show { display: block; }
+.msg.error { background: #fde8e4; color: #8a2113; }
+.msg.ok { background: #e3f4ea; color: #0f5f34; }
+
+/* ---------- App shell ---------- */
+/* The bar wraps rather than overflowing. On a phone the title and the name
+   pill step aside (see the media queries below), which leaves room for every
+   page's buttons on one row except a few with three long ones - Leads,
+   Marketing, Batch timesheets, Backup, Compare. Those drop their buttons to a
+   second row, all still on screen, instead of pushing Log out off the right
+   edge. */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; column-gap: 12px; row-gap: 8px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+.topbar .brand h1 { font-size: 16px; }
+.topbar a.brand { color: inherit; text-decoration: none; }
+/* One line, cut short with an ellipsis if it must be - never wrapped into a
+   three-line stack that makes the whole bar three times as tall.
+
+   The title gives way before the buttons do. Its width:0 means it claims no
+   room when the bar decides what fits on a row, then flex-grow hands it
+   whatever is left over. The 6em floor is where it stops giving way: a title
+   cut to "DCR…" is noise, so below that the buttons take a row of their own
+   and the title gets the first row whole. Growing into the free space also
+   keeps the nav and the brand together on the left and the actions on the
+   right. */
+.topbar > .brand { flex: 1 1 0%; }
+.topbar .brand > h1, .topbar .brand > span {
+  flex: 1 1 auto; width: 0; min-width: 6em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* margin-left: auto keeps the buttons on the right when they wrap onto a row
+   of their own. They never shrink or break - "Log out" split over two lines is
+   how this bar looked on a phone. A long name in the pill is cut short. */
+.top-actions {
+  display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; gap: 8px 12px; margin-left: auto; min-width: 0;
+}
+.top-actions > .btn { flex-shrink: 0; white-space: nowrap; }
+.top-actions > .pill {
+  min-width: 0; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Back / Forward ────────────────────────────────────────────────────────
+   The portal is opened in a desktop shell with no browser chrome, so no page
+   has a back control of its own. These sit at the far left of the bar, ahead
+   of the brand, which is where one is looked for. */
+/* The bar's 12px column gap plus this 2px is the 14px the nav always had. */
+.topbar > .dcr-nav { display: flex; align-items: center; gap: 6px; margin-right: 2px; flex-shrink: 0; }
+.dcr-navbtn {
+  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text);
+  cursor: pointer; line-height: 1;
+  transition: background .12s ease, border-color .12s ease, opacity .12s ease;
+}
+.dcr-navbtn svg { width: 17px; height: 17px; display: block; }
+.dcr-navbtn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--text-muted); }
+.dcr-navbtn:active:not(:disabled) { background: var(--surface-2); transform: translateY(1px); }
+.dcr-navbtn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+/* Dimmed, never hidden: a control that disappears shifts everything beside it,
+   and the button you were reaching for moves out from under the cursor. */
+.dcr-navbtn:disabled { opacity: .3; cursor: default; }
+/* ── The bar on narrower screens ──────────────────────────────────────────
+   Given up in order of how little it is missed: first the pill's length, then
+   the pill (you know who you are), then the title (the logo still says whose
+   portal this is, and each page names itself in its own heading). Back,
+   Forward and the page's buttons are never given up. */
+@media (max-width: 768px) {
+  .top-actions > .pill { max-width: 180px; }
+}
+@media (max-width: 640px) {
+  .topbar { padding: 10px 14px; column-gap: 8px; }
+  .topbar > .dcr-nav { margin-right: 0; gap: 4px; }
+  .top-actions { gap: 6px; }
+  .top-actions > .pill { display: none; }
+}
+@media (max-width: 480px) {
+  .topbar { padding: 8px 12px; }
+  /* Out of sight but still the page's heading to a screen reader. */
+  .topbar .brand > h1, .topbar .brand > span {
+    position: absolute; width: 1px; min-width: 0; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
+}
+/* A finger, not a cursor: 44px is the smallest target that is reliably hit
+   with a thumb. A phone-width window gets it too, so the bar measures the
+   same in a desktop preview as in a hand. */
+@media (max-width: 480px), (pointer: coarse) {
+  .top-actions > .btn { min-height: 44px; }
+  .dcr-navbtn { width: 40px; height: 44px; }
+}
+.pill {
+  font-size: 12px; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--surface-2); color: var(--text-muted);
+}
+.layout { display: grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 57px); }
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 12px;
+  overflow-y: auto;
+}
+.side-title { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); margin: 12px 8px 6px; }
+.nav-item {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; text-align: left;
+  padding: 8px 10px; margin-bottom: 2px;
+  border: none; background: transparent; border-radius: 7px;
+  color: var(--text); font-size: 14px;
+}
+.nav-item:hover { background: var(--surface-2); }
+.nav-item.active { background: rgba(200, 55, 31, 0.1); color: var(--brand-dark); font-weight: 600; }
+.nav-item .tag { font-size: 10px; color: var(--text-muted); }
+.content { padding: 20px 24px; overflow: auto; }
+
+.page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+.page-head h2 { margin: 0; font-size: 20px; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ---------- Table ---------- */
+.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+th { background: var(--surface-2); position: sticky; top: 0; font-weight: 600; }
+tbody tr:hover { background: var(--surface-2); }
+.row-actions { display: flex; gap: 6px; }
+
+.empty { padding: 40px; text-align: center; color: var(--text-muted); }
+.muted { color: var(--text-muted); }
+.center { text-align: center; }
+.spinner { padding: 40px; text-align: center; color: var(--text-muted); }
+
+/* ---------- Modal ---------- */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(16, 24, 40, 0.5);
+  display: none; place-items: center; padding: 20px; z-index: 50;
+}
+.modal-backdrop.show { display: grid; }
+.modal {
+  background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--shadow); width: 100%; max-width: 560px;
+  max-height: 88vh; overflow: auto; padding: 24px;
+}
+.modal h3 { margin: 0 0 16px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field-grid .full { grid-column: 1 / -1; }
+
+.perm-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; max-height: 300px; overflow: auto; padding: 4px; border: 1px solid var(--border); border-radius: 8px; }
+.perm-grid .pk { font-size: 13px; }
+
+@media (max-width: 720px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 200px; }
+  .field-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #171d25; --surface-2: #1e252e;
+    --border: #2a333d; --text: #e6ebf1; --text-muted: #93a1b1;
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  }
+  :root:not([data-theme="light"]) .msg.error { background: #3a1712; color: #f6bcae; }
+  :root:not([data-theme="light"]) .msg.ok { background: #10321f; color: #a7e2c0; }
+  /* Invert the black artwork to white on the dark bar, and pull it back from
+     pure white so it sits with the text rather than shouting over it. */
+  :root:not([data-theme="light"]) .brand-logo,
+  :root:not([data-theme="light"]) .topbar .logo { filter: invert(1) brightness(.92); }
+}
+
+/* The same, chosen explicitly in Settings rather than read
+   from the operating system. */
+:root[data-theme="dark"] {
+    --bg: #0f141a; --surface: #171d25; --surface-2: #1e252e;
+    --border: #2a333d; --text: #e6ebf1; --text-muted: #93a1b1;
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  }
+:root[data-theme="dark"] .msg.error { background: #3a1712; color: #f6bcae; }
+:root[data-theme="dark"] .msg.ok { background: #10321f; color: #a7e2c0; }
+/* Invert the black artwork to white on the dark bar, and pull it back from
+     pure white so it sits with the text rather than shouting over it. */
+  :root[data-theme="dark"] .brand-logo,
+  :root[data-theme="dark"] .topbar .logo { filter: invert(1) brightness(.92); }
+
+/* An explicitly chosen dark theme, which prefers-color-scheme does not see.
+   Without this the mark stays black artwork on a dark bar — which is exactly
+   how it looked on the invoice screen. */
+:root[data-theme="dark"] .brand-logo,
+:root[data-theme="dark"] .topbar .logo { filter: invert(1) brightness(.92); }
+:root[data-theme="light"] .brand-logo,
+:root[data-theme="light"] .topbar .logo { filter: none; }
+
+/* ── auto-save status badge (DCR.live) ────────────────────────────────────
+   Every screen that saves by itself paints one of these. Deliberately quiet:
+   it never moves layout, never steals focus, and the failed state is sticky. */
+.dcr-live { font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--text-muted); }
+.dcr-live.saved { color: #1f7a55; }
+.dcr-live.error, .dcr-live.invalid { color: #c44b3b; }
+.dcr-live-retry {
+  margin-left: 2px; padding: 1px 8px; font-size: 11.5px; font-weight: 700; cursor: pointer;
+  border: 1px solid currentColor; border-radius: 8px; background: transparent; color: inherit;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dcr-live.saved { color: #6fd3a4; }
+  :root:not([data-theme="light"]) .dcr-live.error, :root:not([data-theme="light"]) .dcr-live.invalid { color: #f0937f; }
+}
+
+/* The same, chosen explicitly in Settings rather than read
+   from the operating system. */
+:root[data-theme="dark"] .dcr-live.saved { color: #6fd3a4; }
+:root[data-theme="dark"] .dcr-live.error, :root[data-theme="dark"] .dcr-live.invalid { color: #f0937f; }
+
+/* ── app dialogs (DCR.modal) ──────────────────────────────────────────────
+   Centred in the app and branded, instead of the browser's own prompt box
+   with the hosting domain in its title. */
+.dcr-mo {
+  position: fixed; inset: 0; z-index: 2147483000; display: none;
+  align-items: center; justify-content: center; padding: 20px;
+  background: rgba(0,0,0,.45); backdrop-filter: blur(2px);
+}
+.dcr-mo.open { display: flex; animation: dcrMoIn .12s ease-out; }
+.dcr-mo-card {
+  width: 100%; max-width: 420px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px 16px;
+  box-shadow: 0 18px 60px rgba(0,0,0,.45);
+}
+@keyframes dcrMoIn { from { opacity: 0 } to { opacity: 1 } }
+.dcr-mo-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  font-size: 12px; font-weight: 700; color: var(--text-muted); letter-spacing: .02em; }
+.dcr-mo-hd img { height: 20px; width: auto; }
+.dcr-mo-t { font-size: 16px; font-weight: 800; margin-bottom: 4px; }
+.dcr-mo-m { font-size: 13.5px; line-height: 1.5; color: var(--text); margin-bottom: 4px; white-space: pre-wrap; }
+.dcr-mo-f { margin-top: 10px; }
+.dcr-mo-f label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 3px; font-weight: 600; }
+.dcr-mo-f input, .dcr-mo-f textarea, .dcr-mo-f select {
+  width: 100%; box-sizing: border-box; padding: 9px 11px; font-size: 14px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--text);
+}
+.dcr-mo-f input:focus, .dcr-mo-f textarea:focus, .dcr-mo-f select:focus { outline: 2px solid #2f80d8; outline-offset: 1px; }
+.dcr-mo-chk label { display: flex; align-items: center; gap: 9px; min-height: 40px; margin: 0;
+  font-size: 13.5px; color: var(--text); font-weight: 600; cursor: pointer; }
+.dcr-mo-f.dcr-mo-chk input { width: 20px; height: 20px; margin: 0; flex: none; padding: 0; }
+.dcr-mo-err { color: #d9614f; font-size: 12.5px; min-height: 16px; margin-top: 6px; }
+.dcr-mo-ft { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+.dcr-mo-danger { background: #c44b3b; border-color: #c44b3b; color: #fff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dcr-mo-hd img { filter: invert(1); }
+}
+
+/* The same, chosen explicitly in Settings rather than read
+   from the operating system. */
+:root[data-theme="dark"] .dcr-mo-hd img { filter: invert(1); }
+
+
+
+
+/* ══ Portal 2 ═══════════════════════════════════════════════════════════════
+   The accent: a teal band on the top bar, the "Portal 2" badge and a teal icon, so nobody
+   confuses the two portals while both exist (BLUEPRINT 2.2.1). Everything else keeps the look. */
+:root {
+  --p2: #0f8b7d;
+  --p2-dark: #0b6e63;
+  --p2-tint: rgba(15, 139, 125, 0.12);
+  --p2-tint-2: rgba(15, 139, 125, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --p2: #2fb5a5; --p2-dark: #23978a; --p2-tint: rgba(47, 181, 165, 0.14); --p2-tint-2: rgba(47, 181, 165, 0.26); }
+}
+:root[data-theme="dark"] { --p2: #2fb5a5; --p2-dark: #23978a; --p2-tint: rgba(47, 181, 165, 0.14); --p2-tint-2: rgba(47, 181, 165, 0.26); }
+
+[hidden] { display: none !important; }
+
+.p2-badge {
+  display: inline-flex; align-items: center; flex-shrink: 0;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--p2); color: #fff;
+  font-size: 11px; font-weight: 800; letter-spacing: .04em; line-height: 1.5; white-space: nowrap;
+}
+.p2-badge.sm { font-size: 10px; padding: 0 6px; margin-left: auto; }
+.btn.p2 { background: var(--p2); }
+.btn.p2:hover { background: var(--p2-dark); }
+.linkish { background: none; border: 0; padding: 6px; color: var(--text-muted); text-decoration: underline; font-size: 12.5px; cursor: pointer; }
+
+/* ── the top bar (DCR2.topbar) ─────────────────────────────────────────── */
+.dcr2-topbar { border-top: 3px solid var(--p2); }
+.dcr2-topbar > .brand {
+  flex: 0 1 auto; min-width: 0; gap: 9px; margin: 0;
+  color: inherit; text-decoration: none;
+}
+.dcr2-topbar .brand-name {
+  font-size: 16px; font-weight: 700; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dcr2-nav { display: flex; align-items: center; gap: 2px; flex: 1 1 auto; flex-wrap: wrap; min-width: 0; }
+.dcr2-nav a {
+  padding: 6px 10px; border-radius: 8px; color: var(--text); text-decoration: none;
+  font-size: 13.5px; font-weight: 600; white-space: nowrap;
+}
+.dcr2-nav a:hover { background: var(--surface-2); }
+.dcr2-nav a.on { background: var(--p2-tint); color: var(--p2-dark); }
+:root[data-theme="dark"] .dcr2-nav a.on { color: var(--p2); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .dcr2-nav a.on { color: var(--p2); } }
+.dcr2-menu-btn { display: none; }
+.dcr2-topbar .top-actions > .pill { text-decoration: none; }
+.dcr2-topbar .top-actions > .pill:hover { color: var(--text); }
+
+/* who else is here (presence) */
+.dcr2-presence { display: flex; align-items: center; }
+.dcr2-presence:empty { display: none; }
+.dcr2-av {
+  width: 28px; height: 28px; border-radius: 50%; margin-left: -6px;
+  display: inline-grid; place-items: center; flex-shrink: 0;
+  color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .02em;
+  border: 2px solid var(--surface); position: relative; cursor: default;
+}
+.dcr2-av:first-child { margin-left: 0; }
+.dcr2-av.here { box-shadow: 0 0 0 2px var(--p2); }
+.dcr2-av.editing::after {
+  content: "\270E"; position: absolute; right: -5px; bottom: -5px;
+  width: 15px; height: 15px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface); color: var(--text); font-size: 9px; border: 1px solid var(--border);
+}
+.dcr2-av.more { background: var(--surface-2) !important; color: var(--text-muted); }
+
+@media (max-width: 860px) {
+  .dcr2-menu-btn { display: inline-flex; order: 2; }
+  .dcr2-topbar > .brand { flex: 1 1 0%; }
+  .dcr2-nav {
+    display: none; position: absolute; top: 100%; left: 8px; right: 8px; z-index: 30;
+    flex-direction: column; align-items: stretch; gap: 2px; padding: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+  }
+  .dcr2-nav.open { display: flex; }
+  .dcr2-nav a { padding: 11px 12px; font-size: 15px; }
+  .dcr2-topbar .top-actions { order: 3; }
+}
+@media (max-width: 480px) {
+  .dcr2-menu-btn .lbl { display: none; }
+  .dcr2-topbar .brand-name { display: none; }
+  .dcr2-presence { display: none; }
+}
+@media (max-width: 480px), (pointer: coarse) {
+  .dcr2-menu-btn { min-height: 44px; min-width: 44px; }
+}
+
+/* ── toasts (DCR2.toast) ───────────────────────────────────────────────── */
+.dcr2-toasts {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 2147482000;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  width: max-content; max-width: calc(100vw - 32px); pointer-events: none;
+}
+.dcr2-toast {
+  pointer-events: auto; cursor: pointer;
+  padding: 10px 14px; border-radius: 10px; font-size: 13.5px; font-weight: 600; line-height: 1.4;
+  background: #1b2733; color: #f4f6f8; box-shadow: 0 6px 24px rgba(0,0,0,.28);
+  transition: opacity .2s ease, transform .2s ease;
+}
+.dcr2-toast.ok { background: #0f5f34; }
+.dcr2-toast.error { background: #8a2113; }
+.dcr2-toast.out { opacity: 0; transform: translateY(6px); }
+
+/* ── offline and "already open" notices ────────────────────────────────── */
+.dcr2-offline {
+  position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.55); padding: 16px;
+}
+.dcr2-offline-card {
+  width: 100%; max-width: 340px; padding: 22px; border-radius: 14px; text-align: center;
+  background: var(--surface); color: var(--text); box-shadow: 0 10px 40px rgba(0,0,0,.3);
+}
+.dcr2-offline-card .t { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+.dcr2-offline-card .s { color: var(--text-muted); font-size: 13px; margin-bottom: 4px; }
+.dcr2-offline-card .btn-block { margin-top: 14px; }
+.dcr2-single {
+  position: fixed; inset: 0; z-index: 2147483647; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 28px;
+  background: #0f141a; color: #e6ebf1;
+}
+.dcr2-single .t { font-size: 18px; font-weight: 700; }
+.dcr2-single .s { font-size: 14px; opacity: .75; max-width: 340px; line-height: 1.5; }
+
+/* the auto-save badge's conflict state */
+.dcr-live.conflict { color: #b8860b; }
+
+/* the old bar squeezes every span in .brand to an ellipsis (and hides them on a phone): the badge
+   is the one thing that must always show */
+.dcr2-topbar .brand > .brand-name { flex: 0 1 auto; width: auto; min-width: 0; }
+.dcr2-topbar .brand > .p2-badge {
+  flex: none; width: auto; min-width: 0; height: auto; overflow: visible;
+  position: static; margin: 0; padding: 2px 8px; clip: auto; clip-path: none;
+}
