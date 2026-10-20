@@ -96,6 +96,25 @@
         </div>
       </section>
 
+      <section class="st-sec" aria-labelledby="stEmpH" id="stEmpSec" hidden>
+        <h3 id="stEmpH">For the office: your phone and address</h3>
+        <p class="why">On your employee record (<span id="stEmpName"></span>). The phone is where DCR Agents texts your timesheet
+          reminders; the address is for payroll. Only you and the office see them.</p>
+        <div class="st-f">
+          <label for="stEmpPhone">Mobile phone</label>
+          <input id="stEmpPhone" maxlength="80" autocomplete="tel" inputmode="tel" />
+          <div class="sub" id="stEmpText"></div>
+        </div>
+        <div class="st-f">
+          <label for="stEmpAddress">Home address</label>
+          <input id="stEmpAddress" maxlength="300" autocomplete="street-address" />
+        </div>
+        <div class="st-acts">
+          <button class="st-save" id="stEmpSave" type="button">Save phone and address</button>
+          <span class="st-msg" id="stEmpMsg" role="status"></span>
+        </div>
+      </section>
+
       <section class="st-sec" aria-labelledby="stThemeH">
         <h3 id="stThemeH">Appearance</h3>
         <p class="why">Applies to this device only, and takes effect straight away.</p>

@@ -14,6 +14,7 @@ const PREFIX = "dcr-portal2-";
 const SHELL = [
   "./", "index.html", "dashboard.html", "change-password.html", "settings.html",
   "board.html", "project.html", "search.html", "logs.html", "capture.html", "report-journal.html",
+  "timesheet.html", "timesheet-mobile.html", "timesheet-manager.html", "timesheet-batch.html", "report-timecard.html", "admin.html",
   "css/styles.css", "manifest.json",
   "js/config.js", "js/sb.js", "js/common2.js", "js/live.js", "js/money-mask.js", "js/upload-queue2.js",
   "js/install.js", "js/push2.js",

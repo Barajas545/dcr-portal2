@@ -474,7 +474,7 @@
 
   /* ── realtime: changes and presence ────────────────────────────────── */
   const joined = new Set();
-  const REPLICA_FULL = new Set(["activity"]);
+  const REPLICA_FULL = new Set(["activity", "timesheets"]);
 
   function parseRtFilter(f) {
     const m = /^([a-z_][a-z0-9_]*)=(eq|neq|lt|lte|gt|gte|in)\.(.*)$/i.exec(String(f || ""));
@@ -887,6 +887,16 @@
       act("Someone else edits this project", () => {
         const p = engine.rows.projects.find((x) => x.id === pid);
         if (p) remoteEdit("projects", pid, { status_note: "Changed by Morgan at " + new Date().toLocaleTimeString() });
+      });
+    }
+    if (/timesheet/.test(location.pathname)) {
+      act("Someone else changes an hour this week", () => {
+        const sat = (() => { const t = F.companyDay(new Date()); const [y, m, d] = t.split("-").map(Number); const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+          const x = new Date(Date.UTC(y, m - 1, d - (w === 6 ? 0 : w + 1))); return x.toISOString().slice(0, 10); })();
+        const lastSat = (() => { const [y, m, d] = sat.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d - 7)).toISOString().slice(0, 10); })();
+        const list = engine.rows.timesheets.filter((t) => t.kind === "work" && t.work_date >= lastSat);
+        const t = list[Math.floor(Math.random() * list.length)];
+        if (t) remoteEdit("timesheets", t.id, { hours: Number(t.hours) === 8 ? 8.5 : 8 });
       });
     }
     act("Someone else moves a Board card", () => {

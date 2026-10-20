@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Time Sheet</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      /* The old phone Time Sheet: big targets, the two-week calendar with the job's street address.
+         It is the page DCR Agents' reminders open (?date=YYYY-MM-DD). */
+      body { background: var(--bg); }
+      .m-wrap { max-width: 560px; margin: 0 auto; padding: 14px 14px calc(40px + env(safe-area-inset-bottom)); }
+      .m-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 14px; box-shadow: var(--shadow); }
+      .m-h { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; margin: 0 0 14px; color: var(--text); }
+      .m-field { margin-bottom: 14px; }
+      .m-label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 6px; }
+      .m-input, .m-select, .m-area { width: 100%; box-sizing: border-box; padding: 13px 14px; font-size: 16px; border: 1px solid var(--border); border-radius: 11px;
+        background: var(--surface); color: var(--text); color-scheme: light dark; outline: none; }
+      .m-input:focus, .m-select:focus, .m-area:focus { border-color: var(--acc); box-shadow: 0 0 0 3px var(--tint-2); }
+      .m-area { resize: vertical; min-height: 76px; font-family: inherit; }
+      .m-static { padding: 13px 14px; border: 1px dashed var(--border); border-radius: 11px; font-size: 16px; font-weight: 600; color: var(--text); background: var(--surface-2); }
+      .m-note { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+      .m-note.warn { color: var(--err); }
+      .m-seg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+      .m-seg button { padding: 9px 2px; font-size: 12px; font-weight: 700; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); border-radius: 10px; cursor: pointer; font-family: inherit; }
+      .m-seg button.active { background: var(--acc); border-color: var(--acc); color: #fff; }
+      .m-step { display: flex; align-items: stretch; }
+      .m-step button { width: 64px; font-size: 30px; font-weight: 700; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; user-select: none; }
+      .m-step button:active { background: var(--tint-2); }
+      .m-step .minus { border-radius: 12px 0 0 12px; border-right: none; }
+      .m-step .plus { border-radius: 0 12px 12px 0; border-left: none; }
+      .m-step input { flex: 1; min-width: 0; text-align: center; font-size: 26px; font-weight: 800; border: 1px solid var(--border); border-radius: 0; background: var(--surface); color: var(--text); outline: none; margin: 0; }
+      .m-step input:focus { border-color: var(--acc); }
+      .m-sched { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-top: 4px; }
+      .m-sched-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 10px; }
+      .m-sess { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; align-items: center; margin-bottom: 10px; }
+      .m-sess:last-of-type { margin-bottom: 0; }
+      .m-sess label { font-size: 12px; color: var(--text-muted); font-weight: 600; margin: 0; }
+      .m-time { padding: 9px 10px; font-size: 15px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); color-scheme: light dark; width: 100%; box-sizing: border-box; }
+      .m-calc { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding: 8px 12px; border-radius: 9px; font-size: 13px; font-weight: 600; gap: 8px; }
+      .m-calc.match { background: rgba(15,110,86,.16); color: var(--ok); }
+      .m-calc.mismatch { background: rgba(139,105,20,.2); color: var(--gold); }
+      .m-btn { width: 100%; padding: 15px; font-size: 16px; font-weight: 700; border: none; border-radius: 12px; background: var(--acc); color: #fff; cursor: pointer; font-family: inherit; display: block; text-align: center; text-decoration: none; box-sizing: border-box; }
+      .m-btn:active { background: var(--acc-2); }
+      .m-btn:disabled { background: #7a8595; }
+      .m-btn-ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+      .m-msg { margin-top: 10px; padding: 11px 13px; border-radius: 10px; font-size: 14px; text-align: center; display: none; }
+      .m-msg.show { display: block; background: var(--surface-2); }
+      .m-msg.ok { background: rgba(15,110,86,.16); color: var(--ok); }
+      .m-msg.err { background: rgba(200,55,31,.16); color: var(--err); }
+      .m-daycard { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 6px; }
+      .m-empty { text-align: center; color: var(--text-muted); padding: 24px; }
+      /* Two weeks, Saturday first. Seven columns fit a 375 px phone: the grid bleeds 6 px into the
+         card's padding and the cells keep a 2 px gap (about 45 px a day: "8h" and a two-line street).
+         Header and day cells share ONE grid per week so the columns line up by construction. */
+      .m-cal-week { margin: 0 -6px 12px; }
+      .m-cal-week:last-child { margin-bottom: 4px; }
+      .m-cal-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 6px; margin: 8px 0 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+      .m-cal-label .tot { flex-shrink: 0; font-size: 15px; font-weight: 800; letter-spacing: 0; text-transform: none; color: var(--text); }
+      .m-cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+      .m-cal-head { text-align: center; padding: 3px 0 2px; border-radius: 6px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; line-height: 1.2; color: var(--acc); }
+      .m-cal-head .dn { display: block; font-size: 13px; font-weight: 800; color: var(--text); letter-spacing: 0; }
+      .m-cal-head.weekend { color: var(--text-muted); background: var(--surface-2); }
+      .m-cal-head.weekend .dn { color: var(--text-muted); }
+      .m-cal-head.today .dn { color: var(--acc); }
+      .m-cal-cell { display: flex; flex-direction: column; justify-content: flex-start; gap: 3px; min-height: 60px; padding: 5px 2px; margin: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; text-align: center; cursor: pointer; -webkit-appearance: none; appearance: none; -webkit-tap-highlight-color: transparent; min-width: 0; }
+      .m-cal-cell.weekend { background: var(--surface-2); }
+      .m-cal-cell.has { background: var(--tint-1); border-color: var(--tint-2); }
+      .m-cal-cell.today { border-color: var(--acc); box-shadow: inset 0 0 0 1px var(--acc); }
+      .m-cal-cell:active { background: var(--tint-2); }
+      .m-cal-cell:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
+      .m-cal-ent { display: block; min-width: 0; }
+      .m-cal-ent + .m-cal-ent { border-top: 1px solid var(--border); padding-top: 3px; }
+      .m-cal-h { display: block; font-size: 13px; font-weight: 800; line-height: 1.15; color: var(--badge-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .m-cal-h.long { font-size: 11px; letter-spacing: -.02em; }
+      .m-cal-a { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 10px; line-height: 1.2; color: var(--text-muted); overflow-wrap: anywhere; word-break: break-word; }
+      .m-cal-ent.leave .m-cal-h, .m-cal-ent.leave .m-cal-a { color: var(--gold); }
+      .m-cal-dot { margin: auto; font-size: 18px; line-height: 1; color: var(--text-muted); opacity: .4; }
+      .m-daylist button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 12px; margin-bottom: 8px; font-size: 14px; font-weight: 600; text-align: left; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--text); cursor: pointer; font-family: inherit; }
+      .m-daylist .hrs { flex-shrink: 0; font-weight: 800; color: var(--badge-text); }
+      .m-daylist .leave .hrs { color: var(--gold); }
+      .m-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; z-index: 60; }
+      .m-sheet { background: var(--surface); color: var(--text); width: 100%; max-width: 640px; margin: 0 auto; border-radius: 16px 16px 0 0; padding: 20px 18px calc(20px + env(safe-area-inset-bottom)); box-shadow: 0 -6px 24px rgba(0,0,0,.35); box-sizing: border-box; max-height: 88vh; overflow: auto; }
+      .m-sheet h3 { margin: 0 0 12px; font-size: 16px; }
+      .m-krow { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+      .m-krow span:first-child { color: var(--text-muted); flex-shrink: 0; }
+      .m-krow span:last-child { font-weight: 600; text-align: right; word-break: break-word; white-space: pre-wrap; }
+      .m-sheet-actions { display: flex; gap: 8px; margin-top: 16px; }
+      .m-sheet-actions button { flex: 1; padding: 12px; font-size: 14px; font-weight: 700; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; font-family: inherit; }
+      .m-sheet-actions button.del { color: var(--err); }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <div class="m-wrap ts-theme" id="mApp">
+      <div class="m-card" id="formCard">
+        <div class="m-h">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="color:var(--acc)"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span id="formTitle">New entry</span>
+        </div>
+
+        <div id="mReadOnly" class="m-static" style="font-weight:500;font-size:14px" hidden></div>
+        <form id="mForm" novalidate autocomplete="off">
+          <div class="m-field">
+            <span class="m-label" id="dayTypeLabel">Day type</span>
+            <div class="m-seg" id="daySeg" role="group" aria-labelledby="dayTypeLabel">
+              <button type="button" data-kind="work" class="active" aria-pressed="true">Worked</button>
+              <button type="button" data-kind="holiday" aria-pressed="false">Holiday</button>
+              <button type="button" data-kind="vacation" aria-pressed="false">Vac.</button>
+              <button type="button" data-kind="sick" aria-pressed="false">Sick</button>
+              <button type="button" data-kind="day_off" aria-pressed="false">Off</button>
+            </div>
+          </div>
+
+          <div class="m-field">
+            <label class="m-label" for="tsEmpSelect">Employee</label>
+            <select id="tsEmpSelect" class="m-select"></select>
+            <div id="empReadonly" class="m-static" hidden></div>
+            <div class="m-note" id="empScopeNote"></div>
+          </div>
+
+          <div class="m-field" id="projField">
+            <label class="m-label" for="tsProject">Project</label>
+            <input id="tsProject" class="m-input" list="tsProjList" placeholder="Pick a project (number or name)" />
+            <datalist id="tsProjList"></datalist>
+            <div class="m-note" id="tsProjNote"></div>
+          </div>
+
+          <div class="m-field">
+            <label class="m-label" for="tsDate">Date</label>
+            <input id="tsDate" type="date" class="m-input" />
+          </div>
+
+          <div class="m-field">
+            <label class="m-label" for="tsHours">Hours worked</label>
+            <div class="m-step">
+              <button type="button" class="minus" id="hrsMinus" aria-label="Subtract 30 minutes">&minus;</button>
+              <input id="tsHours" type="text" inputmode="decimal" value="0" />
+              <button type="button" class="plus" id="hrsPlus" aria-label="Add 30 minutes">&plus;</button>
+            </div>
+          </div>
+
+          <div class="m-field" id="tsScheduleSection" style="display:none">
+            <div class="m-sched">
+              <div class="m-sched-title">Work schedule</div>
+              <div class="m-sess">
+                <label for="tsStart1">Morning start</label><input type="time" class="m-time" id="tsStart1" />
+                <label for="tsEnd1">Morning end</label><input type="time" class="m-time" id="tsEnd1" />
+              </div>
+              <div class="m-sess">
+                <label for="tsLunch">Lunch (hrs)</label><input type="text" inputmode="decimal" class="m-time" id="tsLunch" value="1" />
+                <span class="m-note" id="tsLunchRange" style="grid-column:1/-1;margin:0"></span>
+              </div>
+              <div class="m-sess">
+                <label for="tsStart2">Afternoon start</label><input type="time" class="m-time" id="tsStart2" />
+                <label for="tsEnd2">Afternoon end</label><input type="time" class="m-time" id="tsEnd2" />
+              </div>
+              <div id="tsCalcBar"></div>
+            </div>
+          </div>
+
+          <div class="m-field">
+            <label class="m-label" for="tsWork">Work completed</label>
+            <textarea id="tsWork" class="m-area" maxlength="2000" placeholder="Describe the work (optional for leave days)…"></textarea>
+          </div>
+
+          <button class="m-btn" type="submit" id="submitBtn">✓ Submit time sheet</button>
+          <button class="m-btn m-btn-ghost" type="button" id="cancelBtn" hidden style="margin-top:8px;">Cancel edit</button>
+          <div class="m-msg" id="formMsg" role="status"></div>
+        </form>
+      </div>
+
+      <div class="m-card">
+        <div class="m-daycard">
+          <div class="m-h" style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color:var(--acc)"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Last two weeks</div>
+          <button class="btn btn-ghost btn-sm" type="button" id="listRefresh" aria-label="Refresh">&#8635;</button>
+        </div>
+        <div class="m-note" id="listNote" style="margin:0 0 6px"></div>
+        <!-- Last week and this week, Saturday to Friday, one cell per day: the hours in bold over the
+             job's street address. Tap a day with an entry to see it; tap an empty day to log it. -->
+        <div id="listArea"><div class="m-empty">Loading…</div></div>
+        <button type="button" id="tsPdfBtn" class="m-btn m-btn-ghost" style="margin-top:12px">📄 Send timesheet as PDF</button>
+        <a href="report-timecard.html" class="m-btn m-btn-ghost" style="margin-top:8px">🖨 Weekly time card</a>
+      </div>
+
+      <!-- "Phone reminders: on/off" (push2.js draws it once reminders exist): this is the page a
+           reminder opens, so the switch lives where the crew is. -->
+      <div id="pushSlot" style="text-align:center;margin-bottom:14px"></div>
+
+      <div style="text-align:center"><a class="m-note" id="deskLink" href="timesheet.html?view=desktop">🖥️ Switch to desktop view</a></div>
+    </div>
+
+    <div id="modalContainer" class="ts-theme"></div>
+
+    <script type="module" src="js/pages/timesheet-mobile.js"></script>
+  </body>
+</html>

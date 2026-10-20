@@ -43,6 +43,7 @@ export function clientAs(engine, uid) {
   Q.prototype.select = function (cols) { if (this.m !== "select") this.ret = true; this.q.columns = cols || "*"; return this; };
   Q.prototype.insert = function (v) { this.m = "insert"; this.body = v; return this; };
   Q.prototype.update = function (v) { this.m = "update"; this.body = v; return this; };
+  Q.prototype.delete = function () { this.m = "delete"; return this; };
   ["eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "in"].forEach((op) => {
     Q.prototype[op] = function (c, v) { this.q.filters.push({ col: c, op, val: v, neg: false }); return this; };
   });
@@ -62,6 +63,10 @@ export function clientAs(engine, uid) {
       if (this.m === "insert") {
         const made = engine.insert(ctx(), this.t, clone(this.body));
         return { data: this.ret ? clone(this.rowsBy(made)) : null, error: null, status: 201 };
+      }
+      if (this.m === "delete") {
+        const gone = engine.delete(ctx(), this.t, this.q);
+        return { data: this.ret ? clone(gone) : null, error: null, status: 200 };
       }
       const changed = engine.update(ctx(), this.t, clone(this.body), this.q);
       return { data: this.ret ? clone(this.rowsBy(changed)) : null, error: null, status: 200 };

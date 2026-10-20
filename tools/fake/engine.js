@@ -15,6 +15,12 @@
      "Files uploaded to <folder>" once per person, folder and hour), file version chains, tombstones;
    - the RPCs: create_project, search, soft_delete, set_project_location, password_changed,
      next_project_number;
+   - phase 2 (M2, BLUEPRINT 3.3.5 / 3.3.6): employees (phone_e164 by trigger, one active name),
+     crew_members, timesheets under the crew scope (admin and manager all; the accountant reads all,
+     writes own; a lead self and crew; field self; a viewer reads own; WITH CHECK on the new
+     employee), timesheet_confirmations (no direct access) and the RPCs my_roster,
+     update_my_contact, confirm_timesheet_week (md5 fingerprint, PT409), unconfirm_timesheet_week,
+     timesheet_weeks;
    - Storage: simple uploads, TUS resumable uploads (6 MiB chunks), signed URLs, with the
      project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read).
    Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
@@ -28,7 +34,11 @@
   const ROLES = ["admin", "manager", "lead", "accountant", "field", "viewer", "agents"];
   const SOFT = new Set(["contacts", "projects", "journal_entries", "files"]);
   const TABLES = ["profiles", "settings", "settings_prices", "contacts", "projects", "project_prices", "activity",
-    "journal_entries", "files", "tasks", "task_notes", "deletions"];
+    "journal_entries", "files", "tasks", "task_notes", "deletions",
+    "employees", "crew_members", "timesheets", "timesheet_confirmations"];
+  const TS_KINDS = ["work", "holiday", "vacation", "sick", "day_off"];
+  const TS_SOURCES = ["portal", "desktop", "agents_sms", "agents_email", "agents_whatsapp", "agents_app", "import"];
+  const NO_DIRECT = new Set(["timesheet_confirmations"]);     // RLS on, no policies: RPCs only
   const VIEWS = { current_files: "files" };
   const PK = { project_prices: "project_id" };
   const UUID_PK = new Set(["profiles"]);
@@ -63,6 +73,15 @@
       priority: "normal", assigned_to: null, due_date: null, status: "open", completed_at: null, completed_by: null }, AUDIT),
     task_notes: Object.assign({ id: null, task_id: null, text: null }, AUDIT),
     deletions: { id: null, table_name: null, row_id: null, project_id: null, deleted_at: null, deleted_by: null },
+    employees: Object.assign({ id: null, profile_id: null, contact_id: null, full_name: null, employee_no: null, phone: null,
+      phone_e164: null, email: null, address: null, normal_start1: null, normal_end1: null, normal_start2: null, normal_end2: null,
+      normal_lunch_hours: 1, active: true, notes: null, legacy_sp_id: null }, AUDIT),
+    crew_members: Object.assign({ id: null, lead_profile_id: null, employee_id: null }, AUDIT),
+    timesheets: Object.assign({ id: null, employee_id: null, work_date: null, kind: "work", project_id: null, legacy_project_text: null,
+      hours: null, work_completed: null, start1: null, end1: null, start2: null, end2: null, lunch_hours: null, calculated_hours: null,
+      notes: null, source: "portal", source_key: null, legacy_sp_id: null }, AUDIT),
+    timesheet_confirmations: Object.assign({ id: null, employee_id: null, week_start: null, confirmed_by: null, confirmed_at: null,
+      hours_at_confirm: null, fingerprint: null }, AUDIT),
   };
   COLS.current_files = COLS.files;
 
@@ -81,6 +100,13 @@
     ["tasks", "assigned_to", "profiles"],
     ["tasks", "completed_by", "profiles"],
     ["task_notes", "task_id", "tasks"],
+    ["employees", "profile_id", "profiles", true],
+    ["employees", "contact_id", "contacts"],
+    ["crew_members", "lead_profile_id", "profiles"],
+    ["crew_members", "employee_id", "employees"],
+    ["timesheets", "employee_id", "employees"],
+    ["timesheets", "project_id", "projects"],
+    ["timesheet_confirmations", "employee_id", "employees"],
   ].map(([table, column, ref, one]) => ({ table, column, ref, one: !!one }));
 
   /* ── errors ─────────────────────────────────────────────────────────── */
@@ -122,6 +148,65 @@
     if (!y.suffix) return 1;
     return x.suffix < y.suffix ? -1 : 1;
   }
+
+  /* md5 (RFC 1321) of a string's UTF-8 bytes: the week fingerprint of the sign-off (M2) */
+  const MD5S = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+  const MD5K = Array.from({ length: 64 }, (_, i) => (Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296)) | 0);
+  function md5(str) {
+    const bytes = Array.from(new TextEncoder().encode(String(str)));
+    const n = bytes.length;
+    const w = new Array((((n + 8) >>> 6) << 4) + 16).fill(0);
+    for (let i = 0; i < n; i++) w[i >> 2] |= bytes[i] << ((i % 4) * 8);
+    w[n >> 2] |= 0x80 << ((n % 4) * 8);
+    w[w.length - 2] = (n * 8) >>> 0;
+    w[w.length - 1] = Math.floor(n / 0x20000000) >>> 0;
+    let a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+    for (let i = 0; i < w.length; i += 16) {
+      const aa = a, bb = b, cc = c, dd = d;
+      for (let j = 0; j < 64; j++) {
+        let f, g;
+        if (j < 16) { f = (b & c) | (~b & d); g = j; }
+        else if (j < 32) { f = (d & b) | (~d & c); g = (5 * j + 1) % 16; }
+        else if (j < 48) { f = b ^ c ^ d; g = (3 * j + 5) % 16; }
+        else { f = c ^ (b | ~d); g = (7 * j) % 16; }
+        const t = d; d = c; c = b;
+        const x = (a + f + MD5K[j] + w[i + g]) | 0;
+        b = (b + ((x << MD5S[j]) | (x >>> (32 - MD5S[j])))) | 0;
+        a = t;
+      }
+      a = (a + aa) | 0; b = (b + bb) | 0; c = (c + cc) | 0; d = (d + dd) | 0;
+    }
+    return [a, b, c, d].map((v) => [0, 1, 2, 3].map((k) => ((v >>> (k * 8)) & 0xff).toString(16).padStart(2, "0")).join("")).join("");
+  }
+  /** the week fingerprint (app.timesheet_week_state): md5 over the rows ordered by id of
+      "id|YYYY-MM-DD|hours (2 decimals)|project id, or the kind without one", joined by a line feed,
+      then "-<count>" */
+  function tsFingerprint(list) {
+    const rows = list.slice().sort((x, y) => x.id - y.id);
+    return md5(rows.map((r) => r.id + "|" + r.work_date + "|" + Number(r.hours || 0).toFixed(2) + "|" +
+      (r.project_id == null ? r.kind || "work" : r.project_id)).join("\n")) + "-" + rows.length;
+  }
+  function addDaysYmd(t, n) {
+    const [y, m, d] = String(t).split("-").map(Number);
+    const x = new Date(Date.UTC(y, m - 1, d + n));
+    return x.getUTCFullYear() + "-" + String(x.getUTCMonth() + 1).padStart(2, "0") + "-" + String(x.getUTCDate()).padStart(2, "0");
+  }
+  function saturdayOfYmd(t) {
+    const [y, m, d] = String(t).split("-").map(Number);
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    return addDaysYmd(t, -(dow === 6 ? 0 : dow + 1));
+  }
+  /** phone_e164 (M2 trigger): US numbers; the first number that parses when several were typed */
+  function e164(phone) {
+    for (const part of String(phone || "").split(/[\/,;|]|\bor\b|\band\b/i)) {
+      let dg = part.replace(/[^0-9]/g, "");
+      if (dg.length === 11 && dg[0] === "1") dg = dg.slice(1);
+      if (dg.length === 10 && /^[2-9]/.test(dg)) return "+1" + dg;
+    }
+    return null;
+  }
+  const TIME_OK = /^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/;
 
   function folderName(p) {
     const parts = [p.number, p.address, p.city, p.name].map((s) => String(s || "").replace(/[\u0000-\u001f\\/<>:"|?*]/g, "").trim()).filter(Boolean);
@@ -301,6 +386,7 @@
         case "journal": return ["admin", "manager", "lead", "field"].includes(r);
         case "files": return r !== "viewer";
         case "money": return r === "admin" || ((r === "manager" || r === "accountant") && w.financials);
+        case "people": case "timesheets_all": return r === "admin" || r === "manager";
         case "settings": case "users": return r === "admin";
         default: return false;
       }
@@ -313,6 +399,34 @@
     }
     function isCurrent(f) {
       return !f.deleted_at && !rows.files.some((n) => n.previous_id === f.id && !n.deleted_at);
+    }
+
+    /* the crew scope (M2): app.my_employee_id(), app.in_my_crew(employee_id) */
+    function myEmployeeId(w) {
+      if (!w.uid) return null;
+      const e = rows.employees.find((x) => x.profile_id === w.uid);
+      return e ? e.id : null;
+    }
+    // an ACTIVE LEAD's crew only (a crew row of someone who is no longer a lead gives nothing)
+    function inMyCrew(w, empId) {
+      return !!w.uid && w.role === "lead" && rows.crew_members.some((c) => c.lead_profile_id === w.uid && c.employee_id === Number(empId));
+    }
+    function tsReads(w, empId) {
+      if (!w.active) return false;
+      if (["admin", "manager", "accountant"].includes(w.role)) return true;
+      const mine = myEmployeeId(w);
+      return (mine !== null && mine === Number(empId)) || inMyCrew(w, empId);
+    }
+    function tsWrites(w, empId) {
+      if (!w.active || w.role === "viewer") return false;
+      if (w.role === "admin" || w.role === "manager") return true;
+      const mine = myEmployeeId(w);
+      return (mine !== null && mine === Number(empId)) || inMyCrew(w, empId);
+    }
+    function employeeReads(w, e) {
+      if (!w.active) return false;
+      if (["admin", "manager", "accountant"].includes(w.role)) return true;
+      return e.profile_id === w.uid || inMyCrew(w, e.id);
     }
 
     /* row level security: may this person read this row? */
@@ -335,6 +449,11 @@
           return projectVisible(w, r.project_id);
         case "task_notes": { const t = rows.tasks.find((x) => x.id === r.task_id); return !!t && canRead(w, "tasks", t); }
         case "deletions": return true;
+        case "employees": return employeeReads(w, r);
+        case "crew_members":
+          if (["admin", "manager", "accountant"].includes(w.role)) return true;
+          return r.lead_profile_id === w.uid || (myEmployeeId(w) !== null && r.employee_id === myEmployeeId(w));
+        case "timesheets": return tsReads(w, r.employee_id);
         default: return false;
       }
     }
@@ -342,6 +461,7 @@
     function source(table) {
       if (VIEWS[table]) return rows[VIEWS[table]].filter(isCurrent);
       if (!rows[table]) throw new PgErr("42P01", 'relation "public.' + table + '" does not exist', 404);
+      if (NO_DIRECT.has(table)) throw new PgErr("42501", "permission denied for table " + table, 403);
       return rows[table];
     }
     function readable(w, table) {
@@ -559,9 +679,95 @@
           if (!r.name || !String(r.name).trim()) throw rule("23514", 'new row for relation "contacts" violates check constraint "contacts_name_check"');
           break;
         }
+        case "employees": employeesCheck(r, null); break;
+        case "crew_members": {
+          if (!rows.profiles.some((p) => p.id === r.lead_profile_id)) throw rule("23503", 'insert or update on table "crew_members" violates foreign key constraint "crew_members_lead_profile_id_fkey"');
+          if (!rows.employees.some((e) => e.id === Number(r.employee_id))) throw rule("23503", 'insert or update on table "crew_members" violates foreign key constraint "crew_members_employee_id_fkey"');
+          r.employee_id = Number(r.employee_id);
+          const leadP = profileOf(r.lead_profile_id);
+          if (!leadP || leadP.role !== "lead") throw rule("23514", "only a lead has a crew");
+          if (rows.employees.some((e) => e.id === r.employee_id && e.profile_id === r.lead_profile_id)) throw rule("23514", "a lead is not in their own crew");
+          if (rows.crew_members.some((c) => c.lead_profile_id === r.lead_profile_id && c.employee_id === r.employee_id)) {
+            throw new PgErr("23505", 'duplicate key value violates unique constraint "crew_members_pair_key"', 409);
+          }
+          break;
+        }
+        case "timesheets": timesheetsCheck(r, null); break;
         default: break;
       }
       return r;
+    }
+
+    function employeesCheck(r, old) {
+      if (!r.full_name || !String(r.full_name).trim()) throw rule("23514", 'new row for relation "employees" violates check constraint "employees_full_name_check"');
+      r.full_name = String(r.full_name).trim().replace(/\s+/g, " ");
+      if (r.email) r.email = String(r.email).trim().toLowerCase() || null;
+      if (r.email && !/^[^@\s]+@[^@\s]+$/.test(r.email)) throw rule("23514", 'new row for relation "employees" violates check constraint "employees_email_check"');
+      if (r.profile_id && (!old || r.profile_id !== old.profile_id)) {
+        const pp = profileOf(r.profile_id);
+        if (pp && pp.role === "agents") throw rule("23514", "the DCR Agents 2 account is not an employee");
+      }
+      if (r.normal_lunch_hours !== null && r.normal_lunch_hours !== undefined && (Number(r.normal_lunch_hours) < 0 || Number(r.normal_lunch_hours) > 8)) {
+        throw rule("23514", 'new row for relation "employees" violates check constraint "employees_normal_lunch_hours_check"');
+      }
+      for (const k of ["normal_start1", "normal_end1", "normal_start2", "normal_end2"]) {
+        if (r[k] !== null && r[k] !== undefined && !TIME_OK.test(String(r[k]))) throw rule("22007", 'invalid input syntax for type time: "' + r[k] + '"');
+        if (r[k]) r[k] = String(r[k]).length === 5 ? r[k] + ":00" : String(r[k]);
+      }
+      if (r.active && rows.employees.some((e) => e.active && e.id !== r.id && e.full_name.toLowerCase() === r.full_name.toLowerCase())) {
+        throw new PgErr("23505", 'duplicate key value violates unique constraint "employees_active_name_key"', 409);
+      }
+      if (r.profile_id && rows.employees.some((e) => e.id !== r.id && e.profile_id === r.profile_id)) {
+        throw new PgErr("23505", 'duplicate key value violates unique constraint "employees_profile_id_key"', 409);
+      }
+      if (r.profile_id && !rows.profiles.some((p) => p.id === r.profile_id)) {
+        throw rule("23503", 'insert or update on table "employees" violates foreign key constraint "employees_profile_id_fkey"');
+      }
+      if (!old || r.phone !== old.phone) r.phone_e164 = e164(r.phone);
+    }
+
+    function timesheetsCheck(r, old) {
+      const bad = (c) => rule("23514", 'new row for relation "timesheets" violates check constraint "' + c + '"');
+      if (r.employee_id === null || r.employee_id === undefined) throw rule("23502", 'null value in column "employee_id" of relation "timesheets" violates not-null constraint');
+      r.employee_id = Number(r.employee_id);
+      if (!rows.employees.some((e) => e.id === r.employee_id)) throw rule("23503", 'insert or update on table "timesheets" violates foreign key constraint "timesheets_employee_id_fkey"');
+      if (!r.work_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(r.work_date))) throw rule("23502", 'null value in column "work_date" of relation "timesheets" violates not-null constraint');
+      if (!TS_KINDS.includes(r.kind)) throw bad("timesheets_kind_check");
+      if (r.hours === null || r.hours === undefined || !(Number(r.hours) >= 0 && Number(r.hours) <= 24)) throw bad("timesheets_hours_check");
+      r.hours = Math.round(Number(r.hours) * 100) / 100;
+      if (r.kind === "work" && !(r.hours > 0)) throw bad("timesheets_work_hours_check");
+      if (r.project_id !== null && r.project_id !== undefined) {
+        r.project_id = Number(r.project_id);
+        if (!rows.projects.some((p) => p.id === r.project_id)) throw rule("23503", 'insert or update on table "timesheets" violates foreign key constraint "timesheets_project_id_fkey"');
+      }
+      if (r.kind === "work" && (r.project_id === null || r.project_id === undefined) && !r.legacy_project_text) throw bad("timesheets_project_check");
+      if (r.work_completed !== null && r.work_completed !== undefined && String(r.work_completed).length > 2000) throw bad("timesheets_work_completed_check");
+      if (!TS_SOURCES.includes(r.source)) throw bad("timesheets_source_check");
+      for (const k of ["start1", "end1", "start2", "end2"]) {
+        if (r[k] !== null && r[k] !== undefined && !TIME_OK.test(String(r[k]))) throw rule("22007", 'invalid input syntax for type time: "' + r[k] + '"');
+        if (r[k]) r[k] = String(r[k]).length === 5 ? r[k] + ":00" : String(r[k]);
+      }
+      if (r.source_key && rows.timesheets.some((t) => t.id !== r.id && t.source_key === r.source_key)) {
+        throw new PgErr("23505", 'duplicate key value violates unique constraint "timesheets_source_key_key"', 409);
+      }
+      if (r.kind !== "work" && r.project_id !== null && r.project_id !== undefined) throw bad("timesheets_leave_no_project");
+      if (!quiet) {
+        // what a person may write (app.tg_timesheets_before)
+        if (old === null) {
+          if ((r.legacy_sp_id !== null && r.legacy_sp_id !== undefined) || r.legacy_project_text) throw deny("the old portal's columns are written by the import only");
+          if (!["portal", "desktop"].includes(r.source)) throw deny("a person files a timesheet from Portal 2 or DCR Desktop 2 (source portal or desktop)");
+          if (r.source_key && !/^(portal|desktop):/.test(r.source_key)) throw deny("a person's source key starts with portal: or desktop:");
+        } else {
+          if (r.legacy_sp_id !== old.legacy_sp_id || (r.legacy_project_text && r.legacy_project_text !== old.legacy_project_text)) {
+            throw deny("the old portal's columns are written by the import only");
+          }
+          if (r.source !== old.source || (r.source_key || null) !== (old.source_key || null)) throw deny("where a timesheet came from does not change");
+        }
+        if (r.project_id !== null && r.project_id !== undefined && (old === null || r.project_id !== old.project_id)) {
+          const pj = rows.projects.find((x) => x.id === r.project_id);
+          if (!pj || pj.deleted_at) throw rule("23503", "that project does not exist (or was deleted)");
+        }
+      }
     }
 
     function filesBeforeInsert(w, r) {
@@ -685,6 +891,8 @@
         case "tasks": return canEdit(w, "tasks") || (canEdit(w, "own_tasks") && (r.assigned_to === null || r.assigned_to === undefined || r.assigned_to === w.uid));
         case "task_notes": { const t = rows.tasks.find((x) => x.id === r.task_id); return !!t && canUpdate(w, "tasks", t); }
         case "settings": return w.admin;
+        case "employees": case "crew_members": return canEdit(w, "people");
+        case "timesheets": return tsWrites(w, r.employee_id);
         default: return false;
       }
     }
@@ -701,6 +909,8 @@
         case "tasks": return canEdit(w, "tasks") || (canEdit(w, "own_tasks") && (r.assigned_to === w.uid || r.created_by === w.uid));
         case "task_notes": return r.created_by === w.uid || w.admin;
         case "settings": case "settings_prices": return w.admin;
+        case "employees": return canEdit(w, "people");
+        case "timesheets": return tsWrites(w, r.employee_id);
         default: return false;
       }
     }
@@ -749,6 +959,16 @@
       if (table === "tasks") {
         if (r.status === "done" && old.status !== "done") { r.completed_at = nowIso(); r.completed_by = w.uid; }
         else if (r.status !== "done") { r.completed_at = null; r.completed_by = null; }
+      }
+      if (table === "employees") {
+        if ("legacy_sp_id" in patch && patch.legacy_sp_id !== old.legacy_sp_id) throw deny("only the import may set legacy columns");
+        employeesCheck(r, old);
+      }
+      if (table === "crew_members") throw deny("a crew row is added or removed, never changed");
+      if (table === "timesheets") {
+        timesheetsCheck(r, old);
+        // WITH CHECK: the row as it will be must still be in the writer's scope
+        if (!tsWrites(w, r.employee_id)) throw new PgErr("42501", 'new row violates row-level security policy for table "timesheets"', 403);
       }
     }
 
@@ -856,6 +1076,8 @@
         case "activity": return r.kind === "note" && (r.created_by === w.uid || w.admin);
         case "tasks": return canEdit(w, "tasks") || r.created_by === w.uid;
         case "task_notes": return r.created_by === w.uid || w.admin;
+        case "crew_members": return canEdit(w, "people");
+        case "timesheets": return tsWrites(w, r.employee_id);
         default: return false;
       }
     }
@@ -870,6 +1092,11 @@
       soft_delete: { args: ["tbl", "id", "version"], required: ["tbl", "id"] },
       set_project_location: { args: ["project_id", "lat", "lng", "accuracy_m", "source"], required: ["project_id", "lat", "lng"] },
       password_changed: { args: [], required: [] },
+      my_roster: { args: [], required: [] },
+      update_my_contact: { args: ["p_phone", "p_address"], required: ["p_phone", "p_address"] },
+      confirm_timesheet_week: { args: ["p_employee_id", "p_week_start", "p_seen_fingerprint"], required: ["p_employee_id", "p_week_start", "p_seen_fingerprint"] },
+      unconfirm_timesheet_week: { args: ["p_confirmation_id"], required: ["p_confirmation_id"] },
+      timesheet_weeks: { args: ["p_from", "p_to"], required: ["p_from", "p_to"] },
     };
     function checkArgs(name, args) {
       const sig = SIGNATURES[name];
@@ -974,6 +1201,105 @@
           auditUpdate(w, "profiles", r, p);
           commitUpdate("profiles", p, r);
           return true;
+        }
+        case "my_roster": {
+          // id, name, number and the normal schedule of the employees in scope — never phone,
+          // address or pay
+          if (!w.active) throw deny("sign in first");
+          return rows.employees.filter((e) => e.active && employeeReads(w, e))
+            .sort((a, b) => cmp(a.full_name.toLowerCase(), b.full_name.toLowerCase()))
+            .map((e) => ({ id: e.id, full_name: e.full_name, employee_no: e.employee_no, normal_start1: e.normal_start1,
+              normal_end1: e.normal_end1, normal_start2: e.normal_start2, normal_end2: e.normal_end2,
+              normal_lunch_hours: e.normal_lunch_hours, is_me: e.profile_id === w.uid }));
+        }
+        case "update_my_contact": {
+          if (!w.active) throw deny("sign in first");
+          const mine = myEmployeeId(w);
+          const old = mine === null ? null : rows.employees.find((e) => e.id === mine);
+          const ph = arg(args, "p_phone"), ad = arg(args, "p_address");
+          if ((ph === null || ph === undefined) && (ad === null || ad === undefined)) throw rule("22023", "nothing to change (p_phone, p_address)");
+          if (ph && String(ph).length > 80) throw rule("22023", "a phone has at most 80 characters");
+          if (ad && String(ad).length > 500) throw rule("22023", "an address has at most 500 characters");
+          if (!old) throw new PgErr("PT404", "no employee record is linked to your account", 404);
+          // NULL leaves a value as it is, a blank clears it
+          const r = clone(old);
+          if (ph !== null && ph !== undefined) r.phone = String(ph).trim() || null;
+          if (ad !== null && ad !== undefined) r.address = String(ad).trim() || null;
+          r.phone_e164 = e164(r.phone);
+          auditUpdate(w, "employees", r, old);
+          commitUpdate("employees", old, r);
+          return { id: r.id, phone: r.phone, address: r.address, version: r.version };
+        }
+        case "timesheet_weeks": {
+          if (!w.active) throw deny("sign in first");
+          const from = String(arg(args, "p_from") || ""), to = String(arg(args, "p_to") || "");
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw rule("22023", "from and to are dates (YYYY-MM-DD)");
+          if (to < from) throw rule("22023", "to must not be before from");
+          if ((Date.parse(to) - Date.parse(from)) / 86400000 > 120) throw rule("22023", "ask for 120 days or fewer");
+          const weeks = [];
+          for (let s = saturdayOfYmd(from); s <= to; s = addDaysYmd(s, 7)) weeks.push(s);
+          const lo = weeks[0], hi = addDaysYmd(weeks[weeks.length - 1], 6);
+          const pairs = new Map();
+          const add = (emp, wk) => { const k = emp + "|" + wk; if (!pairs.has(k)) pairs.set(k, { emp, wk }); };
+          rows.timesheets.forEach((t) => { if (t.work_date >= lo && t.work_date <= hi && tsReads(w, t.employee_id)) add(t.employee_id, saturdayOfYmd(t.work_date)); });
+          rows.timesheet_confirmations.forEach((c) => { if (weeks.includes(c.week_start) && tsReads(w, c.employee_id)) add(c.employee_id, c.week_start); });
+          const out = [];
+          for (const { emp, wk } of pairs.values()) {
+            const end = addDaysYmd(wk, 6);
+            const list = rows.timesheets.filter((t) => t.employee_id === emp && t.work_date >= wk && t.work_date <= end);
+            const fp = tsFingerprint(list);
+            const marks = rows.timesheet_confirmations.filter((c) => c.employee_id === emp && c.week_start === wk)
+              .sort((a, b) => cmp(a.confirmed_at, b.confirmed_at) || a.id - b.id).map((c) => {
+                const by = profileOf(c.confirmed_by);
+                return { id: c.id, confirmed_by: c.confirmed_by, name: by ? (by.full_name || by.email) : "", role: by ? by.role : null, color: by ? by.color : null,
+                  confirmed_at: c.confirmed_at, hours_at_confirm: c.hours_at_confirm, stale: c.fingerprint !== fp,
+                  mine: c.confirmed_by === w.uid, can_withdraw: c.confirmed_by === w.uid || w.admin };
+              });
+            const live = marks.filter((m) => !m.stale).length;
+            const e = rows.employees.find((x) => x.id === emp);
+            out.push({ employee_id: emp, employee_name: e ? e.full_name : "", week_start: wk, week_end: addDaysYmd(wk, 6), fingerprint: fp,
+              hours: Math.round(list.reduce((s, t) => s + Number(t.hours || 0), 0) * 100) / 100, entries: list.length,
+              confirmed: live > 0, live_count: live, stale_count: marks.length - live, marks });
+          }
+          return out.sort((a, b) => cmp(a.employee_name.toLowerCase(), b.employee_name.toLowerCase()) || a.employee_id - b.employee_id || cmp(a.week_start, b.week_start));
+        }
+        case "confirm_timesheet_week": {
+          if (!w.active) throw deny("sign in first");
+          if (!["admin", "manager", "lead"].includes(w.role)) throw deny("only a lead, a manager or an admin confirms hours");
+          const emp = Number(arg(args, "p_employee_id"));
+          const wk = String(arg(args, "p_week_start") || "");
+          const seen = String(arg(args, "p_seen_fingerprint") || "").trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(wk) || saturdayOfYmd(wk) !== wk) throw rule("22023", "a week starts on a Saturday");
+          if (wk > today()) throw rule("22023", "that week has not started yet");
+          if (!rows.employees.some((e) => e.id === emp)) throw new PgErr("PT404", "employee not found", 404);
+          if (!tsWrites(w, emp)) throw deny("a lead confirms only their own crew's hours");
+          if (!seen) throw rule("22023", "Reload the week before confirming: this request did not say which hours it was signing for.");
+          const end = addDaysYmd(wk, 6);
+          const list = rows.timesheets.filter((t) => t.employee_id === emp && t.work_date >= wk && t.work_date <= end);
+          const fp = tsFingerprint(list);
+          if (seen !== fp) throw new PgErr("PT409", "These hours changed while you were looking at them. Reload the week and check it again.", 409);
+          const hours = Math.round(list.reduce((s, t) => s + Number(t.hours || 0), 0) * 100) / 100;
+          const old = rows.timesheet_confirmations.find((c) => c.employee_id === emp && c.week_start === wk && c.confirmed_by === w.uid);
+          if (old) {
+            const r = Object.assign(clone(old), { confirmed_at: nowIso(), hours_at_confirm: hours, fingerprint: fp });
+            auditUpdate(w, "timesheet_confirmations", r, old);
+            commitUpdate("timesheet_confirmations", old, r);
+            return rpc(ctx, "timesheet_weeks", { p_from: wk, p_to: wk }).find((x) => x.employee_id === emp) || null;
+          }
+          const r = Object.assign(clone(COLS.timesheet_confirmations), { id: nextId("timesheet_confirmations"), employee_id: emp, week_start: wk,
+            confirmed_by: w.uid, confirmed_at: nowIso(), hours_at_confirm: hours, fingerprint: fp });
+          auditInsert(w, "timesheet_confirmations", r);
+          commitInsert("timesheet_confirmations", r);
+          return rpc(ctx, "timesheet_weeks", { p_from: wk, p_to: wk }).find((x) => x.employee_id === emp) || null;
+        }
+        case "unconfirm_timesheet_week": {
+          if (!w.active) throw deny("sign in first");
+          const id = Number(arg(args, "p_confirmation_id"));
+          const old = rows.timesheet_confirmations.find((c) => c.id === id);
+          if (!old || !(old.confirmed_by === w.uid || tsReads(w, old.employee_id))) throw new PgErr("PT404", "confirmation not found", 404);
+          if (old.confirmed_by !== w.uid && !w.admin) throw deny("You can only withdraw your own confirmation.");
+          commitDelete("timesheet_confirmations", old);
+          return { removed: true, id: old.id, employee_id: old.employee_id, week_start: old.week_start };
         }
         default:
           throw new PgErr("PGRST202", "Could not find the function public." + name + " without parameters in the schema cache", 404,
@@ -1225,6 +1551,9 @@
   }
 
   NS.createEngine = createEngine;
+  NS.md5 = md5;
+  NS.tsFingerprint = tsFingerprint;
+  NS.e164 = e164;
   NS.PgErr = PgErr;
   NS.parseSelect = parseSelect;
   NS.parseLogic = parseLogic;

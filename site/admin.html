@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Employees &amp; crews</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      .ad { max-width: 1080px; margin: 0 auto; padding: 20px 16px 60px; }
+      .ad-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+      .ad-head h2 { margin: 0; font-size: 22px; }
+      .ad-lead { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; line-height: 1.5; }
+      .ad-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+      .ad-tab { padding: 8px 15px; border-radius: 18px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+      .ad-tab[aria-selected="true"] { background: var(--acc); border-color: var(--acc); color: #fff; }
+      .ad-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+      .ad-bar input[type=search] { flex: 1; min-width: 180px; max-width: 360px; padding: 9px 12px; font-size: 14px; }
+      .ad-chk { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+      .ad-chk input { width: auto; margin: 0; }
+      .ad-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+      .ad-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+      .ad-card.off { opacity: .72; border-style: dashed; }
+      .ad-top { display: flex; align-items: center; gap: 10px; }
+      .ad-av { width: 36px; height: 36px; border-radius: 50%; background: var(--acc); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; flex-shrink: 0; }
+      .ad-nm { font-weight: 800; font-size: 15px; line-height: 1.25; word-break: break-word; }
+      .ad-no { font-size: 11.5px; color: var(--text-muted); }
+      .ad-kv { display: grid; grid-template-columns: 92px 1fr; gap: 3px 8px; font-size: 12.5px; }
+      .ad-kv span:nth-child(odd) { color: var(--text-muted); }
+      .ad-kv span:nth-child(even) { word-break: break-word; }
+      .ad-pill { display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .03em; padding: 2px 8px; border-radius: 9px; background: var(--surface-2); color: var(--text-muted); }
+      .ad-pill.ok { background: rgba(31,138,95,.14); color: var(--ok); }
+      .ad-pill.warn { background: var(--warm); color: var(--gold); }
+      .ad-acts { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+      .ad-empty { padding: 30px; text-align: center; color: var(--text-muted); border: 1px dashed var(--border); border-radius: 12px; }
+      .ad-crew { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow); }
+      .ad-crew h3 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .ad-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+      .ad-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--tint); color: var(--badge-text); border-radius: 14px; padding: 5px 6px 5px 11px; font-size: 13px; font-weight: 600; }
+      .ad-chip button { border: 0; background: none; color: var(--text-muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 4px; }
+      .ad-chip button:hover { color: var(--err); }
+      .ad-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .ad-add select { width: auto; min-width: 200px; max-width: 100%; flex: 1; }
+      .ad-note { font-size: 12.5px; color: var(--text-muted); border-left: 3px solid var(--acc); background: var(--surface); border-radius: 0 10px 10px 0; padding: 10px 12px; margin-bottom: 14px; line-height: 1.5; }
+      .ad-mo { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 16px; }
+      .ad-box { background: var(--surface); color: var(--text); border-radius: 14px; border: 1px solid var(--border); padding: 20px; width: 620px; max-width: 100%; max-height: 92vh; overflow: auto; box-shadow: 0 8px 32px rgba(0,0,0,.35); box-sizing: border-box; }
+      .ad-box h3 { margin: 0 0 12px; font-size: 18px; }
+      .ad-fg { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+      .ad-fg .full { grid-column: 1 / -1; }
+      .ad-fg label { margin: 10px 0 4px; font-size: 12px; color: var(--text-muted); }
+      .ad-fg input, .ad-fg select, .ad-fg textarea { padding: 9px 11px; font-size: 14px; }
+      /* the morning, then the afternoon: a time box keeps room for its AM/PM (five in a row clipped it) */
+      .ad-sched { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .7fr); grid-template-areas: "s1 e1 l" "s2 e2 ."; gap: 8px; }
+      .ad-sched > div:nth-child(1) { grid-area: s1; } .ad-sched > div:nth-child(2) { grid-area: e1; } .ad-sched > div:nth-child(3) { grid-area: l; }
+      .ad-sched > div:nth-child(4) { grid-area: s2; } .ad-sched > div:nth-child(5) { grid-area: e2; }
+      .ad-sched label { margin: 0 0 3px; }
+      .ad-msg { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 10px; }
+      .ad-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+      @media (max-width: 560px) {
+        .ad-fg { grid-template-columns: 1fr; }
+        .ad-sched { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "s1 e1" "s2 e2" "l ."; }
+        .ad-grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="ad ts-theme" id="adApp">
+      <div class="ad-head">
+        <h2>👷 Employees &amp; crews</h2>
+        <span style="flex:1"></span>
+        <button type="button" class="btn btn-sm" id="adNew">+ New employee</button>
+      </div>
+      <p class="ad-lead">Everyone who logs time or gets timesheet reminders, with or without a sign-in. Link an employee to their
+        account so they can log their own hours, and give each lead their crew. Sign-in accounts, roles and passwords are managed in
+        <b>DCR Desktop 2 → Users</b>.</p>
+      <div class="ad-tabs" role="tablist">
+        <button type="button" class="ad-tab" role="tab" id="tabEmp" aria-selected="true" aria-controls="paneEmp">Employees</button>
+        <button type="button" class="ad-tab" role="tab" id="tabCrew" aria-selected="false" aria-controls="paneCrew">Crews</button>
+      </div>
+      <section id="paneEmp" role="tabpanel" aria-labelledby="tabEmp">
+        <div class="ad-bar">
+          <input type="search" id="adSearch" placeholder="Search name, number, phone…" aria-label="Search employees" />
+          <label class="ad-chk"><input type="checkbox" id="adInactive" /> Show people who left</label>
+          <span class="muted" id="adCount" style="font-size:12.5px"></span>
+        </div>
+        <div id="adList"><div class="ad-empty">Loading…</div></div>
+      </section>
+      <section id="paneCrew" role="tabpanel" aria-labelledby="tabCrew" hidden>
+        <div class="ad-note">A lead sees and logs time for themself and their crew, and confirms the crew's weeks in Team Sheets.
+          An employee needs an account linked to log their own hours; crew without an account are entered by their lead or the office,
+          or text their hours to DCR Agents.</div>
+        <div id="adCrews"><div class="ad-empty">Loading…</div></div>
+      </section>
+      <div id="adModal"></div>
+    </main>
+    <script type="module" src="js/pages/admin.js"></script>
+  </body>
+</html>

@@ -340,6 +340,126 @@
         completed_at: done ? ts : null, completed_by: done ? assigned : null }, audit(ts, i % 4 === 0 ? P.lead : P.manager)));
     }
 
+    /* ── phase 2: employees, crews, timesheets and sign-offs (M2) ─────────
+       Made-up people: five linked to the demo accounts, the rest crew without an account (they file
+       by text with DCR Agents). Riley Lead's crew is Jordan Field, Pat Newhire, Alex Juniper, Blair
+       Sycamore and Devon Madrone; Emery Chaparral and Harper Alder are in nobody's crew; Finley
+       Coyote has left (inactive). Four weeks of hours up to today, with overtime, a Saturday, leave
+       days, a day split across two jobs and one imported row whose job did not match a project.
+       Last week: two crews signed by the lead, one by the manager, one signature gone stale. */
+    const addD = (t, n) => {
+      const [y, mo, d] = t.split("-").map(Number);
+      const x = new Date(Date.UTC(y, mo - 1, d + n));
+      return x.getUTCFullYear() + "-" + String(x.getUTCMonth() + 1).padStart(2, "0") + "-" + String(x.getUTCDate()).padStart(2, "0");
+    };
+    const dow = (t) => { const [y, mo, d] = t.split("-").map(Number); return new Date(Date.UTC(y, mo - 1, d)).getUTCDay(); };
+    const thisSat = addD(today, -(dow(today) === 6 ? 0 : dow(today) + 1));
+    const crewSched = { normal_start1: "07:00:00", normal_end1: "11:00:00", normal_start2: "12:00:00", normal_end2: "15:30:00", normal_lunch_hours: 1 };
+    const officeSched = { normal_start1: "08:00:00", normal_end1: "12:00:00", normal_start2: "13:00:00", normal_end2: "17:00:00", normal_lunch_hours: 1 };
+    const EMP = [
+      { key: "lead", name: "Riley Lead", no: "E-104", profile: P.lead, phone: "(805) 555-0105", sched: crewSched },
+      { key: "field", name: "Jordan Field", no: "E-117", profile: P.field, phone: "(805) 555-0106", sched: crewSched },
+      { key: "newhire", name: "Pat Newhire", no: "E-131", profile: P.newhire, phone: "(805) 555-0110", sched: crewSched },
+      { key: "accountant", name: "Casey Accounts", no: "E-102", profile: P.accountant, phone: "(805) 555-0104", sched: officeSched },
+      { key: "viewer", name: "Taylor Viewer", no: "E-140", profile: P.viewer, phone: null, sched: officeSched },
+      { key: "alex", name: "Alex Juniper", no: "E-120", phone: "(805) 555-0121 / (805) 555-0191", sched: crewSched },
+      { key: "blair", name: "Blair Sycamore", no: "E-121", phone: "805.555.0122", sched: crewSched },
+      { key: "devon", name: "Devon Madrone", no: "E-122", phone: "555-0123", sched: crewSched },
+      { key: "emery", name: "Emery Chaparral", no: "E-123", phone: "(805) 555-0124", sched: { normal_start1: "06:30:00", normal_end1: "10:30:00",
+        normal_start2: "11:00:00", normal_end2: "15:00:00", normal_lunch_hours: 0.5 } },
+      { key: "harper", name: "Harper Alder", no: "E-126", phone: null, sched: {} },
+      { key: "finley", name: "Finley Coyote", no: "E-125", phone: "(805) 555-0125", sched: crewSched, inactive: true },
+    ];
+    out.employees = []; out.crew_members = []; out.timesheets = []; out.timesheet_confirmations = [];
+    const E = {};
+    EMP.forEach((x, i) => {
+      const r = Object.assign({ id: i + 1, profile_id: x.profile || null, contact_id: null, full_name: x.name, employee_no: x.no,
+        phone: x.phone, phone_e164: NS.e164 ? NS.e164(x.phone) : null, email: x.profile ? (x.key + "@demo.test") : null,
+        address: between(100, 9800) + " " + pick(STREETS) + " " + pick(SUFFIX) + ", " + pick(TOWNS)[0],
+        normal_start1: null, normal_end1: null, normal_start2: null, normal_end2: null, normal_lunch_hours: 1,
+        active: !x.inactive, notes: x.inactive ? "Left in the spring." : null, legacy_sp_id: 700 + i }, x.sched,
+      audit(iso(now.getTime() - 380 * 86400000), P.admin));
+      out.employees.push(r);
+      E[x.key] = r;
+    });
+    ["field", "newhire", "alex", "blair", "devon"].forEach((k, i) => {
+      out.crew_members.push(Object.assign({ id: i + 1, lead_profile_id: P.lead, employee_id: E[k].id }, audit(iso(now.getTime() - 200 * 86400000), P.admin)));
+    });
+
+    const jobs = [sandbox].concat(busy.slice(-6));
+    const WORK = ["Framed walls on the second floor.", "Set trusses and braced them.", "Sheathing on the north side.", "Blocking and hold-downs per the inspector.",
+      "Punch list items.", "Stood the garage walls.", "Roof sheathing, nailing pattern checked.", "Deck ledger and joists.", "Cleanup and lumber sorting."];
+    let tsId = 0;
+    const tsRow = (emp, day, extra) => {
+      const r = Object.assign({ id: ++tsId, employee_id: emp.id, work_date: day, kind: "work", project_id: null, legacy_project_text: null,
+        hours: 8, work_completed: null, start1: null, end1: null, start2: null, end2: null, lunch_hours: null, calculated_hours: null,
+        notes: null, source: "portal", source_key: null, legacy_sp_id: null }, extra || {},
+      audit(day + "T23:" + String(10 + (tsId % 40)).padStart(2, "0") + ":00.000Z", emp.profile_id || P.lead));
+      if (r.kind === "work" && emp.normal_start1 && r.start1 === null) {
+        const h = Number(r.hours);
+        const s1 = 7 * 60 + (emp.normal_start1 === "06:30:00" ? -30 : emp.normal_start1 === "08:00:00" ? 60 : 0);
+        const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0") + ":00";
+        if (h <= 4) Object.assign(r, { start1: hhmm(s1), end1: hhmm(s1 + h * 60), lunch_hours: 0 });
+        else Object.assign(r, { start1: hhmm(s1), end1: hhmm(s1 + 240), lunch_hours: Number(emp.normal_lunch_hours) || 1,
+          start2: hhmm(s1 + 240 + (Number(emp.normal_lunch_hours) || 1) * 60), end2: hhmm(s1 + 240 + (Number(emp.normal_lunch_hours) || 1) * 60 + (h - 4) * 60) });
+        r.calculated_hours = h;
+      }
+      out.timesheets.push(r);
+      return r;
+    };
+    const filers = ["lead", "field", "newhire", "alex", "blair", "devon", "emery", "harper", "accountant", "viewer"];
+    for (let wk = -3; wk <= 0; wk++) {
+      const sat = addD(thisSat, wk * 7);
+      for (let i = 0; i < 7; i++) {
+        const day = addD(sat, i);
+        if (day > today) break;
+        const weekend = i < 2;
+        filers.forEach((k, fi) => {
+          const emp = E[k];
+          if (weekend && !(i === 0 && (k === "lead" || k === "alex") && wk === -1)) return;   // a Saturday last week
+          if (day === today && fi % 3 === 1) return;                                      // some have not filed today yet
+          if (k === "newhire" && wk < -1) return;                                          // started two weeks ago
+          if (k === "viewer" && (wk !== -1 || weekend)) return;                           // filed by the office, last week only
+          const job = jobs[(fi + Math.max(0, wk + 3)) % jobs.length];
+          if (wk === -2 && i === 2 && k !== "accountant" && k !== "viewer") { tsRow(emp, day, { kind: "holiday", hours: 8 }); return; }   // a Monday holiday
+          if (k === "alex" && wk === -1 && (i === 5 || i === 6)) { tsRow(emp, day, { kind: "vacation", hours: 8 }); return; }
+          if (k === "devon" && wk === 0 && i === 3) { tsRow(emp, day, { kind: "sick", hours: 0, work_completed: "Called in sick." }); return; }
+          if (k === "harper" && wk === -1 && i === 4) { tsRow(emp, day, { kind: "day_off", hours: 0 }); return; }
+          if (k === "lead" && i === 4) {                                                   // a day split across two jobs
+            tsRow(emp, day, { project_id: job.id, hours: 4, work_completed: "Morning: layout and walls." });
+            tsRow(emp, day, { project_id: sandbox.id, hours: 4, work_completed: "Afternoon on the sandbox job." });
+            return;
+          }
+          if (k === "accountant" || k === "viewer") { tsRow(emp, day, { project_id: sandbox.id, hours: 8, work_completed: "Office: bills and payroll." }); return; }
+          const hours = k === "blair" && i === 3 ? 10 : k === "emery" && i % 2 ? 9 : k === "devon" && wk === -1 && i === 6 ? 6.5 : 8;
+          tsRow(emp, day, { project_id: job.id, hours, work_completed: weekend ? "Saturday catch-up on the trusses." : WORK[(fi + i + wk + 9) % WORK.length] });
+        });
+      }
+    }
+    // an imported row whose job did not match a project (legacy_project_text, source import)
+    tsRow(E.emery, addD(thisSat, -19), { project_id: null, legacy_project_text: "Hillside barn (old portal)", hours: 7.5,
+      work_completed: "Imported from the old portal.", source: "import", legacy_sp_id: 9001 });
+    out.timesheets.sort((a, b) => a.id - b.id);
+
+    // last week's sign-offs: the lead signed Jordan and Alex, the manager signed Riley; then one of
+    // Alex's days was changed, so that signature is stale
+    const lastSat = addD(thisSat, -7);
+    let cId = 0;
+    const sign = (empKey, by, at) => {
+      const emp = E[empKey];
+      const list = out.timesheets.filter((t) => t.employee_id === emp.id && t.work_date >= lastSat && t.work_date <= addD(lastSat, 6));
+      const fp = NS.tsFingerprint ? NS.tsFingerprint(list) : "";
+      out.timesheet_confirmations.push(Object.assign({ id: ++cId, employee_id: emp.id, week_start: lastSat, confirmed_by: by,
+        confirmed_at: at, hours_at_confirm: Math.round(list.reduce((s, t) => s + Number(t.hours), 0) * 100) / 100, fingerprint: fp }, audit(at, by)));
+    };
+    const friEve = addD(lastSat, 6) + "T23:40:00.000Z";
+    sign("field", P.lead, friEve);
+    sign("alex", P.lead, friEve);
+    sign("lead", P.manager, addD(lastSat, 7) + "T17:05:00.000Z");
+    sign("field", P.manager, addD(lastSat, 7) + "T17:06:00.000Z");
+    const changed = out.timesheets.find((t) => t.employee_id === E.alex.id && t.work_date === addD(lastSat, 3) && t.kind === "work");
+    if (changed) { changed.hours = 9; changed.calculated_hours = null; changed.version = 2; changed.updated_at = addD(lastSat, 8) + "T16:00:00.000Z"; changed.updated_by = P.manager; }
+
     out.activity.sort((a, b) => a.id - b.id);
     return out;
   }

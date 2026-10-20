@@ -700,6 +700,344 @@ await check("presence: the topic presence:dcr is open to active people only", as
   same(await can("inactive"), "CHANNEL_ERROR", "inactive");
 });
 
+// ===========================================================================================
+section = "P2: employees and crews (repo/employees.js, migration M2)";
+// ===========================================================================================
+const HAS_M2 = !!(catalog.tables.timesheets && catalog.tables.employees && catalog.functions.my_roster);
+const emp = await site("repo/employees.js");
+const ts = await site("repo/timesheets.js");
+const tsmap = await site("map/timesheets.js");
+const tsShared = await site("pages/ts-shared.js");
+const E = {};
+
+if (!HAS_M2) {
+  results.push({ section, name: "M2 (20261021000100_people_timesheets) is not in DCR Desktop 2 yet: the P2 checks wait for it", ok: true });
+} else {
+  await check("createEmployee() / updateEmployee(): admin and manager add and edit (versioned); phone_e164 by the database; one ACTIVE name; accountant, lead, field and viewer refused; nobody deletes", async () => {
+    await as("admin");
+    E.lead = await emp.createEmployee({ full_name: "Lee  Lead", employee_no: "C-1", phone: "Cell: (805) 555-0141", profile_id: PEOPLE.lead.id,
+      normal_start1: "07:00", normal_end1: "11:00", normal_start2: "12:00", normal_end2: "15:30", normal_lunch_hours: 1 });
+    same([E.lead.full_name, E.lead.phone_e164], ["Lee Lead", "+18055550141"], "name tidied, texting number derived");
+    E.field = await emp.createEmployee({ full_name: "Flo Field", employee_no: "C-2", phone: "805 555 0142", profile_id: PEOPLE.field.id,
+      normal_start1: "07:00", normal_end1: "11:00", normal_start2: "12:00", normal_end2: "15:30" });
+    await as("manager");
+    E.crew = await emp.createEmployee({ full_name: "Cy Crew", employee_no: "C-3", phone: "555-0143" });
+    same(E.crew.phone_e164, null, "a 7-digit number cannot be texted");
+    E.field2 = await emp.createEmployee({ full_name: "Fay Field", profile_id: PEOPLE.field2.id });
+    E.viewer = await emp.createEmployee({ full_name: "Vi Viewer", profile_id: PEOPLE.viewer.id });
+    E.acct = await emp.createEmployee({ full_name: "Ace Accountant", profile_id: PEOPLE.accountant.id });
+    E.other = await emp.createEmployee({ full_name: "Otto Other" });
+    await refused(() => emp.createEmployee({ full_name: "otto other" }), "23505", "a second active Otto Other");
+    const v = E.crew.version;
+    E.crew = await emp.updateEmployee(E.crew, { phone: "(805) 555-0143" });
+    ok(E.crew.version === v + 1 && E.crew.phone_e164 === "+18055550143", "versioned edit, number derived again");
+    await refused(() => emp.updateEmployee(Object.assign({}, E.crew, { version: v }), { notes: "stale" }), "PT409", "a stale version");
+    await refused(() => emp.linkAccount(E.other, PEOPLE.lead.id), "23505", "one employee per account");
+    await refused(() => emp.linkAccount(E.other, PEOPLE.agents.id), "23514", "never the DCR Agents 2 account");
+    for (const k of ["accountant", "lead", "field", "viewer"]) {
+      await as(k);
+      await refused(() => emp.createEmployee({ full_name: "Nope " + k }), "42501", k + " adds");
+    }
+    await as("admin");
+    const del = await client.from("employees").delete().eq("id", E.other.id).select();
+    ok(del.error && del.error.code === "42501", "no DELETE on employees: " + JSON.stringify(del.error));
+    same((await emp.setActive(E.other, false)).active, false, "turned off instead");
+  });
+
+  await check("crews: an admin sets the lead's crew (addToCrew / removeFromCrew); only a lead has a crew, never themself; who reads crew_members (office all, the lead their own, a member the rows naming them)", async () => {
+    await as("admin");
+    await emp.addToCrew(PEOPLE.lead.id, E.field.id);
+    await emp.addToCrew(PEOPLE.lead.id, E.crew.id);
+    await refused(() => emp.addToCrew(PEOPLE.lead.id, E.crew.id), "23505", "the same pair twice");
+    await refused(() => emp.addToCrew(PEOPLE.field.id, E.crew.id), "23514", "a field person has no crew");
+    await refused(() => emp.addToCrew(PEOPLE.lead.id, E.lead.id), "23514", "a lead is not in their own crew");
+    await emp.addToCrew(PEOPLE.lead.id, E.field2.id);
+    ok(await emp.removeFromCrew(PEOPLE.lead.id, E.field2.id), "removed");
+    const want = { admin: 2, manager: 2, accountant: 2, lead: 2, field: 1, field2: 0, viewer: 0 };
+    for (const [k, n] of Object.entries(want)) {
+      await as(k);
+      same((await emp.listCrews()).length, n, k + " reads crew rows");
+    }
+    await as("lead");
+    same((await emp.crewOf(PEOPLE.lead.id)).map(Number).sort(), [E.field.id, E.crew.id].sort(), "crewOf(lead)");
+    await refused(() => emp.addToCrew(PEOPLE.lead.id, E.field2.id), "42501", "a lead does not set crews");
+  });
+
+  await check("roster() (my_roster) by scope, never phone, e-mail, address, notes or pay; mine() is the own row; listEmployees() follows the same scope; the agents account is refused", async () => {
+    const cols = catalog.functions.my_roster[0];
+    const outCols = (await sql("select string_agg(a.attname, ',' order by a.attnum) as c from pg_proc p join pg_namespace n on n.oid = p.pronamespace, unnest(p.proargnames) with ordinality as a(attname, attnum) where n.nspname = 'public' and p.proname = 'my_roster'"))[0].c;
+    ok(!/phone|email|address|notes|pay|rate/.test(String(outCols)), "my_roster's columns: " + outCols);
+    ok(cols, "my_roster exists");
+    const want = { admin: 6, manager: 6, accountant: 6, lead: 3, field: 1, field2: 1, viewer: 1 };
+    for (const [k, n] of Object.entries(want)) {
+      await as(k);
+      const r = await emp.roster();
+      same(r.length, n, k + " roster");
+      ok(r.every((x) => !("phone" in x) && !("address" in x) && !("email" in x)), k + ": no contact columns");
+      same((await emp.listEmployees()).length, Math.max(n, k === "admin" || k === "manager" || k === "accountant" ? 7 : n), k + " listEmployees (the office also sees the one turned off)");
+    }
+    await as("field");
+    same((await emp.mine(PEOPLE.field.id)).id, E.field.id, "mine()");
+    await as("manager2");
+    same(await emp.mine(PEOPLE.manager2.id), null, "an account without an employee row");
+    await as("agents");
+    await refused(() => emp.roster(), "42501", "agents");
+  });
+
+  await check("mine() names its columns — never the office's notes (M2 lets the person and their lead read the whole row, so Portal 2 does not carry the notes to their phones); former() / get(): turned-off employees and one employee, in scope only", async () => {
+    await as("admin");
+    E.field = await emp.updateEmployee(E.field, { notes: "Made-up office remark" });
+    await as("field");
+    const me = await emp.mine(PEOPLE.field.id);
+    ok(me && !("notes" in me) && ["phone", "phone_e164", "address", "full_name", "normal_start1", "active"].every((k) => k in me),
+      "mine() columns: " + Object.keys(me || {}).join(","));
+    const raw = await client.from("employees").select("notes").eq("id", E.field.id);
+    same(raw.data && raw.data[0] && raw.data[0].notes, "Made-up office remark", "the database: the person reads their own row's notes (the editor's label says so)");
+    await as("lead");
+    const crewRaw = await client.from("employees").select("notes").eq("id", E.field.id);
+    same(crewRaw.data && crewRaw.data[0] && crewRaw.data[0].notes, "Made-up office remark", "the database: their lead reads them too");
+    const want = { admin: ["Otto Other"], manager: ["Otto Other"], accountant: ["Otto Other"], lead: [], field: [], viewer: [] };
+    for (const [k, names] of Object.entries(want)) {
+      await as(k);
+      const f = await emp.former();
+      same(f.map((x) => x.full_name), names, k + " former()");
+      ok(f.every((x) => !("notes" in x) && !("phone" in x) && !("address" in x)), k + ": former() carries names and hours only");
+    }
+    await as("admin");
+    same((await emp.get(E.other.id)).full_name, "Otto Other", "admin get(left)");
+    same(await emp.get("1 or 1=1"), null, "get() takes an id only");
+    await as("lead");
+    same(await emp.get(E.other.id), null, "a lead cannot read someone outside the crew");
+    same((await emp.get(String(E.crew.id))).full_name, "Cy Crew", "a lead reads their crew member");
+    await as("admin");
+    E.field = await emp.updateEmployee(E.field, { notes: "" });
+  });
+
+  await check("update_my_contact(): one's own phone and address only (blank clears it, the texting number follows); PT404 without an employee row", async () => {
+    await as("field");
+    await emp.updateMyContact("(805) 555-0199", "12 Sample St");
+    let me = await emp.mine(PEOPLE.field.id);
+    same([me.phone_e164, me.address], ["+18055550199", "12 Sample St"], "saved");
+    await emp.updateMyContact("(805) 555-0199", "");
+    me = await emp.mine(PEOPLE.field.id);
+    same(me.address, null, "a blank clears the address");
+    await as("manager2");
+    await refused(() => emp.updateMyContact("805 555 0100", "x"), "PT404", "no employee row");
+  });
+
+  // ===========================================================================================
+  section = "P2: timesheets (repo/timesheets.js, the crew scope)";
+  // ===========================================================================================
+  const today = (await sql("select app.today()::text as d"))[0].d;
+  const thisSat = tsmap.weekDays(common2.saturdayOf(today))[0];
+  const lastSat = common2.addDays(thisSat, -7);
+  const day = (n) => common2.addDays(lastSat, n);
+  const form = (empId, d, extra) => Object.assign({ employeeId: empId, date: d, kind: "work", projectId: S.p1.id, hours: 8, work: "Framing",
+    start1: "07:00", end1: "11:00", start2: "12:00", end2: "16:00", lunch: 1 }, extra || {});
+  const T = {};
+
+  await check("create(): the writing scope (P2 check 1) — admin and manager anyone; a lead self and crew; field and the accountant themselves; a viewer nobody; source portal", async () => {
+    const cases = [
+      ["admin", "other", true], ["manager", "crew", true], ["lead", "lead", true], ["lead", "field", true], ["lead", "crew", true],
+      ["lead", "field2", false], ["lead", "other", false], ["field", "field", true], ["field", "crew", false], ["field2", "field", false],
+      ["accountant", "acct", true], ["accountant", "field", false], ["viewer", "viewer", false], ["manager2", "field2", true],
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const [who, target, allowed] = cases[i];
+      await as(who);
+      const f = form(E[target].id, day(2 + (i % 4)));
+      if (allowed) {
+        const e = await ts.create(f);
+        same([e.employeeId, e.source, e.kind, e.projectNumber, e.hours, e.calculated], [E[target].id, "portal", "work", S.p1.internalIDNumber, 8, 8], who + " -> " + target);
+        T[who + ":" + target] = e;
+      } else {
+        await refused(() => ts.create(f), "42501", who + " -> " + target);
+      }
+    }
+  });
+
+  await check("list(): the reading scope — admin, manager, accountant everyone (Q7); a lead self and crew; field and viewer themselves; the agents account nothing; the embeds (employee, project with address)", async () => {
+    await as("admin");
+    T.viewerRow = await ts.create(form(E.viewer.id, day(3)));      // the office files the viewer's hours
+    const from = lastSat, to = common2.addDays(lastSat, 6);
+    const all = new Set((await ts.list(from, to)).map((e) => e.employeeId));
+    const want = {
+      admin: all.size, manager: all.size, accountant: all.size,
+      lead: [E.lead.id, E.field.id, E.crew.id].filter((x) => all.has(x)).length,
+      field: 1, field2: 1, viewer: 1,                            // field2: the row manager2 filed for them
+    };
+    for (const [k, n] of Object.entries(want)) {
+      await as(k);
+      const list = await ts.list(from, to);
+      same(new Set(list.map((e) => e.employeeId)).size, n, k + " sees employees");
+      ok(list.every((e) => e.employeeName && e.projectAddress === "100 Sample Rd"), k + ": embeds");
+    }
+    await as("agents");
+    same((await ts.list(from, to)).length, 0, "agents: list() is empty");
+    const r = await client.from("timesheets").select("id").limit(5);
+    ok(!r.data || r.data.length === 0, "agents reads no timesheet rows");
+  });
+
+  await check("update() / remove(): versioned; a PATCH that moves a row to an out-of-scope employee is refused (WITH CHECK); the accountant and a viewer cannot change anything; a stale version is PT409", async () => {
+    await as("lead");
+    let e = T["lead:crew"];
+    e = await ts.update(e, form(E.crew.id, e.date, { hours: 7.5, start2: "12:00", end2: "15:30" }));
+    same([e.hours, e.calculated], [7.5, 7.5], "a lead edits the crew's row");
+    await refused(() => ts.update(e, form(E.other.id, e.date)), "42501", "moving it to someone outside the crew");
+    await refused(() => ts.update(Object.assign({}, e, { version: e.version - 1 }), form(E.crew.id, e.date, { hours: 6 })), "PT409", "stale version");
+    T["lead:crew"] = e;
+    for (const [k, row] of [["accountant", T["lead:field"]], ["viewer", T.viewerRow]]) {
+      await as(k);
+      await refused(() => ts.update(row, form(row.employeeId, row.date, { hours: 2 })), "42501", k + " edits (reads it, cannot change it)");
+      await refused(() => ts.remove(row), "42501", k + " deletes");
+    }
+    await as("field");
+    const mine = T["field:field"];
+    ok(await ts.remove(mine), "field deletes their own (hard delete)");
+    await as("admin");
+    same((await sql("select count(*)::int as n from public.timesheets where id = $1", [mine.id]))[0].n, 0, "gone for real");
+  });
+
+  await check("the rules of a row (P2 check 2): a leave day needs no project (and takes none); a work day needs a project and hours > 0; hours 0 to 24; clock times are plain times", async () => {
+    await as("field");
+    const leave = await ts.create({ employeeId: E.field.id, date: day(5), kind: "vacation", hours: 8 });
+    same([leave.kind, leave.projectId, leave.start1, leave.leave, leave.dayType], ["vacation", null, "", true, "Vacation"], "a vacation day");
+    const sick = await ts.create({ employeeId: E.field.id, date: day(6), kind: "sick", hours: 0 });
+    same(sick.hours, 0, "a sick day with 0 hours");
+    await refused(() => ts.create(form(E.field.id, day(4), { projectId: null })), "23514", "work without a project");
+    await refused(() => ts.create(form(E.field.id, day(4), { hours: 0 })), "23514", "work with 0 hours");
+    await refused(() => ts.create(form(E.field.id, day(4), { hours: 24.5 })), "23514", "25 hours");
+    const raw = await client.from("timesheets").insert({ employee_id: E.field.id, work_date: day(4), kind: "holiday", project_id: S.p1.id, hours: 8, source: "portal" }).select();
+    same(raw.error && raw.error.code, "23514", "a leave day with a project");
+    const t = (await sql("select start1::text as s from public.timesheets where id = $1", [T["lead:field"].id]))[0];
+    same(t.s, "07:00:00", "start1 is a time");
+    same(tsmap.problem({ employeeId: 1, date: day(4), kind: "work", projectId: null, hours: 8 }), "Choose a project from the list.", "the page says it first");
+  });
+
+  await check("sign-off (P2 check 3): confirm with the fingerprint timesheet_weeks gave -> live; an hour changes elsewhere -> stale, and confirming with the old fingerprint is PT409; the page's own fingerprint equals the database's; withdraw: own, or any as an admin", async () => {
+    await as("lead");
+    let wk = tsmap.weeksOf(await ts.weeks(lastSat, common2.addDays(lastSat, 6)), lastSat);
+    const w = wk[String(E.field.id)];
+    ok(w && /^[0-9a-f]{32}-\d+$/.test(w.fingerprint), "a fingerprint for the field person's week");
+    const rows = (await ts.list(lastSat, common2.addDays(lastSat, 6))).filter((e) => e.employeeId === E.field.id);
+    same(tsmap.fingerprint(rows), w.fingerprint, "map/timesheets.js fingerprint() = app.timesheet_week_state");
+    await ts.confirm(E.field.id, lastSat, w.fingerprint);
+    wk = tsmap.weeksOf(await ts.weeks(lastSat, lastSat), lastSat);
+    ok(wk[String(E.field.id)].confirmed && wk[String(E.field.id)].marks[0].mine === true, "live, mine");
+    same([wk[String(E.field.id)].marks[0].role, wk[String(E.field.id)].marks[0].canWithdraw, /^#[0-9a-f]{6}$/i.test(wk[String(E.field.id)].marks[0].color)],
+      ["lead", true, true], "the mark names the signer's role and colour (the confirm dialog shows them)");
+    await as("manager");
+    const seenByManager = tsmap.weeksOf(await ts.weeks(lastSat, lastSat), lastSat)[String(E.field.id)].fingerprint;
+    await ts.confirm(E.field.id, lastSat, seenByManager);
+    await as("field");                                           // an hour changes on the phone
+    const one = (await ts.list(lastSat, common2.addDays(lastSat, 6))).find((e) => e.kind === "work");
+    await ts.update(one, form(E.field.id, one.date, { hours: 9, end2: "17:00" }));
+    await as("lead");
+    wk = tsmap.weeksOf(await ts.weeks(lastSat, lastSat), lastSat);
+    const now = wk[String(E.field.id)];
+    same([now.confirmed, now.staleCount, now.marks.every((m) => m.stale)], [false, 2, true], "both signatures stale");
+    await refused(() => ts.confirm(E.field.id, lastSat, w.fingerprint), "PT409", "the old fingerprint");
+    await refused(() => ts.confirm(E.field.id, lastSat, ""), "22023", "no fingerprint");
+    await refused(() => ts.confirm(E.field2.id, lastSat, now.fingerprint), "42501", "a lead outside the crew");
+    await ts.confirm(E.field.id, lastSat, now.fingerprint);
+    for (const k of ["field", "viewer", "accountant"]) {
+      await as(k);
+      await refused(() => ts.confirm(E.field.id, lastSat, now.fingerprint), "42501", k + " cannot confirm");
+    }
+    await as("lead");
+    wk = tsmap.weeksOf(await ts.weeks(lastSat, lastSat), lastSat);
+    const marks = wk[String(E.field.id)].marks;
+    const mgr = marks.find((m) => m.mine === false);
+    same(mgr.canWithdraw, false, "a lead may not withdraw the manager's");
+    await refused(() => ts.unconfirm(mgr.id), "42501", "a lead withdraws the manager's");
+    await ts.unconfirm(marks.find((m) => m.mine).id);
+    await as("admin");
+    wk = tsmap.weeksOf(await ts.weeks(lastSat, lastSat), lastSat);
+    const left = wk[String(E.field.id)].marks;
+    same(left.length, 1, "the manager's left");
+    same(left[0].canWithdraw, true, "an admin may withdraw anyone's");
+    await ts.unconfirm(left[0].id);
+    const direct = await client.from("timesheet_confirmations").select("id").limit(1);
+    ok(direct.error || !direct.data.length, "nobody reads timesheet_confirmations directly");
+  });
+
+  await check("a screen behind the database (a change whose live event never arrived): the fingerprint of the rows ON SCREEN (weekFingerprint) is refused with PT409 even though timesheet_weeks was read after the change — new hours or another project; screenBehind() names the week; a fresh read confirms", async () => {
+    await as("lead");
+    const fri = common2.addDays(lastSat, 6);
+    for (const change of [{ hours: 7.5, end2: "15:30" }, { projectId: S.p2.id, end2: "15:30" }]) {
+      const screen = await ts.list(lastSat, fri);                       // what the page drew
+      await as("manager");                                               // the office changes a row; the page hears nothing
+      const row = (await ts.list(lastSat, fri)).find((e) => e.employeeId === E.field.id && e.kind === "work");
+      await ts.update(row, form(E.field.id, row.date, Object.assign({ hours: row.hours, projectId: row.projectId }, change)));
+      await as("lead");
+      const wk = tsmap.weeksOf(await ts.weeks(lastSat, fri), lastSat);  // the sign-offs read AFTER the change
+      const fp = tsmap.weekFingerprint(screen, E.field.id, lastSat);
+      ok(fp !== wk[String(E.field.id)].fingerprint && tsmap.screenBehind(wk, screen, lastSat).includes(String(E.field.id)),
+        JSON.stringify(change) + ": the screen is behind");
+      await refused(() => ts.confirm(E.field.id, lastSat, fp), "PT409", JSON.stringify(change) + ": the rows on screen");
+      const fresh = await ts.list(lastSat, fri);
+      same(tsmap.weekFingerprint(fresh, E.field.id, lastSat), wk[String(E.field.id)].fingerprint, "a fresh read agrees with the database");
+      same(tsmap.screenBehind(wk, fresh, lastSat), [], "nobody behind after a fresh read");
+      await ts.confirm(E.field.id, lastSat, tsmap.weekFingerprint(fresh, E.field.id, lastSat));
+      const mine = tsmap.weeksOf(await ts.weeks(lastSat, fri), lastSat)[String(E.field.id)].marks.find((m) => m.mine);
+      await ts.unconfirm(mine.id);
+    }
+  });
+
+  await check("weeks run Saturday to Friday in company time (P2 check 4): timesheet_weeks' week_start is a Saturday; Friday 9 pm Pacific is still that week (app.week_start_at); the page's saturdayOf agrees", async () => {
+    const r = (await sql("select app.week_start_at('2026-10-24T04:00:00Z')::text as a, app.week_start('2026-10-23')::text as b, app.week_start('2026-10-24')::text as c"))[0];
+    same([r.a, r.b, r.c], ["2026-10-17", "2026-10-17", "2026-10-24"], "the database");
+    same([common2.saturdayOf(new Date("2026-10-24T04:00:00Z")), common2.saturdayOf("2026-10-23"), common2.saturdayOf("2026-10-24")],
+      ["2026-10-17", "2026-10-17", "2026-10-24"], "common2.saturdayOf");
+    await as("admin");
+    const rows = await client.rpc("timesheet_weeks", { p_from: lastSat, p_to: common2.addDays(lastSat, 6) });
+    ok(!rows.error && rows.data.length && rows.data.every((x) => new Date(x.week_start + "T12:00:00Z").getUTCDay() === 6), "Saturdays");
+  });
+
+  await check("context() (pages/ts-shared.js) over the real roster: the scope words and who may be written for, per role", async () => {
+    const want = { admin: ["all", 6], manager: ["all", 6], accountant: ["all-read", 1], lead: ["crew", 3], field: ["self", 1], viewer: ["view", 0], manager2: ["all", 6] };
+    for (const [k, [scope, n]] of Object.entries(want)) {
+      await as(k);
+      const ctx = await tsShared.context(await sbm.me());
+      same([ctx.scope, ctx.writable.length], [scope, n], k);
+      // someone who has left: never offered for new hours; their entries stay correctable by the office
+      const office = k === "admin" || k === "manager" || k === "manager2";
+      ok(!ctx.writable.some((r) => r.id === E.other.id), k + ": Otto (left) not offered for new hours");
+      same(!!ctx.byId(E.other.id), office || k === "accountant", k + ": byId(Otto, left)");
+      same(tsShared.formPeople(ctx, E.other.id).some((r) => r.id === E.other.id), office, k + ": an entry of Otto's opens with Otto in the form");
+      same(ctx.everyone.length, ctx.roster.length + ctx.former.length, k + ": everyone = roster + former");
+    }
+  });
+
+  await check("watch('timesheets') — Team Sheets' live channel: every active role joins; the agents account cannot", async () => {
+    const join = () => new Promise((res) => {
+      let stop = null;
+      const t = setTimeout(() => { if (stop) stop(); res("timeout"); }, 3000);
+      stop = live.watch("timesheets", null, (evt) => {
+        if (evt.type === "SUBSCRIBED") { clearTimeout(t); stop(); res("SUBSCRIBED"); }
+      });
+    });
+    for (const k of ["admin", "accountant", "lead", "field", "viewer"]) {
+      await as(k);
+      same(await join(), "SUBSCRIBED", k);
+    }
+    await as("agents");
+    same(await join(), "timeout", "agents never joins");
+    for (const ch of client.channels) ch.unsubscribe();
+  });
+
+  await check("the agents account (P1 check 10, the new tables): zero rows from employees, crew_members, timesheets, timesheet_confirmations; refused by my_roster, timesheet_weeks, confirm, update_my_contact", async () => {
+    await as("agents");
+    for (const t of ["employees", "crew_members", "timesheets", "timesheet_confirmations"]) {
+      const r = await client.from(t).select("id").limit(5);
+      ok(r.error || (r.data && r.data.length === 0), t + ": " + JSON.stringify(r.error || r.data));
+    }
+    await refused(() => ts.weeks(lastSat, lastSat), "42501", "timesheet_weeks");
+    await refused(() => ts.confirm(E.field.id, lastSat, "x"), "42501", "confirm");
+    await refused(() => emp.updateMyContact("805 555 0100", ""), "42501", "update_my_contact");
+  });
+}
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

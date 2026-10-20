@@ -459,6 +459,21 @@ tbody tr:hover { background: var(--surface-2); }
   .dcr2-nav a { padding: 11px 12px; font-size: 15px; }
   .dcr2-topbar .top-actions { order: 3; }
 }
+/* a desk bar whose links do not fit on one row (common2.js fitTopbar): first "tight" — the logo and
+   the Portal 2 badge without the words, a little less padding —, then "fold" — the same menu as the
+   phone's, as a panel under the brand */
+.dcr2-topbar.dcr2-tight > .brand > .brand-name { display: none; }
+.dcr2-topbar.dcr2-tight .dcr2-nav a { padding: 6px 8px; }
+.dcr2-topbar.dcr2-fold .dcr2-menu-btn { display: inline-flex; order: 2; }
+.dcr2-topbar.dcr2-fold > .brand { flex: 0 1 auto; }
+.dcr2-topbar.dcr2-fold .dcr2-nav {
+  display: none; position: absolute; top: 100%; left: 8px; width: 280px; max-width: calc(100% - 16px); z-index: 30;
+  flex-direction: column; align-items: stretch; gap: 2px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+}
+.dcr2-topbar.dcr2-fold .dcr2-nav.open { display: flex; }
+.dcr2-topbar.dcr2-fold .dcr2-nav a { padding: 10px 12px; font-size: 14.5px; }
+.dcr2-topbar.dcr2-fold .top-actions { order: 3; }
 @media (max-width: 480px) {
   .dcr2-menu-btn .lbl { display: none; }
   .dcr2-topbar .brand-name { display: none; }
@@ -515,3 +530,43 @@ tbody tr:hover { background: var(--surface-2); }
   flex: none; width: auto; min-width: 0; height: auto; overflow: visible;
   position: static; margin: 0; padding: 2px 8px; clip: auto; clip-path: none;
 }
+
+/* ── Timesheets (P2): the old timesheet pages' blue, light and dark ──────────────────────── */
+.ts-theme, .tp-overlay {
+  --acc: #2f80d8; --acc-2: #1f6fc8;
+  --tint: rgba(47, 128, 216, 0.10); --tint-1: rgba(47, 128, 216, 0.10); --tint-2: rgba(47, 128, 216, 0.20);
+  --badge-text: #1f6fc8; --gold: #b8860b; --warm: rgba(214, 161, 58, 0.16);
+  --ok: #1f8a5f; --err: #c8371f; --exp: #1f9d6a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ts-theme, :root:not([data-theme="light"]) .tp-overlay {
+    --badge-text: #9cc9f5; --gold: #e0b049; --ok: #4cc28f; --err: #f0937f; --tint: rgba(47, 128, 216, 0.16);
+  }
+}
+:root[data-theme="dark"] .ts-theme, :root[data-theme="dark"] .tp-overlay {
+  --badge-text: #9cc9f5; --gold: #e0b049; --ok: #4cc28f; --err: #f0937f; --tint: rgba(47, 128, 216, 0.16);
+}
+
+/* the "Send timesheet as PDF" chooser (js/timesheet-pdf.js) */
+.tp-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 10000; display: flex;
+  align-items: center; justify-content: center; padding: 16px; }
+.tp-box { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 14px;
+  max-width: 400px; width: 100%; padding: 20px; box-shadow: 0 10px 40px rgba(0, 0, 0, .4); max-height: 92vh; overflow: auto; box-sizing: border-box; }
+.tp-box h3 { margin: 0 0 4px; font-size: 17px; }
+.tp-sub { margin: 0 0 14px; font-size: 13px; color: var(--text-muted); }
+.tp-l { display: block; font-size: 12px; font-weight: 600; margin: 0 0 6px; }
+.tp-scope { display: flex; gap: 8px; margin-bottom: 14px; }
+.tp-scope .btn { flex: 1; }
+.tp-in { width: 100%; box-sizing: border-box; padding: 9px 11px; font-size: 15px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface); color: var(--text); color-scheme: light dark; }
+.tp-note { font-size: 11.5px; color: var(--text-muted); margin-top: 6px; }
+.tp-row { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 6px; }
+.tp-emps { font-size: 13px; color: var(--text); }
+.tp-list { max-height: 190px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.tp-pick { display: flex; align-items: center; gap: 8px; padding: 5px 2px; margin: 0; cursor: pointer; font-weight: 500; font-size: 13.5px; }
+.tp-pick input { width: auto; margin: 0; }
+.tp-no { color: var(--text-muted); font-size: 11.5px; }
+.tp-msg { font-size: 13px; margin-top: 12px; min-height: 16px; color: var(--text-muted); }
+.tp-msg.err { color: var(--err); } .tp-msg.ok { color: var(--ok); }
+.tp-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.ts-theme a.btn { text-decoration: none; }

@@ -20,6 +20,12 @@ export const CSP = "default-src 'self'; script-src 'self' " + SUPABASE_JS + "; "
   "worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; " +
   "base-uri 'self'; form-action 'self'";
 
+// A page that needs another library names its exact file(s) in script-src, and only that page:
+// the timesheet PDF (js/timesheet-pdf.js) loads jsPDF and its table plugin on the two Time Sheet pages.
+export const PDF_LIBS = ["https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js",
+  "https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"];
+export const PAGE_LIBS = { "timesheet.html": PDF_LIBS, "timesheet-mobile.html": PDF_LIBS };
+
 function walk(dir) {
   const out = [];
   for (const name of readdirSync(dir)) {
@@ -60,7 +66,9 @@ test("every page carries the security policy of BLUEPRINT 2.2.1, before any scri
     const m = /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(src);
     assert.ok(m, rel(f) + ": no Content-Security-Policy meta tag");
     const got = parseCsp(m[1]);
-    for (const d of REQUIRED) assert.equal(got[d], want[d], rel(f) + ": " + d + " differs from the blueprint's");
+    const extra = PAGE_LIBS[rel(f)] || [];
+    const wantHere = Object.assign({}, want, { "script-src": want["script-src"].split(" ").concat(extra).sort().join(" ") });
+    for (const d of REQUIRED) assert.equal(got[d], wantHere[d], rel(f) + ": " + d + " differs from the blueprint's");
     for (const [d, v] of Object.entries(got)) {
       if (REQUIRED.includes(d)) continue;
       assert.ok(/^('self'|'none')$/.test(v), rel(f) + ": " + d + " " + v + " is looser than default-src");
@@ -91,6 +99,19 @@ test("the policy names each CDN library file, never the whole of jsDelivr (anyon
     for (const m of src.matchAll(/<script\b[^>]*\ssrc="(https:[^"]+)"/g)) {
       assert.ok(csp["script-src"].split(" ").includes(m[1]), rel(f) + ": " + m[1] + " is not named by script-src");
     }
+  }
+});
+
+test("the PDF pages name exactly the files timesheet-pdf.js loads (exact versions, integrity hashes), and every page that opens the PDF names them", () => {
+  const src = read(join(SITE, "js/timesheet-pdf.js"));
+  const libs = [...src.matchAll(/src: "(https:[^"]+)",\s*integrity: "(sha384-[A-Za-z0-9+\/=]{64})"/g)];
+  assert.deepEqual(libs.map((m) => m[1]).sort(), PDF_LIBS.slice().sort());
+  for (const f of html) {
+    const page = read(f);
+    const mod = /<script type="module" src="([^"]+)"/.exec(page);
+    if (!mod) continue;
+    const js = read(join(SITE, mod[1]));
+    if (/timesheet-pdf\.js/.test(js)) assert.ok(PAGE_LIBS[rel(f)], rel(f) + " opens the PDF but does not name its library files");
   }
 });
 
@@ -140,6 +161,7 @@ test("Portal 2's own browser-side names, never the old portal's (Appendix C)", (
     [/dcrJrnDraft:/, "the old journal draft key"], [/["'`]dcr_theme["'`]/, "the old theme key"], [/\bdcrCityGeo\b/, "the old city cache"],
     [/\bdcrPlanRecent\b/, "the old plan recents"], [/dcr-portal-single-instance/, "the old lock"], [/pm_employee_order_v1/, "the old row order"],
     [/share-point-api\.vercel\.app|\/api\/portal\b/, "the old server"], [/graph\.microsoft\.com|sharepoint\.com/i, "SharePoint / Graph"],
+    [/["'`]tsView["'`]/, "the old time-sheet view key"],
   ];
   for (const f of scripts.concat(html)) {
     const src = read(f);
@@ -171,4 +193,23 @@ test("the manifest is Portal 2's own app", () => {
   assert.equal(m.scope, "./");
   assert.equal(m.start_url, "dashboard.html");
   for (const i of m.icons) assert.ok(files.some((f) => rel(f) === i.src), i.src);
+});
+
+test("P2 review: no page offers the old portal's sandbox (A267) as an example; the four entry pages share one 'pick the project' sentence", () => {
+  const pages = files.filter((f) => /\/pages\/|\.html$/.test(rel(f)) || /^js\/pages\//.test(rel(f)));
+  for (const f of pages) assert.ok(!/A267/.test(read(f)), rel(f) + ": names A267 (not in this database)");
+  for (const p of ["timesheet.js", "timesheet-mobile.js", "timesheet-manager.js", "timesheet-batch.js"]) {
+    const src = read(join(SITE, "js/pages", p));
+    assert.ok(/\bPICK_PROJECT\b/.test(src) && !/Pick the project from the list \(/.test(src), p + ": the shared sentence");
+  }
+});
+
+test("P2 review: the employee notes are said to be readable by the person and their lead (as M2 and Desktop 2 have it), and the self-read names its columns", () => {
+  const admin = read(join(SITE, "js/pages/admin.js"));
+  assert.ok(!/office only/i.test(admin), "admin.js: 'office only' is not what the database does");
+  assert.match(admin, /Notes \(the person and their lead can read them\)/);
+  const repo = read(join(SITE, "js/repo/employees.js"));
+  const mine = /export async function mine\(uid\) \{[\s\S]*?\n\}/.exec(repo)[0];
+  assert.ok(!/select\("\*"\)/.test(mine) && /MINE_COLS/.test(mine), "mine() selects named columns");
+  assert.ok(!/notes/.test(/export const PICKER_COLS = "[^"]*"/.exec(repo)[0] + /export const MINE_COLS = [^;]*;/.exec(repo)[0]), "never the notes");
 });

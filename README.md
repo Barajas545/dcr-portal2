@@ -18,6 +18,12 @@ site/                       published as is
   dashboard.html            home: search and the cards this role may open
   settings.html             name, phone, colour, theme, password, sign out
   board.html, project.html, search.html, logs.html, capture.html, report-journal.html
+  timesheet.html            Time Sheet, desk (the form + the two-week calendar; phones go to the phone page)
+  timesheet-mobile.html     Time Sheet, phone (?date= from DCR Agents' reminders; the job's street per day)
+  timesheet-batch.html      Batch Entry (one entry for many employees, a result per row)
+  timesheet-manager.html    Team Sheets (the week grid, overtime / weekend marks, CSV, sign-off, live)
+  report-timecard.html      the printable weekly Time Card
+  admin.html                Employees & crews (admin, manager): employees, account links, each lead's crew
   css/styles.css            the old portal's styles plus the Portal 2 accent
   js/config.js              DCR2_CONFIG (public values only) + the theme before first paint
   js/sb.js                  the one supabase-js client, its sign-in storage, me(), signIn/signOut
@@ -26,6 +32,9 @@ site/                       published as is
   js/live.js                Realtime: watch(table, filter, cb), presence(view, opts), onPresence
   js/money-mask.js          maskAmounts / fmtMoney, ported from Desktop 2 (shared test vectors)
   js/upload-queue2.js       IndexedDB custody + resumable uploads to Storage + the files row
+  js/timesheet-pdf.js       the timesheet PDF in the DCR paper form (jsPDF 2.5.2 + AutoTable 3.8.4 from
+                            jsDelivr, exact versions with integrity hashes; only the two Time Sheet pages
+                            name them in their script-src)
   js/install.js, js/push2.js, sw.js, manifest.json, icons/
   js/shell/*.js             the scripts of the four pages above
   js/repo/*.js              data modules (the only code that talks to the database)
@@ -35,7 +44,8 @@ tests/                      node --test (pure modules, the demo engine, the site
 tools/devserve.mjs          the local demo server (development only)
 tools/fake/                 the demo database (development only, never published)
 tools/check-pages.mjs       a headless look at the demo site (sign-in rules, service worker, queue)
-tools/e2e-demo.mjs          the end-to-end walk of every P1 flow in the demo, with screenshots
+tools/e2e-demo.mjs          the end-to-end walk of every P1 flow in the demo, with screenshots, then the P2 walk
+tools/e2e-p2.mjs            the P2 timesheet pages (every role, phone and desk, light and dark); e2e-demo runs it
 tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite)
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
@@ -53,7 +63,11 @@ address search of Site Photos is answered from made-up towns (nothing goes to Op
 Sign in with any demo account from the orange **DEMO** button (any password except `wrong`):
 `admin@`, `manager@` (no prices: the owner's Q1), `manager2@` (prices switched on), `accountant@`,
 `lead@`, `field@`, `viewer@`, `agents@` (refused), `inactive@` (refused), `newhire@` (temporary
-password), all `@demo.test`. The same button turns the connection off, shows two colleagues online,
+password), all `@demo.test`. For the timesheets the demo has eleven made-up employees (five linked to
+those accounts; Riley Lead's crew of five; one who has left), four weeks of hours with overtime, a
+Saturday, leave days, a day split across two jobs and one imported row whose job matched no project,
+and last week's sign-offs (one gone stale because an hour changed after it). On a timesheet page the
+DEMO button also offers "Someone else changes an hour this week" (live updates, stale sign-offs). The same button turns the connection off, shows two colleagues online,
 lets "someone else" edit the open project, and resets the demo data. Two tabs signed in without
 "keep me signed in" are two people over the same demo data (they see each other's changes and
 presence). The published site has no switch for any of this: the imitation exists only in pages
@@ -66,7 +80,9 @@ In Claude Code the same server is the `portal2-demo` entry of `.claude/launch.js
 ```
 node --test                                        # pure modules, the demo engine, the site guard
 node tools/check-pages.mjs --out <folder>          # headless Chrome/Edge: sign-in rules, service worker, queue
-node tools/e2e-demo.mjs --out <folder>             # every P1 flow as every role + screenshots (final_*.png)
+node tools/e2e-demo.mjs --out <folder>             # every P1 flow as every role + screenshots (final_*.png),
+                                                   # then the P2 walk (--p2 checks | shots | none)
+node tools/e2e-p2.mjs --out <folder>               # the P2 walk alone + screenshots (p2_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
 ```
 
@@ -79,6 +95,18 @@ PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against 
   Site Photos with a GPS fix (nearest project, the pin, three photos at once, offline then online),
   Search, Log History, the journal report, the offline overlay, the install prompt and presence.
   It saves light and dark screenshots at 390 px and desktop width.
+- `tools/e2e-p2.mjs` signs in as admin, manager, accountant, lead, field and viewer and checks the home
+  cards and the top bar, every P2 page each may open (and the refusal of the others), a day and a
+  vacation day from the phone (?date=, the schedule over the normal hours), Batch Entry for three of a
+  crew, Team Sheets (the stale signature, a re-confirm, a change arriving while the confirm dialog is
+  open -> 409 and nothing confirmed, live updates, Add / edit / delete, the CSV with its formula guard,
+  read only for the accountant), the Time Card, Employees & crews (a new employee, a crew), Settings'
+  employee section and the PDF (downloaded, `%PDF-`); and what the P2 review found: a change whose live
+  event never arrived -> 409 (then, after the on-focus refresh, the signature carries what the screen
+  shows), someone who has left (a printable Time Card, correctable entries; a link naming nobody in
+  scope never shows one's own card), a lead without a crew (no Batch Entry), the desk Time Sheet's card
+  buttons at tablet widths, the top bar on one row at 1366 / 1280 / 1100 / 900 px. It needs jsDelivr for
+  jsPDF; nothing goes to Supabase. Screenshots: `p2_<page>_<role>_<light|dark>_<desktop|phone>.png`.
 - `tools/schema-check.mjs` loads every migration of DCR Desktop 2 (`DCR_DESKTOP2_DIR`, default
   `../DCR Desktop 2`) into PGlite (`PGLITE_DIR`: a folder whose `node_modules` has
   `@electric-sql/pglite`) and runs Portal 2's own `sb.js`, `repo/*.js`, upload queue and `live.js`
@@ -90,6 +118,31 @@ The money mask, the file-name rules and the project-location rules are checked a
 taken from DCR Desktop 2 (`tests/vectors/`). `tests/core-site-guard.test.mjs` checks every page for
 the security policy meta tag, no inline script or handler, pinned library versions, no regular
 expression look-behind (older iPhones), Portal 2's own browser names and no trace of the demo mode.
+
+## Timesheets (P2) in short
+
+- The pages read and write `timesheets` under the crew scope of migration M2 (`20261021000100_people_timesheets`):
+  admin and manager everyone; the accountant reads everyone and writes only their own (Q7); a lead self
+  and crew; field self; a view-only account reads its own and writes nothing. The pages only hide what
+  the database would refuse (`pages/ts-shared.js context()`).
+- People are `employees` rows (`rpc my_roster()` for the pickers: names, numbers and normal hours, never
+  phone or address); a leave day is a `kind`, never a project; dates are calendar days and clock times
+  plain times; weeks run Saturday to Friday in company time. Someone who has left (`active` off) is
+  never offered for new hours, but stays on the Time Card ("(left)") and in the form of their own
+  entries, for whoever has them in scope. One's own row is read with named columns (Settings): the
+  employee notes are readable by the person and their lead in the database (M2), so the editor says so
+  and Portal 2 never carries them to the crew's phones.
+- Sign-off goes only through `timesheet_weeks`, `confirm_timesheet_week` and `unconfirm_timesheet_week`:
+  a confirmation sends the fingerprint of the rows the screen shows (`map/timesheets.js
+  weekFingerprint()`, the same formula as `app.timesheet_week_state`, checked by schema-check) — never
+  the value `timesheet_weeks` handed back — so the database answers 409 whenever the screen is behind:
+  a change while the dialog was open, or one whose live event never arrived. Rows and sign-offs are
+  always read together (also the 90-second and on-focus refreshes).
+- Batch Entry is for admin, manager and leads with a crew; a lead without a crew is pointed to the
+  Time Sheet.
+- Until the timesheet Saturday after DCR Agents 2 is live (BLUEPRINT 4.4) the pages are tried by the
+  office and one lead on the live test project A000T2 (A267 is the demo's sandbox only); the history
+  import waits for that evening.
 
 ## Rules for every page
 
@@ -116,13 +169,41 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   entry is taken in ("Use mine" for a field both changed).
 - Signing out ends this device's session only. Amounts in free text are masked on screen for
   people without the prices switch (display only).
-- Test data is made up (`@demo.test`, `@example.com`, 555-01xx numbers, A267 as the sandbox).
+- Test data is made up (`@demo.test`, `@example.com`, 555-01xx numbers, A267 as the sandbox). No page
+  names A267 to people (it is not in the live database).
+- The top bar is one row on every desk width: when the links do not fit (a long name, people online,
+  the office roles' eight links) it first drops the words "DCR … Portal" beside the logo, then folds the
+  links into the ☰ menu (`common2.js fitTopbar`, measured, not a fixed width); below 861 px the menu
+  is always used.
+- A page that needs another CDN library names its exact file in its own `script-src` and nowhere else
+  (`tests/core-site-guard.test.mjs PAGE_LIBS`): today the two Time Sheet pages and jsPDF.
 
 ## Publishing (go-live)
 
 Portal 2 needs the database change M1 (`20261020000100_portal2_foundation`, in DCR Desktop 2), the
 `admin-users` function with CORS and the temporary-password flag, and DCR Desktop 2 2.14.0 on every
 office PC the same day. Every live step waits for the owner's OK.
+
+**P2 (timesheets) go-live, in order, each live step after the owner's OK.** The site calls M2's tables
+and functions, so the database goes first (pushed before M2, the timesheet pages say the website and
+database do not match; Settings and the home page carry on).
+
+1. Both repositories committed; the offline checks green (DCR Desktop 2 suite, PGlite, `rehearse_p2.mjs`;
+   here `node --test`, `schema-check`, `check-pages`, `e2e-demo` with its P2 walk).
+2. A backup from today (Supabase → Database → Backups), then database change M2
+   (`20261021000100_people_timesheets`): `npx supabase db push` from DCR Desktop 2.
+3. DCR Desktop 2 2.15.0 on the office PCs (2.14 keeps working; 2.15 adds Users → Employees & crews).
+4. The employee and journal imports (DCR Desktop 2 `tools/legacy_import/README.md`, "Portal 2 phase 2",
+   steps 0–5), then in Employees & crews link each account to its employee and set each lead's crew.
+5. Push this repository's `main` (the workflow runs the tests and publishes `site/`).
+6. Try it on the test project **A000T2** ("Portal 2 test (delete later)"; A267, the old portal's sandbox,
+   is not in this database): a day on the phone page, Team Sheets shows it live, confirm, change an hour
+   in a second browser (the tick goes stale, the old fingerprint gets 409), withdraw, the Time Card, the
+   PDF; then delete the test rows.
+
+The crews keep filing hours in the old portal until the cutover: the timesheet history import and the
+switch-over wait for the timesheet Saturday after DCR Agents 2 is live (BLUEPRINT 4.4, Q6; the
+cutover steps 6–9 of that README).
 
 **Owner, once (any time before the first publish)**
 
@@ -155,7 +236,7 @@ office PC the same day. Every live step waits for the owner's OK.
 6. Push this repository's `main` branch, after the owner's OK: the workflow runs the tests and
    publishes `site/`.
 7. When GitHub shows the certificate is ready: Settings → Pages → tick **Enforce HTTPS**.
-8. Try it on the sandbox project A267 only: sign in, Board, a photo from Site Photos, the journal,
+8. Try it on the test project A000T2 only (A267, the old portal's sandbox, is not in this database): sign in, Board, a photo from Site Photos, the journal,
    a second browser for "changed by someone else", Desktop 2 showing the photo under "Stored in DCR"
    and both apps in presence.
 9. In DCR Desktop 2, Users: give each person who will use Portal 2 an account with a temporary

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Batch Time Entry</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      .bt-app { max-width: 800px; margin: auto; padding: 20px 16px 60px; }
+      .bt-app *, .bt-app *::before, .bt-app *::after { box-sizing: border-box; }
+      .bt-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: var(--shadow); }
+      .bt-header { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; flex-wrap: wrap; }
+      .bt-header h2 { margin: 0; font-size: 20px; font-weight: 700; color: var(--text); }
+      .bt-label { font-size: 13px; color: var(--text-muted); margin: 0 0 4px; font-weight: 600; display: block; }
+      .bt-input { width: 100%; font-family: inherit; padding: 9px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background: var(--surface); color: var(--text); color-scheme: light dark; }
+      .bt-input:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px var(--tint-2); }
+      .bt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1rem; }
+      .bt-full { grid-column: 1 / -1; }
+      .bt-note { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+      .bt-emp-picker { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+      .bt-emp-search-wrap { padding: 8px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+      .bt-emp-search { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 5px; font-size: 13px; background: var(--surface); color: var(--text); }
+      .bt-emp-list { max-height: 260px; overflow-y: auto; padding: 4px 0; }
+      .bt-emp-item { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+      .bt-emp-item:hover { background: var(--surface-2); }
+      .bt-emp-checkbox { width: 18px; height: 18px; border: 2px solid var(--border); border-radius: 4px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+      .bt-emp-item.selected .bt-emp-checkbox { background: var(--acc); border-color: var(--acc); }
+      .bt-emp-checkmark { display: none; color: #fff; font-size: 12px; font-weight: 700; }
+      .bt-emp-item.selected .bt-emp-checkmark { display: block; }
+      .bt-emp-avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--acc); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+      .bt-emp-name-text { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+      .bt-emp-no { font-size: 11px; color: var(--text-muted); }
+      .bt-selected-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; min-height: 28px; }
+      .bt-selected-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--tint); color: var(--badge-text); border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+      .bt-selected-chip button { cursor: pointer; font-size: 14px; color: var(--text-muted); margin-left: 2px; background: none; border: 0; padding: 0 2px; }
+      .bt-selected-chip button:hover { color: var(--err); }
+      .bt-selected-count { font-size: 12px; color: var(--acc); font-weight: 700; }
+      .bt-select-actions { display: flex; gap: 12px; margin-top: 6px; }
+      .bt-select-action { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--acc); font-weight: 600; padding: 2px 0; }
+      .bt-select-action:hover { text-decoration: underline; }
+      .bt-hrs-control { display: flex; align-items: center; }
+      .bt-hrs-btn { width: 48px; height: 44px; border: 1px solid var(--border); background: var(--surface-2); font-size: 20px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text); user-select: none; }
+      .bt-hrs-btn:hover { background: var(--tint); border-color: var(--acc); color: var(--acc); }
+      .bt-hrs-minus { border-radius: 6px 0 0 6px; border-right: none; }
+      .bt-hrs-plus { border-radius: 0 6px 6px 0; border-left: none; }
+      .bt-hrs-input { flex: 1; height: 44px; border: 1px solid var(--border); border-radius: 0; background: var(--surface); font-size: 16px; font-weight: 700; text-align: center; color: var(--text); min-width: 0; outline: none; padding: 0 4px; margin: 0; }
+      .bt-btn-primary { background: var(--acc); color: #fff; border: none; padding: 12px 24px; border-radius: 7px; cursor: pointer; font-size: 15px; font-weight: 600; width: 100%; }
+      .bt-btn-primary:hover { background: var(--acc-2); }
+      .bt-btn-primary:disabled { background: #7a8595; cursor: not-allowed; }
+      .bt-schedule { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+      .bt-schedule-title { font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
+      .bt-schedule-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+      .bt-schedule-session { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
+      .bt-schedule-session-title { font-size: 11px; font-weight: 700; color: var(--acc); text-transform: uppercase; margin-bottom: 8px; }
+      .bt-time-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+      .bt-time-label { font-size: 11px; color: var(--text-muted); font-weight: 600; min-width: 36px; margin: 0; }
+      .bt-time-input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 13px; width: 116px; background: var(--surface); color: var(--text); color-scheme: light dark; }
+      .bt-lunch-input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 13px; width: 70px; text-align: center; background: var(--surface); color: var(--text); }
+      .bt-calc-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding: 10px 12px; border-radius: 6px; font-size: 13px; gap: 8px; flex-wrap: wrap; }
+      .bt-calc-match { background: rgba(15,110,86,.16); color: var(--ok); }
+      .bt-calc-mismatch { background: var(--warm); color: var(--gold); }
+      .bt-calc-value { font-size: 16px; font-weight: 700; }
+      .bt-calc-label { font-weight: 600; }
+      .bt-timeline { display: flex; align-items: center; margin-top: 10px; height: 32px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+      .bt-timeline-block { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #fff; min-width: 20px; }
+      .bt-timeline-work { background: var(--acc); }
+      .bt-timeline-lunch { background: #e0a33a; }
+      .bt-timeline-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+      .bt-preview-title { font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+      .bt-preview-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; flex-wrap: wrap; }
+      .bt-preview-row:last-child { border-bottom: none; }
+      .bt-preview-emp { font-weight: 600; color: var(--text); flex: 1; min-width: 120px; }
+      .bt-preview-detail { color: var(--text-muted); font-size: 12px; }
+      .bt-preview-badge { display: inline-block; background: var(--tint-2); color: var(--badge-text); border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 700; }
+      .bt-result { margin-top: 1rem; padding: 1rem; border-radius: 8px; font-size: 14px; }
+      .bt-result-success { background: rgba(15,110,86,.16); color: var(--ok); }
+      .bt-result-error { background: rgba(200,55,31,.15); color: var(--err); }
+      .bt-result-item { display: flex; align-items: flex-start; gap: 6px; padding: 4px 0; font-size: 13px; }
+      .bt-msg { font-size: 13px; margin-top: 8px; min-height: 16px; }
+      @media (max-width: 640px) {
+        .bt-grid, .bt-schedule-grid { grid-template-columns: 1fr; }
+        .bt-section { padding: 1rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <div class="bt-app ts-theme" id="btApp">
+      <div class="bt-section">
+        <div class="bt-header">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--acc)"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <h2>Batch Time Entry</h2>
+          <span style="flex:1"></span>
+          <a class="btn btn-ghost btn-sm" href="timesheet-manager.html">📆 Team Sheets</a>
+        </div>
+        <p style="font-size:13px;color:var(--text-muted);margin:0 0 1.25rem;">Select the employees who worked together (or are off), fill in the details once, and submit an entry for each of them.</p>
+        <div>
+          <label class="bt-label" for="btEmpSearch">Select team members *</label>
+          <div class="bt-emp-picker" id="btEmpPicker">
+            <div class="bt-emp-search-wrap">
+              <input type="search" class="bt-emp-search" id="btEmpSearch" placeholder="Search employees…" autocomplete="off" />
+            </div>
+            <div class="bt-emp-list" id="btEmpList" role="group" aria-label="Employees"><div style="padding:12px;color:var(--text-muted);font-size:13px;">Loading employees…</div></div>
+          </div>
+          <div class="bt-select-actions">
+            <button type="button" class="bt-select-action" id="btSelectAll">Select all</button>
+            <button type="button" class="bt-select-action" id="btDeselectAll">Deselect all</button>
+          </div>
+          <div class="bt-selected-bar" id="btSelectedBar"></div>
+          <div class="bt-note" id="btScopeNote"></div>
+        </div>
+      </div>
+
+      <div class="bt-section">
+        <div class="bt-grid">
+          <div class="bt-full">
+            <label class="bt-label" for="btDayType">Day type *</label>
+            <select id="btDayType" class="bt-input">
+              <option value="work">Worked</option>
+              <option value="holiday">Holiday</option>
+              <option value="vacation">Vacation</option>
+              <option value="sick">Sick day</option>
+              <option value="day_off">Day off</option>
+            </select>
+          </div>
+          <div id="btProjField">
+            <label class="bt-label" for="btProject">Project *</label>
+            <input id="btProject" type="text" class="bt-input" list="btProjList" placeholder="Pick a project (number or name)" autocomplete="off" />
+            <datalist id="btProjList"></datalist>
+          </div>
+          <div>
+            <label class="bt-label" for="btDate">Date *</label>
+            <input id="btDate" type="date" class="bt-input" />
+          </div>
+          <div>
+            <label class="bt-label" for="btHours">Hours worked *</label>
+            <div class="bt-hrs-control">
+              <button type="button" class="bt-hrs-btn bt-hrs-minus" id="btMinus" aria-label="Subtract 30 minutes">&minus;</button>
+              <input id="btHours" type="text" class="bt-hrs-input" value="0" inputmode="decimal" />
+              <button type="button" class="bt-hrs-btn bt-hrs-plus" id="btPlus" aria-label="Add 30 minutes">&plus;</button>
+            </div>
+          </div>
+          <div class="bt-full">
+            <label class="bt-label" for="btWork">Work completed</label>
+            <textarea id="btWork" class="bt-input" rows="3" maxlength="2000" style="resize:vertical;" placeholder="Describe the work the team completed…"></textarea>
+          </div>
+        </div>
+
+        <div class="bt-schedule" id="btScheduleSection" style="display:none;">
+          <div class="bt-schedule-title">Work Schedule <span class="bt-note" id="btSchedNote" style="text-transform:none;letter-spacing:0;font-weight:400;"></span></div>
+          <div class="bt-schedule-grid">
+            <div class="bt-schedule-session">
+              <div class="bt-schedule-session-title">Morning</div>
+              <div class="bt-time-row"><label class="bt-time-label" for="btStart1">Start</label><input type="time" class="bt-time-input" id="btStart1" /></div>
+              <div class="bt-time-row"><label class="bt-time-label" for="btEnd1">End</label><input type="time" class="bt-time-input" id="btEnd1" /></div>
+            </div>
+            <div class="bt-schedule-session">
+              <div class="bt-schedule-session-title" style="color:var(--gold);">Lunch Break</div>
+              <div class="bt-time-row"><label class="bt-time-label" for="btLunch">Hours</label><input type="text" class="bt-lunch-input" id="btLunch" value="1" inputmode="decimal" /></div>
+              <div class="bt-note" id="btLunchRange"></div>
+            </div>
+            <div class="bt-schedule-session">
+              <div class="bt-schedule-session-title">Afternoon</div>
+              <div class="bt-time-row"><label class="bt-time-label" for="btStart2">Start</label><input type="time" class="bt-time-input" id="btStart2" /></div>
+              <div class="bt-time-row"><label class="bt-time-label" for="btEnd2">End</label><input type="time" class="bt-time-input" id="btEnd2" /></div>
+            </div>
+          </div>
+          <div id="btTimeline"></div>
+          <div id="btCalcBar"></div>
+        </div>
+      </div>
+
+      <div class="bt-section" id="btPreviewSection" hidden>
+        <div class="bt-preview-title">Preview — entries to be created</div>
+        <div id="btPreviewList"></div>
+      </div>
+
+      <div class="bt-section">
+        <button type="button" class="bt-btn-primary" id="btSubmitBtn">&#10003; Submit time entries for team</button>
+        <div id="btMsg" class="bt-msg" role="status"></div>
+        <div id="btResult"></div>
+      </div>
+    </div>
+
+    <script type="module" src="js/pages/timesheet-batch.js"></script>
+  </body>
+</html>

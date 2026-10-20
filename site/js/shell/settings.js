@@ -2,15 +2,17 @@
 
    Three independent things, each saving on its own: a password change and a phone number fail for
    different reasons. Details are a versioned PATCH of the person's own profiles row (name, phone,
-   colour: the only columns people change themselves; Desktop 2's users.update_me). The address
-   moves with the employees list (P2). */
+   colour: the only columns people change themselves; Desktop 2's users.update_me). A person linked to
+   an employee record also keeps its phone (where reminders are texted) and address up to date, through
+   rpc update_my_contact (only those two columns of their own row: the old profile.js allow-list). */
 import { sb, me, changePassword, passwordProblem, authStorage } from "../sb.js";
 import { requireAuth, topbar, theme, errorText, roleLabel, logout, toast, DCR2 } from "../common2.js";
 import { mountSwitch } from "../push2.js";
+import * as employees from "../repo/employees.js";
 
 const $ = (id) => document.getElementById(id);
 const COLORS = ["#c8371f", "#d4652f", "#b8860b", "#1f9d55", "#0f8b7d", "#2f80d8", "#7b5cd6", "#c2185b", "#6b7a8c", "#3d4a5c"];
-const state = { p: null, color: "" };
+const state = { p: null, color: "", emp: null };
 
 function say(node, text, cls) {
   node.textContent = text || "";
@@ -109,6 +111,34 @@ async function savePassword(e) {
   btn.disabled = false;
 }
 
+function fillEmployee(e) {
+  state.emp = e;
+  $("stEmpSec").hidden = !e;
+  if (!e) return;
+  $("stEmpName").textContent = e.full_name + (e.employee_no ? " · " + e.employee_no : "");
+  $("stEmpPhone").value = e.phone || "";
+  $("stEmpAddress").value = e.address || "";
+  $("stEmpText").textContent = e.phone ? (e.phone_e164 ? "Reminders are texted to " + e.phone_e164 + "." : "This is not a number DCR Agents can text: write it as (805) 555-0123.") : "";
+}
+
+async function saveEmployee() {
+  const msg = $("stEmpMsg"), btn = $("stEmpSave");
+  const e = state.emp;
+  if (!e) return;
+  const phone = $("stEmpPhone").value.trim(), address = $("stEmpAddress").value.trim();
+  if (phone === (e.phone || "") && address === (e.address || "")) { say(msg, "Nothing has changed.", ""); return; }
+  btn.disabled = true;
+  say(msg, "Saving…", "");
+  try {
+    await employees.updateMyContact(phone, address);
+    fillEmployee(await employees.mine(state.p.id));
+    say(msg, "Saved.", "ok");
+  } catch (ex) {
+    say(msg, errorText(ex), "err");
+  }
+  btn.disabled = false;
+}
+
 async function start() {
   const p = await requireAuth();
   topbar("settings");
@@ -124,6 +154,9 @@ async function start() {
     : "<b>Kept signed in</b> on this device until you sign out.";
   $("stSignOut").addEventListener("click", () => logout());
   mountSwitch("pushSlot");
+  $("stEmpSave").addEventListener("click", saveEmployee);
+  // the employee record arrives with P2 (migration M2); before it the section simply stays hidden
+  employees.mine(p.id).then(fillEmployee).catch(() => fillEmployee(null));
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

@@ -702,8 +702,9 @@ export function roleLabel(role) { return ROLE_LABELS[role] || String(role || "")
 
 /* ── the top bar ───────────────────────────────────────────────────────── */
 
-/** The P1 pages, by role. Field and view-only people read the Board; only a viewer cannot take
-    site photos (the database refuses their uploads). Later phases add their pages here. */
+/** The pages, by role. Field and view-only people read the Board; only a viewer cannot take site
+    photos (the database refuses their uploads). Everyone has a Time Sheet (a viewer reads theirs);
+    Team Sheets is for admin, manager, accountant (read only) and lead. Later phases add theirs. */
 export function navItems(p) {
   const role = p && p.role;
   return [
@@ -712,6 +713,8 @@ export function navItems(p) {
     { key: "search", href: "search.html", text: "Search" },
     { key: "logs", href: "logs.html", text: "Log History" },
     { key: "capture", href: "capture.html", text: "Site Photos", show: role !== "viewer" },
+    { key: "timesheet", href: "timesheet.html", text: "Time Sheet" },
+    { key: "teamsheets", href: "timesheet-manager.html", text: "Team Sheets", show: ["admin", "manager", "accountant", "lead"].indexOf(role) !== -1 },
     { key: "settings", href: "settings.html", text: "Settings" },
   ].filter((i) => i.show !== false);
 }
@@ -767,6 +770,13 @@ export function topbar(active, opts) {
   bar.appendChild(nav);
   bar.appendChild(actions);
   buildNav();
+  fitTopbar(bar);
+  if (!_fitWired) {
+    _fitWired = true;
+    window.addEventListener("resize", queueFit);
+    window.addEventListener("load", queueFit);
+    try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueFit, () => null); } catch (e) { /* */ }
+  }
   // Who else is here: on a desk by default; on a phone only when the page asks (a project page),
   // so a crew phone holds no Realtime connection it does not need.
   const wantPresence = o.presence === undefined
@@ -780,6 +790,48 @@ export function topbar(active, opts) {
 }
 let _presenceOff = null;
 let _menuWired = false;
+let _fitWired = false;
+let _fitQueued = false;
+
+/** The desk bar stays ONE row (as the phone's does: below 861 px the menu is always used). When the
+    page links do not fit beside Back / Forward, the brand and the person (a narrow window, a long
+    name, several people online, the office roles' eight links), the bar first gives up the words
+    "DCR Portal" (the logo and the Portal 2 badge stay) and some padding ("tight"), then folds the
+    links into the ☰ menu ("fold"). Measured, not guessed: each step is laid out and compared.
+    -> "" | "tight" | "fold". */
+export function fitTopbar(bar) {
+  if (!HAS_DOM) return "";
+  const b = bar || document.querySelector(".dcr2-topbar");
+  if (!b || !b.isConnected) return "";
+  b.classList.remove("dcr2-fold", "dcr2-tight");
+  const nav = b.querySelector(".dcr2-nav");
+  if (!nav || (window.matchMedia && window.matchMedia("(max-width: 860px)").matches)) return "";
+  const oneRow = () => {
+    const parts = [];
+    Array.from(b.children).forEach((n) => {
+      if (n === nav || n.classList.contains("dcr2-menu-btn")) return;
+      if (n.classList.contains("top-actions")) parts.push(...Array.from(n.children)); else parts.push(n);
+    });
+    parts.push(...Array.from(nav.children));
+    const mids = [];
+    parts.forEach((n) => {
+      const r = n.getBoundingClientRect();
+      if (r.width && r.height) mids.push(r.top + r.height / 2);
+    });
+    return mids.length < 2 || Math.max(...mids) - Math.min(...mids) <= 12;
+  };
+  if (oneRow()) return "";
+  b.classList.add("dcr2-tight");
+  if (oneRow()) return "tight";
+  b.classList.remove("dcr2-tight");
+  b.classList.add("dcr2-fold");
+  return "fold";
+}
+function queueFit() {
+  if (_fitQueued || !HAS_DOM) return;
+  _fitQueued = true;
+  requestAnimationFrame(() => { _fitQueued = false; fitTopbar(); });
+}
 
 function paintUser(p) {
   if (!HAS_DOM) return;
@@ -795,6 +847,7 @@ function initials(name) {
 const VIEW_WORDS = {
   "web:board": "on the Board", "web:project": "in a project", "web:search": "searching", "web:logs": "in Log History",
   "web:capture": "taking site photos", "web:dashboard": "on the home page", "board": "on the Board",
+  "web:timesheet": "in the Time Sheet", "web:teamsheets": "in Team Sheets",
 };
 function viewWords(s) {
   const v = String(s.view || "");
@@ -834,6 +887,7 @@ export function paintPresence(states, slot) {
     box.appendChild(a);
   });
   if (others.length > max) box.appendChild(el("span", { class: "dcr2-av more", title: others.slice(max).map((s) => s.name).join(", ") }, "+" + (others.length - max)));
+  if (!slot) queueFit();                 // more or fewer faces: the links may (no longer) fit
 }
 
 /* ── DCR2.live — the autosave engine, with versions ─────────────────────── */

@@ -89,7 +89,7 @@ async function main() {
     check("sign-in goes to ?next= (dashboard)", /dashboard\.html$/.test(await d.eval("location.pathname")), await d.eval("location.href"));
     await d.until("document.querySelectorAll('.hm-card').length > 3");
     check("home cards for a manager", (await d.eval("Array.from(document.querySelectorAll('.hm-card .tt')).map(n=>n.textContent).join('|')")) ===
-      "Project Board|Search|Log History|Site Photos|Settings");
+      "Project Board|Search|Log History|Site Photos|Time Sheet|Team Sheets|Batch Entry|Settings|Employees & crews");
     check("kept signed in: the session is in localStorage", await d.eval("!!localStorage.getItem('dcr2-auth') && !sessionStorage.getItem('dcr2-auth')"));
     check("top bar: Portal 2 badge and the user", await d.eval("document.querySelector('.dcr2-topbar .p2-badge') && document.getElementById('userPill').textContent.includes('Morgan')"));
     await sleep(800);

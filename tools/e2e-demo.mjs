@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* DCR Portal 2 — the end-to-end walk of the DEMO site (development only).
 
-     node tools/e2e-demo.mjs [--out <dir>] [--chrome <path>] [--shots none|final]
+     node tools/e2e-demo.mjs [--out <dir>] [--chrome <path>] [--shots none|final] [--p2 checks|shots|none]
 
    Starts tools/devserve.mjs on a free 127.0.0.1 port (the in-browser stand-in database, made-up data,
    nothing sent to Supabase or OpenStreetMap) and drives a local Chrome or Edge headless through
@@ -24,10 +24,16 @@
 
    The tabs share one browser profile (one demo database in localStorage, presence between tabs) and
    each signs in WITHOUT "keep me signed in", so each tab is its own person (sessionStorage).
+   Then (--p2 checks, the default) the P2 timesheet walk, tools/e2e-p2.mjs, in its own browser and demo
+   database (--p2 shots: with its screenshots into <out>/p2; --p2 none: P1 only); its checks are part of
+   this summary ("P2: ...").
+
    Prints a JSON summary; exit code 1 when a check failed. */
+import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { startServer } from "./devserve.mjs";
 import { launch, newPage, sleep } from "./cdp.mjs";
 
@@ -35,6 +41,22 @@ const args = process.argv.slice(2);
 const arg = (name, dflt) => { const i = args.indexOf(name); return i === -1 ? dflt : args[i + 1]; };
 const OUT = resolve(arg("--out", join(tmpdir(), "dcr2-e2e")));
 const SHOTS = arg("--shots", "final");
+const P2 = arg("--p2", "checks");
+
+/** The P2 walk (tools/e2e-p2.mjs) as a child: -> its JSON summary, or {ok: false, error}. */
+function runP2() {
+  return new Promise((done) => {
+    const argv = [join(dirname(fileURLToPath(import.meta.url)), "e2e-p2.mjs"), "--out", join(OUT, "p2"), "--shots", P2 === "shots" ? "all" : "none"];
+    if (arg("--chrome")) argv.push("--chrome", arg("--chrome"));
+    const child = spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "inherit"] });
+    let out = "";
+    child.stdout.on("data", (d) => { out += d; });
+    child.on("error", (e) => done({ ok: false, error: String(e && e.message || e) }));
+    child.on("close", (code) => {
+      try { done(JSON.parse(out.slice(out.indexOf("{")))); } catch (e) { done({ ok: false, error: "exit " + code + ": " + out.slice(-400) }); }
+    });
+  });
+}
 
 const ROLES = ["admin", "manager", "manager2", "accountant", "lead", "field", "viewer"];
 const PRICES = { admin: true, manager: false, manager2: true, accountant: true, lead: false, field: false, viewer: false };
@@ -484,13 +506,23 @@ async function main() {
       !/ERR_INTERNET_DISCONNECTED|demo: offline|Failed to fetch|favicon\.ico/i.test(e.text));
     results.push({ name: "no Content-Security-Policy violation on any page", ok: csp.length === 0, detail: csp.slice(0, 20) });
     results.push({ name: "no console error or uncaught exception on any page", ok: errors.length === 0, detail: errors.slice(0, 20) });
-    const summary = { base, out: OUT, passed: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length,
-      failures: results.filter((x) => !x.ok), results: results.map((r) => (r.ok ? "ok   " : "FAIL ") + r.name), screenshots: shots.length };
-    console.log(JSON.stringify(summary, null, 1));
     try { await cdp.send("Browser.close"); } catch (e) { /* */ }
     try { proc.kill(); } catch (e) { /* */ }
     server.close();
     await sleep(500);
+    let p2shots = 0;
+    if (P2 !== "none") {
+      const p2 = await runP2();
+      if (Array.isArray(p2.results)) {
+        p2.results.forEach((r) => results.push({ name: "P2: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p2shots = p2.shots || 0;
+      } else {
+        results.push({ name: "P2: the timesheet walk (tools/e2e-p2.mjs) ran", ok: false, detail: p2.error || "" });
+      }
+    }
+    const summary = { base, out: OUT, passed: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length,
+      failures: results.filter((x) => !x.ok), results: results.map((r) => (r.ok ? "ok   " : "FAIL ") + r.name), screenshots: shots.length + p2shots };
+    console.log(JSON.stringify(summary, null, 1));
     process.exitCode = summary.failed ? 1 : 0;
   }
 }
