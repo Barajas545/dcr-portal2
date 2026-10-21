@@ -93,7 +93,7 @@ async function main() {
     // the card's own words (the My Tasks card also carries its badge, P3; My Assistant for everyone, P6 - a
     // manager has no DCR Agents 2 nor Assistants card: an admin's)
     check("home cards for a manager", (await d.eval("Array.from(document.querySelectorAll('.hm-card .tt')).map(n=>n.childNodes[0].textContent).join('|')")) ===
-      "Project Board|Search|Log History|My Tasks|Tasks on Map|Site Photos|Time Sheet|Team Sheets|Batch Entry|My Assistant|Settings|Employees & crews");
+      "Project Board|Progress Chart|Search|Log History|My Tasks|Tasks on Map|Site Photos|Time Sheet|Team Sheets|Batch Entry|My Assistant|Settings|Employees & crews");
     check("kept signed in: the session is in localStorage", await d.eval("!!localStorage.getItem('dcr2-auth') && !sessionStorage.getItem('dcr2-auth')"));
     check("top bar: Portal 2 badge and the user", await d.eval("document.querySelector('.dcr2-topbar .p2-badge') && document.getElementById('userPill').textContent.includes('Morgan')"));
     await sleep(800);
@@ -211,6 +211,21 @@ async function main() {
         "agents-console.html", "agents-console.html#/photo", "my-assistant.html", "assistant-admin.html"]) {
         await a.goto(base + "/" + path, 1500);
       }
+      // P5a: the Estimate and Takeoffs tabs and their printed pages, as the admin (prices) and, on a phone, as a lead
+      // (the worksite copy: not one amount on the page, typed ones included)
+      const EST_PAGES = ["project.html?id=268&tab=estimate", "project.html?id=268&tab=takeoffs", "report-estimate.html?id=268",
+        "report-estimate.html?id=268&est=3", "report-takeoff.html?id=268", "report-takeoff.html?id=268&tk=1&kind=quote"];
+      for (const path of EST_PAGES) await a.goto(base + "/" + path, 1500);
+      const le = await newPage(cdp, "lead-estimates"); pages.push(le);
+      await le.size(390, 844, true);
+      await signIn(le, "lead@demo.test", true, "dashboard.html");
+      const seen = [];
+      for (const path of EST_PAGES) {
+        await le.goto(base + "/" + path, 1800);
+        const t = await le.eval("document.body.innerText");
+        if (/\$\s?\d/.test(t) || !/Sandbox/.test(t)) seen.push(path + ": " + ((t.match(/.{0,30}\$\s?\d.{0,12}/) || ["(not drawn)"])[0]));
+      }
+      check("P5a: a lead's Estimate and Takeoffs tabs and printed pages carry no amount", seen.length === 0, seen.join(" | "));
     }
   } finally {
     const all = pages.flatMap((p) => p.log.map((e) => Object.assign({ page: p.name }, e)));

@@ -35,6 +35,14 @@
    - phase 6 (M6, BLUEPRINT 3.3.10): the console relay (agents_console) and the personal assistants
      (assistant_profiles / _messages / _items / _memory), their rules and RPCs, in tools/fake/p6.js (an
      extension this engine hands its internals to: NS.p6Tables for the columns, NS.p6 for the rules);
+   - later phases the same way, each in its own file loaded BEFORE this one (P5a: tools/fake/p5a-est.js —
+     estimates, change orders, takeoffs, the catalog, the estimate_item_totals view): NS.extTables lists
+     their tables ({tables, cols, pk, uuid, noAudit, fks: [[table, column, ref, one]]}), NS.extInstall the
+     functions handed this engine's internals when an engine is made; each answers {tables: Set, canRead,
+     views: {name: (w) -> rows}, handles(rpc), checkArgs, rpc} (views: computed per caller, as a security
+     invoker view is) and, for a table people write (P5a's item flags: tools/fake/p5a-pm.js), canInsert /
+     canUpdate / canDelete (its policies) and beforeInsert / guardUpdate / afterInsert / afterUpdate /
+     afterDelete (its triggers); NS.extSeed adds their made-up rows to the seed;
    - Storage: simple uploads, TUS resumable uploads (6 MiB chunks), signed URLs, with the
      project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read).
    Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
@@ -47,7 +55,15 @@
   const FOLDERS = ["plans", "photos", "documents", "estimates", "invoices", "receipts", "item", "journal", "thumbnail"];
   const ROLES = ["admin", "manager", "lead", "accountant", "field", "viewer", "agents"];
   const SOFT = new Set(["contacts", "projects", "journal_entries", "files"]);
-  const P6 = NS.p6Tables || { tables: [], cols: {}, pk: {}, uuid: [], noAudit: [] };   // tools/fake/p6.js (loaded first)
+  // tools/fake/p6.js and the later phases' extensions (loaded first): one merged list of their tables
+  const XT = [NS.p6Tables || { tables: [], cols: {}, pk: {}, uuid: [], noAudit: [] }].concat(NS.extTables || []);
+  const P6 = {
+    tables: Array.from(new Set([].concat(...XT.map((x) => x.tables || [])))),
+    cols: Object.assign({}, ...XT.map((x) => x.cols || {})),
+    pk: Object.assign({}, ...XT.map((x) => x.pk || {})),
+    uuid: [].concat(...XT.map((x) => x.uuid || [])),
+    noAudit: [].concat(...XT.map((x) => x.noAudit || [])),
+  };
   const TABLES = ["profiles", "settings", "settings_prices", "contacts", "projects", "project_prices", "activity",
     "journal_entries", "files", "tasks", "task_notes", "deletions",
     "employees", "crew_members", "timesheets", "timesheet_confirmations", "notifications_outbox", "push_subscriptions"].concat(P6.tables);
@@ -133,7 +149,7 @@
     ["timesheets", "employee_id", "employees"],
     ["timesheets", "project_id", "projects"],
     ["timesheet_confirmations", "employee_id", "employees"],
-  ].map(([table, column, ref, one]) => ({ table, column, ref, one: !!one }));
+  ].concat(...XT.map((x) => x.fks || [])).map(([table, column, ref, one]) => ({ table, column, ref, one: !!one }));
 
   /* ── errors ─────────────────────────────────────────────────────────── */
   const STATUS_OF = { "42501": 403, PT404: 404, PT409: 409, "23505": 409, PGRST116: 406, PGRST202: 404, PGRST201: 300,
@@ -374,6 +390,8 @@
     let quiet = 0;
     let agentsServer = null;      // M4: the DCR Agents 2 PC's last heartbeat (demo: made up by the seed)
     let ext = null;               // M6: tools/fake/p6.js, handed this engine's internals below
+    const exts = [];              // the later phases' extensions (NS.extInstall), handed the same internals
+    const extFor = (table) => (ext && ext.tables.has(table) ? ext : exts.find((x) => x.tables && x.tables.has(table))) || null;
 
     const nowIso = () => clock().toISOString();
     const today = () => companyDay(clock());
@@ -484,18 +502,19 @@
           if (["admin", "manager", "accountant"].includes(w.role)) return true;
           return r.lead_profile_id === w.uid || (myEmployeeId(w) !== null && r.employee_id === myEmployeeId(w));
         case "timesheets": return tsReads(w, r.employee_id);
-        default: return ext && ext.tables.has(table) ? ext.canRead(w, table, r) : false;
+        default: { const x = extFor(table); return x ? x.canRead(w, table, r) : false; }
       }
     }
 
-    function source(table) {
+    function source(table, w) {
       if (VIEWS[table]) return rows[VIEWS[table]].filter(isCurrent);
+      for (const x of exts) if (x.views && x.views[table]) return x.views[table](w);
       if (!rows[table]) throw new PgErr("42P01", 'relation "public.' + table + '" does not exist', 404);
       if (NO_DIRECT.has(table)) throw new PgErr("42501", "permission denied for table " + table, 403);
       return rows[table];
     }
     function readable(w, table) {
-      return source(table).filter((r) => canRead(w, table, r));
+      return source(table, w).filter((r) => canRead(w, table, r));
     }
 
     /* embeds */
@@ -725,7 +744,7 @@
         }
         case "timesheets": timesheetsCheck(r, null); break;
         case "push_subscriptions": pushSubCheck(r); break;
-        default: break;
+        default: { const x = extFor(table); if (x && x.beforeInsert) x.beforeInsert(w, table, r); break; }
       }
       return r;
     }
@@ -1001,6 +1020,7 @@
     }
 
     function afterInsert(w, table, r, extra) {
+      { const x = extFor(table); if (x && x.afterInsert) x.afterInsert(w, table, r); }
       if (table === "push_subscriptions") pushSubKeep(r);
       if (table === "tasks" && !quiet) taskOutbox(w, r, null);
       if (table === "projects") {
@@ -1068,7 +1088,7 @@
         case "push_subscriptions":            // profile_id default auth.uid(); WITH CHECK own row
           if (r.profile_id === null || r.profile_id === undefined) r.profile_id = w.uid;
           return w.active && r.profile_id === w.uid;      // app.is_active(): never the agents account
-        default: return false;
+        default: { const x = extFor(table); return !!(x && x.canInsert && x.canInsert(w, table, r)); }
       }
     }
     function canUpdate(w, table, r) {
@@ -1087,11 +1107,12 @@
         case "employees": return canEdit(w, "people");
         case "timesheets": return tsWrites(w, r.employee_id);
         case "push_subscriptions": return r.profile_id === w.uid;
-        default: return false;
+        default: { const x = extFor(table); return !!(x && x.canUpdate && x.canUpdate(w, table, r)); }
       }
     }
 
     function guardUpdate(w, table, old, r, patch) {
+      { const x = extFor(table); if (x && x.guardUpdate) x.guardUpdate(w, table, old, r, patch); }   // the later phases' rules
       if (table === "profiles" && !w.admin) {
         const allowed = ["full_name", "phone", "color"];
         for (const k of Object.keys(patch)) {
@@ -1158,6 +1179,7 @@
     }
 
     function afterUpdate(w, table, old, r) {
+      { const x = extFor(table); if (x && x.afterUpdate) x.afterUpdate(w, table, old, r); }
       if (table === "tasks" && r.assigned_to !== old.assigned_to) {
         taskHandover(w, old, r);
         if (!quiet) taskOutbox(w, r, old);
@@ -1252,6 +1274,7 @@
       for (const old of targets) {
         if (SOFT.has(table)) { if (!old.deleted_at) softDelete(w, table, old); continue; }
         commitDelete(table, old);
+        { const x = extFor(table); if (x && x.afterDelete) x.afterDelete(w, table, old); }
         out.push(old);
       }
       return out;
@@ -1269,7 +1292,7 @@
         case "crew_members": return canEdit(w, "people");
         case "timesheets": return tsWrites(w, r.employee_id);
         case "push_subscriptions": return r.profile_id === w.uid;
-        default: return false;
+        default: { const x = extFor(table); return !!(x && x.canDelete && x.canDelete(w, table, r)); }
       }
     }
 
@@ -1310,6 +1333,9 @@
       const w = who(ctx);
       if (!w.uid) throw new PgErr("42501", "permission denied for function " + name, 401);
       if (ext && ext.handles(name)) { ext.checkArgs(name, args); return ext.rpc(w, name, args || {}); }
+      for (const x of exts) {
+        if (x.handles && x.handles(name)) { if (x.checkArgs) x.checkArgs(name, args); return x.rpc(w, name, args || {}); }
+      }
       checkArgs(name, args);
       switch (name) {
         case "create_project": {
@@ -1647,7 +1673,22 @@
         .map((t) => ({ id: t.id, project_id: t.project_id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date, assigned_to: t.assigned_to }));
       const files = readable(w, "current_files").filter((f) => has(f.name)).sort((a, b) => cmp(b.created_at, a.created_at)).slice(0, 20)
         .map((f) => ({ id: f.id, project_id: f.project_id, folder: f.folder, name: f.name, version_no: f.version_no, created_at: f.created_at }));
-      return { projects, contacts, items: [], tasks, files };
+      // P5a (tools/fake/p5a-est.js loaded): the estimate items, as the database's search finds them - live items of a
+      // live, not archived estimate of a live project, by name, description, group or material; newest project first
+      let items = [];
+      if (rows.estimate_items && rows.estimates) {
+        const projOf = new Map(readable(w, "projects").filter((p) => !p.deleted_at).map((p) => [p.id, p]));
+        const estOf = new Map(readable(w, "estimates").map((e) => [e.id, e]));
+        items = readable(w, "estimate_items").filter((i) => {
+          const e = estOf.get(i.estimate_id);
+          return !i.deleted_at && projOf.has(i.project_id) && e && !e.deleted_at && !e.archived_at &&
+            (has(i.name) || has(i.description) || has(i.group_name) || has(i.material_description));
+        }).sort((a, b) => numberCmp(projOf.get(b.project_id).number, projOf.get(a.project_id).number) ||
+          (a.sort ?? Infinity) - (b.sort ?? Infinity) || a.id - b.id)
+          .slice(0, 20).map((i) => ({ id: i.id, estimate_id: i.estimate_id, project_id: i.project_id,
+            project_number: projOf.get(i.project_id).number, name: i.name, group_name: i.group_name, group_code: i.group_code }));
+      }
+      return { projects, contacts, items, tasks, files };
     }
 
     /* ── Storage (bucket project-files) ─────────────────────────────── */
@@ -1961,13 +2002,17 @@
     }
 
     /* M6 (tools/fake/p6.js): the P6 tables' rules and RPCs, over this engine's own internals */
-    if (typeof NS.p6 === "function") {
-      ext = NS.p6({
-        rows, seq, COLS, clone, clock, nowIso, today, companyDay, addDaysYmd, PgErr, deny, rule, who, profileOf,
-        nextId, auditInsert, auditUpdate, commitInsert, commitUpdate, commitDelete, readable, emitOp,
-        server: () => agentsServer, beat: (at) => { if (agentsServer) { agentsServer.at = at || nowIso(); } },
-        myTasks: (w, view) => myTasks(w, view), myEmployeeId,
-      });
+    const internals = {
+      rows, seq, COLS, clone, clock, nowIso, today, companyDay, addDaysYmd, PgErr, deny, rule, who, profileOf,
+      nextId, auditInsert, auditUpdate, commitInsert, commitUpdate, commitDelete, readable, emitOp,
+      server: () => agentsServer, beat: (at) => { if (agentsServer) { agentsServer.at = at || nowIso(); } },
+      myTasks: (w, view) => myTasks(w, view), myEmployeeId,
+      canEdit, projectVisible, logActivity,
+    };
+    if (typeof NS.p6 === "function") ext = NS.p6(internals);
+    for (const install of NS.extInstall || []) {
+      const x = typeof install === "function" ? install(internals) : null;
+      if (x) exts.push(x);
     }
 
     return {
@@ -1977,6 +2022,8 @@
       who, canRead, profileOf,
       /** M6: the demo DCR server's side (tools/fake/p6.js): take / answer console requests, answer chats */
       get p6() { return ext; },
+      /** the later phases' extensions (tools/fake/p5a-est.js, ...) */
+      get exts() { return exts; },
       /** an Edge Function call (only "push" exists in the demo): {status, data} */
       invoke: invokeFunction,
       load, applyOps,

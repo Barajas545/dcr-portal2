@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Project Status Report</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      .rp-controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px; background:var(--surface);
+        border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10;}
+      .rp-btn{padding:8px 14px; font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;
+        border:1px solid var(--border); background:var(--surface); color:var(--text); text-decoration:none;}
+      .rp-btn:hover{background:var(--surface-2);}
+      .rp-btn-primary{background:#2f80d8; border-color:#2f80d8; color:#fff;}
+      .rp-badge{font-size:10.5px; font-weight:800; letter-spacing:.04em; padding:2px 8px; border-radius:9px; background:#0f766e; color:#fff;}
+      .rp-chk{display:flex; gap:6px; align-items:center; font-size:12.5px; color:var(--text);}
+      .rp-chk input{width:auto;}
+      .rp-loading{text-align:center; color:#5a6b7d; padding:60px 0;}
+      /* paper-white, always light: this page exists to be printed (the chart reads these tokens too) */
+      .sheet{--surface:#fff; --surface-2:#f2f4f7; --border:#d7dde4; --text:#1b2733; --text-muted:#5a6b7d; --acc:#2f80d8;
+        --tint:rgba(47,128,216,.10); --gold:#b07d18; --ok:#1f7a55; --err:#c44b3b;
+        --gc0:#2a78d6; --gc1:#eb6834; --gc2:#1baf7a; --gc3:#eda100; --gc4:#e87ba4; --gc5:#008300; --gc6:#4a3aa7; --gc7:#e34948;
+        background:#fff; color:var(--text); max-width:10.5in; margin:14px auto; padding:.55in; box-shadow:0 3px 18px rgba(0,0,0,.18);
+        font-family:system-ui,"Segoe UI",Arial,sans-serif; box-sizing:border-box;}
+      .sheet *{box-sizing:border-box;}
+      .gdot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:baseline;
+        -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+      .lh{display:flex; align-items:center; gap:14px; border-bottom:3px solid #1b2733; padding-bottom:10px; margin-bottom:14px;}
+      .lh img{height:52px; width:auto;}
+      .lh .co{font-size:11px; color:var(--text-muted); line-height:1.45;}
+      .lh .sp{flex:1;}
+      .lh .ttl{text-align:right;}
+      .lh .ttl b{font-size:19px; letter-spacing:.03em;}
+      .wk{display:inline-block; margin-top:3px; font-size:10px; font-weight:800; letter-spacing:.06em; padding:2px 7px; border:1.5px solid #1b2733; border-radius:4px;}
+      .sheet h2{font-size:15px; margin:16px 0 8px; color:var(--text);}
+      .meta{font-size:12.5px; color:var(--text-muted); margin-bottom:10px;}
+      .chartwrap{border:1px solid var(--border); border-radius:8px; overflow:hidden; background:#fff;}
+      .chartwrap svg{width:100%; height:auto; display:block;}
+      .sheet table{width:100%; border-collapse:collapse; font-size:11.5px;}
+      /* styles.css keeps table cells on one line with an ellipsis: on paper every word is printed */
+      .sheet th, .sheet td{white-space:normal; max-width:none; overflow:visible; text-overflow:clip; position:static;}
+      .sheet th{background:var(--surface-2); text-align:left; padding:6px 8px; border-bottom:2px solid var(--border); color:var(--text);}
+      .sheet td{padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:top; break-inside:avoid; color:var(--text);}
+      .sheet td.num, .sheet th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
+      .sheet tr.tot td{font-weight:800; border-top:2px solid var(--text);}
+      .sheet .mut{color:var(--text-muted);}
+      .foot{display:flex; justify-content:space-between; margin-top:18px; padding-top:6px; border-top:1px solid #bbb; font-size:10px; color:#555;}
+      @media screen and (max-width:900px){ .sheet{padding:.3in; margin:8px;} .sheet table{font-size:10.5px;} }
+      /* a phone: the item table scrolls inside its sheet (the page itself never scrolls sideways) */
+      @media screen and (max-width:700px){
+        .sheet{padding:14px 12px; margin:8px;}
+        .lh{flex-wrap:wrap;}
+        .lh .ttl{text-align:left;}
+        .tblwrap{overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100%;}
+        .tblwrap table{min-width:760px;}
+        .tblwrap td:first-child{min-width:160px;}
+      }
+      @page{size:landscape; margin:.4in;}
+      @media print{
+        body{background:#fff !important;}
+        .rp-controls, .topbar{display:none !important;}
+        .sheet{box-shadow:none; margin:0; max-width:none; padding:0;}
+        .sheet h2{break-after:avoid;}
+        .tblwrap{overflow:visible;}
+        *{-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="rp-controls">
+      <a class="rp-btn" id="rpBack" href="pm.html">← Back to the chart</a>
+      <span class="rp-badge">Portal 2</span>
+      <label class="rp-chk" id="rpHideWrap" hidden><input type="checkbox" id="rpHideMoney" /> Hide prices (worksite copy)</label>
+      <button class="rp-btn rp-btn-primary" id="rpPrint" type="button" style="margin-left:auto">🖨 Print / Save as PDF</button>
+    </div>
+    <div class="sheet" id="rpSheet"><div class="rp-loading">Loading…</div></div>
+    <script type="module" src="js/pages/report-pm.js"></script>
+  </body>
+</html>

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Material List</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      /* port of the old report-takeoff.html (the Access "Material List"); the controls follow the theme, the
+         sheet is always paper */
+      .rp-controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px; background:var(--surface);
+        border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10;}
+      .rp-btn{padding:8px 14px; font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;
+        border:1px solid var(--border); background:var(--surface); color:var(--text); text-decoration:none;}
+      .rp-btn:hover{background:var(--surface-2);}
+      .rp-btn-primary{background:#2f80d8; border-color:#2f80d8; color:#fff;}
+      .rp-btn-primary:hover{background:#1f6fc8;}
+      select.rp-btn{width:auto; max-width:100%;}
+      .rp-badge{font-size:10.5px; font-weight:800; letter-spacing:.04em; padding:2px 8px; border-radius:9px; background:#0f766e; color:#fff;}
+      .rp-check{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer; margin:0;}
+      .rp-check input{width:16px; height:16px; min-width:16px; padding:0; margin:0; accent-color:#2f80d8; flex-shrink:0;}
+      .rp-check[hidden], .rp-btn[hidden]{display:none;}
+      .rp-note{font-size:12px; color:var(--text-muted); padding:8px 16px; line-height:1.5; background:var(--surface-2); border-bottom:1px solid var(--border);}
+      .rp-note[hidden]{display:none;}
+      .rp-loading{text-align:center; color:var(--text-muted); padding:60px 0;}
+      .rp-print{margin-left:auto;}
+
+      .sheet{max-width:8.5in; margin:18px auto; background:#fff; color:#111; padding:0.5in 0.55in; box-shadow:0 3px 20px rgba(0,0,0,.25);
+        font-family:Arial,Helvetica,sans-serif; font-size:11.5px; line-height:1.35; box-sizing:border-box;}
+      .ml-top{display:flex; align-items:flex-start; gap:16px;}
+      .ml-topl{flex:1; min-width:0;}
+      .ml-h1{text-align:center; font-size:23px; font-weight:700; margin:0 0 10px;}
+      .ml-meta{font-size:12.5px; line-height:1.6;}
+      .ml-logo{flex-shrink:0; display:flex; align-items:center; gap:11px;}
+      .ml-logo img{width:88px; height:auto; flex-shrink:0;}
+      .ml-co{font-size:8.5px; color:#444; line-height:1.5; text-align:right;}
+      .ml-tkl{text-align:center; font-size:11px; margin:14px 0 2px;}
+      .ml-tkx{text-align:center; font-size:11px; color:#444; margin:0 0 6px;}
+      .ml-band{text-align:center; font-weight:700; padding:5px 8px;}
+      .ml-tk{background:#000; color:#fff; font-size:16px; margin-top:10px; break-after:avoid;}
+
+      table.ml{width:100%; border-collapse:collapse; table-layout:fixed; margin:0;}
+      /* styles.css clips every cell and paints th dark in OS dark mode: undo both inside the white sheet */
+      .ml th, .ml td{white-space:normal; max-width:none; overflow:visible; text-overflow:clip; overflow-wrap:break-word;
+        background:none; position:static; color:#111;}
+      .ml thead{display:table-header-group;}
+      .ml th{font-size:10.5px; font-weight:700; padding:3px 5px; border-bottom:1px solid #111; text-align:left;}
+      .ml td{padding:3px 5px; border-bottom:1px solid #e2e2e2; vertical-align:top;}
+      .ml tr.ml-lvl td{background:#595959; color:#fff; font-size:13px; font-weight:700; text-align:center; padding:5px 8px; border:none;}
+      .ml tr.ml-cat td{background:#d9d9d9; color:#111; font-size:13px; font-weight:700; text-align:center; padding:4px 8px;}
+      .ml tr.ml-sub td{background:#efefef; color:#111; font-size:12px; font-style:italic; font-weight:700; text-align:center; padding:3px 8px;}
+      .ml tr.ml-subtot td{font-weight:700; text-align:right; background:#fafafa; border-bottom:2px solid #999;}
+      /* the column widths (on <col>: the first row of each table is its level band) */
+      .ml col.c-ln{width:34px;} .ml col.c-qty{width:46px;} .ml col.c-un{width:40px;} .ml col.c-pu{width:34%;} .ml col.c-amt{width:76px;}
+      .ml.q col.c-pu{width:24%;}
+      .ml .c-ln{text-align:left; font-style:italic; font-size:9.5px; color:#777;}
+      .ml .c-qty{text-align:right; font-weight:700; color:#c0281c; font-size:12px;}
+      .ml th.c-qty{color:#111;}
+      .ml .c-un{font-style:italic; font-size:9.5px; color:#333; padding-left:3px;}
+      .ml .c-it{font-weight:700;}
+      .ml .c-note{font-weight:400; font-size:10px; color:#555;}
+      .ml .c-pu{font-style:italic; border-left:1px solid #bbb;}
+      .ml th.c-it, .ml th.c-pu{text-align:center;}
+      .ml .c-amt{text-align:right; white-space:nowrap;}
+      .ml td.c-amt{font-variant-numeric:tabular-nums;}
+      /* Subtotal, Sales tax and GRAND TOTAL are one block on paper, kept with what comes before it */
+      table.tot{border-collapse:collapse; margin:14px 0 6px auto; min-width:44%; break-inside:avoid; page-break-inside:avoid; break-before:avoid;}
+      .tot td{padding:4px 8px; color:#111; background:none; border:none; white-space:nowrap;}
+      .tot td.amt{text-align:right; width:120px;}
+      .tot tr.grand td{font-weight:700; font-size:14px; border-top:3px double #111; padding-top:7px;}
+      .ml-small{font-size:10px; color:#555; margin:4px 0 0;}
+      .ml-none{padding:10px 4px; font-style:italic; color:#666;}
+      .foot{display:flex; justify-content:space-between; gap:12px; margin-top:18px; padding-top:6px; border-top:1px solid #bbb; font-size:10px; color:#555;}
+
+      /* a phone's screen only (in print the page box is the width that counts: never the phone layout on paper) */
+      @media screen and (max-width:700px){
+        .sheet{margin:10px 6px; padding:14px 10px; font-size:11px;}
+        .ml-top{flex-direction:column-reverse; gap:8px;}
+        .ml-logo{align-self:flex-end;}
+        .ml-logo img{width:64px;}
+        .ml col.c-ln{width:24px;} .ml col.c-qty{width:38px;} .ml col.c-un{width:38px;} .ml col.c-pu{width:30%;} .ml col.c-amt{width:58px;}
+        .ml th{font-size:9px; white-space:nowrap; padding:3px 2px;}
+        .ml td.c-ln, .ml td.c-un{padding-left:2px; padding-right:2px; overflow-wrap:normal; word-break:keep-all;}
+        .ml.q col.c-pu{width:22%;}
+        .ml .c-amt{font-size:10px;}
+        .foot{flex-direction:column;}
+        table.tot{min-width:0; width:100%;}
+      }
+      @media print{
+        .rp-controls, .rp-note, .topbar{display:none !important;}
+        body{background:#fff !important;}
+        .sheet{box-shadow:none; margin:0; max-width:none; padding:0;}
+        /* the bands and the red quantities are the document: without this most browsers print them white */
+        *{-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;}
+        @page{margin:0.5in 0.5in 0.55in;}
+        thead{display:table-header-group;}
+        tr{break-inside:avoid;}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="rp-controls">
+      <a class="rp-btn" id="rpBack" href="board.html">← Back</a>
+      <span class="rp-badge">Portal 2</span>
+      <select id="rpTk" class="rp-btn" aria-label="Which takeoff" hidden></select>
+      <label class="rp-check" id="rpQuoteBox" hidden><input type="checkbox" id="rpQuote" /> Material quote (prices)</label>
+      <button class="rp-btn rp-btn-primary rp-print" id="rpPrint" type="button">🖨 Print / Save PDF</button>
+    </div>
+    <div class="rp-note" id="rpNote" hidden></div>
+
+    <div id="rpSheet" class="sheet"><div class="rp-loading">Loading material list…</div></div>
+
+    <script type="module" src="js/pages/report-takeoff.js"></script>
+  </body>
+</html>

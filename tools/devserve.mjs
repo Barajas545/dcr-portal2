@@ -4,7 +4,7 @@
      node tools/devserve.mjs            -> http://127.0.0.1:8792/
 
    Serves site/ as GitHub Pages would, and, in every HTML page it serves, swaps the supabase-js
-   <script> for the demo stand-in (/__dev/fake-supabase.js = tools/fake/p6.js + engine.js + pc-demo.js +
+   <script> for the demo stand-in (/__dev/fake-supabase.js = tools/fake/p6.js + p5a-est.js + p5a-pm.js + engine.js + pc-demo.js +
    seed.js + fake-supabase.js + push-demo.js): made-up data in the browser, no request to Supabase at all. The files in site/
    are never changed; the published site has no switch that could turn this on.
 
@@ -19,8 +19,10 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(HERE, "..");
 const SITE = resolve(ROOT, "site");
 const FAKE_DIR = resolve(HERE, "fake");
-// p6.js first: engine.js reads its column lists when it loads (phase 6: the console relay and the assistants)
-const FAKE_PARTS = ["p6.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
+// p6.js and p5a-est.js first: engine.js reads their column lists when it loads (phase 6: the console relay and the
+// assistants; P5a: estimates, change orders, takeoffs; p5a-pm.js after p5a-est.js: the progress chart's flags, quotes
+// and money, made on top of those estimates)
+const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.DCR2_DEV_PORT || process.env.PORT || 8792);
 const DEMO = !process.argv.includes("--no-demo");

@@ -41,11 +41,13 @@ export function toGroups(res, opts) {
       email: c.email || "", phone: c.phone || "",
     };
   });
+  // P5a (acceptance check 1): an item's name and group are typed words too, masked the same way; the hit opens
+  // the project's read-only Estimate tab
   add("Estimate items", "items", res.items, function (i) {
     return {
-      title: i.name || "(no name)",
-      sub: join([i.project_number, i.group_name]),
-      href: "project.html?id=" + encodeURIComponent(i.project_id),
+      title: i.name ? mask(i.name) : "(no name)",
+      sub: join([i.project_number, i.group_name ? mask(i.group_name) : ""]),
+      href: "project.html?id=" + encodeURIComponent(i.project_id) + "&tab=estimate",
     };
   });
   add("Tasks", "tasks", res.tasks, function (t) {

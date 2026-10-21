@@ -8,7 +8,9 @@
    P6: everyone has My Assistant (their personal DCR assistant: the page says "ask the office" until the
    office turns it on), with the old badge: answers not read yet, else what is due today (their own rows);
    an admin also has DCR Agents 2 (the web console: the agents, photo plans, assistants and training on the
-   DCR server, with the server's dot) and Assistants (who has one, the office reading, the office's items). */
+   DCR server, with the server's dot) and Assistants (who has one, the office reading, the office's items).
+   P5a: everyone has the Progress Chart (pm.html: stages, estimate items, quotes and change orders; amounts only with
+   the prices switch, the money tiles with financials too). */
 import { requireAuth, topbar, el, companyInfo, roleLabel } from "../common2.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
@@ -34,6 +36,11 @@ export function cardsFor(p, opts) {
     { href: "board.html", ic: "📋", tt: "Project Board",
       ds: role === "admin" || role === "manager" ? "All projects by stage: drag to move, open details." : "All projects by stage; open any for details.",
       links: [["Sales view", "board.html?view=sales"], ["Marketing view", "board.html?view=marketing"], ["Accounting view", "board.html?view=accounting"]] },
+    /* P5a: the progress chart (amounts only with the prices switch, the money tiles with financials too) */
+    { href: "pm.html", ic: "📊", tt: "Progress Chart",
+      ds: (role === "admin" || p.can_see_prices) && (role === "admin" || p.can_see_financials)
+        ? "Every stage, item and dollar — bids to paid — on one chart."
+        : "Every stage, estimate item and quote of a project on one chart." },
     { href: "search.html", ic: "🔎", tt: "Search", ds: "Projects, contacts, tasks and files, by name, number, address or phone." },
     { href: "logs.html", ic: "📜", tt: "Log History", ds: "Today's project logs, grouped by project, or any period." },
   ] });

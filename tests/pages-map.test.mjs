@@ -276,3 +276,17 @@ test("search: file names and task titles people typed are masked for people with
   const shown = toGroups({ files: [{ id: 9, project_id: 7, folder: "documents", name: "Framing bid $48,500 rev2.pdf" }] });
   assert.equal(shown[0].items[0].title, "Framing bid $48,500 rev2.pdf", "no mask given: as typed");
 });
+
+test("search (P5a, acceptance check 1): an estimate item's name and group are masked without prices; the hit opens the Estimate tab", async () => {
+  const { maskAmounts } = await import("../site/js/money-mask.js");
+  const res = { items: [{ id: 4, estimate_id: 2, project_id: 7, project_number: "A267", name: "Walls ($900 allowance)", group_name: "Extras $1,200", group_code: "06.11" }] };
+  const g = toGroups(res, { mask: maskAmounts });
+  assert.deepEqual(g.map((x) => x.label), ["Estimate items"]);
+  assert.equal(g[0].items[0].title, "Walls (amount hidden allowance)");
+  assert.equal(g[0].items[0].sub, "A267 · Extras (amount hidden)");
+  assert.doesNotMatch(JSON.stringify(g), /\$\s?\d/);
+  assert.equal(g[0].items[0].href, "project.html?id=7&tab=estimate");
+  const priced = toGroups(res);
+  assert.equal(priced[0].items[0].title, "Walls ($900 allowance)", "with prices: as typed");
+  assert.equal(toGroups({ items: [{ id: 5, project_id: 7, project_number: "A267", name: "", group_name: null }] })[0].items[0].sub, "A267");
+});

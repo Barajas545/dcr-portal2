@@ -2016,6 +2016,21 @@ if (!HAS_M6) {
   });
 }
 
+// ===========================================================================================
+section = "P5a: the progress chart (repo/pm.js, migration M5a)";
+// ===========================================================================================
+await (await import("./schema-pm.mjs")).pmChecks({ check, as, site, sql, one, PEOPLE, client, sbm, ok, same, refused, results, catalog, section });
+
+// ===========================================================================================
+section = "P5a: estimates, change orders and takeoffs (repo/estimates.js, migration M5a estimate_print / takeoff_print)";
+// ===========================================================================================
+await (await import("./schema-check-p5a-est.mjs")).run({ check, results, section, as, client, sql, one, SITE, PEOPLE, ok, same, refused, catalog });
+
+// ===========================================================================================
+section = "P5a: acceptance check 1 as a sweep of raw REST answers, and check 5 for M5a's log lines (every role)";
+// ===========================================================================================
+await (await import("./schema-p5a-sweep.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, catalog, SITE });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

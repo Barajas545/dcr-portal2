@@ -5,6 +5,8 @@
 import { existsSync } from "node:fs";
 
 const P6 = new URL("../tools/fake/p6.js", import.meta.url);        // phase 6: read by engine.js when it loads
+const P5A = new URL("../tools/fake/p5a-est.js", import.meta.url);  // P5a estimates and takeoffs: read by engine.js too
+const P5A_PM = new URL("../tools/fake/p5a-pm.js", import.meta.url); // P5a progress chart (flags, quotes, money): after p5a-est.js
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
 const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
 const SEED = new URL("../tools/fake/seed.js", import.meta.url);
@@ -16,6 +18,8 @@ export async function loadFake() {
   if (!available) return null;
   if (!loaded) {
     if (existsSync(P6)) await import(P6.href);
+    if (existsSync(P5A)) await import(P5A.href);
+    if (existsSync(P5A_PM)) await import(P5A_PM.href);
     await import(ENGINE.href);
     if (existsSync(PC)) await import(PC.href);
     await import(SEED.href);
@@ -56,8 +60,9 @@ export function clientAs(engine, uid) {
   Q.prototype.range = function (a, b) { this.q.offset = a; this.q.limit = b - a + 1; return this; };
   Q.prototype.limit = function (n) { this.q.limit = n; return this; };
   Q.prototype.rowsBy = function (made) {
-    const pk = this.t === "project_prices" ? "project_id" : "id";
     if (!made.length) return [];
+    // the table's key: id, or (a table keyed by its parent - project_prices, estimate_item_flags …) its first column
+    const pk = "id" in made[0] ? "id" : Object.keys(engine.COLS[this.t] || {})[0] || "id";
     return engine.select(ctx(), this.t, { columns: this.q.columns, filters: [{ col: pk, op: "in", val: made.map((r) => r[pk]) }],
       orders: [{ col: pk, asc: true }], foreignLimits: {} }).data;
   };

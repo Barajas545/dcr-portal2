@@ -32,6 +32,19 @@ site/                       published as is
                             the console relay (rpc console_request / console_get / console_cancel, Realtime)
   my-assistant.html         My Assistant (P6: one's own DCR assistant - today, tomorrow, the week, the chat, to-dos)
   assistant-admin.html      Assistants (P6, admins: who has one, the office reading the chat, the office's items)
+  pm.html                   the Progress Chart (P5a: the old pm.html on Desktop 2's data - the status-to-milestone
+                            map, a lane per estimate item, quotes and change orders for everyone without amounts
+                            (Q11), item flags set by estimate editors and leads, a quote's follow-up, the money
+                            tiles and quote_commitments only with prices AND financials; no ?id=: the picker)
+  report-pm.html            the printable project status report (the worksite copy for anyone without prices)
+  js/pm-chart.js            the chart engine both share (derive / layout / svg; pure)
+  project.html tabs Estimate, Takeoffs   (P5a, read only - Q12: edits stay in DCR Desktop 2) the estimates and change
+                            orders in the office's order, crew lines, item flags; Labor / Material / Total and the
+                            contract strip with prices only; the takeoffs by level, category and sub-category
+  report-estimate.html      the printed estimate / several with a GRAND TOTAL / a change order with its contract
+                            figures; the worksite copy (no amount at all) for anyone without prices
+  report-takeoff.html       the Material List (everyone; typed amounts masked) / the Material Quote with tax (prices)
+  css/estimates.css         the Estimate and Takeoffs tabs
   css/agents-console.css, css/console-print.css   the old console's styles, unchanged
   js/console/*.js           the old console: shell.js (agents-console.js, its four network points through
                             bridge.js) and console-*.js (the eight tabs, byte for byte the old portal's);
@@ -61,7 +74,17 @@ tools/e2e-p2.mjs            the P2 timesheet pages (every role, phone and desk, 
 tools/e2e-p3.mjs            the P3 task pages (every role, phone and desk, light and dark); e2e-demo runs it
 tools/e2e-p6.mjs            the P6 pages: the console, My Assistant, Assistants (every role, phone and desk, light
                             and dark); e2e-demo runs it
-tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite)
+tools/e2e-p5a-est.mjs       the P5a Estimate and Takeoffs tabs and the printed estimate, change order, material list
+                            and quote, and search for an item named with an amount (admin, managers with and without
+                            prices, accountant, lead, field, view-only; phone and desk, light and dark, the print
+                            preview; every amount the admin sees is looked for in the no-prices pages' HTML);
+                            e2e-demo runs it (--p5est)
+tools/e2e-p5a-pm.mjs        the P5a Progress Chart and its report (every role, phone and desk, light and dark);
+                            e2e-demo runs it (--p5pm)
+tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite); tools/schema-pm.mjs
+                            is its Progress Chart part, tools/schema-check-p5a-est.mjs its estimates part and
+                            tools/schema-p5a-sweep.mjs the P5 acceptance check 1 as a sweep of raw REST answers (every
+                            price / money table, quotes, the print RPCs, search) per role, plus check 5 for M5a's log lines
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
 ```
@@ -117,6 +140,8 @@ node tools/e2e-demo.mjs --out <folder>             # every P1 flow as every role
 node tools/e2e-p2.mjs --out <folder>               # the P2 walk alone + screenshots (p2_*.png; --shots none)
 node tools/e2e-p3.mjs --out <folder>               # the P3 walk alone + screenshots (p3_*.png; --shots none)
 node tools/e2e-p6.mjs --out <folder>               # the P6 walk alone + screenshots (p6_*.png; --shots none)
+node tools/e2e-p5a-pm.mjs --out <folder>           # the Progress Chart walk alone + screenshots (pm_*.png; --shots none)
+node tools/e2e-p5a-est.mjs --out <folder>          # the estimates walk alone + screenshots (est_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
 ```
 

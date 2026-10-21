@@ -549,6 +549,8 @@
         consoleOn: true, consoleAt: minutesAgo(1), assistantAt: minutesAgo(1) } };
     // phase 6 (M6, tools/fake/p6.js): the made-up assistants (chats, reminders, to-dos, events, notes)
     if (NS.p6Seed) NS.p6Seed(out, { P, now, minutesAgo, today });
+    // the later phases' made-up rows (tools/fake/p5a-est.js: estimates, change orders, takeoffs, the catalog)
+    for (const s of NS.extSeed || []) s(out, { P, now, minutesAgo, today });
     return out;
   }
 

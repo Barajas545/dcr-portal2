@@ -2,7 +2,7 @@
 /* DCR Portal 2 — the end-to-end walk of the DEMO site (development only).
 
      node tools/e2e-demo.mjs [--out <dir>] [--chrome <path>] [--shots none|final] [--p2 checks|shots|none] [--p3 checks|shots|none]
-                             [--p6 checks|shots|none]
+                             [--p6 checks|shots|none] [--p5pm checks|shots|none] [--p5est checks|shots|none]
 
    Starts tools/devserve.mjs on a free 127.0.0.1 port (the in-browser stand-in database, made-up data,
    nothing sent to Supabase or OpenStreetMap) and drives a local Chrome or Edge headless through
@@ -30,7 +30,10 @@
    this summary ("P2: ..."). Then (--p3 checks, the default) the P3 task walk, tools/e2e-p3.mjs, the same
    way (--p3 shots: screenshots into <out>/p3; --p3 none: without it): "P3: ...". Then (--p6 checks, the
    default) the P6 walk, tools/e2e-p6.mjs (the DCR Agents 2 console, My Assistant, Assistants), the same way
-   (--p6 shots: screenshots into <out>/p6): "P6: ...".
+   (--p6 shots: screenshots into <out>/p6): "P6: ...". Then (--p5pm checks, the default) the P5a Progress Chart walk,
+   tools/e2e-p5a-pm.mjs, the same way (--p5pm shots: screenshots into <out>/p5pm): "P5a PM: ...". Then (--p5est checks,
+   the default) the P5a estimates walk (the Estimate and Takeoffs tabs, the printed estimate, change order, material list
+   and quote), tools/e2e-p5a-est.mjs (--p5est shots: screenshots into <out>/p5est): "P5a estimates: ...".
 
    Prints a JSON summary; exit code 1 when a check failed. */
 import { spawn } from "node:child_process";
@@ -48,6 +51,8 @@ const SHOTS = arg("--shots", "final");
 const P2 = arg("--p2", "checks");
 const P3 = arg("--p3", "checks");
 const P6 = arg("--p6", "checks");
+const P5PM = arg("--p5pm", "checks");
+const P5EST = arg("--p5est", "checks");
 
 /** A later phase's walk (tools/e2e-p2.mjs, e2e-p3.mjs, e2e-p6.mjs) as a child: -> its JSON summary, or {ok: false, error}. */
 function runWalk(file, mode, sub) {
@@ -546,9 +551,29 @@ async function main() {
         results.push({ name: "P6: the console and assistants walk (tools/e2e-p6.mjs) ran", ok: false, detail: p6.error || "" });
       }
     }
+    let p5pmShots = 0;
+    if (P5PM !== "none") {
+      const pm = await runWalk("e2e-p5a-pm.mjs", P5PM, "p5pm");
+      if (Array.isArray(pm.results)) {
+        pm.results.forEach((r) => results.push({ name: "P5a PM: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5pmShots = pm.shots || 0;
+      } else {
+        results.push({ name: "P5a PM: the Progress Chart walk (tools/e2e-p5a-pm.mjs) ran", ok: false, detail: pm.error || "" });
+      }
+    }
+    let p5estShots = 0;
+    if (P5EST !== "none") {
+      const es = await runWalk("e2e-p5a-est.mjs", P5EST, "p5est");
+      if (Array.isArray(es.results)) {
+        es.results.forEach((r) => results.push({ name: "P5a estimates: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5estShots = es.shots || 0;
+      } else {
+        results.push({ name: "P5a estimates: the estimates walk (tools/e2e-p5a-est.mjs) ran", ok: false, detail: es.error || "" });
+      }
+    }
     const summary = { base, out: OUT, passed: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length,
       failures: results.filter((x) => !x.ok), results: results.map((r) => (r.ok ? "ok   " : "FAIL ") + r.name),
-      screenshots: shots.length + p2shots + p3shots + p6shots };
+      screenshots: shots.length + p2shots + p3shots + p6shots + p5pmShots + p5estShots };
     console.log(JSON.stringify(summary, null, 1));
     process.exitCode = summary.failed ? 1 : 0;
   }

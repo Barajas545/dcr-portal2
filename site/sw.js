@@ -1,6 +1,6 @@
 /* DCR Employee Portal 2 service worker (BLUEPRINT 2.2.6).
 
-   - Cache "dcr-portal2-v2". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
+   - Cache "dcr-portal2-v3". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
      portal's "dcr-portal-*" nor anything else on the device.
    - Network FIRST for the site's own pages and files (always up to date online; the last copy
      offline). A copy is kept under its path only, never with a query string: an address such as
@@ -15,6 +15,9 @@
    v3 (P6): My Assistant (a phone page) and the home page's new cards. The admins' pages (the DCR Agents 2
    console, about 600 KB of scripts, and Assistants) are not kept ahead on every crew phone: they are kept
    as they are opened, like any page.
+   P5a keeps "dcr-portal2-v3" (pages are network first, so nothing goes stale): the Estimate and Takeoffs tabs'
+   files and the two printed pages join the list (the next install keeps them; activate deletes only OTHER
+   names). The progress chart (pm.html, report-pm.html) is kept as it is opened, like the admins' pages.
    A new name must never cost a phone its offline libraries: install also keeps supabase-js (PINNED_PRECACHE),
    and activate copies every pinned CDN file an older "dcr-portal2-*" cache held into the new one BEFORE
    that cache is deleted (the visit that installs the new worker is still served by the old one, so it
@@ -43,6 +46,9 @@ const SHELL = [
   "js/pages/project-tasks.js", "js/pages/report-journal.js", "js/pages/report-timecard.js", "js/pages/search.js",
   "js/pages/task-form.js", "js/pages/tasks-map.js", "js/pages/timesheet.js", "js/pages/timesheet-batch.js",
   "js/pages/timesheet-manager.js", "js/pages/timesheet-mobile.js", "js/pages/ts-shared.js", "js/pages/uploads.js",
+  // P5a: the read-only Estimate and Takeoffs tabs of project.html and their printed pages
+  "report-estimate.html", "report-takeoff.html", "css/estimates.css", "js/repo/estimates.js", "js/map/estimates.js", "js/map/takeoffs.js",
+  "js/pages/est-render.js", "js/pages/project-estimate.js", "js/pages/project-takeoffs.js", "js/pages/report-estimate.js", "js/pages/report-takeoff.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

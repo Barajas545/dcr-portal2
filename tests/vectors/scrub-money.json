@@ -1,0 +1,710 @@
+{
+ "source": "lib/assistant.js scrubMoney of the old DCR Internal Website (DCR Agents 1's server), computed 2026-10-20 by tools/pglite_check/scrub_vectors.mjs",
+ "rule": "app.scrub_money(in) = out, exactly; NULL reads as an empty text",
+ "cases": [
+  {
+   "in": "paid $3,200 deposit",
+   "out": "paid [amount] deposit"
+  },
+  {
+   "in": "balance 8k due",
+   "out": "[amount] due"
+  },
+  {
+   "in": "invoice for 3200 sent",
+   "out": "[amount] sent"
+  },
+  {
+   "in": "12,500 dollars",
+   "out": "[amount]"
+  },
+  {
+   "in": "US$ 40.50 and $2M",
+   "out": "[amount] and [amount]"
+  },
+  {
+   "in": "Quote is USD 4,000 for siding",
+   "out": "Quote is [amount] for siding"
+  },
+  {
+   "in": "He owes us 2,000 still",
+   "out": "He [amount] still"
+  },
+  {
+   "in": "paid them 3,500 cash",
+   "out": "[amount] cash"
+  },
+  {
+   "in": "2,400 sq ft",
+   "out": "2,400 sq ft"
+  },
+  {
+   "in": "4K video",
+   "out": "4K video"
+  },
+  {
+   "in": "Part 107",
+   "out": "Part 107"
+  },
+  {
+   "in": "framed 3 walls",
+   "out": "framed 3 walls"
+  },
+  {
+   "in": "7:30-4:30",
+   "out": "7:30-4:30"
+  },
+  {
+   "in": "A068 day 12",
+   "out": "A068 day 12"
+  },
+  {
+   "in": "the delay cost us 3 days",
+   "out": "the delay cost us 3 days"
+  },
+  {
+   "in": "2 floors on A068",
+   "out": "2 floors on A068"
+  },
+  {
+   "in": "sent it, paid 12,500 deposit and $3,200 more",
+   "out": "sent it, [amount] deposit and [amount] more"
+  },
+  {
+   "in": "Trusses delivered, paid 12,500 deposit and $3,200 for crane",
+   "out": "Trusses delivered, [amount] deposit and [amount] for crane"
+  },
+  {
+   "in": "paid 1500k for lumber",
+   "out": "[amount]k for lumber"
+  },
+  {
+   "in": "budget 250 k",
+   "out": "[amount] k"
+  },
+  {
+   "in": "paid 125.5k",
+   "out": "[amount]k"
+  },
+  {
+   "in": "paid 12.5k",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid 12k",
+   "out": "[amount]"
+  },
+  {
+   "in": "balance 1,250k",
+   "out": "[amount]k"
+  },
+  {
+   "in": "bid 18k",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid 1500 k",
+   "out": "[amount] k"
+  },
+  {
+   "in": "deposit 999K left",
+   "out": "[amount]K left"
+  },
+  {
+   "in": "1500k paid",
+   "out": "[amount]"
+  },
+  {
+   "in": "500 k paid",
+   "out": "[amount]"
+  },
+  {
+   "in": "12,500k deposit",
+   "out": "12,[amount]"
+  },
+  {
+   "in": "deposit 1,250.75 today",
+   "out": "[amount] today"
+  },
+  {
+   "in": "price: 500",
+   "out": "price: 500"
+  },
+  {
+   "in": "price = 500",
+   "out": "[amount]"
+  },
+  {
+   "in": "price is 500",
+   "out": "[amount]"
+  },
+  {
+   "in": "priced at 1,000",
+   "out": "[amount]"
+  },
+  {
+   "in": "prices 2000",
+   "out": "[amount]"
+  },
+  {
+   "in": "balance of 1,000",
+   "out": "[amount]"
+  },
+  {
+   "in": "invoices 2,000",
+   "out": "[amount]"
+  },
+  {
+   "in": "invoiced 2,000",
+   "out": "[amount]"
+  },
+  {
+   "in": "invoice 2,000",
+   "out": "[amount]"
+  },
+  {
+   "in": "owed 300",
+   "out": "[amount]"
+  },
+  {
+   "in": "owes 300",
+   "out": "[amount]"
+  },
+  {
+   "in": "owe 300",
+   "out": "[amount]"
+  },
+  {
+   "in": "owes us 300",
+   "out": "[amount]"
+  },
+  {
+   "in": "refunded 450 yesterday",
+   "out": "[amount] yesterday"
+  },
+  {
+   "in": "refund 450",
+   "out": "[amount]"
+  },
+  {
+   "in": "costs 1200.50",
+   "out": "[amount]"
+  },
+  {
+   "in": "cost 99",
+   "out": "cost 99"
+  },
+  {
+   "in": "charged me 99",
+   "out": "charged me 99"
+  },
+  {
+   "in": "charged me 199",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid at at 500",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid us 1,250 and owes 300",
+   "out": "[amount] and [amount]"
+  },
+  {
+   "in": "payment of 1,800",
+   "out": "[amount]"
+  },
+  {
+   "in": "payments 1800",
+   "out": "[amount]"
+  },
+  {
+   "in": "deposits 2,500",
+   "out": "[amount]"
+  },
+  {
+   "in": "budget for 30,000",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid me500",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid500",
+   "out": "paid500"
+  },
+  {
+   "in": "repaid 500",
+   "out": "repaid 500"
+  },
+  {
+   "in": "prepaid 500",
+   "out": "prepaid 500"
+  },
+  {
+   "in": "paid 50",
+   "out": "paid 50"
+  },
+  {
+   "in": "paid 5,0000",
+   "out": "[amount]0"
+  },
+  {
+   "in": "paid 12,345,6789",
+   "out": "[amount]9"
+  },
+  {
+   "in": "paid 1234,567",
+   "out": "[amount],567"
+  },
+  {
+   "in": "3 payments made",
+   "out": "3 payments made"
+  },
+  {
+   "in": "1,200 in deposit",
+   "out": "[amount]"
+  },
+  {
+   "in": "1,200 in deposits",
+   "out": "[amount]"
+  },
+  {
+   "in": "1200 deposit",
+   "out": "[amount]"
+  },
+  {
+   "in": "120 deposit",
+   "out": "[amount]"
+  },
+  {
+   "in": "12 deposit",
+   "out": "12 deposit"
+  },
+  {
+   "in": "1.5k deposit",
+   "out": "[amount]"
+  },
+  {
+   "in": "PAID 2,000",
+   "out": "[amount]"
+  },
+  {
+   "in": "Deposit: $500",
+   "out": "Deposit: [amount]"
+  },
+  {
+   "in": "balance due 400",
+   "out": "balance due 400"
+  },
+  {
+   "in": "the price was 2,000",
+   "out": "the [amount]"
+  },
+  {
+   "in": "$ 45",
+   "out": "[amount]"
+  },
+  {
+   "in": "$12kg",
+   "out": "[amount]kg"
+  },
+  {
+   "in": "$5 million",
+   "out": "[amount] million"
+  },
+  {
+   "in": "$5 k",
+   "out": "[amount]"
+  },
+  {
+   "in": "$5 kg",
+   "out": "[amount] kg"
+  },
+  {
+   "in": "$5k.",
+   "out": "[amount]."
+  },
+  {
+   "in": "USD5",
+   "out": "[amount]"
+  },
+  {
+   "in": "usd 5",
+   "out": "[amount]"
+  },
+  {
+   "in": "usd 12k",
+   "out": "[amount]"
+  },
+  {
+   "in": "usd12k",
+   "out": "[amount]"
+  },
+  {
+   "in": "5 bucks",
+   "out": "[amount]"
+  },
+  {
+   "in": "3,000 usd",
+   "out": "[amount]"
+  },
+  {
+   "in": "3,000usd",
+   "out": "[amount]"
+  },
+  {
+   "in": "dollars 40",
+   "out": "[amount]"
+  },
+  {
+   "in": "dollars40",
+   "out": "[amount]"
+  },
+  {
+   "in": "1,000,000 dollars",
+   "out": "[amount]"
+  },
+  {
+   "in": "40 dollarsign",
+   "out": "40 dollarsign"
+  },
+  {
+   "in": "$1,2345",
+   "out": "[amount]"
+  },
+  {
+   "in": "price$5",
+   "out": "price[amount]"
+  },
+  {
+   "in": "ABCD$7",
+   "out": "ABCD[amount]"
+  },
+  {
+   "in": "US$5",
+   "out": "[amount]"
+  },
+  {
+   "in": "us$5",
+   "out": "[amount]"
+  },
+  {
+   "in": "U$5",
+   "out": "U[amount]"
+  },
+  {
+   "in": "-$300 credit",
+   "out": "-[amount] credit"
+  },
+  {
+   "in": "$12 k and $3m",
+   "out": "[amount] and [amount]"
+  },
+  {
+   "in": "$1.5M budget",
+   "out": "[amount] budget"
+  },
+  {
+   "in": "$.50",
+   "out": "$.50"
+  },
+  {
+   "in": "$0.50",
+   "out": "[amount]"
+  },
+  {
+   "in": "$,5",
+   "out": "$,5"
+  },
+  {
+   "in": "$5,",
+   "out": "[amount]"
+  },
+  {
+   "in": "$5,000.",
+   "out": "[amount]."
+  },
+  {
+   "in": "$5.5.5",
+   "out": "[amount].5"
+  },
+  {
+   "in": "£500",
+   "out": "£500"
+  },
+  {
+   "in": "€500",
+   "out": "€500"
+  },
+  {
+   "in": "5$",
+   "out": "5$"
+  },
+  {
+   "in": "$",
+   "out": "$"
+  },
+  {
+   "in": "$$5",
+   "out": "$[amount]"
+  },
+  {
+   "in": "a$5",
+   "out": "a[amount]"
+  },
+  {
+   "in": "1$5",
+   "out": "1[amount]"
+  },
+  {
+   "in": "café$5",
+   "out": "café[amount]"
+  },
+  {
+   "in": "café 500 dollars",
+   "out": "café [amount]"
+  },
+  {
+   "in": "naïve $5k",
+   "out": "naïve [amount]"
+  },
+  {
+   "in": "tab\t$5",
+   "out": "tab\t[amount]"
+  },
+  {
+   "in": "nbsp $5",
+   "out": "nbsp [amount]"
+  },
+  {
+   "in": "$ 5",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid 1500",
+   "out": "[amount]"
+  },
+  {
+   "in": "$5 k",
+   "out": "[amount]"
+  },
+  {
+   "in": "500 dollars",
+   "out": "[amount]"
+  },
+  {
+   "in": "1500 k paid",
+   "out": "[amount]"
+  },
+  {
+   "in": "paid 1,500",
+   "out": "[amount]"
+  },
+  {
+   "in": "é500 dollars",
+   "out": "é[amount]"
+  },
+  {
+   "in": "500 dollarsé",
+   "out": "[amount]é"
+  },
+  {
+   "in": "é1500 paid",
+   "out": "é[amount]"
+  },
+  {
+   "in": "paidé 1500",
+   "out": "paidé 1500"
+  },
+  {
+   "in": "٥٠٠ dollars",
+   "out": "٥٠٠ dollars"
+  },
+  {
+   "in": "５００ dollars",
+   "out": "５００ dollars"
+  },
+  {
+   "in": "line one $5\nline two paid 1,000\r\nline three",
+   "out": "line one [amount]\nline two [amount]\r\nline three"
+  },
+  {
+   "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx $9,999.99 yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+   "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [amount] yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+  },
+  {
+   "in": "call 805-555-0100",
+   "out": "call 805-555-0100"
+  },
+  {
+   "in": "A267 - Test ADU",
+   "out": "A267 - Test ADU"
+  },
+  {
+   "in": "",
+   "out": ""
+  },
+  {
+   "in": " ",
+   "out": " "
+  },
+  {
+   "in": "no money here",
+   "out": "no money here"
+  },
+  {
+   "in": "quoted $8,900 and $12.50/ft",
+   "out": "quoted [amount] and [amount]/ft"
+  },
+  {
+   "in": "hold-downs ($1,240 at Simpson)",
+   "out": "hold-downs ([amount] at Simpson)"
+  },
+  {
+   "in": "($300)",
+   "out": "([amount])"
+  },
+  {
+   "in": "US$5, -$40 and $12k",
+   "out": "[amount] -[amount] and [amount]"
+  },
+  {
+   "in": "Framer quoted $8,900",
+   "out": "Framer quoted [amount]"
+  },
+  {
+   "in": "Quoted $1,250.00 and $90",
+   "out": "Quoted [amount] and [amount]"
+  },
+  {
+   "in": "Pay $1,250.50 deposit",
+   "out": "Pay [amount] deposit"
+  },
+  {
+   "in": "Receipt $1,234.50 lumber",
+   "out": "Receipt [amount] lumber"
+  },
+  {
+   "in": "Quote $2,400.pdf",
+   "out": "Quote [amount].pdf"
+  },
+  {
+   "in": "Walls ($1,200 allowance)",
+   "out": "Walls ([amount] allowance)"
+  },
+  {
+   "in": "Ordered hold-downs ($1,240 at Simpson)",
+   "out": "Ordered hold-downs ([amount] at Simpson)"
+  },
+  {
+   "in": "Quoted $1,250 to the client",
+   "out": "Quoted [amount] to the client"
+  },
+  {
+   "in": "Collect $500 deposit",
+   "out": "Collect [amount] deposit"
+  },
+  {
+   "in": "Client OK'd the $1,800 extra",
+   "out": "Client OK'd the [amount] extra"
+  },
+  {
+   "in": "$ 45.50 and $1.5M budget",
+   "out": "[amount] and [amount] budget"
+  },
+  {
+   "in": "A$5 and CAD$10 and ABCD$7",
+   "out": "A[amount] and CAD[amount] and ABCD[amount]"
+  },
+  {
+   "in": "cost: $1,000,000.99!",
+   "out": "cost: [amount]!"
+  },
+  {
+   "in": "$12kg of nails",
+   "out": "[amount]kg of nails"
+  },
+  {
+   "in": "($12)",
+   "out": "([amount])"
+  },
+  {
+   "in": "(about $12)",
+   "out": "(about [amount])"
+  },
+  {
+   "in": "é$5 and É$6",
+   "out": "é[amount] and É[amount]"
+  },
+  {
+   "in": "$١٢٣",
+   "out": "$١٢٣"
+  },
+  {
+   "in": "Line one $10\nLine two $20",
+   "out": "Line one [amount]\nLine two [amount]"
+  },
+  {
+   "in": "50% off $99",
+   "out": "50% off [amount]"
+  },
+  {
+   "in": "x$5",
+   "out": "x[amount]"
+  },
+  {
+   "in": "_$5",
+   "out": "_[amount]"
+  },
+  {
+   "in": "$5_000",
+   "out": "[amount]_000"
+  },
+  {
+   "in": "$5,000k",
+   "out": "[amount]"
+  },
+  {
+   "in": "Paid $1,250,000 total",
+   "out": "Paid [amount] total"
+  },
+  {
+   "in": "#$5",
+   "out": "#[amount]"
+  },
+  {
+   "in": "$12ké",
+   "out": "[amount]é"
+  },
+  {
+   "in": "$12 é",
+   "out": "[amount] é"
+  },
+  {
+   "in": "$ 12",
+   "out": "[amount]"
+  },
+  {
+   "in": "tab$\t5",
+   "out": "tab[amount]"
+  },
+  {
+   "in": "$5.",
+   "out": "[amount]."
+  },
+  {
+   "in": "($5",
+   "out": "([amount]"
+  },
+  {
+   "in": "$5)",
+   "out": "[amount])"
+  },
+  {
+   "in": "US $5",
+   "out": "US [amount]"
+  }
+ ]
+}

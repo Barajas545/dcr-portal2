@@ -9,8 +9,9 @@
 
    Tabs (P1): Overview (Desktop 2's fields, autosaved with versions; the labor rate only with the
    prices switch), Log, Journal, Mailing, Files (with the capture bar); P3: Tasks (the project's
-   tasks, the tick through complete_task, a new task, the updates). The money and estimate tabs come
-   with P5.
+   tasks, the tick through complete_task, a new task, the updates); P5a: Estimate and Takeoffs (read only,
+   Q12: the estimates, change orders and takeoffs as DCR Desktop 2 has them, the amounts only for people
+   who see prices, Print to report-estimate.html / report-takeoff.html). The money tabs come with P5b.
 
    Live: the project row, its activity, journal, files and tasks (and their notes) are watched; a
    change made elsewhere lands in place (an untouched field takes it, a field being edited meets the
@@ -30,10 +31,12 @@ import * as journalTab from "./project-journal.js";
 import * as mailingTab from "./project-mailing.js";
 import * as filesTab from "./project-files.js";
 import * as tasksTab from "./project-tasks.js";
+import * as estimateTab from "./project-estimate.js";
+import * as takeoffsTab from "./project-takeoffs.js";
 import { startSweeper } from "./journal-sync.js";
 
-const TABS = ["overview", "log", "journal", "mailing", "files", "tasks"];
-const ALIASES = { logs: "log" };
+const TABS = ["overview", "estimate", "takeoffs", "log", "journal", "mailing", "files", "tasks"];
+const ALIASES = { logs: "log", estimates: "estimate", takeoff: "takeoffs" };
 
 const ctx = {
   pid: null, project: null, me: null, mask: null,
@@ -77,6 +80,8 @@ function renderHead() {
   const a = el("pjOldPortal");
   a.hidden = !old;
   if (old) a.href = old;
+  const pm = el("pjPm");
+  if (pm) pm.href = "pm.html?id=" + encodeURIComponent(p.id);
 }
 
 async function changeStatus() {
@@ -169,6 +174,45 @@ function loadTab(name) {
   else if (name === "mailing") mailingTab.render(ctx, el("pane-mailing"));
   else if (name === "files") filesTab.render(ctx, el("pane-files"));
   else if (name === "tasks") { tasksTab.render(ctx, el("pane-tasks")); watchTasks(); }
+  else if (name === "estimate") { estimateTab.render(ctx, el("pane-estimate")); watchEstimates(); }
+  else if (name === "takeoffs") { takeoffsTab.render(ctx, el("pane-takeoffs")); watchTakeoffs(); }
+}
+
+/* the Estimate and Takeoffs tabs' live channels, only once each tab has been opened: the project's rows,
+   and the price rows only for a person who sees prices (they carry the item / row id alone) */
+let estWatched = false, tkWatched = false;
+function watchEstimates() {
+  const live = ctx.live;
+  if (estWatched || !live || typeof live.watch !== "function") return;
+  estWatched = true;
+  const f = "project_id=eq." + ctx.pid;
+  try {
+    live.watch("estimates", f, function () { estimateTab.reload(ctx); });
+    live.watch("estimate_items", f, function () { estimateTab.reload(ctx); });
+    live.watch("estimate_item_flags", f, function () { estimateTab.reload(ctx); });   // M5a: a flag set on the progress chart
+    if (ctx.prices) {
+      live.watch("estimate_item_prices", null, function (evt) {
+        const row = evt && (evt.new || evt.old);
+        if (!row || evt.type === "SUBSCRIBED" || estimateTab.hasItem(row.item_id)) estimateTab.reload(ctx);
+      });
+    }
+  } catch (e) { /* the tab reads again when opened */ }
+}
+function watchTakeoffs() {
+  const live = ctx.live;
+  if (tkWatched || !live || typeof live.watch !== "function") return;
+  tkWatched = true;
+  const f = "project_id=eq." + ctx.pid;
+  try {
+    live.watch("takeoffs", f, function () { takeoffsTab.reload(ctx); });
+    live.watch("takeoff_rows", f, function () { takeoffsTab.reload(ctx); });
+    if (ctx.prices) {
+      live.watch("takeoff_row_prices", null, function (evt) {
+        const row = evt && (evt.new || evt.old);
+        if (!row || evt.type === "SUBSCRIBED" || takeoffsTab.hasRow(row.row_id)) takeoffsTab.reload(ctx);
+      });
+    }
+  } catch (e) { /* the tab reads again when opened */ }
 }
 
 /* the Tasks tab's live channels, only once the tab has been opened (a phone holds no channel it does
@@ -297,6 +341,8 @@ async function startLive() {
       live.watch("journal_entries", f, function () { journalTab.reload(ctx); });
       live.watch("files", f, function () { filesTab.reload(ctx); journalTab.reload(ctx, { media: true }); });
       if (loaded.tasks) watchTasks();
+      if (loaded.estimate) watchEstimates();
+      if (loaded.takeoffs) watchTakeoffs();
     }
     if (typeof live.onPresence === "function") live.onPresence(paintPresence);
   } catch (e) { /* live updates are a nicety; the page works without them */ }

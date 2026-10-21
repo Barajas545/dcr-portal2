@@ -8,6 +8,7 @@
     <title>DCR Portal 2 — Project</title>
     <link rel="stylesheet" href="css/styles.css" />
     <link rel="stylesheet" href="css/tasks.css" />
+    <link rel="stylesheet" href="css/estimates.css" />
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" type="image/png" href="icons/icon-192.png" />
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
@@ -235,6 +236,7 @@
         </div>
         <a class="pj-btn" id="pjOldPortal" href="#" target="_blank" rel="noopener" hidden
           title="This project came from the old portal: its old estimates, money and documents are there">Old portal ↗</a>
+        <a class="pj-btn" id="pjPm" href="pm.html" title="The progress chart: every stage, estimate item and quote of this project">📊 Progress chart</a>
         <button class="pj-btn" id="pjSave" type="button" title="This page saves by itself — use this only to save right now">💾 Save now</button>
       </div>
       <div style="display:flex;gap:12px;align-items:center;min-height:18px;margin-bottom:6px">
@@ -245,6 +247,8 @@
 
       <div class="pj-tabs" id="pjTabs" role="tablist">
         <button class="pj-tab active" data-tab="overview" type="button" role="tab">Overview</button>
+        <button class="pj-tab" data-tab="estimate" type="button" role="tab">Estimate</button>
+        <button class="pj-tab" data-tab="takeoffs" type="button" role="tab">Takeoffs</button>
         <button class="pj-tab" data-tab="log" type="button" role="tab">Log</button>
         <button class="pj-tab" data-tab="journal" type="button" role="tab">Journal</button>
         <button class="pj-tab" data-tab="mailing" type="button" role="tab">Mailing</button>
@@ -253,6 +257,8 @@
       </div>
 
       <div class="pj-pane active" id="pane-overview" role="tabpanel"><div class="pj-empty">Loading…</div></div>
+      <div class="pj-pane" id="pane-estimate" role="tabpanel"><div class="pj-empty">Loading…</div></div>
+      <div class="pj-pane" id="pane-takeoffs" role="tabpanel"><div class="pj-empty">Loading…</div></div>
       <div class="pj-pane" id="pane-log" role="tabpanel"><div class="pj-empty">Loading…</div></div>
       <div class="pj-pane" id="pane-journal" role="tabpanel"><div class="pj-empty">Loading…</div></div>
       <div class="pj-pane" id="pane-mailing" role="tabpanel"><div class="pj-empty">Loading…</div></div>
