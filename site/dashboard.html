@@ -67,6 +67,12 @@
       .hm-note { border: 1px solid var(--border); border-left: 4px solid var(--p2); border-radius: 12px;
         background: var(--surface); padding: 12px 14px; font-size: 13px; color: var(--text-muted); margin-bottom: 14px; }
       .hm-note b { color: var(--text); }
+      /* an admin's line about DCR Agents 2's PC (rpc agents_server_status) */
+      .hm-agents { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted);
+        border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 9px 14px; margin-bottom: 14px; }
+      .hm-agents .dot { width: 9px; height: 9px; border-radius: 50%; background: #9aa5b1; flex: none; }
+      .hm-agents.ok .dot { background: #1f9d55; }
+      .hm-agents.warn .dot { background: #d4a017; }
     </style>
   </head>
   <body>
@@ -83,6 +89,7 @@
         <div id="installSlot" style="margin-top:14px"></div>
         <div id="pushSlot" style="margin-top:10px"></div>
       </div>
+      <div id="hmAgents" hidden></div>
       <div id="hmNotes"></div>
       <div id="hmSections"></div>
     </main>

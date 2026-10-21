@@ -1664,6 +1664,72 @@ if (!HAS_M3 || !HAS_M2) {
   }
 }
 
+// ===========================================================================================
+section = "P4: DCR Agents 2's PC on the home page (repo/agents.js, migration M4)";
+// ===========================================================================================
+const HAS_M4 = !!(catalog.functions.agents_server_status && catalog.functions.agents_heartbeat);
+const agentsRepo = await site("repo/agents.js");
+const amap = await site("map/agents.js");
+
+if (!HAS_M4) {
+  results.push({ section, name: "M4 (20261023000100_agents_core) is not in DCR Desktop 2 yet: the P4 checks wait for it", ok: true });
+} else {
+  await check("agents_server_status() takes nothing and answers jsonb; the agents_* RPCs Portal 2 never calls are there for DCR Agents 2", async () => {
+    same(catalog.functions.agents_server_status.map((f) => [f.args.length, f.rettype]), [[0, "jsonb"]], "agents_server_status() -> jsonb");
+    same(catalog.functions.agents_heartbeat.map((f) => f.args.map((a) => a.name)), [["p_body"]], "agents_heartbeat(p_body)");
+  });
+
+  await check("an admin's home page: 'DCR Agents 2 PC - not seen yet' before any beat, 'last seen just now' after the agents account's heartbeat, the lease holder; every other role and the agents account itself refused (42501)", async () => {
+    await sql("delete from app.agents_hosts");
+    await sql("update app.agents_lease set host_id = null, since = null, lease_by = null");
+    await as("admin");
+    let s = await agentsRepo.serverStatus();
+    same(Object.keys(s).sort(), ["generatedAt", "lease", "minutesAgo", "others", "ready", "server", "status"], "the answer's keys");
+    same(amap.serverLine(s, new Date()), { text: "DCR Agents 2 PC - not seen yet", cls: "off", title: "No computer running DCR Agents 2 has reported yet." }, "no PC yet");
+    client.as(PEOPLE.agents.id);
+    const beat = await client.rpc("agents_heartbeat", { p_body: { host: "CHECK-PC#agents2", proto: 1, wants: true, version: "2.0.0", sentToday: 2 } });
+    ok(!beat.error, "the agents account beats: " + JSON.stringify(beat.error));
+    same([beat.data.you, beat.data.lease && beat.data.lease.host], ["server", "CHECK-PC#agents2"], "and takes the lease");
+    await as("admin");
+    s = await agentsRepo.serverStatus();
+    same([s.server.host, s.server.online, s.server.minutesAgo, s.server.sentToday], ["CHECK-PC#agents2", true, 0, 2], "the server");
+    same(amap.serverLine(s, new Date()), { text: "DCR Agents 2 PC - last seen just now", cls: "ok", title: "CHECK-PC#agents2 · DCR Agents 2.0.0" }, "the line");
+    await sql("update app.agents_hosts set at = now() - interval '7 minutes'");
+    s = await agentsRepo.serverStatus();
+    same(amap.serverLine(s, new Date()), { text: "DCR Agents 2 PC - last seen 7 min ago", cls: "warn", title: "CHECK-PC#agents2 · DCR Agents 2.0.0" }, "gone quiet");
+    for (const key of ["manager", "manager2", "accountant", "lead", "field", "viewer"]) {
+      await as(key);
+      await refused(() => agentsRepo.serverStatus(), "42501", key);
+    }
+    client.as(PEOPLE.agents.id);
+    same((await client.rpc("agents_server_status")).error.code, "42501", "the agents account reads no status (an admin's)");
+    client.as(PEOPLE.inactive.id);
+    same((await client.rpc("agents_server_status")).error.code, "42501", "an inactive account");
+    client.as(null);
+    same((await client.rpc("agents_server_status")).error.code, "42501", "anonymous");
+    await sql("delete from app.agents_hosts");
+    await sql("delete from app.agents_beats");
+    await sql("update app.agents_lease set host_id = null, since = null, lease_by = null");
+  });
+
+  await check("the agents account (P1 check 10, re-run for M4): reads no table and calls none of the people's RPCs; its own agents_* feeds answer it; nobody else reaches them", async () => {
+    client.as(PEOPLE.agents.id);
+    for (const t of ["projects", "tasks", "timesheets", "employees", "payments", "notifications_outbox"]) {
+      const r = await client.from(t).select("*").limit(5);
+      ok(!r.error ? r.data.length === 0 : r.error.code === "42501", t + ": nothing");
+    }
+    same((await client.rpc("my_tasks", { p_view: "mine" })).error.code, "42501", "my_tasks");
+    const people = await client.rpc("agents_people");
+    ok(!people.error && Array.isArray(people.data.people), "agents_people answers it");
+    ok(people.data.people.some((p) => p.name === "Flo Field" && p.role === "Field" && p.hasAccount), "the roster, in the old words");
+    for (const key of ["admin", "field", "lead"]) {
+      await as(key);
+      const w = await client.rpc("agents_task_note", { p_task_id: "1", p_text: "x x", p_from_profile: "Nobody", p_via: "sms" });
+      same(w.error && w.error.code, "42501", key + ": a write is the agents account's only");
+    }
+  });
+}
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

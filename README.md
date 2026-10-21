@@ -158,6 +158,15 @@ PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against 
   admin or the agents account; the test notice reaches the caller's own devices only; a lead's new task
   reaches the field person's phone as "New task" with `my-tasks.html?task=<id>`, once, and a dead device
   (410) is pruned; a shared phone moves to the person who turns reminders on there; five devices at most.
+  With M4 (`20261023000100_agents_core`, DCR Agents 2's database surface) it also checks DCR Agents 2's line
+  on an admin's home page: `repo/agents.js serverStatus()` (rpc `agents_server_status`, an admin's only:
+  every other role, the agents account itself and anon get 42501) and `map/agents.js serverLine()` —
+  "DCR Agents 2 PC - not seen yet" before any heartbeat, "last seen just now" after the agents account's
+  `agents_heartbeat`, amber once it goes quiet — and that the agents account still reads no table.
+
+**P4 (DCR Agents 2 core).** Portal 2's only change is that admin line on the home page (`hmAgents`, drawn
+by `shell/dashboard.js`; the demo database answers it from a made-up PC). Before M4 is pushed the RPC is
+missing and the line simply stays hidden; nothing else on the page depends on it.
 
 The money mask, the file-name rules and the project-location rules are checked against vectors
 taken from DCR Desktop 2 (`tests/vectors/`). `tests/core-site-guard.test.mjs` checks every page for

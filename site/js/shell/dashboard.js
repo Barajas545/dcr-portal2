@@ -2,11 +2,15 @@
    modules Portal 2 has so far (P1 projects, P2 timesheets, P3 tasks). Cards are gated by role and
    switch, as the database rules them (BLUEPRINT 3.2, Appendix D); later phases add their cards here.
    The My Tasks card carries the old badge: how many of your own tasks need an update (red: somebody's
-   job today), else how many are open, else the crew's, dimmed (rpc my_tasks_summary, counts only). */
+   job today), else how many are open, else the crew's, dimmed (rpc my_tasks_summary, counts only).
+   An admin also sees one line about DCR Agents 2's PC: "DCR Agents 2 PC - last seen N min ago" (rpc
+   agents_server_status, an admin's only; M4). */
 import { requireAuth, topbar, el, companyInfo, roleLabel } from "../common2.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
 import { summaryOf, badgeOf } from "../map/tasks.js";
+import { serverStatus } from "../repo/agents.js";
+import { serverLine } from "../map/agents.js";
 import { drain } from "../upload-queue2.js";
 import { startSweeper } from "../pages/journal-sync.js";
 import { mountSwitch } from "../push2.js";
@@ -90,6 +94,18 @@ async function myTasksBadge() {
   tt.appendChild(el("span", { class: "hm-badge " + b.cls }, b.text));
 }
 
+/** An admin's line about DCR Agents 2's PC; any failure (the RPC not deployed yet, offline) leaves it hidden. */
+async function agentsLine() {
+  let line = null;
+  try { line = serverLine(await serverStatus(), new Date()); } catch (e) { return; }
+  const box = $("hmAgents");
+  if (!box || !line) return;
+  box.innerHTML = "";
+  box.appendChild(el("div", { class: "hm-agents " + line.cls, title: line.title || null },
+    el("span", { class: "dot", "aria-hidden": "true" }), el("span", { text: line.text })));
+  box.hidden = false;
+}
+
 function notes() {
   const box = $("hmNotes");
   box.innerHTML = "";
@@ -114,6 +130,7 @@ async function start() {
   // a lead's Batch Entry card waits for their crew (crew_members: their own rows)
   if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { render(p, { hasCrew: true }); myTasksBadge(); } }).catch(() => null);
   myTasksBadge();
+  if (p.role === "admin") agentsLine();
   notes();
   mountSwitch("pushSlot");
   // journal entries written with no signal are created (the app may have been killed since), then

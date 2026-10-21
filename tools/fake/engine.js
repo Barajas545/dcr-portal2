@@ -29,6 +29,9 @@
      (mine | crew | everyone with the project, the notes and app.task_clock), my_tasks_summary,
      add_task_note (one line, 2,000 characters, "already complete", the client key once) and
      complete_task (status and closing note together, versioned, done already is done);
+   - phase 4 (M4, BLUEPRINT 2.3.5): agents_server_status — an admin's only (42501 for anyone else) — from the
+     DCR Agents 2 PC's last heartbeat the seed made up (data.agents_server), with the database's rules
+     (online within 3 minutes, 12 for an older build; the lease holder is the server);
    - Storage: simple uploads, TUS resumable uploads (6 MiB chunks), signed URLs, with the
      project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read).
    Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
@@ -364,6 +367,7 @@
     const listeners = new Set();
     const opListeners = new Set();
     let quiet = 0;
+    let agentsServer = null;      // M4: the DCR Agents 2 PC's last heartbeat (demo: made up by the seed)
 
     const nowIso = () => clock().toISOString();
     const today = () => companyDay(clock());
@@ -1282,6 +1286,7 @@
       complete_task: { args: ["p_id", "p_version", "p_note", "p_via"], required: ["p_id"] },
       my_tasks: { args: ["p_view"], required: [] },
       my_tasks_summary: { args: [], required: [] },
+      agents_server_status: { args: [], required: [] },
     };
     function checkArgs(name, args) {
       const sig = SIGNATURES[name];
@@ -1489,6 +1494,24 @@
         case "my_tasks": {
           if (!w.active) throw deny("sign in first");
           return myTasks(w, arg(args, "p_view"));
+        }
+        case "agents_server_status": {
+          // an admin only (Portal 2's home page); the shape of public.agents_server_status() (M4)
+          if (!w.admin) throw deny("Only an admin can read the DCR Agents 2 status.");
+          const at = nowIso();
+          const s = agentsServer;
+          if (!s) return { ready: false, server: null, lease: null, others: [], status: null, minutesAgo: null, generatedAt: at };
+          const minutes = Math.max(0, Math.round((clock().getTime() - Date.parse(s.at)) / 60000));
+          const pay = s.payload || {};
+          return {
+            ready: false,
+            server: { host: s.host_id, version: s.version || "", proto: s.proto || 0, lastSeen: s.at, minutesAgo: minutes,
+              online: minutes <= (s.proto ? 3 : 12), standby: !!s.standby, paused: pay.paused === true, lastError: pay.lastError || "",
+              sentToday: pay.sentToday || 0, failedToday: pay.failedToday || 0, repliesToday: pay.repliesToday || 0,
+              enabledAgents: pay.enabledAgents || 0, consoleAt: "", consoleOn: false, assistantAt: "" },
+            lease: { host: s.host_id, since: s.since || s.at, by: "started as the DCR server" },
+            others: [], status: Object.assign({}, pay, { at: s.at, host: s.host_id }), minutesAgo: minutes, generatedAt: at,
+          };
         }
         case "my_tasks_summary": {
           // {mine, mine_needs_update, mine_overdue, mine_due_today, crew, crew_needs_update, everyone,
@@ -1893,6 +1916,7 @@
           seq[t] = rows[t].reduce((m, r) => (typeof r[pk] === "number" && r[pk] > m ? r[pk] : m), 0);
         }
         for (const [k, v] of Object.entries(data.objects || {})) objects.set(k, v);
+        agentsServer = data.agents_server ? clone(data.agents_server) : null;
       } finally { quiet--; }
     }
     function applyOps(ops, loud) {

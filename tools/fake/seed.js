@@ -92,7 +92,10 @@
     const iso = (d) => new Date(d).toISOString();
     const minutesAgo = (m) => iso(now.getTime() - m * 60000);
     const daysAgo = (d, hour) => {
-      const base = new Date(now.getTime() - d * 86400000);
+      // counted back from the COMPANY day, not the UTC one: after 5 pm Pacific the UTC date is already
+      // tomorrow, and "7 days ago" landed 6 company days back (the task clock tests failed every evening)
+      const [ty, tm, td] = today.split("-").map(Number);
+      const base = new Date(Date.UTC(ty, tm - 1, td - d));
       base.setUTCHours(15 + (hour === undefined ? between(0, 8) : hour), between(0, 59), between(0, 59), 0);
       return base.getTime() > now.getTime() ? iso(now.getTime() - between(5, 300) * 60000) : iso(base);
     };
@@ -338,7 +341,8 @@
     for (let i = 0; i < 104; i++) rnd();
     const AG = PEOPLE.find((x) => x.key === "agents").id;
     const tAt = (d, hour, minute) => {
-      const base = new Date(now.getTime() - d * 86400000);
+      const [ty, tm, td] = today.split("-").map(Number);       // from the company day (see daysAgo)
+      const base = new Date(Date.UTC(ty, tm - 1, td - d));
       base.setUTCHours(15 + (hour || 0), minute || 7, 0, 0);
       return base.getTime() > now.getTime() ? iso(now.getTime() - (d === 0 ? 20 : 5) * 60000) : iso(base);
     };
@@ -539,6 +543,9 @@
     if (changed) { changed.hours = 9; changed.calculated_hours = null; changed.version = 2; changed.updated_at = addD(lastSat, 8) + "T16:00:00.000Z"; changed.updated_by = P.manager; }
 
     out.activity.sort((a, b) => a.id - b.id);
+    // the DCR Agents 2 PC (M4): beat two minutes ago, the DCR server since this morning (made up)
+    out.agents_server = { host_id: "DCR-OFFICE-PC#agents2", at: minutesAgo(2), since: minutesAgo(300), version: "2.0.0", proto: 1,
+      standby: false, payload: { version: "2.0.0", sentToday: 4, failedToday: 0, repliesToday: 1, enabledAgents: 4, lastError: "", paused: false } };
     return out;
   }
 
