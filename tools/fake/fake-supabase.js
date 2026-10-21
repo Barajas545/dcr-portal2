@@ -16,7 +16,13 @@
 
    window.DCR2Demo and the "DEMO" button (bottom right) offer: sign in as any role, offline on/off,
    colleagues on/off, "someone else edits this", on the task pages "someone else adds an update /
-   finishes a task" and "the office gives you a new task", and reset.                                */
+   finishes a task" and "the office gives you a new task", and reset.
+
+   Phase 6: a made-up DCR server computer (tools/fake/p6.js pc + pc-demo.js) takes each console request
+   a moment after it is made and answers it, and answers each chat message a little later, the way DCR
+   Agents 2 would (in THIS tab: the answer reaches the other tabs as their changes do). It beats its
+   heartbeat once a minute while a page is open. On the console and assistant pages the DEMO button also
+   offers "the DCR server is off" (requests wait, then expire; chats wait) and "the office writes to you". */
 (function (root) {
   "use strict";
   const F = root.DCR2Fake;
@@ -398,6 +404,7 @@
       if (state.offline) return fail(netError(), 0);
       try {
         const data = engine.rpc(this.c._ctx(), this.name, clone(this.args));
+        afterRpc(this.name);
         return { data: data === undefined ? null : clone(data), error: null, count: null, status: data === null ? 204 : 200, statusText: "OK" };
       } catch (e) {
         if (e instanceof F.PgErr) return fail(e.toJSON(), e.status);
@@ -405,6 +412,46 @@
         return fail({ code: "XX000", message: String(e && e.message), details: null, hint: null }, 500);
       }
     }
+  }
+
+  /* ── phase 6: the made-up DCR server answers (tools/fake/p6.js pc, pc-demo.js) ── */
+  const PC_OFF = "dcr2-demo-pc-off";
+  state.pcOff = (() => { try { return sessionStorage.getItem(PC_OFF) === "1"; } catch (e) { return false; } })();
+  let pcTimer = null, chatTimer = null;
+  function pcSoon(ms) {
+    if (!engine.p6 || state.pcOff || pcTimer) return;
+    pcTimer = setTimeout(() => {
+      pcTimer = null;
+      if (state.pcOff || state.offline) return;
+      let q = null;
+      try { q = engine.p6.pc.step(); } catch (e) { console.error("demo DCR server:", e); }
+      if (q && engine.p6.pc.waiting()) pcSoon(400 + Math.random() * 500);
+    }, ms);
+  }
+  function chatSoon(ms) {
+    if (!engine.p6 || state.pcOff || chatTimer) return;
+    chatTimer = setTimeout(() => {
+      chatTimer = null;
+      if (state.pcOff || state.offline) return;
+      try { engine.p6.pc.answerChats(); } catch (e) { console.error("demo assistant:", e); }
+    }, ms);
+  }
+  function afterRpc(name) {
+    if (name === "console_request") pcSoon(500 + Math.random() * 900);
+    else if (name === "assistant_say") chatSoon(1800 + Math.random() * 1600);
+  }
+  // the PC beats once a minute while a page is open (and answers what waited while it was "off")
+  if (typeof setInterval === "function" && typeof window !== "undefined") {
+    setInterval(() => {
+      if (state.pcOff || !engine.p6) return;
+      try { if (engine.p6.pc.waiting()) pcSoon(200); if (engine.p6.pc.chatsWaiting()) chatSoon(400); } catch (e) { /* */ }
+    }, 60000);
+  }
+  function setPcOff(on) {
+    state.pcOff = !!on;
+    try { sessionStorage.setItem(PC_OFF, on ? "1" : "0"); } catch (e) { /* */ }
+    if (!on && engine.p6) { pcSoon(300); chatSoon(600); }
+    paintPanel();
   }
 
   /* ── storage ───────────────────────────────────────────────────────── */
@@ -971,6 +1018,13 @@
         }
       });
     }
+    if (/agents-console|my-assistant|assistant-admin/.test(location.pathname)) {
+      row("The DCR server is off (nothing is answered)", !!state.pcOff, setPcOff);
+      act("The office writes to you in the assistant chat", () => {
+        const me = current();
+        if (me && engine.p6) engine.p6.pc.officeSays(me.id, "From the office: the crew meeting moved to 7:30 tomorrow.");
+      });
+    }
     act("Someone else moves a Board card", () => {
       const list = engine.rows.projects.filter((p) => p.status === "approved" && !p.deleted_at);
       const p = list[Math.floor(Math.random() * list.length)];
@@ -1012,7 +1066,8 @@
   }
 
   root.DCR2Demo = {
-    engine, people: PEOPLE, signInAs, setOffline, setColleagues, remoteEdit, reset,
+    engine, people: PEOPLE, signInAs, setOffline, setColleagues, remoteEdit, reset, setPcOff,
+    pcStep: () => (engine.p6 ? engine.p6.pc.step() : null), answerChats: () => (engine.p6 ? engine.p6.pc.answerChats() : 0),
     isOffline: () => state.offline,
     setLatency: (ms) => { state.latency = Math.max(0, Number(ms) || 0); },
     opsCount: () => ops.length,

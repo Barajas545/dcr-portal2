@@ -12,11 +12,14 @@
      "push"; "notificationclick" opens or focuses that page, and only a page of this site (same origin,
      inside this worker's scope): anything else in a payload opens the home page instead.
    v2 (P3): the push handlers and the task pages; a new name so every installed copy takes them.
+   v3 (P6): My Assistant (a phone page) and the home page's new cards. The admins' pages (the DCR Agents 2
+   console, about 600 KB of scripts, and Assistants) are not kept ahead on every crew phone: they are kept
+   as they are opened, like any page.
    A new name must never cost a phone its offline libraries: install also keeps supabase-js (PINNED_PRECACHE),
    and activate copies every pinned CDN file an older "dcr-portal2-*" cache held into the new one BEFORE
    that cache is deleted (the visit that installs the new worker is still served by the old one, so it
    never fetches them itself). tests/core-sw.test.mjs runs both. */
-const CACHE = "dcr-portal2-v2";
+const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
 // tests/core-sw.test.mjs checks it), so the installed app also opens offline from a cold start (a
@@ -25,17 +28,17 @@ const SHELL = [
   "./", "index.html", "dashboard.html", "change-password.html", "settings.html",
   "board.html", "project.html", "search.html", "logs.html", "capture.html", "report-journal.html",
   "timesheet.html", "timesheet-mobile.html", "timesheet-manager.html", "timesheet-batch.html", "report-timecard.html", "admin.html",
-  "my-tasks.html", "tasks-map.html",
+  "my-tasks.html", "tasks-map.html", "my-assistant.html",
   "css/styles.css", "css/tasks.css", "manifest.json",
   "js/config.js", "js/sb.js", "js/common2.js", "js/live.js", "js/money-mask.js", "js/upload-queue2.js",
   "js/install.js", "js/push2.js", "js/timesheet-pdf.js",
   "js/shell/index.js", "js/shell/dashboard.js", "js/shell/settings.js", "js/shell/change-password.js",
-  "js/repo/_db.js", "js/repo/activity.js", "js/repo/agents.js", "js/repo/employees.js", "js/repo/files.js", "js/repo/journal.js",
+  "js/repo/_db.js", "js/repo/activity.js", "js/repo/agents.js", "js/repo/assistant.js", "js/repo/employees.js", "js/repo/files.js", "js/repo/journal.js",
   "js/repo/people.js", "js/repo/projects.js", "js/repo/search.js", "js/repo/tasks.js", "js/repo/timesheets.js",
-  "js/map/activity.js", "js/map/agents.js", "js/map/files.js", "js/map/geo.js", "js/map/journal.js", "js/map/legacy.js", "js/map/pacific.js",
+  "js/map/activity.js", "js/map/agents.js", "js/map/assistant.js", "js/map/files.js", "js/map/geo.js", "js/map/journal.js", "js/map/legacy.js", "js/map/pacific.js",
   "js/map/projects.js", "js/map/search.js", "js/map/status.js", "js/map/tasks.js", "js/map/timesheets.js",
   "js/pages/shell.js", "js/pages/admin.js", "js/pages/board.js", "js/pages/board-model.js", "js/pages/capture.js",
-  "js/pages/journal-sync.js", "js/pages/logs.js", "js/pages/my-tasks.js", "js/pages/project.js", "js/pages/project-files.js",
+  "js/pages/journal-sync.js", "js/pages/logs.js", "js/pages/my-tasks.js", "js/pages/my-assistant.js", "js/pages/project.js", "js/pages/project-files.js",
   "js/pages/project-journal.js", "js/pages/project-log.js", "js/pages/project-mailing.js", "js/pages/project-overview.js",
   "js/pages/project-tasks.js", "js/pages/report-journal.js", "js/pages/report-timecard.js", "js/pages/search.js",
   "js/pages/task-form.js", "js/pages/tasks-map.js", "js/pages/timesheet.js", "js/pages/timesheet-batch.js",

@@ -4,7 +4,9 @@
 // (tools/fake/fake-supabase.js) needs a DOM; this is only the query / rpc / signed-URL part.
 import { existsSync } from "node:fs";
 
+const P6 = new URL("../tools/fake/p6.js", import.meta.url);        // phase 6: read by engine.js when it loads
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
+const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
 const SEED = new URL("../tools/fake/seed.js", import.meta.url);
 
 export const available = existsSync(ENGINE) && existsSync(SEED);
@@ -13,7 +15,9 @@ let loaded = null;
 export async function loadFake() {
   if (!available) return null;
   if (!loaded) {
+    if (existsSync(P6)) await import(P6.href);
     await import(ENGINE.href);
+    if (existsSync(PC)) await import(PC.href);
     await import(SEED.href);
     loaded = globalThis.DCR2Fake;
   }

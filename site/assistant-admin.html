@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Assistants</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      /* The office's side of the personal assistants: everyone on the left, one person on the right
+         (on a phone: the list, then the person over it with a way back). */
+      .aa { --acc: var(--p2); --acc-2: var(--p2-dark); --tint: var(--p2-tint);
+        --ok-text:#1f7a55; --ok-bg:rgba(31,157,85,.10); --warn-text:#8a5a00; --warn-bg:rgba(212,160,23,.14); --bad-text:#b3261e; --bad-bg:rgba(200,55,31,.10);
+        max-width: 1180px; margin: 0 auto; padding: 18px 16px 60px; }
+      @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .aa { --ok-text:#6fd3a4; --ok-bg:rgba(111,211,164,.12);
+        --warn-text:#e0b25a; --warn-bg:rgba(224,178,90,.14); --bad-text:#f0937f; --bad-bg:rgba(240,147,127,.13); } }
+      :root[data-theme="dark"] .aa { --ok-text:#6fd3a4; --ok-bg:rgba(111,211,164,.12); --warn-text:#e0b25a; --warn-bg:rgba(224,178,90,.14);
+        --bad-text:#f0937f; --bad-bg:rgba(240,147,127,.13); }
+      [hidden] { display: none !important; }
+      .aa-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+      .aa-head h2 { margin: 4px 0 2px; font-size: 22px; }
+      .aa-sub { margin: 0 0 10px; color: var(--text-muted); font-size: 14px; max-width: 760px; }
+      .aa-pc { font-size: 13px; padding: 9px 12px; border-radius: 10px; margin: 0 0 12px; border: 1px solid var(--border); background: var(--surface); }
+      .aa-pc.ok { border-left: 4px solid #1f9d55; } .aa-pc.warn { border-left: 4px solid #d4a017; background: var(--warn-bg); }
+      .aa-pc.bad { border-left: 4px solid #c8371f; background: var(--bad-bg); }
+      .aa-grid { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 16px; align-items: start; }
+      .aa-side { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 10px; }
+      .aa-tools-row { display: flex; gap: 6px; margin-bottom: 8px; }
+      .aa-tools-row input { flex: 1; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
+        background: var(--surface); color: var(--text); font-size: 15px; }
+      .aa-count { font-size: 12px; color: var(--text-muted); margin: 2px 4px 8px; }
+      .aa-row { display: grid; grid-template-columns: 1fr; gap: 2px; width: 100%; text-align: left; background: transparent; color: var(--text);
+        border: 1px solid transparent; border-radius: 10px; padding: 9px 10px; cursor: pointer; font: inherit; min-height: 44px; }
+      .aa-row:hover { background: var(--surface-2); }
+      .aa-row.sel { border-color: var(--acc); background: var(--tint); }
+      .aa-name { font-weight: 700; font-size: 15px; }
+      .aa-role { font-size: 12px; color: var(--text-muted); }
+      .aa-chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+      .aa-chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 10px; background: var(--surface-2); color: var(--text-muted); }
+      .aa-chip.on { background: var(--ok-bg); color: var(--ok-text); }
+      .aa-chip.reads { background: var(--warn-bg); color: var(--warn-text); }
+      .aa-main { min-width: 0; }
+      .aa-placeholder { color: var(--text-muted); border: 1px dashed var(--border); border-radius: 14px; padding: 30px 16px; text-align: center; }
+      .aa-h { margin: 6px 0 10px; font-size: 20px; }
+      .aa-muted { color: var(--text-muted); font-weight: 400; font-size: 13px; }
+      .aa-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
+      .aa-card h3 { margin: 0 0 6px; font-size: 15px; }
+      .aa-switch { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; cursor: pointer; }
+      .aa-switch input { width: 22px; height: 22px; margin: 2px 0 0; flex: none; }
+      .aa-switch small { display: block; color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
+      .aa-addrow { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 8px; }
+      .aa-addrow .btn, .aa-tools .btn { min-height: 40px; }
+      .aa-items { list-style: none; margin: 0; padding: 0; }
+      .aa-item { border-top: 1px solid var(--border); padding: 8px 0; }
+      .aa-item:first-child { border-top: 0; }
+      .aa-item.done .aa-itext { text-decoration: line-through; color: var(--text-muted); }
+      .aa-itext { font-weight: 600; overflow-wrap: anywhere; }
+      .aa-iwhen, .aa-inotes { font-size: 12.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+      .aa-tools { display: flex; gap: 6px; margin-top: 4px; }
+      .aa-danger { color: var(--danger); }
+      .aa-empty { color: var(--text-muted); font-size: 13px; margin: 6px 0; }
+      .aa-error { color: var(--bad-text); background: var(--bad-bg); border-radius: 10px; padding: 10px 12px; }
+      .aa-chat { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .aa-msg { max-width: 88%; }
+      .aa-msg.user { align-self: flex-end; text-align: right; }
+      .aa-who { font-size: 11.5px; color: var(--text-muted); margin-bottom: 2px; }
+      .aa-bubble { display: inline-block; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 11px; border-radius: 12px;
+        background: var(--surface-2); border: 1px solid var(--border); font-size: 14px; }
+      .aa-msg.user .aa-bubble { background: var(--tint); border-color: transparent; }
+      .aa-msg.office .aa-bubble { border-left: 3px solid #d4a017; }
+      .aa-cards { margin-top: 3px; display: flex; gap: 4px; flex-wrap: wrap; }
+      .aa-msg.user .aa-cards { justify-content: flex-end; }
+      .aa-back { display: none; margin-bottom: 6px; min-height: 40px; }
+      @media (max-width: 900px) {
+        .aa-grid { grid-template-columns: 1fr; }
+        .aa-back { display: inline-flex; }
+        body.aa-open .aa-side { display: none; }
+        body:not(.aa-open) .aa-placeholder { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="aa">
+      <div class="aa-head">
+        <div>
+          <h2>Assistants</h2>
+          <p class="aa-sub">Turn someone's personal assistant on, choose whether the office may read their chat, and add the office's
+            own reminders, to-dos and events to their phone. The answers come from DCR Agents 2 on the DCR server.</p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="aaRefresh">Refresh</button>
+      </div>
+      <div id="aaPc" class="aa-pc" role="status" aria-live="polite"></div>
+      <div class="aa-grid">
+        <aside class="aa-side" aria-label="Everyone">
+          <div class="aa-tools-row"><input type="search" id="aaSearch" placeholder="Find a person…" aria-label="Find a person" autocomplete="off" /></div>
+          <div class="aa-count" id="aaCount"></div>
+          <div id="aaList"><p class="aa-empty">Loading…</p></div>
+        </aside>
+        <section class="aa-main" aria-live="polite">
+          <div id="aaDetail" hidden></div>
+          <p class="aa-placeholder" id="aaPick">Pick a person on the left.</p>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="js/pages/assistant-admin.js"></script>
+  </body>
+</html>

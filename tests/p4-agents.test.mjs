@@ -58,8 +58,10 @@ test("the demo database: an admin reads the made-up PC (seen two minutes ago, on
   useClient(clientAs(e, admin.id));
   const s = await agents.serverStatus();
   assert.deepEqual(Object.keys(s).sort(), ["generatedAt", "lease", "minutesAgo", "others", "ready", "server", "status"], "the database's keys");
-  assert.deepEqual([s.ready, s.server.host, s.server.minutesAgo, s.server.online, s.lease.host], [false, "DCR-OFFICE-PC#agents2", 2, true, "DCR-OFFICE-PC#agents2"]);
-  assert.deepEqual(serverLine(s, NOW), { text: "DCR Agents 2 PC - last seen 2 min ago", cls: "ok", title: "DCR-OFFICE-PC#agents2 · DCR Agents 2.0.0" });
+  // M6: ready (the console relay is in the database) and consoleOn from the PC's own heartbeat
+  assert.deepEqual([s.ready, s.server.host, s.server.minutesAgo, s.server.online, s.lease.host, s.server.consoleOn],
+    [true, "DCR-OFFICE-PC#agents2", 2, true, "DCR-OFFICE-PC#agents2", true]);
+  assert.deepEqual(serverLine(s, NOW), { text: "DCR Agents 2 PC - last seen 2 min ago", cls: "ok", title: "DCR-OFFICE-PC#agents2 · DCR Agents 2.1.0" });
   for (const key of ["manager", "manager_prices", "accountant", "lead", "field", "viewer", "agents", "inactive"]) {
     const p = await person(key);
     useClient(clientAs(e, p.id));

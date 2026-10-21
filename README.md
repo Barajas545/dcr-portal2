@@ -28,11 +28,20 @@ site/                       published as is
   tasks-map.html            Tasks on Map (P3: Leaflet 1.9.4, a pin per job, New task here, moving a pin)
   css/styles.css            the old portal's styles plus the Portal 2 accent
   css/tasks.css             the task pieces My Tasks, the map and the project's Tasks tab share
+  agents-console.html       DCR Agents 2 (P6, admins): the old web console - its shell and eight tab modules - over
+                            the console relay (rpc console_request / console_get / console_cancel, Realtime)
+  my-assistant.html         My Assistant (P6: one's own DCR assistant - today, tomorrow, the week, the chat, to-dos)
+  assistant-admin.html      Assistants (P6, admins: who has one, the office reading the chat, the office's items)
+  css/agents-console.css, css/console-print.css   the old console's styles, unchanged
+  js/console/*.js           the old console: shell.js (agents-console.js, its four network points through
+                            bridge.js) and console-*.js (the eight tabs, byte for byte the old portal's);
+                            bridge.js the module under them (supabase-js, Realtime); framed.js (no framing)
   js/config.js              DCR2_CONFIG (public values only) + the theme before first paint
   js/sb.js                  the one supabase-js client, its sign-in storage, me(), signIn/signOut
   js/common2.js             window.DCR2: dialogs, toasts, dates (America/Los_Angeles), money and
                             the amount mask, error sentences, requireAuth, the top bar, autosave
-  js/live.js                Realtime: watch(table, filter, cb), presence(view, opts), onPresence
+  js/live.js                Realtime: watch(table, filter, cb, opts), presence(view, opts), onPresence
+                            (opts.lost: hear {type: "LOST"} when the channel goes, to pace one's own reads)
   js/money-mask.js          maskAmounts / fmtMoney, ported from Desktop 2 (shared test vectors)
   js/upload-queue2.js       IndexedDB custody + resumable uploads to Storage + the files row
   js/timesheet-pdf.js       the timesheet PDF in the DCR paper form (jsPDF 2.5.2 + AutoTable 3.8.4 from
@@ -50,6 +59,8 @@ tools/check-pages.mjs       a headless look at the demo site (sign-in rules, ser
 tools/e2e-demo.mjs          the end-to-end walk of every P1 flow in the demo, with screenshots, then the P2 walk
 tools/e2e-p2.mjs            the P2 timesheet pages (every role, phone and desk, light and dark); e2e-demo runs it
 tools/e2e-p3.mjs            the P3 task pages (every role, phone and desk, light and dark); e2e-demo runs it
+tools/e2e-p6.mjs            the P6 pages: the console, My Assistant, Assistants (every role, phone and desk, light
+                            and dark); e2e-demo runs it
 tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite)
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
@@ -84,6 +95,15 @@ lets "someone else" edit the open project, and resets the demo data. Two tabs si
 presence). The published site has no switch for any of this: the imitation exists only in pages
 served by `tools/devserve.mjs`, which binds to 127.0.0.1.
 
+For phase 6 the demo has a made-up DCR server computer running DCR Agents 2 (`tools/fake/pc-demo.js`): it takes
+each console request a moment after it is made and answers it with made-up agents, timesheets, tasks, photo
+plans, assistants, training, activity, replies, people and settings (the real computer's allowlist of 122
+methods; a change it asks about first, it asks about first), and it answers each chat message a few seconds
+later (a reminder card for "remind me at 3 pm to ...", an e-mail draft card, never an amount). Jordan Field,
+Riley Lead and Avery Admin have assistants (the office reads Jordan's and Avery's chats, not Riley's); the
+managers have none ("ask the office"). On the console and assistant pages the DEMO button also offers "The DCR
+server is off" (requests and chats wait) and "The office writes to you in the assistant chat".
+
 In Claude Code the same server is the `portal2-demo` entry of `.claude/launch.json`.
 
 ## Tests
@@ -96,6 +116,7 @@ node tools/e2e-demo.mjs --out <folder>             # every P1 flow as every role
                                                    # and the P3 walk (--p3 checks | shots | none)
 node tools/e2e-p2.mjs --out <folder>               # the P2 walk alone + screenshots (p2_*.png; --shots none)
 node tools/e2e-p3.mjs --out <folder>               # the P3 walk alone + screenshots (p3_*.png; --shots none)
+node tools/e2e-p6.mjs --out <folder>               # the P6 walk alone + screenshots (p6_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
 ```
 
@@ -163,6 +184,32 @@ PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against 
   every other role, the agents account itself and anon get 42501) and `map/agents.js serverLine()` —
   "DCR Agents 2 PC - not seen yet" before any heartbeat, "last seen just now" after the agents account's
   `agents_heartbeat`, amber once it goes quiet — and that the agents account still reads no table.
+
+- `tools/e2e-p6.mjs` signs in as admin, manager, accountant, lead, field and viewer and checks the home cards (My
+  Assistant with the badge the database's counts give; DCR Agents 2 with the server's dot and Assistants for an
+  admin only), the console (an admin's status bar and eleven tabs; "Only an Admin can manage DCR Agents 2." for
+  anybody else, with nothing asked), My Assistant (on, or "ask the office") and Assistants (refused for anybody
+  but an admin); then, as admin, every console tab drawn from the made-up DCR server through the relay (all the
+  admin's own requests, answered, woken by Realtime) and Pause everything / Resume asked first; as field on the
+  phone, the six panels, a question answered live with a reminder card, no signal (the words and their client id
+  kept, the resend ONE message), the office's item only ticked, a to-do added / ticked / deleted, the briefing
+  time and Spanish, a note kept, a note from the office arriving live ("1 new") and read; as admin on Assistants,
+  a private chat ("does not read"), the office reads turned on, the office's to-do reaching the field person's
+  open page live, the manager's assistant turned on while their page is open. Screenshots:
+  `p6_<page>_<role>_<light|dark>_<desktop|phone>.png`.
+- `tests/console/*.test.mjs` are the old portal's page tests of the console (the shell and every tab, with an
+  `<img onerror>` in every string the server sends), pointed at the ported files; the shell's stand-in browser
+  gives it a bridge over the old relay fake, so the request mechanics are tested unchanged.
+- With M6 (`20261024000100_agents_phase6`), `tools/schema-check.mjs` runs `repo/console.js` and
+  `repo/assistant.js` against the real migration: every name and parameter; an admin's request read back with
+  console_get, another admin's id the same 404 as an unknown one, every other role refused; the lease holder
+  takes and answers it; expired and lost worked out on read and stored by the purge; 20 open, 60 a minute (the
+  wait), 20,000 characters; the agents account joins only `agents2-console` and `agents2-assistant`; My
+  Assistant off until the office turns it on, the old GET (the agenda without amounts, unchanged at the same
+  revision, the badge's counts) and every POST op as the page sends it; the office's list, the chat only while
+  office reads is on and only from when it went on (the note that tells the person first), the office's items
+  read-only for the person, every other role refused; the agents account reads no row of the chat (a question
+  waiting is an id in `assistant_waiting`).
 
 **P4 (DCR Agents 2 core).** Portal 2's only change is that admin line on the home page (`hmAgents`, drawn
 by `shell/dashboard.js`; the demo database answers it from a made-up PC). Before M4 is pushed the RPC is
@@ -235,6 +282,37 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   waiting notices (`{op: 'drain'}`, fire-and-forget). The e-mail is DCR Agents 2's (P4), off until the
   owner turns `task_email_enabled` on.
 
+## The DCR Agents 2 console and the assistants (P6) in short
+
+- **The console** (`agents-console.html`, admins) is the old portal's web console: its shell and its eight tab
+  modules (Dashboard, Agents, Timesheets and Tasks, Photo & Video, Assistants, Training, Activity / Replies /
+  People, Settings) are the old files; the tab modules unchanged, the shell changed only at its four network
+  points, which `js/console/bridge.js` answers from migration M6 in the old shapes: the status bar from rpc
+  `agents_server_status` (ready, consoleOn), a request `console_request` -> `{id, at}`, reading it
+  `console_get` (the old answer; expired and lost worked out by the database), cancelling `console_cancel`. The
+  page listens on Realtime to the admin's own rows of `agents_console` (RLS lets nobody else's through), so an
+  answer is read the moment it lands; the old poll stays as the fallback (every 5 s while the channel is joined,
+  else 1 s then 2 s). Everything the DCR server does is checked again on the server computer; the database
+  re-reads the admin role on every request and allows 20 open, 60 a minute and 900 an hour. The page never opens
+  inside another site's frame.
+- **My Assistant** (`my-assistant.html`, everyone; a phone page) is the old page: M6 answers `rpc my_assistant`
+  as the old GET (the state, the agenda: one's own hours, open tasks and shoots, hours filed and the jobs' last
+  log lines, scrubbed of amounts and clients' words by the database), `assistant_say` and `assistant_op` as the
+  old POST. A message is kept on the phone with its client id until the database has it (the same id is
+  accepted once: a lost answer never makes a second message); five may wait. The answers come from DCR Agents 2
+  on the DCR server and arrive over Realtime on one's own rows (a channel that drops puts the page back on its
+  5-second read at once). Items the office added are only ticked done.
+  Drafts and the language are kept per profile (`dcr2:myAssistant.*`).
+- **Assistants** (`assistant-admin.html`, admins) turns a person's assistant on or off and the office's reading
+  of their chat and notes (`assistant_set`; from when it is turned on - what was written before stays private, and
+  the person gets a note each time it changes), shows one person (`assistant_office_view`: the chat and the notes
+  only while the office may read them, since then) and keeps the office's own reminders, to-dos and events for them
+  (`assistant_office_item`). It works while the DCR server is off.
+- The home page: My Assistant for everyone, with the old badge (answers not read, else what is due today:
+  `my_assistant` with `p_summary`); DCR Agents 2 (with the server's dot) and Assistants for admins.
+- Guided Assist is not built (Q21: dropped). The service worker keeps My Assistant ahead on phones, not the
+  admins' pages.
+
 ## Rules for every page
 
 - The `Content-Security-Policy` meta tag of `index.html`, word for word, first in `<head>` after
@@ -246,10 +324,10 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - `<script src="js/config.js">`, then the pinned supabase-js
   (`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js`, `defer`),
   then the page's `<script type="module">`. Every CDN script names an exact version.
-- Browser-side names are Portal 2's own: session `dcr2-auth`, cache `dcr-portal2-v2` (P3), IndexedDB
+- Browser-side names are Portal 2's own: session `dcr2-auth`, cache `dcr-portal2-v3` (P6), IndexedDB
   `dcr2Uploads`, drafts `dcr2JrnDraft:<profile>:<project>`, theme `dcr2_theme`, city cache
   `dcr2CityGeo`, Site Photos' last job list `dcr2CaptureJobs:<profile>`, locks
-  `dcr-portal2-single-instance`, `dcr2-upload-queue` and `dcr2-journal-drafts`. Never the old portal's
+  `dcr-portal2-single-instance`, `dcr2-upload-queue` and `dcr2-journal-drafts`, My Assistant's drafts `dcr2:myAssistant.draft.v1:<profile>`. Never the old portal's
   names.
 - The sign-in form ships inert (a disabled fieldset, `method="post"`, no `name` attributes) and only
   its script enables it: a press before the script has loaded sends nothing. The service worker keeps

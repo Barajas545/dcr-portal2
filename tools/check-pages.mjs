@@ -90,9 +90,10 @@ async function main() {
     await signIn(d, "manager@demo.test", true, "dashboard.html");
     check("sign-in goes to ?next= (dashboard)", /dashboard\.html$/.test(await d.eval("location.pathname")), await d.eval("location.href"));
     await d.until("document.querySelectorAll('.hm-card').length > 3");
-    // the card's own words (the My Tasks card also carries its badge, P3)
+    // the card's own words (the My Tasks card also carries its badge, P3; My Assistant for everyone, P6 - a
+    // manager has no DCR Agents 2 nor Assistants card: an admin's)
     check("home cards for a manager", (await d.eval("Array.from(document.querySelectorAll('.hm-card .tt')).map(n=>n.childNodes[0].textContent).join('|')")) ===
-      "Project Board|Search|Log History|My Tasks|Tasks on Map|Site Photos|Time Sheet|Team Sheets|Batch Entry|Settings|Employees & crews");
+      "Project Board|Search|Log History|My Tasks|Tasks on Map|Site Photos|Time Sheet|Team Sheets|Batch Entry|My Assistant|Settings|Employees & crews");
     check("kept signed in: the session is in localStorage", await d.eval("!!localStorage.getItem('dcr2-auth') && !sessionStorage.getItem('dcr2-auth')"));
     check("top bar: Portal 2 badge and the user", await d.eval("document.querySelector('.dcr2-topbar .p2-badge') && document.getElementById('userPill').textContent.includes('Morgan')"));
     await sleep(800);
@@ -206,7 +207,8 @@ async function main() {
       await a.size(1280, 860, false);
       await signIn(a, "admin@demo.test", true, "dashboard.html");
       for (const path of ["dashboard.html", "settings.html", "board.html", "project.html?id=268", "search.html?q=A24", "logs.html",
-        "capture.html", "report-journal.html?id=268", "my-tasks.html", "my-tasks.html?task=1", "tasks-map.html", "project.html?id=268&tab=tasks"]) {
+        "capture.html", "report-journal.html?id=268", "my-tasks.html", "my-tasks.html?task=1", "tasks-map.html", "project.html?id=268&tab=tasks",
+        "agents-console.html", "agents-console.html#/photo", "my-assistant.html", "assistant-admin.html"]) {
         await a.goto(base + "/" + path, 1500);
       }
     }

@@ -544,8 +544,11 @@
 
     out.activity.sort((a, b) => a.id - b.id);
     // the DCR Agents 2 PC (M4): beat two minutes ago, the DCR server since this morning (made up)
-    out.agents_server = { host_id: "DCR-OFFICE-PC#agents2", at: minutesAgo(2), since: minutesAgo(300), version: "2.0.0", proto: 1,
-      standby: false, payload: { version: "2.0.0", sentToday: 4, failedToday: 0, repliesToday: 1, enabledAgents: 4, lastError: "", paused: false } };
+    out.agents_server = { host_id: "DCR-OFFICE-PC#agents2", at: minutesAgo(2), since: minutesAgo(300), version: "2.1.0", proto: 1,
+      standby: false, payload: { version: "2.1.0", sentToday: 4, failedToday: 0, repliesToday: 1, enabledAgents: 4, lastError: "", paused: false,
+        consoleOn: true, consoleAt: minutesAgo(1), assistantAt: minutesAgo(1) } };
+    // phase 6 (M6, tools/fake/p6.js): the made-up assistants (chats, reminders, to-dos, events, notes)
+    if (NS.p6Seed) NS.p6Seed(out, { P, now, minutesAgo, today });
     return out;
   }
 

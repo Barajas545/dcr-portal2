@@ -1730,6 +1730,292 @@ if (!HAS_M4) {
   });
 }
 
+// ===========================================================================================
+section = "P6: the console relay and the personal assistants (repo/console.js, repo/assistant.js, migration M6)";
+// ===========================================================================================
+const HAS_M6 = !!(catalog.functions.console_request && catalog.functions.console_get && catalog.functions.my_assistant &&
+  catalog.functions.assistant_op && catalog.functions.assistant_office_view);
+const consoleRepo = await site("repo/console.js");
+const cmap = await site("map/console.js");
+const asstRepo = await site("repo/assistant.js");
+const asmap = await site("map/assistant.js");
+
+if (!HAS_M6) {
+  results.push({ section, name: "M6 (20261024000100_agents_phase6) is not in DCR Desktop 2 yet: the P6 checks wait for it", ok: true });
+} else {
+  const ADMIN2 = "c2000000-0000-4000-8000-00000000000c";       // a second, made-up admin: someone else's request
+  const PC = "CHECK-PC#agents2";
+  const beat = async (extra) => {
+    client.as(PEOPLE.agents.id);
+    const r = await client.rpc("agents_heartbeat", { p_body: Object.assign({ host: PC, proto: 1, wants: true, version: "2.1.0",
+      consoleOn: true, consoleAt: new Date().toISOString(), assistantAt: new Date().toISOString() }, extra || {}) });
+    ok(!r.error, "the agents account beats: " + JSON.stringify(r.error));
+  };
+  const pcCall = async (name, args) => {
+    client.as(PEOPLE.agents.id);
+    const r = await client.rpc(name, args);
+    if (r.error) throw Object.assign(new Error(r.error.message), r.error);
+    return r.data;
+  };
+
+  await check("every name and parameter Portal 2 calls is M6's (console_request / _get / _cancel, my_assistant, assistant_op / _say / _pc_status, the office's four)", async () => {
+    const args = (n) => (catalog.functions[n] || []).map((f) => f.args.map((a) => a.name));
+    same(args("console_request"), [["p_method", "p_args"]], "console_request");
+    same(args("console_get"), [["p_id"]], "console_get");
+    same(args("console_cancel"), [["p_id"]], "console_cancel");
+    same(args("my_assistant"), [["p_agenda", "p_rev", "p_summary"]], "my_assistant");
+    same(args("assistant_op"), [["p_op", "p_body"]], "assistant_op");
+    same(args("assistant_say"), [["p_text", "p_client_id"]], "assistant_say");
+    same(args("assistant_pc_status"), [[]], "assistant_pc_status");
+    same(args("assistant_office_list"), [[]], "assistant_office_list");
+    same(args("assistant_set"), [["p_profile_id", "p_on", "p_office_reads"]], "assistant_set");
+    same(args("assistant_office_view"), [["p_profile_id"]], "assistant_office_view");
+    same(args("assistant_office_item"), [["p_profile_id", "p_do", "p_item_id", "p_item"]], "assistant_office_item");
+    for (const n of Object.values(asstRepo.RPC)) ok(catalog.functions[n], n + " exists");
+    await sql("reset role");
+    await sql("insert into auth.users (id, email) values ($1, $2) on conflict do nothing", [ADMIN2, "admin2@schema-check.test"]);
+    await sql("select set_config('request.jwt.claims', $1, false)", [JSON.stringify({ sub: PEOPLE.admin.id, role: "authenticated" })]);
+    await sql("set role authenticated");
+    await sql("insert into public.profiles (id, full_name, email, role) values ($1, 'Ada Second', 'admin2@schema-check.test', 'admin') on conflict do nothing", [ADMIN2]);
+    await sql("reset role");
+    await sql("select set_config('request.jwt.claims', '', false)");
+  });
+
+  await check("the console: an admin's request, read back with console_get (the old ?id= answer); someone else's id is the same PT404 as an unknown one; nobody but an admin asks or reads", async () => {
+    await beat();
+    await as("admin");
+    const st = cmap.consoleServer(await consoleRepo.status());
+    same([st.ready, st.server.host, st.server.consoleOn, st.server.online], [true, PC, true, true], "M6's status: ready, the console on");
+    const r = cmap.requestOf(await consoleRepo.request("agents.list", { all: true }));
+    ok(/^[0-9a-f-]{36}$/.test(r.id) && r.at, "{id, at}");
+    const g = await consoleRepo.get(r.id);
+    same(Object.keys(g).sort(), ["at", "doneAt", "error", "host", "id", "method", "result", "status", "takenAt"], "the old answer's keys");
+    same([g.status, g.method, g.result, g.error], ["new", "agents.list", null, null], "new");
+    const own = await client.from("agents_console").select("id, admin_id, status").eq("id", r.id);
+    same((own.data || []).length, 1, "the admin's own row is readable (Realtime on it)");
+    client.as(ADMIN2);
+    const e2 = await refused(() => consoleRepo.get(r.id), "PT404", "another admin's id");
+    same([e2.message, e2.hint], ["No such request.", "not_found"], "the same words as an unknown id");
+    await refused(() => consoleRepo.get("00000000-0000-4000-8000-000000000000"), "PT404", "an unknown id");
+    await refused(() => consoleRepo.get("junk"), "PT404", "junk");
+    await refused(() => consoleRepo.cancel(r.id), "PT404", "cancel someone else's");
+    same(((await client.from("agents_console").select("id").eq("id", r.id)).data || []).length, 0, "RLS: another admin reads nothing");
+    for (const k of ["manager", "manager2", "accountant", "lead", "field", "viewer", "inactive"]) {
+      await as(k);
+      await refused(() => consoleRepo.request("agents.list", {}), "42501", k + " asks");
+      await refused(() => consoleRepo.get(r.id), "42501", k + " reads");
+      same(((await client.from("agents_console").select("id")).data || []).length, 0, k + ": no row through the table");
+    }
+    client.as(PEOPLE.agents.id);
+    same((await client.rpc("console_request", { p_method: "agents.list", p_args: {} })).error.code, "42501", "the agents account never asks");
+    await as("admin");
+    same(await consoleRepo.cancel(r.id), { ok: true, status: "cancelled" }, "cancel while new");
+    same(await consoleRepo.cancel(r.id), { ok: false, status: "cancelled" }, "only once");
+    same((await consoleRepo.get(r.id)).error.code, "cancelled", "the old cancelled words");
+  });
+
+  await check("the console: the lease holder takes a request (atomically), answers it, and the admin reads the PC's data; expired and lost are worked out on read; the purge stores and then deletes them", async () => {
+    await beat();
+    await as("admin");
+    const r = await consoleRepo.request("dashboard.status", {});
+    const t = await pcCall("agents_console_take", { p_id: r.id, p_host: PC, p_timeout: 15 });
+    same([t.ok, t.request && t.request.id, t.request && t.request.method], [true, r.id, "dashboard.status"], "taken");
+    const again = await pcCall("agents_console_take", { p_id: r.id, p_host: PC, p_timeout: 15 });
+    same(again.again, true, "the same host asking again is answered again");
+    await as("admin");
+    same(await consoleRepo.cancel(r.id), { ok: false, status: "taken" }, "taken: too late to cancel");
+    await pcCall("agents_console_done", { p_id: r.id, p_result: { v: 1, ok: true, data: { cards: { sent: 3 } }, ms: 40, host: PC }, p_host: PC });
+    await as("admin");
+    const done = await consoleRepo.get(r.id);
+    same([done.status, done.result, done.host], ["done", { cards: { sent: 3 } }, PC], "the envelope's data");
+    // expired: new for more than 15 minutes; a read never writes; the purge stores it
+    const x = await consoleRepo.request("agents.list", {});
+    await sql("reset role");
+    await sql("update public.agents_console set at = now() - interval '16 minutes' where id = $1", [x.id]);
+    await as("admin");
+    const ex = await consoleRepo.get(x.id);
+    same([ex.status, ex.error && ex.error.code], ["expired", "expired"], "expired on read");
+    same((await one("select status from public.agents_console where id = $1", [x.id])).status, "new", "a read writes nothing");
+    // lost: taken past its timeout + 2 minutes
+    const y = await consoleRepo.request("agents.list", {});
+    await pcCall("agents_console_take", { p_id: y.id, p_host: PC, p_timeout: 15 });
+    await sql("reset role");
+    await sql("update public.agents_console set taken_at = now() - interval '140 seconds' where id = $1", [y.id]);
+    await as("admin");
+    const lost = await consoleRepo.get(y.id);
+    same([lost.status, lost.error && lost.error.code], ["error", "lost"], "lost on read");
+    await pcCall("agents_console_purge", { p_host: PC });
+    same((await one("select status from public.agents_console where id = $1", [x.id])).status, "expired", "the purge stores expired");
+    await sql("reset role");
+    await sql("update public.agents_console set done_at = now() - interval '11 minutes' where id = $1", [x.id]);
+    await pcCall("agents_console_purge", { p_host: PC });
+    await as("admin");
+    await refused(() => consoleRepo.get(x.id), "PT404", "deleted 10 minutes after it finished");
+    // nobody but the agents account runs the PC's side
+    for (const k of ["admin", "manager", "field"]) {
+      await as(k);
+      same((await client.rpc("agents_console_take", { p_id: null, p_host: PC, p_timeout: 15 })).error.code, "42501", k + " takes nothing");
+    }
+    await sql("reset role");
+    await sql("delete from public.agents_console");
+  });
+
+  await check("the console's limits through the bridge's words: 20 open (too_many), 60 a minute (rate, the wait in details), 20,000 characters (too_big), a method's shape", async () => {
+    await as("admin");
+    for (let i = 0; i < 20; i++) await consoleRepo.request("agents.list", { i });
+    const many = await refused(() => consoleRepo.request("agents.list", {}), "PT429", "21st open");
+    same([cmap.httpError(many).status, cmap.httpError(many).data.code], [429, "too_many"], "the shell's too_many");
+    await sql("reset role");
+    await sql("delete from public.agents_console");
+    await sql("delete from app.console_rates");
+    await sql("insert into app.console_rates (admin_id, at) select $1, now() from generate_series(1, 60)", [PEOPLE.admin.id]);
+    await as("admin");
+    const rate = await refused(() => consoleRepo.request("agents.list", {}), "PT429", "61st this minute");
+    const he = cmap.httpError(rate);
+    same([he.status, he.data.code], [429, "rate"], "the shell's rate");
+    ok(he.data.retryAfter > 0 && he.data.retryAfter <= 60, "how long to wait: " + he.data.retryAfter);
+    await sql("reset role");
+    await sql("delete from app.console_rates");
+    await as("admin");
+    same(cmap.httpError(await refused(() => consoleRepo.request("agents.list", { blob: "x".repeat(20001) }), "PT413", "too big")).data.code, "too_big", "too_big");
+    same(cmap.httpError(await refused(() => consoleRepo.request("Not A Method", {}), "22023", "a bad name")).status, 400, "400");
+    await sql("reset role");
+    await sql("delete from public.agents_console");
+    await sql("delete from app.console_rates");
+  });
+
+  await check("Realtime: an admin joins the change channel on their own requests; the agents account joins ONLY agents2-console and agents2-assistant", async () => {
+    const join = (topic) => new Promise((res) => client.channel(topic, { config: { private: true } }).subscribe((s) => res(s)));
+    await as("admin");
+    same(await new Promise((res) => {
+      let stop = null;
+      const t = setTimeout(() => { if (stop) stop(); res("timeout"); }, 3000);
+      consoleRepo.watchMine(PEOPLE.admin.id, (evt) => { if (evt.type === "SUBSCRIBED") { clearTimeout(t); if (stop) stop(); res("SUBSCRIBED"); } }).then((s) => { stop = s; });
+    }), "SUBSCRIBED", "the admin's own rows");
+    await as("field");
+    same(await new Promise((res) => {
+      let stop = null;
+      const t = setTimeout(() => { if (stop) stop(); res("timeout"); }, 3000);
+      asstRepo.watchMine(PEOPLE.field.id, (evt) => { if (evt.type === "SUBSCRIBED") { clearTimeout(t); if (stop) stop(); res("SUBSCRIBED"); } }).then((s) => { stop = s; });
+    }), "SUBSCRIBED", "a person's own assistant rows");
+    client.as(PEOPLE.agents.id);
+    same(await join("agents2-console"), "SUBSCRIBED", "agents2-console");
+    same(await join("agents2-assistant"), "SUBSCRIBED", "agents2-assistant");
+    for (const topic of ["agents2-other", "presence:dcr", "dcr-agents_console-9", "dcr-assistant_messages-9"]) same(await join(topic), "CHANNEL_ERROR", topic);
+    await as("field");
+    same(await join("agents2-console"), "CHANNEL_ERROR", "a person never joins the PC's channel");
+    for (const ch of client.channels) ch.unsubscribe();
+  });
+
+  await check("My Assistant: 'ask the office' until it is on; the old GET (the state, the agenda scrubbed of amounts, 'unchanged' at the same revision, the badge's counts); the old POST ops as the page sends them", async () => {
+    await beat();
+    await as("field");
+    const off = await asstRepo.page({ agenda: true });
+    same([off.enabled, off.message], [false, "Your assistant isn’t turned on yet — ask the office."], "off");
+    const none = await asstRepo.page({ summary: true });
+    same([none.enabled, none.unread, none.dueToday, asmap.assistantBadge(none)], [false, 0, 0, null], "the badge: nothing");
+    await refused(() => asstRepo.say("Hello", "c-1"), "42501", "not on: nothing is said");
+    await as("admin");
+    same((await asstRepo.officeSet(PEOPLE.field.id, true, true)).created, true, "the office turns it on");
+    // a task of the field person's with an amount in its words: the agenda carries it scrubbed
+    await sql("reset role");
+    await sql(`insert into public.tasks (title, assigned_to, status, created_by) values ('Order hold-downs $1,240 at the yard', $1, 'open', $2)`,
+      [PEOPLE.field.id, PEOPLE.admin.id]);
+    await as("field");
+    const d = await asstRepo.page({ agenda: true });
+    same([d.enabled, d.firstName, d.officeReads, d.tz], [true, "Flo", true, "America/Los_Angeles"], "on");
+    for (const k of ["rev", "waiting", "chat", "items", "memory", "prefs", "unread", "dueToday", "pc", "today", "now", "generatedAt", "agenda"]) ok(k in d, k);
+    same(Object.keys(d.agenda).sort(), ["hours", "projects", "sites", "tasks", "timesheets"], "the agenda");
+    const task = d.agenda.tasks.find((t) => /hold-downs/.test(t.name));
+    ok(task && !/\$\s?\d|1,240/.test(task.name), "the task's words without the amount: " + (task && task.name));
+    same(Object.keys(d.pc).sort(), ["chatAt", "lastSeen", "minutesAgo", "paused"], "the PC, nothing else");
+    same((await asstRepo.page({ rev: d.rev })).unchanged, true, "unchanged at the same revision");
+    // the old POST, exactly as my-assistant.js sends each op
+    const s1 = await asstRepo.say("What do I have tomorrow?", "c-1");
+    same([s1.ok, s1.message.status, /^m_/.test(s1.message.id)], [true, "waiting", true], "say");
+    same((await asstRepo.say("What do I have tomorrow?", "c-1")).already, true, "the same client id: once");
+    await refused(() => asstRepo.say("x".repeat(1501), "c-2"), "22023", "1,500 characters");
+    for (let i = 0; i < 4; i++) await asstRepo.say("q" + i, "w" + i);
+    const five = await refused(() => asstRepo.say("one more", "w9"), "PT409", "five waiting");
+    same(five.message, "Wait for your assistant to answer first.", "the old words");
+    const todo = await asstRepo.op("item.add", { item: { kind: "todo", text: "Sign the safety sheet", due: "", notes: "" } });
+    same([todo.ok, todo.item.kind, todo.item.by, /^i_/.test(todo.item.id)], [true, "todo", "employee", true], "item.add (a to-do)");
+    const rem = await asstRepo.op("item.add", { item: { kind: "reminder", text: "Call the yard", at: d.today + "T15:00" } });
+    same(rem.item.at, d.today + "T15:00", "a reminder keeps the wall clock");
+    const ev = await asstRepo.op("item.add", { item: { kind: "event", text: "Inspection", at: d.today + "T09:00", end: "", location: "", remind: 30, notes: "" } });
+    same([ev.item.kind, ev.item.remind], ["event", 30], "an event");
+    const up = await asstRepo.op("item.update", { id: rem.item.id, patch: { text: "Call the lumber yard", at: d.today + "T15:30" } });
+    same([up.item.text, up.item.at], ["Call the lumber yard", d.today + "T15:30"], "item.update");
+    same((await asstRepo.op("item.complete", { id: todo.item.id, done: true })).item.done, true, "item.complete");
+    same((await asstRepo.op("item.delete", { id: ev.item.id })).ok, true, "item.delete");
+    await refused(() => asstRepo.op("prefs.set", { prefs: { eveningAt: "21:30" } }), "22023", "a briefing after 20:45");
+    same((await asstRepo.op("prefs.set", { prefs: { eveningAt: "19:00", language: "es" } })).prefs.language, "es", "prefs.set");
+    const mem = await asstRepo.op("memory.add", { text: "I start at 7" });
+    ok(mem.memory.some((n) => n.text === "I start at 7" && n.by === "employee"), "memory.add");
+    same((await asstRepo.op("memory.delete", { id: mem.memory[0].id })).ok, true, "memory.delete");
+    same((await asstRepo.op("read")).ok, true, "read");
+    const sum = await asstRepo.page({ summary: true });
+    same([sum.enabled, sum.unread, sum.dueToday >= 1], [true, 0, true], "the badge's counts: read, and today's reminder");
+    same(asmap.assistantBadge(sum), { text: sum.dueToday + " today", cls: "dim" }, "the home page's badge");
+  });
+
+  await check("the office: the list (never the agents account), the view with the chat ONLY while office_reads is on (chatHidden otherwise), the office's own items read-only for the person; only an admin", async () => {
+    await as("admin");
+    const list = await asstRepo.officeList();
+    ok(list.length > 0 && list.every((p) => p.profile_id !== PEOPLE.agents.id), "everyone but the agents account");
+    const flo = list.find((p) => p.profile_id === PEOPLE.field.id);
+    same([flo.on, flo.officeReads, flo.role], [true, true, "Field"], "Flo's row");
+    ok((await asstRepo.officeView(PEOPLE.field.id)).chat.length > 0, "office reads on: the chat");
+    await asstRepo.officeSet(PEOPLE.field.id, true, false);
+    const hid = await asstRepo.officeView(PEOPLE.field.id);
+    same([hid.chatHidden, hid.chat, hid.memory], [true, [], []], "office reads off: none of it");
+    ok(hid.items.length > 0, "the items: always");
+    same(((await client.from("assistant_messages").select("id").eq("profile_id", PEOPLE.field.id)).data || []).length, 0, "RLS agrees: no message through the table");
+    await asstRepo.officeSet(PEOPLE.field.id, true, true);
+    // on again: only what is written from now on (M6 office_reads_since - review fix), starting with the note that tells Flo
+    const again = (await client.from("assistant_messages").select("role, text").eq("profile_id", PEOPLE.field.id)).data || [];
+    same(again.map((m) => m.role), ["office"], "on again: only from now on - nothing written while it was off");
+    ok(/from this message on|desde este mensaje/.test(again[0].text), "the note that tells Flo: " + again[0].text);
+    const view = await asstRepo.officeView(PEOPLE.field.id);
+    same([view.chat.map((m) => m.role), !!view.officeReadsSince], [["office"], true], "the office view says the same, and from when");
+    const add = await asstRepo.officeItem(PEOPLE.field.id, "add", null, asmap.itemFields("todo", { text: "Bring the hours by Friday", due: "" }));
+    ok(add.ok && add.ids && add.ids.length === 1, "the office's item: " + JSON.stringify(add));
+    const id = add.ids[0];
+    await asstRepo.officeItem(PEOPLE.field.id, "update", id, asmap.itemFields("todo", { text: "Bring the hours by Friday noon", due: "" }, true));
+    await as("field");
+    const mine = await asstRepo.page({});
+    const it = mine.items.find((i) => i.id === id);
+    same([it.by, it.text], ["office", "Bring the hours by Friday noon"], "the person sees it");
+    const ro = await refused(() => asstRepo.op("item.update", { id, patch: { text: "mine now" } }), "42501", "the person may not change it");
+    same(ro.message, "The office added this one.", "the old words");
+    await refused(() => asstRepo.op("item.delete", { id }), "42501", "nor delete it");
+    same((await asstRepo.op("item.complete", { id, done: true })).item.done, true, "only tick it done");
+    same(((await client.from("assistant_messages").select("profile_id")).data || []).every((m) => m.profile_id === PEOPLE.field.id), true, "a person reads only their own messages");
+    const ins = await client.from("assistant_messages").insert({ id: "m_zzzzzzzz", profile_id: PEOPLE.field.id, role: "user", text: "x", status: "waiting" });
+    ok(ins.error && ins.error.code === "42501", "nobody writes a row directly");
+    for (const k of ["manager", "manager2", "accountant", "lead", "viewer"]) {
+      await as(k);
+      await refused(() => asstRepo.officeList(), "42501", k + " list");
+      await refused(() => asstRepo.officeView(PEOPLE.field.id), "42501", k + " view");
+      await refused(() => asstRepo.officeSet(PEOPLE.field.id, false), "42501", k + " set");
+      await refused(() => asstRepo.officeItem(PEOPLE.field.id, "add", null, { kind: "todo", text: "x" }), "42501", k + " item");
+      same(((await client.from("assistant_messages").select("id").eq("profile_id", PEOPLE.field.id)).data || []).length, 0, k + ": nobody else's chat");
+    }
+    await as("admin");
+    await refused(() => asstRepo.officeSet(PEOPLE.agents.id, true), "PT404", "never the agents account");
+    client.as(PEOPLE.agents.id);
+    same(((await client.from("assistant_profiles").select("profile_id")).data || []).length, 0, "the agents account reads no profile row");
+    same(((await client.from("assistant_messages").select("id")).data || []).length, 0, "it reads NO row of the chat (review fix: no words, no amounts)");
+    const waiting = (await client.from("assistant_waiting").select("*")).data || [];
+    ok(waiting.length > 0 && waiting.every((w) => !("text" in w) && w.id && w.profile_id), "the questions waiting reach it as ids (assistant_waiting, its Realtime)");
+    same((await client.rpc("my_assistant", { p_agenda: false, p_rev: null, p_summary: false })).error.code, "42501", "and has no assistant");
+    await as("admin");
+    await asstRepo.officeSet(PEOPLE.field.id, false);
+    await as("field");
+    same((await asstRepo.page({})).enabled, false, "turned off: 'ask the office' again");
+  });
+}
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

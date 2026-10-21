@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — DCR Agents 2</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/agents-console.css" />
+    <link rel="stylesheet" href="css/console-print.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <!-- never inside another site's frame: hidden before the first paint (the shell offers its own window) -->
+    <script src="js/console/framed.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <main class="c-app" id="cApp">
+      <div class="c-status" id="cStatus" role="status" aria-live="polite">
+        <div class="c-st-main"><span class="c-dot" id="cDot"></span><span class="c-st-text" id="cStatusText">Checking the DCR server…</span></div>
+        <span class="c-st-work" id="cWorking"></span>
+      </div>
+      <div class="c-banners" id="cBanners"></div>
+      <nav class="c-tabs" id="cTabs" role="tablist" aria-label="DCR Agents 2"></nav>
+      <div id="cView"><div class="c-skel"></div><div class="c-skel"></div></div>
+    </main>
+
+    <div class="c-framed-note" id="cFramed" hidden></div>
+    <div class="c-toasts" id="cToasts" role="status" aria-live="polite"></div>
+    <!-- the Print view: hidden on screen, the only thing printed (ctx.print) -->
+    <div id="cPrint"></div>
+
+    <!-- the old console, unchanged: the shell, then its eight tabs (classic scripts, in order) -->
+    <script src="js/console/shell.js"></script>
+    <script src="js/console/console-dashboard.js"></script>
+    <script src="js/console/console-agents.js"></script>
+    <script src="js/console/console-work.js"></script>
+    <script src="js/console/console-photo.js"></script>
+    <script src="js/console/console-assistants.js"></script>
+    <script src="js/console/console-training.js"></script>
+    <script src="js/console/console-people.js"></script>
+    <script src="js/console/console-settings.js"></script>
+    <!-- Portal 2's data layer under it (supabase-js, Realtime): installed before the shell boots -->
+    <script type="module" src="js/console/bridge.js"></script>
+  </body>
+</html>

@@ -8,7 +8,9 @@
      (the UPDATE that hid the row is not delivered to people who may not see deleted rows), so
      watch() of a soft-delete table also listens there and hands it on as a DELETE.
    - A channel that fails (refused, timed out, closed) is dropped and subscribed again on a fresh
-     topic, with back-off.
+     topic, with back-off. A page that paces its own reads by whether the channel is live passes
+     {lost: true} and hears {type: "LOST", table, status} each time it goes (then SUBSCRIBED again
+     when it is back), so it never keeps a slow "Realtime is live" pace on a dead channel.
    - Presence uses DCR Desktop 2's payload {user_id, name, color, view, editing, project, since}
      so office and web users see each other. Phones track presence only while a project page is
      open (the pages decide when to call presence()).                                           */
@@ -58,10 +60,13 @@ function serverFilter(f) {
   return first ? first.col + "=" + first.op + "." + first.val : null;
 }
 
-/** watch("projects", "status=eq.in_progress", cb) -> unsubscribe.
+/** watch("projects", "status=eq.in_progress", cb, opts) -> unsubscribe.
     cb({type: "SUBSCRIBED"}) after every join (read again then);
-    cb({type: "INSERT"|"UPDATE"|"DELETE", table, new, old}) for each change the person may see. */
-export function watch(table, filter, cb) {
+    cb({type: "INSERT"|"UPDATE"|"DELETE", table, new, old}) for each change the person may see;
+    with opts.lost, cb({type: "LOST", table, status}) whenever the channel stops being live (refused,
+    timed out, closed) - the page goes back to its own pace until the next SUBSCRIBED. */
+export function watch(table, filter, cb, opts) {
+  const tellLost = !!(opts && opts.lost);
   let stopped = false;
   let ch = null;
   let tries = 0;
@@ -110,11 +115,14 @@ export function watch(table, filter, cb) {
     mine.subscribe((status) => {
       if (ch !== mine || stopped) return;
       if (status === "SUBSCRIBED") { tries = 0; deliver({ type: "SUBSCRIBED", table }); }
-      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") retry();
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        if (tellLost) deliver({ type: "LOST", table, status });
+        retry();
+      }
     });
   }
 
-  try { subscribe(); } catch (e) { retry(); }
+  try { subscribe(); } catch (e) { if (tellLost) deliver({ type: "LOST", table, status: "ERROR" }); retry(); }
   return function unsubscribe() {
     stopped = true;
     clearTimeout(timer);

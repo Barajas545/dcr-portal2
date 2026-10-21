@@ -32,6 +32,9 @@
    - phase 4 (M4, BLUEPRINT 2.3.5): agents_server_status — an admin's only (42501 for anyone else) — from the
      DCR Agents 2 PC's last heartbeat the seed made up (data.agents_server), with the database's rules
      (online within 3 minutes, 12 for an older build; the lease holder is the server);
+   - phase 6 (M6, BLUEPRINT 3.3.10): the console relay (agents_console) and the personal assistants
+     (assistant_profiles / _messages / _items / _memory), their rules and RPCs, in tools/fake/p6.js (an
+     extension this engine hands its internals to: NS.p6Tables for the columns, NS.p6 for the rules);
    - Storage: simple uploads, TUS resumable uploads (6 MiB chunks), signed URLs, with the
      project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read).
    Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
@@ -44,9 +47,10 @@
   const FOLDERS = ["plans", "photos", "documents", "estimates", "invoices", "receipts", "item", "journal", "thumbnail"];
   const ROLES = ["admin", "manager", "lead", "accountant", "field", "viewer", "agents"];
   const SOFT = new Set(["contacts", "projects", "journal_entries", "files"]);
+  const P6 = NS.p6Tables || { tables: [], cols: {}, pk: {}, uuid: [], noAudit: [] };   // tools/fake/p6.js (loaded first)
   const TABLES = ["profiles", "settings", "settings_prices", "contacts", "projects", "project_prices", "activity",
     "journal_entries", "files", "tasks", "task_notes", "deletions",
-    "employees", "crew_members", "timesheets", "timesheet_confirmations", "notifications_outbox", "push_subscriptions"];
+    "employees", "crew_members", "timesheets", "timesheet_confirmations", "notifications_outbox", "push_subscriptions"].concat(P6.tables);
   const TS_KINDS = ["work", "holiday", "vacation", "sick", "day_off"];
   const TS_SOURCES = ["portal", "desktop", "agents_sms", "agents_email", "agents_whatsapp", "agents_app", "import"];
   const NO_DIRECT = new Set(["timesheet_confirmations"]);     // RLS on, no policies: RPCs only
@@ -54,9 +58,9 @@
   const PEOPLE_VIA = ["desktop", "portal"];                    // M3: only the agents role files a channel's words
   const TASK_DAYS = 5;                                         // app.task_clock: needs an update after MORE than 5 days
   const VIEWS = { current_files: "files" };
-  const PK = { project_prices: "project_id" };
-  const UUID_PK = new Set(["profiles"]);
-  const NO_AUDIT = new Set(["deletions", "notifications_outbox"]);
+  const PK = Object.assign({ project_prices: "project_id" }, P6.pk);
+  const UUID_PK = new Set(["profiles"].concat(P6.uuid));
+  const NO_AUDIT = new Set(["deletions", "notifications_outbox"].concat(P6.noAudit));
   const LOCAL_CITIES = ["Pine Hollow", "Cedar Flats", "Oak Vista", "Sage Valley", "Sandbox"];
   const TZ = "America/Los_Angeles";
   const CHUNK = 6 * 1024 * 1024;
@@ -104,6 +108,7 @@
     push_subscriptions: Object.assign({ id: null, profile_id: null, endpoint: null, p256dh: null, auth: null, device: null, last_ok_at: null }, AUDIT),
   };
   COLS.current_files = COLS.files;
+  for (const [t, c] of Object.entries(P6.cols)) COLS[t] = Object.assign({}, c, P6.noAudit.includes(t) ? {} : AUDIT);
 
   const FKS = [
     ["projects", "client_contact_id", "contacts"],
@@ -368,6 +373,7 @@
     const opListeners = new Set();
     let quiet = 0;
     let agentsServer = null;      // M4: the DCR Agents 2 PC's last heartbeat (demo: made up by the seed)
+    let ext = null;               // M6: tools/fake/p6.js, handed this engine's internals below
 
     const nowIso = () => clock().toISOString();
     const today = () => companyDay(clock());
@@ -478,7 +484,7 @@
           if (["admin", "manager", "accountant"].includes(w.role)) return true;
           return r.lead_profile_id === w.uid || (myEmployeeId(w) !== null && r.employee_id === myEmployeeId(w));
         case "timesheets": return tsReads(w, r.employee_id);
-        default: return false;
+        default: return ext && ext.tables.has(table) ? ext.canRead(w, table, r) : false;
       }
     }
 
@@ -1303,6 +1309,7 @@
     function rpc(ctx, name, args) {
       const w = who(ctx);
       if (!w.uid) throw new PgErr("42501", "permission denied for function " + name, 401);
+      if (ext && ext.handles(name)) { ext.checkArgs(name, args); return ext.rpc(w, name, args || {}); }
       checkArgs(name, args);
       switch (name) {
         case "create_project": {
@@ -1496,19 +1503,21 @@
           return myTasks(w, arg(args, "p_view"));
         }
         case "agents_server_status": {
-          // an admin only (Portal 2's home page); the shape of public.agents_server_status() (M4)
+          // an admin only (Portal 2's home page, the console's status bar); the shape of public.agents_server_status()
+          // as M6 left it: ready (the console relay is in), consoleOn from the PC's own heartbeat (never in Standby)
           if (!w.admin) throw deny("Only an admin can read the DCR Agents 2 status.");
           const at = nowIso();
           const s = agentsServer;
-          if (!s) return { ready: false, server: null, lease: null, others: [], status: null, minutesAgo: null, generatedAt: at };
+          if (!s) return { ready: true, server: null, lease: null, others: [], status: null, minutesAgo: null, generatedAt: at };
           const minutes = Math.max(0, Math.round((clock().getTime() - Date.parse(s.at)) / 60000));
           const pay = s.payload || {};
           return {
-            ready: false,
+            ready: true,
             server: { host: s.host_id, version: s.version || "", proto: s.proto || 0, lastSeen: s.at, minutesAgo: minutes,
               online: minutes <= (s.proto ? 3 : 12), standby: !!s.standby, paused: pay.paused === true, lastError: pay.lastError || "",
               sentToday: pay.sentToday || 0, failedToday: pay.failedToday || 0, repliesToday: pay.repliesToday || 0,
-              enabledAgents: pay.enabledAgents || 0, consoleAt: "", consoleOn: false, assistantAt: "" },
+              enabledAgents: pay.enabledAgents || 0, consoleAt: pay.consoleAt || "", consoleOn: pay.consoleOn === true && !s.standby,
+              assistantAt: pay.assistantAt || "" },
             lease: { host: s.host_id, since: s.since || s.at, by: "started as the DCR server" },
             others: [], status: Object.assign({}, pay, { at: s.at, host: s.host_id }), minutesAgo: minutes, generatedAt: at,
           };
@@ -1951,11 +1960,23 @@
       for (const cb of Array.from(listeners)) { try { cb(evt); } catch (e) { /* */ } }
     }
 
+    /* M6 (tools/fake/p6.js): the P6 tables' rules and RPCs, over this engine's own internals */
+    if (typeof NS.p6 === "function") {
+      ext = NS.p6({
+        rows, seq, COLS, clone, clock, nowIso, today, companyDay, addDaysYmd, PgErr, deny, rule, who, profileOf,
+        nextId, auditInsert, auditUpdate, commitInsert, commitUpdate, commitDelete, readable, emitOp,
+        server: () => agentsServer, beat: (at) => { if (agentsServer) { agentsServer.at = at || nowIso(); } },
+        myTasks: (w, view) => myTasks(w, view), myEmployeeId,
+      });
+    }
+
     return {
       PgErr, COLS, TABLES, FKS,
       select, insert, update, delete: del, rpc, storage,
       upsert: (ctx, table, input, q) => insert(ctx, table, input, Object.assign({}, q, { upsert: true })),
       who, canRead, profileOf,
+      /** M6: the demo DCR server's side (tools/fake/p6.js): take / answer console requests, answer chats */
+      get p6() { return ext; },
       /** an Edge Function call (only "push" exists in the demo): {status, data} */
       invoke: invokeFunction,
       load, applyOps,

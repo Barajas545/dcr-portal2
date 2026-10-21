@@ -4,13 +4,19 @@
    The My Tasks card carries the old badge: how many of your own tasks need an update (red: somebody's
    job today), else how many are open, else the crew's, dimmed (rpc my_tasks_summary, counts only).
    An admin also sees one line about DCR Agents 2's PC: "DCR Agents 2 PC - last seen N min ago" (rpc
-   agents_server_status, an admin's only; M4). */
+   agents_server_status, an admin's only; M4).
+   P6: everyone has My Assistant (their personal DCR assistant: the page says "ask the office" until the
+   office turns it on), with the old badge: answers not read yet, else what is due today (their own rows);
+   an admin also has DCR Agents 2 (the web console: the agents, photo plans, assistants and training on the
+   DCR server, with the server's dot) and Assistants (who has one, the office reading, the office's items). */
 import { requireAuth, topbar, el, companyInfo, roleLabel } from "../common2.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
 import { summaryOf, badgeOf } from "../map/tasks.js";
 import { serverStatus } from "../repo/agents.js";
 import { serverLine } from "../map/agents.js";
+import { page as assistantPage } from "../repo/assistant.js";
+import { assistantBadge } from "../map/assistant.js";
 import { drain } from "../upload-queue2.js";
 import { startSweeper } from "../pages/journal-sync.js";
 import { mountSwitch } from "../push2.js";
@@ -51,12 +57,22 @@ export function cardsFor(p, opts) {
       ds: "Submit time for a whole crew at once." },
   ] });
   sections.push({ label: "You", cards: [
+    /* beside Settings: the other card about the person's own day; its badge says how many answers they
+       have not read, or what is due today */
+    { href: "my-assistant.html", ic: "🤖", tt: "My Assistant", id: "hmMyAssistant",
+      ds: "Your day, reminders and a chat with your DCR assistant." },
     { href: "settings.html", ic: "⚙️", tt: "Settings", ds: "Your name and phone, phone reminders, how Portal 2 looks, and your password." },
   ] });
   if (role === "admin" || role === "manager") {
     sections.push({ label: "Admin", cards: [
       { href: "admin.html", ic: "👷", tt: "Employees & crews",
         ds: "Everyone who logs time: phones, normal hours, the account each signs in with, and each lead's crew." },
+      /* DCR Agents 2 on the DCR server computer, managed from here by every admin with their own
+         account; its dot is the server's pulse (the same rpc agents_server_status as the line above) */
+      { href: "agents-console.html", ic: "🛰️", tt: "DCR Agents 2", id: "hmAgentsConsole", show: role === "admin",
+        ds: "Manage the reminder agents, photo plans, assistants and training on the DCR server." },
+      { href: "assistant-admin.html", ic: "🤖", tt: "Assistants", show: role === "admin",
+        ds: "Who has a personal assistant, whether the office reads the chat, and the office's reminders for each person." },
       { info: true, ic: "🔐", tt: "Users and roles", show: role === "admin",
         ds: "Invite people, set roles and switches, reset passwords and turn accounts off in DCR Desktop 2: Users." },
     ] });
@@ -94,10 +110,35 @@ async function myTasksBadge() {
   tt.appendChild(el("span", { class: "hm-badge " + b.cls }, b.text));
 }
 
+/** The My Assistant badge (map/assistant.js assistantBadge) from the counts-only answer (rpc my_assistant
+    p_summary: {enabled, unread, dueToday}); an assistant that is not on, or any failure (M6 not deployed yet,
+    offline), leaves the card. */
+async function myAssistantBadge() {
+  let b = null;
+  try { b = assistantBadge(await assistantPage({ summary: true })); } catch (e) { return; }
+  const card = $("hmMyAssistant");
+  if (!card || !b) return;
+  const tt = card.querySelector(".tt");
+  const old = tt.querySelector(".hm-badge");
+  if (old) old.remove();
+  tt.appendChild(el("span", { class: "hm-badge " + b.cls }, b.text));
+}
+
+/** The DCR Agents 2 card's dot: green while the server reports, amber once it has gone quiet. */
+function agentsConsoleDot(line) {
+  const card = $("hmAgentsConsole");
+  if (!card || !line) return;
+  const tt = card.querySelector(".tt");
+  const old = tt.querySelector(".hm-dot");
+  if (old) old.remove();
+  tt.appendChild(el("span", { class: "hm-dot " + line.cls, title: line.text, "aria-label": line.text }));
+}
+
 /** An admin's line about DCR Agents 2's PC; any failure (the RPC not deployed yet, offline) leaves it hidden. */
 async function agentsLine() {
   let line = null;
   try { line = serverLine(await serverStatus(), new Date()); } catch (e) { return; }
+  agentsConsoleDot(line);
   const box = $("hmAgents");
   if (!box || !line) return;
   box.innerHTML = "";
@@ -128,8 +169,9 @@ async function start() {
   });
   render(p);
   // a lead's Batch Entry card waits for their crew (crew_members: their own rows)
-  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { render(p, { hasCrew: true }); myTasksBadge(); } }).catch(() => null);
+  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { render(p, { hasCrew: true }); myTasksBadge(); myAssistantBadge(); } }).catch(() => null);
   myTasksBadge();
+  myAssistantBadge();
   if (p.role === "admin") agentsLine();
   notes();
   mountSwitch("pushSlot");
