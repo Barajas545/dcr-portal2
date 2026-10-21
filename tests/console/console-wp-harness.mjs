@@ -17,6 +17,9 @@
    with a target whose closest() finds the element the test names by its
    attributes. Not a browser: enough to prove what is drawn, what is
    escaped and what is sent. */
+// Company time for every console page test: the console shows times in the browser's own zone (the
+// office's browsers are all on Pacific time), and GitHub's runner is UTC. Node applies a TZ change at once.
+process.env.TZ = "America/Los_Angeles";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 

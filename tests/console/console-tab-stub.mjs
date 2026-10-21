@@ -9,6 +9,9 @@
    from the test's own function — act() is the shell's confirm flow,
    modal() answers from a queue, and everything asked is recorded. Not a
    test file itself (no .test. in the name). */
+// Company time for every console page test: the console shows times in the browser's own zone (the
+// office's browsers are all on Pacific time), and GitHub's runner is UTC. Node applies a TZ change at once.
+process.env.TZ = "America/Los_Angeles";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 

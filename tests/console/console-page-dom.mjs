@@ -14,6 +14,9 @@
    openConsole() loads agents-console.html's body, runs the shell and the
    given modules in a vm context with window.__DCR_CONSOLE_TEST__ set, a
    fake clock, a fake DCR (api, requireAuth, modal, confirm) and storage. */
+// Company time for every console page test: the console shows times in the browser's own zone (the
+// office's browsers are all on Pacific time), and GitHub's runner is UTC. Node applies a TZ change at once.
+process.env.TZ = "America/Los_Angeles";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
