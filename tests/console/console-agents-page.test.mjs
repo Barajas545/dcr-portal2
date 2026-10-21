@@ -393,3 +393,65 @@ test("an agent stored with no end time (until null) opens with 23:59, as the des
   assert.equal(saved.length, 1, "no “Pick the no later than time” refusal");
   assert.equal(saved[0].agent.schedule.until, "23:59");
 });
+
+/* "Also e-mail every message" (rules.also_email) came with DCR Agents 2 2.1.1. The PC
+   says so in its agents.form (also_email: label + note); a 2.1.0 PC's closed agent
+   schema refuses the key ("agent.rules.also_email is not something this takes"),
+   so the box and the key follow the PC's form. */
+const ALSO_FORM = { also_email: { label: `Also e-mail ${EVIL}`, note: `Once per reminder ${EVIL}` } };
+const closedSchema = (a) => {
+  if (a.agent && a.agent.rules && "also_email" in a.agent.rules) throw refused("agent.rules.also_email is not something this takes");
+};
+
+test("“Also e-mail every message”, on a PC that describes it: a box under the channels in the PC's words; it opens as stored, ticks, and is checked and saved in the rules", async () => {
+  const saved = [];
+  const { h, of } = await open("#/agents/edit/0254698b3f0a", editorAnswers({
+    "agents.get": { agent: agent({ rules: { ...agent().rules, also_email: true } }), rev: "r", form: form(ALSO_FORM) },
+    "agents.save": (a) => { saved.push(a); return { agent: a.agent, rev: "1111222233334444", words: "Saved." }; } }));
+  assert.deepEqual(scan(h.view()), []);
+  const box = h.$("ae-alsoemail");
+  assert.equal(box.checked, true, "opens as stored");
+  assert.ok(box.closest("#ae-pane-who"), "on Who and how, with the channels");
+  assert.equal(box.closest("label").textContent.trim(), `Also e-mail ${EVIL}`);
+  assert.equal(h.$("ae-alsonote").textContent, `Once per reminder ${EVIL}`);
+  assert.equal(plain(h.C._agents.collect()).rules.also_email, true);
+  await h.click(box);
+  assert.equal(plain(h.C._agents.collect()).rules.also_email, false);
+  await h.settle(6000);
+  assert.equal(of("agents.check").at(-1).args.agent.rules.also_email, false, "the live check has it");
+  await h.click("ae-save");
+  await h.settle(10);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].agent.rules.also_email, false, "saved in the rules");
+  /* an agent stored before 2.1.1 (no field) on such a PC: the box opens clear */
+  const fresh = await open("#/agents/edit/0254698b3f0a", editorAnswers({ "agents.get": { agent: agent(), rev: "r", form: form(ALSO_FORM) } }));
+  assert.equal(fresh.h.$("ae-alsoemail").checked, false);
+  assert.equal(plain(fresh.h.C._agents.collect()).rules.also_email, false);
+});
+
+test("on a PC whose form does not describe it (2.1.0): no box, and rules.also_email is never sent — Check, Save and Preview keep working against its closed schema", async () => {
+  const saved = [];
+  const { h, of } = await open("#/agents/edit/0254698b3f0a", editorAnswers({
+    /* stored on the PC with the field (say a 2.1.1 that was rolled back): it stays there */
+    "agents.get": { agent: agent({ rules: { ...agent().rules, also_email: true } }), rev: "r", form: form() },
+    "agents.check": (a) => { closedSchema(a); return { problems: [], segments: { text: "", warn: false }, agent: a.agent }; },
+    "agents.save": (a) => { closedSchema(a); saved.push(a); return { agent: a.agent, rev: "1111222233334444", words: "Saved." }; },
+    "agents.preview": (a) => { closedSchema(a); return { found: 0, would_send: 0, held: 0, skipped: 0, headers: [], rows: [], error: "", words: "0 found." }; } }));
+  assert.equal(h.$("ae-alsoemail"), null, "no box");
+  assert.equal(h.$("ae-alsonote"), null);
+  assert.doesNotMatch(h.$("ae-pane-who").textContent, /Also e-mail/);
+  assert.equal("also_email" in plain(h.C._agents.collect()).rules, false, "no key");
+  await h.change("ae-subject", "Changed subject");
+  await h.settle(6000);
+  await h.click("ae-previewbtn");
+  await h.settle(10);
+  await h.click("ae-save");
+  await h.settle(10);
+  assert.ok(of("agents.check").length >= 1);
+  for (const c of [...of("agents.check"), ...of("agents.preview"), ...of("agents.save")]) {
+    assert.equal("also_email" in c.args.agent.rules, false, c.method + " sent no also_email");
+  }
+  assert.equal(of("agents.preview").length, 1);
+  assert.equal(saved.length, 1, "saved — not refused");
+  assert.equal(h.ctx.location.hash, "#/agents", "and back to the list");
+});

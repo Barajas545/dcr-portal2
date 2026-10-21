@@ -12,10 +12,34 @@ const OLD = "C:/DCR/DCR Internal Website/dcr-portal/";
 const MODULES = ["console-dashboard.js", "console-agents.js", "console-work.js", "console-photo.js", "console-assistants.js",
   "console-training.js", "console-people.js", "console-settings.js"];
 const lf = (s) => s.replace(/\r\n/g, "\n");
+/* DCR Agents 2 2.1.1 added one thing to the Agents tab that DCR Agents 1 never
+   had: the "Also e-mail every message" box under the channels (rules.also_email).
+   Taken out again — each piece exactly once, so a change to it shows here —
+   the module is still the old portal's, byte for byte. */
+const ALSO_EMAIL_2_1_1 = [
+  [/\n\n  \/\* "Also e-mail every message" \(rules\.also_email, DCR Agents 2 2\.1\.1\)[\s\S]*?\n  function alsoHtml\(form, r\) \{\n[^\n]*\n[^\n]*\n  \}/, ""],
+  [` On this screen, ↑ and ↓ change the order.</p>" + alsoHtml(form, r) + "</fieldset>" +`,
+   ` On this screen, ↑ and ↓ change the order.</p></fieldset>" +`],
+  ["\n    var out = {\n      id: text(S.agent.id), name: val(\"ae-name\").trim(),", "\n    return {\n      id: text(S.agent.id), name: val(\"ae-name\").trim(),"],
+  ["\n    };\n    if (alsoOffered(form) && $(\"ae-alsoemail\")) out.rules.also_email = on(\"ae-alsoemail\");\n    return out;\n  }",
+   "\n    };\n  }"],
+  ["\n        if (cur.rules && \"also_email\" in cur.rules) next.rules.also_email = !!cur.rules.also_email;", ""],
+];
+function withoutAlsoEmail(src) {
+  for (const [from, to] of ALSO_EMAIL_2_1_1) {
+    const n = typeof from === "string" ? src.split(from).length - 1 : (src.match(new RegExp(from.source, "g")) || []).length;
+    assert.equal(n, 1, "the 2.1.1 'Also e-mail every message' piece is in console-agents.js once: " + String(from).slice(0, 60));
+    src = src.replace(from, to);
+  }
+  return src;
+}
 
-test("the console's eight tab modules are the old portal's, byte for byte (BLUEPRINT 3.3.10: they port unchanged)",
+test("the console's eight tab modules are the old portal's, byte for byte (BLUEPRINT 3.3.10: they port unchanged) — but for the Agents tab's 2.1.1 'Also e-mail every message' box",
   { skip: !existsSync(OLD + "console-agents.js") && "the old portal's source is not on this computer" }, () => {
-    for (const m of MODULES) assert.equal(lf(site("js/console/" + m)), lf(readFileSync(OLD + m, "utf8")), m);
+    for (const m of MODULES) {
+      const mine = lf(site("js/console/" + m));
+      assert.equal(m === "console-agents.js" ? withoutAlsoEmail(mine) : mine, lf(readFileSync(OLD + m, "utf8")), m);
+    }
     for (const c of ["agents-console.css", "console-print.css"]) assert.equal(lf(site("css/" + c)), lf(readFileSync(OLD + c, "utf8")), c);
   });
 

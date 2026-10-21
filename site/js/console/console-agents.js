@@ -410,6 +410,18 @@
 
   function smartNote(form) { return text(form.smart && form.smart.note); }
 
+  /* "Also e-mail every message" (rules.also_email, DCR Agents 2 2.1.1): the
+     box under the channels, in the PC's words (agent_form.describe →
+     also_email). Only a PC that describes it takes the field: an older one's
+     closed agent schema refuses rules.also_email, so for it the box is not
+     drawn and the key is never sent (Check, Save and Preview keep working,
+     and the stored value stays on the server). */
+  function alsoOffered(form) { return !!(form && form.also_email && text(form.also_email.label)); }
+  function alsoHtml(form, r) {
+    return alsoOffered(form) ? check("ae-alsoemail", !!r.also_email, text(form.also_email.label)) +
+      '<p class="c-help" id="ae-alsonote">' + esc(text(form.also_email.note)) + "</p>" : "";
+  }
+
   function channelRows(S) {
     return S.channels.map(function (c, i) {
       return '<li class="ca-ch">' +
@@ -506,7 +518,7 @@
           '" placeholder="names, comma separated — never these">', "", "ae-exclude") +
         '<fieldset class="ca-fs"><legend>Channels, in the order to try them</legend><ol class="ca-chs" id="ae-channels">' + channelRows(S) + "</ol>" +
           '<p class="c-help">' + esc(form.note_channels || "Tick the channels to use; the first one with an address on file is tried first.") +
-          " On this screen, ↑ and ↓ change the order.</p></fieldset>" +
+          " On this screen, ↑ and ↓ change the order.</p>" + alsoHtml(form, r) + "</fieldset>" +
       "</section>" +
       /* The message */
       '<section id="ae-pane-words" role="tabpanel" aria-labelledby="ae-tab-words" hidden>' +
@@ -601,7 +613,7 @@
     var days = [];
     for (var i = 0; i < 7; i++) if (on("ae-d" + i)) days.push(i);
     var offered = !!(form.smart && form.smart.offered);
-    return {
+    var out = {
       id: text(S.agent.id), name: val("ae-name").trim(), feed: val("ae-feed") || text(S.agent.feed), enabled: on("ae-enabled"),
       schedule: { kind: val("ae-kind") === "interval" ? "interval" : "daily", at: val("ae-at"), until: val("ae-until") || null,
         every_minutes: num("ae-every"), between: [val("ae-b0"), val("ae-b1")], days: days },
@@ -614,6 +626,8 @@
         first_run_reviewed: on("ae-reviewed"), smart_wording: offered && on("ae-smart") },
       feed_params: params,
     };
+    if (alsoOffered(form) && $("ae-alsoemail")) out.rules.also_email = on("ae-alsoemail");
+    return out;
   }
 
   /* What the server's schema would refuse, said plainly and found here, so
@@ -727,6 +741,7 @@
         next.feed = feed;
         next.rules = Object.assign({}, next.rules || {}, { dry_run: !!(cur.rules && cur.rules.dry_run),
           first_run_reviewed: !!(cur.rules && cur.rules.first_run_reviewed) });
+        if (cur.rules && "also_email" in cur.rules) next.rules.also_email = !!cur.rules.also_email;
         if (form.recurring && (!next.recurring || typeof next.recurring !== "object")) {
           next.recurring = JSON.parse(JSON.stringify(form.recurring.defaults || {}));
         }
