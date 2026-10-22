@@ -284,6 +284,12 @@ async function seed({ sql, one, asPerson }) {
   await approve(J.victim, "cash");
   J.porch = await bill({ project: J.p2.id, vendor: J.vendor, name: "Madeup Framing LLC", no: "P-1", amount: 2950, doc: await file(J.p2.id, "porch P-1.pdf", "application/pdf"),
     kind: "Subcontractor", description: "Porch footings" });
+  // owner decision 2026-10-21: paid by bank transfer (waiting for its approval) and on the company card (approved)
+  J.wire = await bill({ project: J.p2.id, name: "Madeup Steel Works", no: "P-2", amount: 1800, doc: await file(J.p2.id, "steel P-2.pdf", "application/pdf"),
+    kind: "Subcontractor", description: "Porch beam, fabricated and set" });
+  J.cardBill = await bill({ project: J.p2.id, name: "Madeup Tool Rental", no: "P-3", amount: 386.5, doc: await file(J.p2.id, "rental P-3.pdf", "application/pdf"),
+    kind: "Equipment", description: "Plate compactor, two days" });
+  await approve(J.cardBill, "card");
 
   J.inv = (await one("insert into public.invoices (project_id, status, sent_date, invoice_date, due_date) values ($1, 'sent', $2, $2, $3) returning id", [J.p1.id, ago(5), ago(-25)])).id;
   await sql("insert into public.invoice_lines (invoice_id, description, qty, unit_price) values ($1, 'Garage framing, first draw', 1, 8400)", [J.inv]);

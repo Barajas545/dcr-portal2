@@ -7,7 +7,8 @@
    other site's file into a frame); a file kept on the office computers is named, not opened.
 
    * Approve (rpc approve_bill(id, pay_method, version, note)): only an admin, or a manager with the approve switch
-     (and financials). The pay method is REQUIRED and nothing is pre-selected (a default would get clicked through
+     (and financials). The pay method - by check, in cash, either, by bank transfer (ACH or wire) or by card (owner
+     decision 2026-10-21) - is REQUIRED and nothing is pre-selected (a default would get clicked through
      and the accountant told "check" about a bill meant for cash); the version is the one on screen, so a bill
      changed meanwhile is refused (PT409) and shown again; the document must be attached. An accountant sees the
      bill and its state but never an approve button (and approve_bill refuses them anyway).
@@ -21,7 +22,7 @@
 import { boot, esc, toast, errorText, qs, D } from "./shell.js";
 import * as books from "../repo/books.js";
 import * as filesRepo from "../repo/files.js";
-import { fmtMoney, payMethodWords, PAY_METHODS, seesBooks, canApprove, APPROVAL_NOTE_MAX } from "../map/books.js";
+import { fmtMoney, payMethodWords, paymentLabel, isPayMethod, PAY_METHODS, seesBooks, canApprove, APPROVAL_NOTE_MAX } from "../map/books.js";
 import { fmtSize, SIGNED_DOC_S } from "../map/files.js";
 import { fmtDay } from "../map/pacific.js";
 
@@ -103,7 +104,7 @@ function render() {
       (b.approvalNote ? "<br>" + h(b.approvalNote) : "") +
       (b.payMethod ? "<br>To be paid <b>" + h(payMethodWords(b.payMethod)) + "</b>" : "") + "</div>";
     if (!b.payMethod) {
-      s += '<div class="bl-why" style="margin-top:8px">Nobody recorded whether this is paid by check or in cash, so the accountant cannot pay it.' +
+      s += '<div class="bl-why" style="margin-top:8px">Nobody recorded how this is paid (by check, in cash, by bank transfer or by card), so the accountant cannot pay it.' +
         (can.approve ? "" : " Ask a manager or admin to set it.") + "</div>";
     }
     if (can.approve && !d.payments.length) {
@@ -124,7 +125,8 @@ function render() {
 
   if (d.payments.length) {
     s += '<div class="bl-card"><h3>Paid on this bill</h3>' + d.payments.map((p) => '<div class="bl-pay"><span>' +
-      (p.method === "cash" ? "Cash" : p.method === "check" ? "Check #" + h(p.checkNumber) : h(p.method)) + " · " + h(day(p.paidDate)) +
+      h(paymentLabel(p.method)) + (p.method === "check" ? " #" + h(p.checkNumber) : p.reference && p.method !== "cash" ? " · " + h(p.reference) : "") +
+      " · " + h(day(p.paidDate)) +
       (p.payee ? '<br><span class="t">to ' + h(p.payee) + "</span>" : "") + "</span><span><b>" + money(p.amount) + "</b>" +
       (p.collectable ? '<br><span class="t">' + (p.toldAt ? "told " + h(p.toldHow) + " " + h(day(p.toldDay)) : "not told yet") + "</span>" : "") +
       "</span></div>").join("") + "</div>";
@@ -207,7 +209,7 @@ async function pickMethod(title, message, current) {
   const v = await M({
     title, message, okText: title === "Approve for payment" ? "Approve" : "Set it",
     fields: [{ name: "m", label: "How should this be paid?", type: "select", value: current || "", options: METHOD_OPTIONS }],
-    validate: (x) => (["check", "cash", "both"].includes(x.m) ? "" : "Choose check, cash or either."),
+    validate: (x) => (isPayMethod(x.m) ? "" : "Choose how it is paid: by check, in cash, either, by bank transfer or by card."),
   });
   return v ? v.m : null;
 }

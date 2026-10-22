@@ -134,6 +134,9 @@
       .ck-method.cash { border-color: var(--gold); color: var(--gold); }
       .ck-method.none { border-color: var(--text-muted); color: var(--text-muted); }
       .ck-method.either { border-color: var(--acc); color: var(--acc); }
+      /* bank transfer (ACH or wire) and card (owner decision 2026-10-21): no check, nobody picks it up */
+      .ck-method.transfer { border-color: var(--text-muted); color: var(--text); background: rgba(127,127,127,.08); }
+      .ck-method.card { border-color: var(--gold); color: var(--text); background: rgba(184,134,11,.08); }
       .ck-methods { display: flex; gap: 8px; flex-wrap: wrap; }
       .ck-mbtn { padding: 9px 16px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
         border: 1px solid var(--border); background: var(--bg); color: var(--text); }
@@ -201,6 +204,8 @@
       .bk-chip.check { border-color: var(--ok); color: var(--ok); }
       .bk-chip.cash { border-color: var(--gold); color: var(--gold); }
       .bk-chip.either { border-color: var(--acc); color: var(--acc); }
+      .bk-chip.transfer { border-color: var(--text-muted); color: var(--text); }
+      .bk-chip.card { border-color: var(--gold); color: var(--text); }
       .bk-age { margin-top: 12px; }
       .bk-age .ln { font-size: 12.5px; color: var(--text-muted); margin-bottom: 6px; }
       .bk-age .ln b { color: var(--text); }

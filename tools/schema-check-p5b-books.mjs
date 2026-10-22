@@ -15,6 +15,10 @@
      clears the approval; a payment above the approved amount is refused (23514); set_bill_pay_method for approvers,
      refused once paid;
    * the check desk: a payment with payee and memo, payment_told by phone, and a told payment cannot be deleted;
+   * bank transfer and card (owner decision 2026-10-21): the five pay methods the bill page offers are the database's;
+     a bill approved for a bank transfer is paid by ACH or wire with its confirmation and no check number, one for card
+     by card - anything else refused in the database's words; both on "Pay by bank transfer or card" (books_desk
+     pay_pile transfer_card, to_tell 0), never on the check desk, and nobody told about them;
    * P5 check 3: mark_bills_entered marks only the ready bill and lists the others in refused[] with the database's
      reasons (shown by refusedLines); a marked bill is locked; unmark; the invoices' marker (a draft "Not sent yet.");
    * nobody without financials (a manager - Q1 -, a manager with prices, a lead, field, view-only) and not the agents
@@ -111,6 +115,12 @@ export async function run(h) {
     same(args("payment_told"), [["p_id", "p_how", "p_version"]], "payment_told");
     same((await sql("select pg_get_constraintdef(oid) as d from pg_constraint where conname = 'bills_kind_check'"))[0].d.match(/'[^']+'/g),
       M.KINDS.map((k) => "'" + k.label + "'"), "bills.kind: the four words the page labels");
+    same((await sql("select pg_get_constraintdef(oid) as d from pg_constraint where conname = 'bills_pay_method_check'"))[0].d.match(/'[^']+'/g),
+      M.PAY_METHODS.map((m) => "'" + m.id + "'"), "bills.pay_method: the five ways the bill page offers (check, cash, both, transfer, card)");
+    for (const m of M.PAY_METHODS.map((x) => x.id)) {
+      same((await sql("select array(select x from unnest(array['check', 'cash', 'ach', 'wire', 'card', 'other']) x where app.pay_method_allows($1, x)) as a", [m]))[0].a,
+        M.allowedMethods(m), m + ": what the page lets the accountant record is what the database allows");
+    }
   });
 
   await check("P5b books: The Books for the accountant, the admin and the approver - the piles as books_desk judges them, the cap from the approved amount, the CSV", async () => {
@@ -204,6 +214,50 @@ export async function run(h) {
     same(del.error && del.error.code, "23514", "a told payment stays");
     await as("lead");
     await refused(() => books.markTold({ paymentId: p.id, version: told.version }, null), "42501", "a lead cannot clear it");
+  });
+
+  await check("P5b books: bank transfer and card (owner decision 2026-10-21) on the real rules - the approver approves one bill for a bank transfer and one for card; the accountant records an ACH payment with its confirmation and no check number, and a card payment (a check, cash, a card or 'other' on the transfer bill and ACH on the card bill refused in the database's words); the desk lists both on 'Pay by bank transfer or card' (books_desk pay_pile transfer_card, to_tell 0), never on the check desk; nobody is told about them (payment_told refuses)", async () => {
+    // set-up as the owner (documents and bills); what they log is not the books' writes (acceptance check 5 below)
+    const s0 = await counts();
+    await as(null);
+    B.transfer = await bill({ no: "S-8", amount: 4120, doc: await doc(8, "s8.pdf"), kind: "Subcontractor", description: "Moment frame" });
+    B.card = await bill({ no: "S-9", amount: 386.5, doc: await doc(9, "s9.pdf"), kind: "Equipment", description: "Plate compactor" });
+    const s1 = await counts();
+    before.act += s1.act - s0.act;
+    before.outbox += s1.outbox - s0.outbox;
+    await as("approver");
+    const t = await books.approve({ id: B.transfer, version: (await row(B.transfer)).version }, "transfer", "Wire or ACH");
+    const c = await books.approve({ id: B.card, version: (await row(B.card)).version }, "card");
+    same([t.pay_method, c.pay_method, t.approved_by], ["transfer", "card", PEOPLE.approver.id], "approved by the approver");
+    const nv = (await row(B.nodoc)).version;
+    await refused(() => books.approve({ id: B.nodoc, version: nv }, "ach"), "22023", "ACH is a payment method, not a pay method");
+    await as("accountant");
+    const wv = (await row(B.waiting)).version;
+    await refused(() => books.approve({ id: B.waiting, version: wv }, "transfer"), "42501", "never the accountant");
+    for (const [m, words] of [["check", "the bill is approved for bank transfer payment"], ["cash", "the bill is approved for bank transfer payment"],
+                              ["card", "the bill was approved to be paid by bank transfer (ACH or wire)"], ["other", "the bill was approved to be paid by bank transfer (ACH or wire)"]]) {
+      const e = await refused(() => books.recordPayment({ id: B.transfer, projectId: B.project.id }, { amount: 10, method: m, checkNumber: "77" }), "23514", m + " on a transfer bill");
+      ok(String(e.message).indexOf(words) === 0, m + ": " + e.message);
+    }
+    const p = await books.recordPayment({ id: B.transfer, projectId: B.project.id },
+      { amount: 2000, method: "ach", checkNumber: "ACH 0041-7781", payee: "Madeup Framing LLC", memo: "first half" });
+    same([p.method, p.checkNumber, p.reference, p.collectable], ["ach", "", "ACH 0041-7781", false], "the ACH payment: its confirmation, no check number");
+    const e2 = await refused(() => books.recordPayment({ id: B.card, projectId: B.project.id }, { amount: 10, method: "ach" }), "23514", "no ACH on a card bill");
+    ok(String(e2.message).indexOf("the bill was approved to be paid by card") === 0, e2.message);
+    const cp = await books.recordPayment({ id: B.card, projectId: B.project.id }, { amount: 86.5, method: "card", checkNumber: "AUTH 448120" });
+    same([cp.method, cp.reference, cp.checkNumber], ["card", "AUTH 448120", ""], "a card payment");
+    const d = await books.loadDesk(await me(), { today });
+    const byId = (x, y) => x[0] - y[0];
+    same(d.checks.toSend.filter((b) => b.projectId === B.project.id).map((b) => [b.id, b.payMethod, b.pile, b.owed]).sort(byId),
+      [[B.transfer, "transfer", "transfer_card", 2120], [B.card, "card", "transfer_card", 300]].sort(byId), "their own list, what is still owed");
+    ok(!d.checks.toPay.some((b) => b.id === B.transfer || b.id === B.card), "never on the check desk");
+    ok(!d.checks.toTell.some((x) => x.paymentId === p.id || x.paymentId === cp.id), "nobody to tell");
+    const desk = await origFrom("books_desk").select("id, pay_pile, to_tell").in("id", [B.transfer, B.card, B.ready]);
+    same(desk.data.map((r) => [r.id, r.pay_pile, r.to_tell]).sort(byId),
+      [[B.ready, "check_desk", 0], [B.transfer, "transfer_card", 0], [B.card, "transfer_card", 0]].sort(byId), "books_desk.pay_pile and to_tell");
+    await refused(() => books.markTold({ paymentId: p.id, version: p.version }, "phone"), "22023", "an ACH payment is never picked up");
+    same(d.todo.filter((x) => x.kind === "transfer" || x.kind === "card").map((x) => [x.kind, x.to]), [["transfer", "secSend"], ["card", "secSend"]], "the to-do lines");
+    same(M.toCsv(d.ready.filter((b) => b.id === B.transfer), M.BILL_COLUMNS).split("\r\n")[1].split('","')[10], "Bank transfer", "the CSV's pay method");
   });
 
   await check("P5b books - acceptance check 3: mark entered only the ready bill (refused[] with the database's reasons); locked while marked; unmark; invoices", async () => {

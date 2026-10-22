@@ -33,8 +33,9 @@ export const BILL_STATE_TEXT = Object.freeze({
   void: ["Void", "muted"], needs_document: ["Needs document", "danger"], waiting: ["Waiting approval", "warning"],
   approved: ["Approved", "info"], part_paid: ["Part paid", "accent"], paid: ["Paid", "success"], overdue: ["Overdue", "danger"],
 });
-export const PAY_METHOD_LABELS = Object.freeze({ check: "Check", cash: "Cash", both: "Check or cash" });
-export const PAYMENT_LABELS = Object.freeze({ check: "Check", cash: "Cash", ach: "ACH / transfer", card: "Card", wire: "Wire", other: "Other" });
+// how an approved bill is paid (M5b; owner decision 2026-10-21: also by bank transfer - ACH or wire - and by card)
+export const PAY_METHOD_LABELS = Object.freeze({ check: "Check", cash: "Cash", both: "Check or cash", transfer: "Bank transfer", card: "Card" });
+export const PAYMENT_LABELS = Object.freeze({ check: "Check", cash: "Cash", ach: "ACH transfer", card: "Card", wire: "Wire transfer", other: "Other" });
 export const INVOICE_STATUS = Object.freeze({ draft: "Draft", sent: "Sent", paid: "Paid", void: "Void" });
 /** M5b bills.kind: Subcontractor | Material supplier | Equipment | Other (the word, whichever way it is stored). */
 export const BILL_KIND_LABELS = Object.freeze({ subcontractor: "Subcontractor", material_supplier: "Material supplier", material: "Material supplier",

@@ -29,7 +29,7 @@ test("The Books never approves: no approve call, no approve button; approving is
   const j = bill.indexOf('id="blGo"');
   assert.ok(i > 0 && j > i, "the Approve button is drawn only after the 'cannot approve' branch");
   assert.ok(/if \(can\.approve && !d\.payments\.length\)/.test(bill), "'Change how to pay' only for approvers, before any payment");
-  assert.ok(/validate: \(x\) => \(\["check", "cash", "both"\]\.includes\(x\.m\)/.test(bill), "the pay method is required in the dialog");
+  assert.ok(/validate: \(x\) => \(isPayMethod\(x\.m\) \? "" : "Choose how it is paid/.test(bill), "the pay method is required in the dialog");
   assert.ok(/value: current \|\| ""/.test(bill) && /pickMethod\("Approve for payment", [^]*?, ""\)/.test(bill), "nothing pre-selected when approving");
   const repo = code(site("js/repo/books.js"));
   assert.match(repo, /c\.rpc\("approve_bill", \{ id: idOf\(bill\.id\), pay_method: method \|\| null, version: bill\.version, note: n \|\| null \}\)/);

@@ -12,6 +12,9 @@
      check desk - payee (<= 200) and memo (<= 100) prefilled, the amount capped at the approved amount still owed
      (the database refuses more: acceptance check 2), the check number, the documents behind it, what is already
      paid - and records the payment (money editors: admin, or a manager / accountant with financials);
+   * pay by bank transfer or card (owner decision 2026-10-21): the bills approved to be paid by bank transfer (ACH or
+     wire) or by card, on a list of their own with the same panel - no check number (the bank's or the card's
+     confirmation instead, optional) and nobody to tell (only a check or cash is picked up);
    * written - tell them it is ready: the payee's e-mail / phone (the bill's vendor contact, the quote it is billed
      against, or a name match in Contacts - a guess is labelled one), the message as a draft in the accountant's own
      mail, and "Told by email / phone / text / in person" (rpc payment_told, versioned) so DCR Agents 2's check
@@ -29,9 +32,9 @@ import { boot, esc, toast, confirmBox, errorText, store, D } from "./shell.js";
 import * as books from "../repo/books.js";
 import * as filesRepo from "../repo/files.js";
 import {
-  fmtMoney, plural, daysLate, payMethodWords, parseAmount, amountAllowed, resolvePayee, pickupMessage, toCsv,
+  fmtMoney, plural, daysLate, payMethodWords, paymentLabel, parseAmount, amountAllowed, resolvePayee, pickupMessage, toCsv,
   BILL_COLUMNS, INVOICE_COLUMNS, csvName, cleanRef, refusedLines, MEMO_MAX, PAYEE_MAX, CHECK_NUMBER_MAX, REF_MAX, TOLD_HOWS,
-  billHref, seesBooks,
+  billHref, seesBooks, refField,
 } from "../map/books.js";
 import { SIGNED_DOC_S } from "../map/files.js";
 import { fmtDay } from "../map/pacific.js";
@@ -120,7 +123,7 @@ function agingHtml(rows, today) {
       h(plural(b[a[0]].n, "bill", "bills")) + ", " + money(b[a[0]].amt) + "</span>" : "")).join("") + "</div></div>";
 }
 
-const STAGE_OF = { check: "pay", cash: "pay", either: "pay", tell: "tell", waiting: "decide", qbo: "qbo", ar: "ar" };
+const STAGE_OF = { check: "pay", cash: "pay", either: "pay", transfer: "pay", card: "pay", tell: "tell", waiting: "decide", qbo: "qbo", ar: "ar" };
 
 function picture(d) {
   const t = d.totals, c = d.checks.totals, can = d.can || {};
@@ -133,12 +136,14 @@ function picture(d) {
   if (c.checkCount) chips.push(["check", plural(c.checkCount, "check", "checks")]);
   if (c.cashCount) chips.push(["cash", c.cashCount + " cash"]);
   if (c.eitherCount) chips.push(["either", c.eitherCount + " either"]);
+  if (c.transferCount) chips.push(["transfer", plural(c.transferCount, "transfer", "transfers")]);
+  if (c.cardCount) chips.push(["card", c.cardCount + " card"]);
   const out = [
     { to: "secWaiting", label: "Not ready", theirs: true, count: stuck.length, amount: stuckAmount, big: money(stuckAmount),
       sub: plural(stuck.length, "bill", "bills"), flag: t.blockedCount ? plural(t.blockedCount, "bill needs", "bills need") + " paperwork first" : "",
       who: "with a manager" },
-    { to: "secPay", label: "To pay", step: step.pay, mine: !!can.pay, count: c.toPayCount, amount: c.toPayAmount, big: money(c.toPayAmount),
-      sub: plural(c.toPayCount, "bill", "bills"), chips, who: can.pay ? "yours to do" : NOT_YOURS },
+    { to: c.toPayCount || !c.toSendCount ? "secPay" : "secSend", label: "To pay", step: step.pay, mine: !!can.pay, count: c.outCount,
+      amount: c.outAmount, big: money(c.outAmount), sub: plural(c.outCount, "bill", "bills"), chips, who: can.pay ? "yours to do" : NOT_YOURS },
     { to: "secTell", label: "Paid — tell them to collect", step: step.tell, mine: !!can.pay, count: c.toTellCount, amount: c.toTellAmount,
       big: money(c.toTellAmount), sub: plural(c.toTellCount, "payment", "payments"), who: can.pay ? "yours to do" : NOT_YOURS },
   ];
@@ -153,19 +158,19 @@ function picture(d) {
     { to: "secEntered", label: "Invoices on the books", done: true, count: t.arEnteredCount, amount: 0, big: String(t.arEnteredCount),
       sub: plural(t.arEnteredCount, "invoice keyed", "invoices keyed"), who: "done" },
   ];
-  const owed = d.checks.toPay.concat(d.checks.toDecide);
-  const owedOut = c.toPayAmount + c.toDecideAmount;
+  const owed = d.checks.toPay.concat(d.checks.toSend, d.checks.toDecide);
+  const owedOut = c.outAmount + c.toDecideAmount;
   const held = c.toDecideCount
     ? '<button type="button" class="bk-st theirs" data-jump="secDecide" style="width:100%;margin-top:12px"><span class="k">Held up</span><span class="n">' +
       h(plural(c.toDecideCount, "approved bill", "approved bills") + " — " + money(c.toDecideAmount) +
-        " — cannot be paid: nobody recorded check or cash. A manager or admin sets it on the bill.") + "</span></button>"
+        " — cannot be paid: nobody recorded how to pay it. A manager or admin sets it on the bill.") + "</span></button>"
     : "";
   let s = '<div class="bk">' +
     band("Money out the door", "Left to right, what happens to a bill.", owedOut ? money(owedOut) + " approved and still owed" : "", out,
       held + agingHtml(owed, d.today)) +
     band("Into QuickBooks", "Keying, not money — a bill can be keyed before it is paid. Bills and invoices each get a done marker.", "",
       keyed, "", ["&rarr;", "+", "&rarr;"]);
-  const nothing = !stuck.length && !c.toPayCount && !c.toDecideCount && !c.toTellCount && !t.readyCount && !t.arReadyCount;
+  const nothing = !stuck.length && !c.outCount && !c.toDecideCount && !c.toTellCount && !t.readyCount && !t.arReadyCount;
   if (nothing) s += '<div class="bk-quiet">Nothing anywhere. No bill and no invoice is waiting on anybody.</div>';
   return s + '<div class="bk-foot"><b>Blue</b> is yours to do. <b>Gold</b> is waiting on a manager and is not yours to action. ' +
     "Click any box to jump to it.</div></div>";
@@ -267,16 +272,26 @@ function refusedBox(which) {
 
 /* ── checks ── */
 
-const METHOD_CHIP = { check: ["check", "check"], cash: ["cash", "cash"], both: ["either", "check or cash"] };
+/* a bill's pay method (check | cash | both | transfer | card) or one payment's method (check | cash | ach | wire | card) */
+const METHOD_CHIP = { check: ["check", "check"], cash: ["cash", "cash"], both: ["either", "check or cash"], transfer: ["transfer", "bank transfer"],
+  card: ["card", "card"], ach: ["transfer", "ACH"], wire: ["transfer", "wire"] };
 function methodChip(m) {
   const x = METHOD_CHIP[m];
   return x ? '<span class="ck-method ' + h(x[0]) + '">' + h(x[1]) + "</span>" : '<span class="ck-method none">not set</span>';
 }
+/* the panel's "how are you paying this one?" buttons, and what the record button says */
+const HOW_LABEL = { check: "By check", cash: "In cash", ach: "By ACH", wire: "By wire", card: "By card" };
+const WRITE_LABEL = { check: "✓ Record the check", cash: "✓ Record the cash payment", ach: "✓ Record the ACH transfer",
+  wire: "✓ Record the wire transfer", card: "✓ Record the card payment" };
+const DONE_WORD = { cash: "Cash payment", ach: "ACH transfer", wire: "Wire transfer", card: "Card payment" };
 
 const PILES = {
   pay: { key: "toPay", id: "secPay", title: "Bills to pay", act: "Pay",
-    hint: "Approved and still owed. Each row says how it was authorised — open it to see the paperwork and record the payment.",
-    empty: "Nothing owed. Every approved bill has been paid." },
+    hint: "Approved to be paid by check or in cash, and still owed. Each row says how it was authorised — open it to see the paperwork and record the payment.",
+    empty: "Nothing owed by check or cash. Every such bill has been paid." },
+  send: { key: "toSend", id: "secSend", title: "Pay by bank transfer or card", act: "Pay",
+    hint: "Approved to be sent from the bank (ACH or wire) or put on the card, and still owed. No check number and nobody to tell — record the confirmation once it has gone.",
+    empty: "" },
   decide: { key: "toDecide", id: "secDecide", title: "Approved — but nobody said how to pay", act: "Open",
     hint: "A manager or admin sets the payment method on the bill; it is not yours to choose.", empty: "" },
 };
@@ -285,7 +300,7 @@ function pile(c, can, which) {
   const P = PILES[which];
   const rows = c[P.key] || [];
   const amount = rows.reduce((n, b) => n + (Number(b.owed) || 0), 0);
-  if (!rows.length && which === "decide") return "";
+  if (!rows.length && (which === "decide" || which === "send")) return "";
   let s = '<div class="ac-sec" id="' + P.id + '"><header><h3>' + h(P.title) + '</h3><span class="hint">' + h(P.hint) +
     '</span><span class="grow"></span><span class="hint">' + rows.length + " waiting · " + money(amount) + "</span></header>";
   if (!rows.length) return s + '<div class="ac-none">' + h(P.empty) + "</div></div>";
@@ -312,26 +327,33 @@ function checkPanel(b, can, which) {
   const d = state.detail;
   if (!d || String(d.bill.id) !== String(b.id)) return '<div class="ck-panel"><div class="ac-none">Loading the paperwork…</div></div>';
   if (which === "decide") {
-    return '<div class="ck-panel"><div class="ac-note">This bill was approved for ' + money(b.approvedFor) + ", but nobody recorded whether to " +
-      "pay it by check or in cash. A manager or admin sets that on the bill — it is an authorisation, not a bookkeeping choice." +
+    return '<div class="ck-panel"><div class="ac-note">This bill was approved for ' + money(b.approvedFor) + ", but nobody recorded how to " +
+      "pay it — by check, in cash, by bank transfer or by card. A manager or admin sets that on the bill — it is an authorisation, not a bookkeeping choice." +
       '</div><div class="ck-acts"><a class="ac-b" href="' + h(billHref(b.id)) + '">Open the bill &rarr;</a><button type="button" class="ac-b" id="ckClose">Close</button></div></div>';
   }
   const allowed = b.allowed || [];
+  const sent = which === "send";
+  // the reference field as the method picked asks for it (one allowed: that one; none picked yet: by the bill's pile)
+  const rf = refField(allowed.length === 1 ? allowed[0] : "", allowed);
   let s = '<div class="ck-panel" id="ckPanel">';
   s += '<div class="ck-grid">' +
-    '<div class="ck-f"><label for="ckPayee">Make it out to</label><input id="ckPayee" class="big" value="' + h(b.payee) + '" maxlength="' + PAYEE_MAX + '">' +
+    '<div class="ck-f"><label for="ckPayee">' + (sent ? "Paid to" : "Make it out to") + '</label><input id="ckPayee" class="big" value="' + h(b.payee) + '" maxlength="' + PAYEE_MAX + '">' +
       (b.payeeNote ? '<div class="sub warn">' + h(b.payeeNote) + "</div>"
         : b.payeePerson && b.payeePerson !== b.payee ? '<div class="sub">Their contact person: ' + h(b.payeePerson) + ".</div>" : "") + "</div>" +
     '<div class="ck-f"><label for="ckAmount">Amount</label><input id="ckAmount" class="big" inputmode="decimal" value="' + h(Number(b.owed).toFixed(2)) + '">' +
       '<div class="sub">' + (b.alreadyPaid > 0 ? money(b.alreadyPaid) + " already paid of " + money(b.approvedFor) + " approved."
         : "Approved for " + money(b.approvedFor) + ".") + "</div></div>" +
-    '<div class="ck-f"><label for="ckNumber" id="ckRefLab">Check number</label><input id="ckNumber" placeholder="e.g. 2041" maxlength="' + CHECK_NUMBER_MAX + '">' +
-      '<div class="sub" id="ckRefSub">So it can be found again.</div></div></div>' +
+    '<div class="ck-f"><label for="ckNumber" id="ckRefLab">' + h(rf.label) + '</label><input id="ckNumber" placeholder="' + h(rf.placeholder) + '" maxlength="' + CHECK_NUMBER_MAX + '">' +
+      '<div class="sub" id="ckRefSub">' + h(rf.sub) + "</div></div></div>" +
     (allowed.length > 1
-      ? '<div class="ck-f" style="margin-bottom:14px"><span class="lab">How are you paying this one?</span><div class="ck-methods" id="ckHow">' +
-        allowed.map((m) => '<button type="button" class="ck-mbtn" data-how="' + h(m) + '" aria-pressed="false">' + (m === "cash" ? "In cash" : "By check") + "</button>").join("") +
-        '</div><div class="sub">Approved either way. Pay part of it now and the rest the other way if that suits — each payment is recorded separately.</div></div>'
-      : '<input type="hidden" id="ckHowFixed" value="' + h(allowed[0] || "") + '">') +
+      ? '<div class="ck-f" style="margin-bottom:14px"><span class="lab">' + (sent ? "How did the bank send it?" : "How are you paying this one?") +
+        '</span><div class="ck-methods" id="ckHow">' +
+        allowed.map((m) => '<button type="button" class="ck-mbtn" data-how="' + h(m) + '" aria-pressed="false">' + h(HOW_LABEL[m] || m) + "</button>").join("") +
+        '</div><div class="sub">' + (sent ? "Approved as a bank transfer: ACH or wire, whichever the bank sent. Each payment is recorded separately."
+          : "Approved either way. Pay part of it now and the rest the other way if that suits — each payment is recorded separately.") + "</div></div>"
+      : '<input type="hidden" id="ckHowFixed" value="' + h(allowed[0] || "") + '">' +
+        (sent ? '<div class="ck-f" style="margin-bottom:14px"><span class="lab">How</span><div>' + methodChip(allowed[0]) +
+          ' <span class="sub">Approved to be paid ' + h(payMethodWords(b.payMethod)) + ".</span></div></div>" : "")) +
     '<div class="ck-f" style="margin-bottom:14px"><label for="ckMemo">Memo — what the payment is for</label><input id="ckMemo" value="' + h(b.memo) +
       '" maxlength="' + MEMO_MAX + '"></div>';
 
@@ -361,9 +383,9 @@ function checkPanel(b, can, which) {
     const paid = written.reduce((n, w) => n + w.amount, 0);
     s += '<div class="ck-docs"><h4>Already paid on this bill</h4>';
     written.forEach((w) => {
-      const cash = w.method === "cash";
-      s += '<div class="ck-doc"><span class="nm">' + (cash ? "Cash" : w.method === "check" ? "Check #" + h(w.checkNumber) : h(w.method)) + " · " + money(w.amount) +
-        "</span>" + methodChip(cash ? "cash" : "check") + '<span class="tag">' + h(day(w.paidDate)) +
+      const ref = w.method === "check" ? (w.checkNumber ? " #" + w.checkNumber : "") : w.reference ? " · " + w.reference : "";
+      s += '<div class="ck-doc"><span class="nm">' + h(paymentLabel(w.method) + ref) + " · " + money(w.amount) +
+        "</span>" + methodChip(w.method) + '<span class="tag">' + h(day(w.paidDate)) +
         (w.collectable ? (w.toldAt ? " · told " + h(w.toldHow) + " " + h(day(w.toldDay)) : " · not told yet") : "") + "</span></div>";
     });
     s += '<div class="ck-doc"><span class="nm">' + money(paid) + " paid · " + money(b.owed) + " still owed</span></div></div>";
@@ -415,7 +437,7 @@ function checksToTell(c, can) {
 }
 
 /* ── what needs doing ── */
-const TODO_ICON = { check: "✎", cash: "◉", either: "◐", tell: "☎", waiting: "⏸", qbo: "⇨", ar: "⇦" };
+const TODO_ICON = { check: "✎", cash: "◉", either: "◐", transfer: "⇄", card: "▭", tell: "☎", waiting: "⏸", qbo: "⇨", ar: "⇦" };
 
 function todoBlock(d) {
   const items = d.todo || [];
@@ -444,6 +466,7 @@ function render() {
   summary(d);
   let s = todoBlock(d);
   s += pile(d.checks, can, "pay");
+  s += pile(d.checks, can, "send");
   s += pile(d.checks, can, "decide");
   s += checksToTell(d.checks, can);
 
@@ -647,22 +670,24 @@ function chosenMethod() {
   return on ? on.getAttribute("data-how") : "";
 }
 
+/* the methods the open panel offers (its buttons, or the one fixed method) */
+function panelMethods() {
+  const fixed = document.getElementById("ckHowFixed");
+  if (fixed) return fixed.value ? [fixed.value] : [];
+  return Array.from(document.querySelectorAll("#ckHow [data-how]")).map((x) => x.getAttribute("data-how"));
+}
+
 function paintMethod() {
   const m = chosenMethod();
   const lab = document.getElementById("ckRefLab"), sub = document.getElementById("ckRefSub"), num = document.getElementById("ckNumber");
   if (!lab) return;
-  if (m === "cash") {
-    lab.textContent = "Reference (optional)";
-    sub.textContent = "Cash has no number of its own. Anything that helps you find it later.";
-    if (num) num.placeholder = "e.g. petty cash slip";
-  } else {
-    lab.textContent = "Check number";
-    sub.textContent = "So it can be found again.";
-    if (num) num.placeholder = "e.g. 2041";
-  }
+  const rf = refField(m, panelMethods());
+  lab.textContent = rf.label;
+  if (sub) sub.textContent = rf.sub;
+  if (num) num.placeholder = rf.placeholder;
   const go = document.getElementById("ckWrite");
   if (go) {
-    go.textContent = m === "cash" ? "✓ Record the cash payment" : m === "check" ? "✓ Record the check" : "✓ Record the payment";
+    go.textContent = WRITE_LABEL[m] || "✓ Record the payment";
     go.disabled = !m;
   }
 }
@@ -785,7 +810,7 @@ function wireChecks() {
 
 async function doWriteCheck() {
   const msg = document.getElementById("ckMsg");
-  const b = state.d.checks.toPay.find((x) => String(x.id) === String(state.openCheck));
+  const b = state.d.checks.toPay.concat(state.d.checks.toSend).find((x) => String(x.id) === String(state.openCheck));
   if (!b || state.busy) return;
   const payee = (document.getElementById("ckPayee").value || "").trim();
   const amount = parseAmount(document.getElementById("ckAmount").value);
@@ -794,13 +819,15 @@ async function doWriteCheck() {
   const method = chosenMethod();
   const cash = method === "cash";
   const allowed = amountAllowed(amount, b.owed);
-  const bad = !method ? "Say whether this is by check or in cash."
-    : !number && !cash ? "Enter the check number."
+  const bad = !method ? (b.pile === "transfer_card" ? "Say whether the bank sent it by ACH or by wire." : "Say whether this is by check or in cash.")
+    : !number && method === "check" ? "Enter the check number."
       : !Number.isFinite(amount) ? "That is not an amount. Type it like 4500.00."
         : !allowed.ok ? allowed.reason : "";
   if (bad) { msg.textContent = bad; msg.className = "ac-msg err"; return; }
-  const sure = await confirmBox((cash ? "Record a cash payment of " + money(amount) : "Record check #" + number + " for " + money(amount)) +
-    " to " + (payee || b.payee || "the vendor") + "?", { okText: "Record it" });
+  const what = method === "check" ? "check #" + number + " for " + money(amount)
+    : (cash ? "a cash payment" : method === "card" ? "a card payment" : method === "ach" ? "an ACH transfer" : "a wire transfer") + " of " + money(amount) +
+      (!cash && number ? " (" + number + ")" : "");
+  const sure = await confirmBox("Record " + what + " to " + (payee || b.payee || "the vendor") + "?", { okText: "Record it" });
   if (!sure) return;
   state.busy = true;
   const go = document.getElementById("ckWrite");
@@ -820,7 +847,7 @@ async function doWriteCheck() {
   state.openCheck = null;
   state.detail = null;
   state.refused = null;
-  toast((cash ? "Cash payment" : "Check #" + number) + " recorded.", "ok");
+  toast((DONE_WORD[method] || "Check #" + number) + " recorded.", "ok");
   await load();
 }
 

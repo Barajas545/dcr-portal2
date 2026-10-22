@@ -20,7 +20,9 @@
      not void, amount > 0, the document attached in the bill's project, no payment yet (23514); stamps by / at /
      the approved amount; unapprove_bill(id, version) the same callers, no payment yet;
    * rpc set_bill_pay_method(p_id, p_method, p_version): approve authority; an approved bill with no payment;
-   * payments: money editors; the bill approved, live; check / cash as the approver allowed; a check needs its
+   * pay methods (owner decision 2026-10-21): check | cash | both | transfer (ACH or wire) | card;
+   * payments: money editors; the bill approved, live; a person pays the way the approver allowed (check, cash, both:
+     a check or cash; transfer: ACH or wire; card: a card; "other" never - app.pay_method_allows); a check needs its
      number; the payments never above the approved amount (23514 "the payments would exceed the approved amount" -
      acceptance check 2); payee 1..200 and memo 1..100 (blank -> null); the pick-up stamp never set by a person's
      write (42501); a payment once told cannot be deleted (M5b's guard, 23514);
@@ -31,18 +33,24 @@
      mark_invoices_entered(p_ids, p_ref) (live, sent or paid, with an amount, not entered), unmark_invoices_entered;
    * view books_desk (security invoker, financials): one row per bill not deleted - the bill's columns, its project's
      number / name / label, paid_total, payments_count, to_tell, owed, documented, state (void | entered | blocked |
-     waiting | ready), reason, pay_state (void | unapproved | to_pay | part_paid | paid), late_by;
+     waiting | ready), reason, pay_state (void | unapproved | to_pay | part_paid | paid), late_by, pay_pile (check_desk |
+     transfer_card);
    * no activity row is written by any of it (P5 acceptance check 5: no amount in any activity row).
    Made-up data only: a demo approver (a manager with the approve and financials switches, no prices - Q1), kinds
    and a QuickBooks mark on the sandbox's bills, and bills, payments and invoices on three more made-up jobs (A303,
    A294, A284) in every state the desk can show (waiting with and without paperwork, approved for check / cash /
-   either, part paid, paid and not told, told, entered; a memo a spreadsheet would run as a formula). */
+   either, part paid, paid and not told, told, entered; a memo a spreadsheet would run as a formula; approved for a bank
+   transfer - one part paid by ACH - and for a card). */
 (function (root) {
   "use strict";
   const NS = (root.DCR2Fake = root.DCR2Fake || {});
 
   const KINDS = ["Subcontractor", "Material supplier", "Equipment", "Other"];
-  const METHODS = ["check", "cash", "both"];
+  const METHODS = ["check", "cash", "both", "transfer", "card"];
+  // app.pay_method_allows / app.pay_method_words (M5b)
+  const ALLOWS = { check: ["check"], cash: ["cash"], both: ["check", "cash"], transfer: ["ach", "wire"], card: ["card"] };
+  const WORDS = { check: "check", cash: "cash", both: "check or cash", transfer: "bank transfer (ACH or wire)", card: "card" };
+  const BAD_METHOD = "pay_method must be check, cash, both, transfer or card";
   const BILL_EXTRA = { kind: null, qbo_entered_at: null, qbo_entered_by: null, qbo_ref: null };
   const INVOICE_EXTRA = { qbo_entered_at: null, qbo_entered_by: null, qbo_ref: null };
   const PAYMENT_EXTRA = { payee: null, memo: null, pickup_told_at: null, pickup_told_by: null, pickup_told_how: null };
@@ -68,7 +76,7 @@
       estimate_item_id: null, quote_id: null, document_file_id: null, void: null, approved_by: null, approved_at: null, approved_amount: null,
       pay_method: null, approval_note: null, qbo_entered_at: null, qbo_entered_by: null, qbo_ref: null, created_at: null, created_by: null,
       updated_at: null, version: null, paid_total: null, payments_count: null, to_tell: null, owed: null, documented: null, state: null,
-      reason: null, pay_state: null, late_by: null } },
+      reason: null, pay_state: null, late_by: null, pay_pile: null } },
     pk: { books_desk: "id" },
     uuid: [],
     noAudit: ["books_desk"],
@@ -150,13 +158,15 @@
       if (!b || b.deleted_at) throw rule("23503", "bill not found");
       if (b.void) throw rule("23514", "the bill is void");
       if (!b.approved_at) throw rule("23514", "the bill is not approved");
-      if ((r.method === "check" && !["check", "both"].includes(b.pay_method)) || (r.method === "cash" && !["cash", "both"].includes(b.pay_method))) {
-        throw rule("23514", "the bill is approved for " + b.pay_method + " payment");
-      }
-      // M5b review fix (t01_payments_client): the approver's way binds - a person pays by check or cash only
-      if (!["check", "cash"].includes(r.method) && (!old || r.method !== old.method)) {
-        throw rule("23514", "the bill was approved to be paid by " + ({ check: "check", cash: "cash" }[b.pay_method] || "check or cash") +
+      // M5b review fix (t01_payments_client, first): the approver's way binds - ACH or wire only on a bank transfer bill,
+      // a card only on a card bill, "other" never
+      if (!["check", "cash"].includes(r.method) && !(ALLOWS[b.pay_method] || []).includes(r.method) && (!old || r.method !== old.method)) {
+        throw rule("23514", "the bill was approved to be paid by " + (WORDS[b.pay_method] || "the approved way") +
           ": ask a manager or admin to change that before paying it another way");
+      }
+      // t10_payments: a check or cash as the approver allowed
+      if ((r.method === "check" && !["check", "both"].includes(b.pay_method)) || (r.method === "cash" && !["cash", "both"].includes(b.pay_method))) {
+        throw rule("23514", "the bill is approved for " + (b.pay_method === "transfer" ? "bank transfer" : b.pay_method) + " payment");
       }
       if (r.method === "check" && !trim(r.check_number)) throw rule("23514", "a check payment needs the check number");
       const others = r2(rows.payments.filter((p) => p.bill_id === b.id && (!old || p.id !== old.id)).reduce((s, p) => s + Number(p.amount || 0), 0));
@@ -242,6 +252,8 @@
           documented, state, reason,
           pay_state: b.void ? "void" : !b.approved_at ? "unapproved" : paid >= Number(b.approved_amount) ? "paid" : paid > 0 ? "part_paid" : "to_pay",
           late_by: b.due_date ? Math.round((utc(todayK) - utc(String(b.due_date))) / 86400000) : null,
+          pay_pile: b.void || !b.approved_at ? null : ["transfer", "card"].includes(b.pay_method) ? "transfer_card"
+            : ["check", "cash", "both"].includes(b.pay_method) ? "check_desk" : null,
         });
       });
     }
@@ -283,7 +295,7 @@
           const b = billOf(a.id);
           if (!b || b.deleted_at || !projectVisible(w, b.project_id)) throw notFound("bill");
           if (Number(b.version) !== Number(a.version)) throw pt409("bills", b.id, b.version);
-          if (!METHODS.includes(a.pay_method)) throw rule("22023", "pay_method must be check, cash or both");
+          if (!METHODS.includes(a.pay_method)) throw rule("22023", BAD_METHOD);
           if (b.void) throw rule("23514", "the bill is void");
           if (!(Number(b.amount) > 0)) throw rule("23514", "the bill amount must be greater than zero");
           if (!fileIn(b.document_file_id, b.project_id)) throw rule("23514", "attach the bill document before approving");
@@ -308,7 +320,7 @@
           const b = billOf(a.p_id);
           if (!b || b.deleted_at || !projectVisible(w, b.project_id)) throw notFound("bill");
           if (Number(b.version) !== Number(a.p_version)) throw pt409("bills", b.id, b.version);
-          if (!METHODS.includes(a.p_method)) throw rule("22023", "pay_method must be check, cash or both");
+          if (!METHODS.includes(a.p_method)) throw rule("22023", BAD_METHOD);
           if (b.void) throw rule("23514", "the bill is void");
           if (!b.approved_at) throw rule("23514", "approve the bill first: that is where its pay method is set");
           if (paidOn(b.id) > 0) throw rule("23514", "this bill has payments: how it was paid is now a matter of record");
@@ -471,7 +483,7 @@
     }
     function pay(b, amount, days, method, number, extra) {
       const row = Object.assign({ id: ++ids.p, bill_id: b.id, project_id: b.project_id, paid_date: day(days), amount, method,
-        check_number: method === "check" ? number : null, reference: method === "cash" ? number || null : null, notes: null }, PAYMENT_EXTRA, extra || {},
+        check_number: method === "check" ? number : null, reference: method !== "check" ? number || null : null, notes: null }, PAYMENT_EXTRA, extra || {},
         audit(days, P.accountant));
       out.payments.push(row);
       return row;
@@ -523,6 +535,14 @@
         doc: "Telehandler rental.pdf" }, 14);
       approve(b, 12, "both", APPROVER.id, "Cash for the deposit, the rest by check");
       pay(b, 400, 11, "cash", "Petty cash slip 18", { payee: "Hillside Equipment Rental", memo: "A294 · Telehandler deposit" });
+      // approved to be paid by bank transfer: one part paid by ACH (nobody is told - it is never picked up), one not yet
+      const t = bill(shop, { vendor_name: "Summit Steel Fabricators", kind: "Subcontractor", amount: 4120, description: "Moment frame, shop and install",
+        doc: "Summit moment frame.pdf" }, 16);
+      approve(t, 13, "transfer", APPROVER.id, "Wire or ACH - their bank details are on file");
+      pay(t, 2000, 9, "ach", "ACH 0041-7781", { payee: "Summit Steel Fabricators", memo: "A294 · Moment frame, first half" });
+      const t2 = bill(shop, { vendor_name: "Northgate Rebar Supply", kind: "Material supplier", amount: 1388.25, description: "Rebar for the slab extension",
+        doc: "Northgate rebar.pdf", due_date: day(-8) }, 5);
+      approve(t2, 3, "transfer", P.admin);
       invoice(shop, { description: "Shop framing, draw 2" }, [["Framing - draw 2", 15600]], 25, [6000, 10, "3310"]);
       entered(out.invoices[out.invoices.length - 1], 20, "INV-QB-2207");
     }
@@ -541,6 +561,10 @@
       pay(b, 812.4, 33, "check", "5288", { payee: "Larkspur Lumber Supply", memo: "A284 · Porch decking", pickup_told_at: at(32, 3),
         pickup_told_by: "Casey Accounts", pickup_told_how: "email" });
       entered(b, 30, "QB-1033");
+      // approved to be paid on the company card
+      const c = bill(porch, { vendor_name: "Coastline Equipment Rentals", kind: "Equipment", amount: 386.5, description: "Plate compactor, two days",
+        doc: "Coastline rental.pdf" }, 7);
+      approve(c, 5, "card", APPROVER.id, "Put it on the company card");
       invoice(porch, { description: "Porch, complete", status: "paid" }, [["Porch framing and decking - complete", 9800]], 28, [9800, 9, "2296"]);
     }
   });

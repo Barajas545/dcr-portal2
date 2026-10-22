@@ -48,12 +48,13 @@ site/                       published as is
   css/agents-console.css, css/console-print.css   the old console's styles, unchanged
   accounting.html           The Books (P5b, the financials switch): the old accountant's desk on Desktop 2's data -
                             the picture or the tiles, what needs doing, bills to pay (the check desk: payee, memo,
-                            the amount capped at the approved amount still owed, the documents), payees to tell
-                            (payment_told), ready to enter in QuickBooks (a CSV built in the browser with the formula
+                            the amount capped at the approved amount still owed, the documents), pay by bank
+                            transfer or card (the same panel: ACH / wire or card, the confirmation, no check number,
+                            nobody to tell), payees to tell (payment_told), ready to enter in QuickBooks (a CSV built in the browser with the formula
                             guard, a BOM and CRLF - Q13: a MANUAL hand-off; mark_bills_entered with refused[] shown),
                             money in (the invoices' own marker), not ready and on whom, already entered (Undo)
   bill.html                 one bill, its paperwork and the decision (P5b): approve_bill with a REQUIRED pay method
-                            (an admin, or a manager with the approve switch - an accountant never sees a working
+                            (by check, in cash, either, by bank transfer - ACH or wire - or by card) (an admin, or a manager with the approve switch - an accountant never sees a working
                             approve button), set_bill_pay_method; the home page's approvals card links here (approvers)
   js/console/*.js           the old console: shell.js (agents-console.js, its four network points through
                             bridge.js) and console-*.js (the eight tabs, byte for byte the old portal's);

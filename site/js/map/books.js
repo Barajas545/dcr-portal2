@@ -10,7 +10,11 @@
                         An accountant NEVER approves (the owner's standing rule; approve_bill refuses them);
    * billState / blockedReason / byUrgency / daysLate   which pile a bill is in and why (old qbo.js);
    * toBill / toInvoice / toPayment                       rows -> the shapes the pages draw;
-   * buildDesk(rows, ctx)                                 every pile, the check desk, the totals and the to-do list;
+   * PAY_METHODS / allowedMethods / payPile / payMethodWords / paymentLabel   how an approved bill is paid: check, cash,
+                                                          either, a bank transfer (ACH or wire) or a card (owner
+                                                          decision 2026-10-21) - the approver's choice binds;
+   * buildDesk(rows, ctx)                                 every pile, the check desk, the "Pay by bank transfer or
+                                                          card" list, the totals and the to-do list;
    * checkCap / amountAllowed / parseAmount               how much may still be paid (the FROZEN approved amount minus
                                                           what is paid - the database's payment trigger is the gate);
    * suggestPayee / suggestMemo / pickupMessage / resolvePayee   what goes on the check and who is told;
@@ -99,24 +103,63 @@ export function kindLabel(v) {
   return hit ? hit.label : txt(v);
 }
 
+/* bills.pay_method (M5b, owner decision 2026-10-21: DCR also pays vendors and subcontractors by bank transfer and by
+   card): check | cash | both (check or cash) | transfer (ACH or wire) | card. The database's app.pay_method_allows is
+   the rule; "other" is never a person's. */
 export const PAY_METHODS = Object.freeze([
   { id: "check", label: "By check" },
   { id: "cash", label: "In cash" },
   { id: "both", label: "Either — check or cash, split if needed" },
+  { id: "transfer", label: "By bank transfer (ACH or wire)" },
+  { id: "card", label: "By card" },
 ]);
 export function isPayMethod(v) { return PAY_METHODS.some((m) => m.id === txt(v).toLowerCase()); }
-/** "by check" | "in cash" | "by check or in cash" | "" */
+/** "by check" | "in cash" | "by check or in cash" | "by bank transfer (ACH or wire)" | "by card" | "" */
 export function payMethodWords(v) {
   const m = txt(v).toLowerCase();
-  return m === "check" ? "by check" : m === "cash" ? "in cash" : m === "both" ? "by check or in cash" : "";
+  return m === "check" ? "by check" : m === "cash" ? "in cash" : m === "both" ? "by check or in cash"
+    : m === "transfer" ? "by bank transfer (ACH or wire)" : m === "card" ? "by card" : "";
 }
-/** What the accountant may pay this bill with: the approver decided (old checks.js allowedMethods). */
+/** What the accountant may pay this bill with: the approver decided (old checks.js allowedMethods; M5b's
+    app.pay_method_allows): payments.method values. */
 export function allowedMethods(payMethod) {
   const m = txt(payMethod).toLowerCase();
   if (m === "check") return ["check"];
   if (m === "cash") return ["cash"];
   if (m === "both") return ["check", "cash"];
+  if (m === "transfer") return ["ach", "wire"];
+  if (m === "card") return ["card"];
   return [];
+}
+/** Which pile pays it (books_desk.pay_pile): "check_desk" (check | cash | both - a check is written or cash handed
+    over, and the payee told), "transfer_card" (transfer | card - sent from the bank or put on the card: no check number,
+    nobody to tell), "" (no pay method said). */
+export function payPile(payMethod) {
+  const m = txt(payMethod).toLowerCase();
+  return m === "check" || m === "cash" || m === "both" ? "check_desk" : m === "transfer" || m === "card" ? "transfer_card" : "";
+}
+/* One payment's method in words (payments.method). */
+export const PAYMENT_LABELS = Object.freeze({ check: "Check", cash: "Cash", ach: "ACH transfer", wire: "Wire transfer", card: "Card", other: "Other" });
+export function paymentLabel(method) { const m = txt(method).toLowerCase(); return PAYMENT_LABELS[m] || (m ? txt(method) : "Payment"); }
+/* The bill's pay method in a CSV cell / a chip: Check | Cash | Check or cash | Bank transfer | Card. */
+export const PAY_METHOD_LABELS = Object.freeze({ check: "Check", cash: "Cash", both: "Check or cash", transfer: "Bank transfer", card: "Card" });
+/** What the pay panel's reference field asks for: {label, sub, placeholder}. `method` is the payment method picked
+    (payments.method; "" while none is picked yet), `allowed` the bill's allowedMethods. A check asks for its number,
+    cash for anything that helps, ACH / wire / card for the confirmation (optional). Before a method is picked, a bill
+    that cannot be paid by check or cash (a bank transfer bill: ACH or wire) already asks for the bank's confirmation -
+    only the check desk says "Check number" (review fix). */
+export function refField(method, allowed) {
+  const m = txt(method).toLowerCase();
+  const can = (allowed || []).map((x) => txt(x).toLowerCase()).filter(Boolean);
+  const bank = { label: "Confirmation number (optional)", sub: "The bank's confirmation — no check number, and nobody to tell." };
+  const card = { label: "Confirmation number (optional)", sub: "The card's authorisation or receipt number — no check number, and nobody to tell.", placeholder: "e.g. AUTH 448120" };
+  if (m === "cash") return { label: "Reference (optional)", sub: "Cash has no number of its own. Anything that helps you find it later.", placeholder: "e.g. petty cash slip" };
+  if (m === "card") return card;
+  if (m === "ach" || m === "wire") return Object.assign({ placeholder: "e.g. " + m.toUpperCase() + " 0041-7781" }, bank);
+  if (m === "check" || !can.length || can.includes("check") || can.includes("cash")) {
+    return { label: "Check number", sub: "So it can be found again.", placeholder: "e.g. 2041" };
+  }
+  return can.every((x) => x === "card") ? card : Object.assign({ placeholder: "e.g. 0041-7781" }, bank);
 }
 
 /* How they were told their check / cash is ready (payment_told: phone, in person, email, text). */
@@ -141,7 +184,7 @@ function byIdMap(rows, key) {
   return m;
 }
 
-/** One row of the books_desk view (M5b) in a known shape, whatever its column names: {billId, state, paid, owed}. */
+/** One row of the books_desk view (M5b) in a known shape, whatever its column names: {billId, state, paid, owed, pile}. */
 export function deskRow(r) {
   if (!r) return null;
   const pick = (keys) => { for (const k of keys) if (r[k] !== undefined) return r[k]; return undefined; };
@@ -155,6 +198,7 @@ export function deskRow(r) {
     reason: txt(pick(["reason", "why"])) || null,
     paid: paid === undefined || paid === null ? null : num(paid),
     owed: owed === undefined || owed === null ? null : num(owed),
+    pile: txt(pick(["pay_pile", "pile"])).toLowerCase() || null,
   };
 }
 
@@ -204,6 +248,8 @@ export function toBill(row, ctx) {
     approvedByName: nameOf(row.approved_by) || (row.approved_by ? "someone" : ""),
     approvedAmount: approvedAmount,
     payMethod: approved ? txt(row.pay_method).toLowerCase() : "",
+    // which pile pays it: the database's answer (books_desk.pay_pile) when the view gave one
+    pile: d && d.pile ? d.pile : approved ? payPile(row.pay_method) : "",
     approvalNote: txt(row.approval_note),
     entered: !!row.qbo_entered_at,
     enteredAt: row.qbo_entered_at || null,
@@ -245,6 +291,7 @@ export function toPayment(row) {
     toldDay: dayOf(row.pickup_told_at),
     toldBy: txt(row.pickup_told_by),
     toldHow: txt(row.pickup_told_how),
+    // only a check or cash is picked up (and its payee told); a transfer or a card payment never is
     collectable: ["check", "cash"].includes(txt(row.method).toLowerCase()),
   };
 }
@@ -380,9 +427,12 @@ export function suggestMemo(b) {
   return memo.length > MEMO_MAX ? memo.slice(0, MEMO_MAX - 1).trimEnd() + "…" : memo;
 }
 
-/** The checks and cash still to hand over, and who has not been told: {toPay, toDecide, toTell, totals}. */
+/** The checks and cash still to hand over (toPay: the check desk), the bank transfers and card payments still to send
+    (toSend: the "Pay by bank transfer or card" list - no check number, nobody to tell), the approved bills nobody said
+    how to pay (toDecide), and who has not been told about a check or cash (toTell): {toPay, toSend, toDecide, toTell,
+    totals}. */
 export function deskChecks(bills, payments) {
-  const toPay = [], toDecide = [], toTell = [];
+  const toPay = [], toSend = [], toDecide = [], toTell = [];
   const byBill = new Map();
   (payments || []).forEach((p) => {
     const k = String(p.billId);
@@ -397,9 +447,11 @@ export function deskChecks(bills, payments) {
       const entry = Object.assign({}, b, {
         owed: cap.cap, alreadyPaid: cap.paid, approvedFor: cap.approved, partial: cap.paid > 0,
         payee: s.payee, payeeCompany: s.company, payeePerson: s.person, payeeNote: s.note,
-        memo: suggestMemo(b), allowed: allowedMethods(b.payMethod),
+        memo: suggestMemo(b), allowed: allowedMethods(b.payMethod), pile: b.pile || payPile(b.payMethod),
       });
-      if (entry.allowed.length) toPay.push(entry); else toDecide.push(entry);
+      if (!entry.allowed.length) toDecide.push(entry);
+      else if (entry.pile === "transfer_card") toSend.push(entry);
+      else toPay.push(entry);
     }
     for (const p of byBill.get(String(b.id)) || []) {
       if (!p.collectable || p.toldAt) continue;
@@ -415,16 +467,20 @@ export function deskChecks(bills, payments) {
   }
   const byOldest = (a, b) => String(a.dueDate || a.writtenDate || "9999").localeCompare(String(b.dueDate || b.writtenDate || "9999")) ||
     num(b.owed !== undefined ? b.owed : b.amount) - num(a.owed !== undefined ? a.owed : a.amount);
-  toPay.sort(byOldest); toDecide.sort(byOldest); toTell.sort(byOldest);
+  toPay.sort(byOldest); toSend.sort(byOldest); toDecide.sort(byOldest); toTell.sort(byOldest);
   const sum = (rows, k) => round(rows.reduce((n, r) => n + num(r[k]), 0));
-  const byMethod = (id) => toPay.filter((b) => b.payMethod === id);
+  const byMethod = (id) => toPay.concat(toSend).filter((b) => b.payMethod === id);
   return {
-    toPay, toDecide, toTell,
+    toPay, toSend, toDecide, toTell,
     totals: {
       toPayCount: toPay.length, toPayAmount: sum(toPay, "owed"),
+      toSendCount: toSend.length, toSendAmount: sum(toSend, "owed"),
+      outCount: toPay.length + toSend.length, outAmount: round(sum(toPay, "owed") + sum(toSend, "owed")),
       checkCount: byMethod("check").length, checkAmount: sum(byMethod("check"), "owed"),
       cashCount: byMethod("cash").length, cashAmount: sum(byMethod("cash"), "owed"),
       eitherCount: byMethod("both").length, eitherAmount: sum(byMethod("both"), "owed"),
+      transferCount: byMethod("transfer").length, transferAmount: sum(byMethod("transfer"), "owed"),
+      cardCount: byMethod("card").length, cardAmount: sum(byMethod("card"), "owed"),
       toDecideCount: toDecide.length, toDecideAmount: sum(toDecide, "owed"),
       toTellCount: toTell.length, toTellAmount: sum(toTell, "amount"),
     },
@@ -532,6 +588,8 @@ export const BILL_COLUMNS = Object.freeze([
   ["Memo", (b) => b.description || ""],
   ["Approved By", (b) => b.approvedByName || ""],
   ["Approved On", (b) => b.approvedDay || ""],
+  // how the approver said it is paid - the QuickBooks payment account it leaves from (the bank, the card, petty cash)
+  ["Pay Method", (b) => PAY_METHOD_LABELS[b.payMethod] || ""],
   ["Portal Bill ID", (b) => String(b.id == null ? "" : b.id)],
 ]);
 
@@ -638,6 +696,8 @@ export function todoList(d) {
   if (t.checkCount) out.push({ kind: "check", text: "Write " + plural(t.checkCount, "check", "checks"), amount: t.checkAmount, to: "secPay" });
   if (t.cashCount) out.push({ kind: "cash", text: "Pay " + plural(t.cashCount, "bill", "bills") + " in cash", amount: t.cashAmount, to: "secPay" });
   if (t.eitherCount) out.push({ kind: "either", text: "Settle " + plural(t.eitherCount, "bill", "bills") + " by check or cash — your call", amount: t.eitherAmount, to: "secPay" });
+  if (t.transferCount) out.push({ kind: "transfer", text: "Send " + plural(t.transferCount, "bank transfer", "bank transfers") + " (ACH or wire)", amount: t.transferAmount, to: "secSend" });
+  if (t.cardCount) out.push({ kind: "card", text: "Pay " + plural(t.cardCount, "bill", "bills") + " by card", amount: t.cardAmount, to: "secSend" });
   if (t.toTellCount) out.push({ kind: "tell", text: "Tell " + plural(t.toTellCount, "payee", "payees") + " it is ready to collect", amount: t.toTellAmount, to: "secTell" });
   if (t.toDecideCount) out.push({ kind: "waiting", text: plural(t.toDecideCount, "approved bill", "approved bills") + " with no payment method — ask a manager", amount: t.toDecideAmount, to: "secDecide" });
   if (s.readyCount) out.push({ kind: "qbo", text: "Enter " + plural(s.readyCount, "bill", "bills") + " in QuickBooks", amount: s.readyAmount, to: "secQbo" });

@@ -294,3 +294,68 @@ test("review fix (M5b t01_payments_client in the demo database): the approver's 
   assert.equal(told.toldHow, "phone");
   useClient(null);
 });
+
+test("bank transfer and card (owner decision 2026-10-21) in the demo database: every pay method x every payment method for the accountant (transfer: ACH or wire; card: a card; 'other' never); the approver approves and re-sets them; the desk's own list (books_desk pay_pile) and nobody told about an ACH payment", { skip }, async () => {
+  await setup();
+  const OK = { check: ["check"], cash: ["cash"], both: ["check", "cash"], transfer: ["ach", "wire"], card: ["card"] };
+  const WORDS = { check: "check", cash: "cash", both: "check or cash", transfer: "bank transfer (ACH or wire)", card: "card" };
+  const c = clientAs(E, id("accountant"));
+  const a = clientAs(E, id("approver"));
+  const waiting = [bill("Footings and stem wall, phase 1")];       // Quarryman Concrete, documented, waiting
+  assert.ok(waiting[0] && !waiting[0].approved_at, "a documented bill waiting");
+  for (const pm of Object.keys(OK)) {
+    const b = waiting[0];
+    const fresh = E.rows.bills.find((x) => x.id === b.id);
+    if (fresh.approved_at) {
+      const un = await a.rpc("unapprove_bill", { id: b.id, version: fresh.version });
+      assert.equal(un.error, null, JSON.stringify(un.error));
+    }
+    const v = E.rows.bills.find((x) => x.id === b.id).version;
+    const ap = await a.rpc("approve_bill", { id: b.id, pay_method: pm, version: v, note: null });
+    assert.equal(ap.error, null, pm + ": " + JSON.stringify(ap.error));
+    for (const m of ["check", "cash", "ach", "card", "wire", "other"]) {
+      const r = await c.from("payments").insert({ bill_id: b.id, amount: 1, method: m, check_number: m === "check" ? "8001" : null,
+        reference: m === "check" ? null : "CONF-1" }).select("id, method, check_number");
+      if (OK[pm].includes(m)) {
+        assert.equal(r.error, null, pm + " / " + m + ": " + JSON.stringify(r.error));
+        assert.equal(r.data[0].check_number, m === "check" ? "8001" : null);
+        // take it back so the bill can be re-approved another way
+        assert.equal((await c.from("payments").delete().eq("id", r.data[0].id)).error, null);
+        continue;
+      }
+      assert.equal(r.error && r.error.code, "23514", pm + " / " + m);
+      if (m === "check" || m === "cash") assert.equal(r.error.message, "the bill is approved for " + (pm === "transfer" ? "bank transfer" : pm) + " payment");
+      else assert.equal(r.error.message, "the bill was approved to be paid by " + WORDS[pm] + ": ask a manager or admin to change that before paying it another way");
+    }
+  }
+  // the approver: approve and set the new ones; the accountant never; an unknown one 22023
+  const w = E.rows.bills.find((b) => b.id === waiting[0].id);
+  as("approver");
+  const set = await books.setPayMethod({ id: w.id, version: w.version }, "transfer");
+  assert.equal(set.pay_method, "transfer");
+  await refused(() => books.setPayMethod({ id: w.id, version: set.version }, "ach"), "22023");
+  as("accountant");
+  await refused(() => books.setPayMethod({ id: w.id, version: set.version }, "card"), "42501");
+  // recordPayment by ACH: no check number, its confirmation kept; then the pay method is settled
+  const rec = await books.recordPayment({ id: w.id, projectId: w.project_id }, { amount: 10, method: "ach", checkNumber: "ACH 0041-7781", payee: "Quarryman Concrete" });
+  assert.deepEqual([rec.method, rec.checkNumber, rec.reference], ["ach", "", "ACH 0041-7781"]);
+  await refused(() => books.markTold({ paymentId: rec.id, version: rec.version }, "phone"), "22023");
+  as("approver");
+  await refused(() => books.setPayMethod({ id: w.id, version: E.rows.bills.find((b) => b.id === w.id).version }, "card"), "23514");
+  // the desk: the transfer and card bills on their own list; no ACH payment to tell anyone about
+  as("accountant");
+  const d = await books.loadDesk(me("accountant"));
+  const send = d.checks.toSend.map((b) => b.vendor);
+  for (const v of ["Summit Steel Fabricators", "Northgate Rebar Supply", "Coastline Equipment Rentals", "Quarryman Concrete"]) assert.ok(send.includes(v), v);
+  assert.ok(d.checks.toSend.every((b) => b.pile === "transfer_card" && (b.payMethod === "transfer" || b.payMethod === "card")));
+  assert.ok(d.checks.toPay.every((b) => ["check", "cash", "both"].includes(b.payMethod)), "the check desk: check, cash and either only");
+  const summit = d.checks.toSend.find((b) => b.vendor === "Summit Steel Fabricators");
+  assert.deepEqual([summit.owed, summit.partial, summit.allowed], [2120, true, ["ach", "wire"]]);
+  const ach = E.rows.payments.filter((x) => ["ach", "wire", "card"].includes(x.method)).map((x) => x.id);
+  assert.ok(ach.length >= 2);
+  assert.ok(!d.checks.toTell.some((t) => ach.includes(t.paymentId)), "nobody is told about a transfer");
+  assert.ok(d.checks.totals.transferCount >= 2 && d.checks.totals.cardCount >= 1);
+  const rows = (await c.from("books_desk").select("id, pay_pile, to_tell, pay_method").in("id", d.checks.toSend.map((b) => b.id))).data;
+  assert.ok(rows.length >= 4 && rows.every((r) => r.pay_pile === "transfer_card" && r.to_tell === 0), JSON.stringify(rows));
+  useClient(null);
+});

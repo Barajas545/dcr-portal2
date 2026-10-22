@@ -99,6 +99,61 @@ test("the check desk: the cap is the FROZEN approved amount minus what is paid; 
   assert.equal(M.buildDesk({ bills: rows, payments: [Object.assign({}, payments[0], { method: "wire" })], projects, contacts }, { today: TODAY }).checks.toTell.length, 0);
 });
 
+test("bank transfer and card (owner decision 2026-10-21): the five pay methods, what each allows, its pile - transfer and card bills go to the 'Pay by bank transfer or card' list, never the check desk; nobody is told about an ACH, wire or card payment", () => {
+  assert.deepEqual(M.PAY_METHODS.map((m) => m.id), ["check", "cash", "both", "transfer", "card"]);
+  assert.deepEqual(M.PAY_METHODS.map((m) => m.label), ["By check", "In cash", "Either — check or cash, split if needed", "By bank transfer (ACH or wire)", "By card"]);
+  assert.deepEqual(M.allowedMethods("transfer"), ["ach", "wire"]);
+  assert.deepEqual(M.allowedMethods("card"), ["card"]);
+  assert.deepEqual(M.allowedMethods("other"), [], "never a person's");
+  assert.equal(M.payMethodWords("transfer"), "by bank transfer (ACH or wire)");
+  assert.equal(M.payMethodWords("card"), "by card");
+  assert.deepEqual(["check", "cash", "both", "transfer", "card", null].map(M.payPile), ["check_desk", "check_desk", "check_desk", "transfer_card", "transfer_card", ""]);
+  assert.equal(M.isPayMethod("transfer"), true);
+  assert.equal(M.isPayMethod("ach"), false, "a payment method is not a pay method");
+  assert.deepEqual(["check", "cash", "ach", "wire", "card", "other"].map(M.paymentLabel), ["Check", "Cash", "ACH transfer", "Wire transfer", "Card", "Other"]);
+  const rows = [approved({ id: 1 }), approved({ id: 2, pay_method: "transfer", amount: 4120, approved_amount: 4120 }),
+    approved({ id: 3, pay_method: "card", amount: 386.5, approved_amount: 386.5 }), approved({ id: 4, pay_method: "both" }),
+    approved({ id: 5, pay_method: "transfer", amount: 900, approved_amount: 900 })];
+  const payments = [
+    { id: 70, bill_id: 2, project_id: 1, paid_date: "2026-10-12", amount: 2000, method: "ach", reference: "ACH 0041", version: 1 },
+    { id: 71, bill_id: 5, project_id: 1, paid_date: "2026-10-13", amount: 900, method: "wire", reference: "W-1", version: 1 },
+    { id: 72, bill_id: 4, project_id: 1, paid_date: "2026-10-14", amount: 100, method: "check", check_number: "9", version: 1 }];
+  const d = M.buildDesk({ bills: rows, payments, projects, contacts }, { today: TODAY, nameOf });
+  assert.deepEqual(d.checks.toPay.map((b) => b.id).sort(), [1, 4], "the check desk: check, cash and either only");
+  assert.deepEqual(d.checks.toSend.map((b) => b.id).sort(), [2, 3], "transfer and card on their own list (a paid one off it)");
+  const t = d.checks.toSend.find((b) => b.id === 2);
+  assert.deepEqual([t.owed, t.partial, t.pile, t.allowed], [2120, true, "transfer_card", ["ach", "wire"]], "4120 approved - 2000 sent by ACH");
+  assert.deepEqual(d.checks.toSend.find((b) => b.id === 3).allowed, ["card"]);
+  assert.deepEqual(d.checks.toTell.map((x) => x.paymentId), [72], "only the check is told about - never the ACH or the wire");
+  const T = d.checks.totals;
+  assert.deepEqual([T.toPayCount, T.toSendCount, T.outCount, T.transferCount, T.transferAmount, T.cardCount, T.cardAmount],
+    [2, 2, 4, 1, 2120, 1, 386.5]);
+  // the pay panel's reference field (review fix: a transfer bill asked for a "Check number" until ACH or wire was picked)
+  const lab = (m, pm) => M.refField(m, M.allowedMethods(pm)).label;
+  assert.equal(lab("", "transfer"), "Confirmation number (optional)", "a transfer bill, nothing picked yet: the bank's confirmation");
+  assert.match(M.refField("", ["ach", "wire"]).sub, /bank's confirmation — no check number, and nobody to tell/);
+  assert.doesNotMatch(M.refField("", ["ach", "wire"]).placeholder, /2041/, "no check-number example on a transfer bill");
+  assert.deepEqual(["ach", "wire"].map((m) => lab(m, "transfer")), ["Confirmation number (optional)", "Confirmation number (optional)"]);
+  assert.equal(M.refField("wire", ["ach", "wire"]).placeholder, "e.g. WIRE 0041-7781");
+  assert.equal(lab("card", "card"), "Confirmation number (optional)");
+  assert.match(M.refField("", ["card"]).sub, /card's authorisation/, "a card bill, whatever is picked: the card's number");
+  assert.equal(lab("", "both"), "Check number", "the check desk keeps 'Check number' while check or cash is still open");
+  assert.equal(lab("check", "check"), "Check number");
+  assert.equal(lab("check", "both"), "Check number");
+  assert.equal(lab("cash", "both"), "Reference (optional)");
+  assert.equal(lab("cash", "cash"), "Reference (optional)");
+  assert.equal(lab("", null), "Check number", "nobody said: the old wording (the panel is never shown for it)");
+  assert.equal(T.outAmount, Math.round((T.toPayAmount + T.toSendAmount) * 100) / 100);
+  const todo = d.todo.filter((x) => x.kind === "transfer" || x.kind === "card");
+  assert.deepEqual(todo.map((x) => [x.text, x.amount, x.to]), [["Send 1 bank transfer (ACH or wire)", 2120, "secSend"], ["Pay 1 bill by card", 386.5, "secSend"]]);
+  // the database's pile wins when the view gives one
+  const desk = [Object.assign({}, rows[1], { state: "ready", paid_total: 2000, owed: 2120, pay_pile: "transfer_card" })];
+  assert.equal(M.buildDesk({ bills: desk, desk, payments, projects, contacts }, { today: TODAY }).checks.toSend[0].pile, "transfer_card");
+  // an ACH payment is never collectable
+  assert.equal(M.toPayment(payments[0]).collectable, false);
+  assert.equal(M.toPayment(payments[2]).collectable, true);
+});
+
 test("amounts typed for a check: only $ , and spaces are stripped; over the cap is refused", () => {
   assert.equal(M.parseAmount("$4,500.00"), 4500);
   assert.ok(Number.isNaN(M.parseAmount("-100")), "a stripped minus would be a hundred-dollar check");
@@ -126,8 +181,13 @@ test("the CSV (Q13: a manual hand-off): every cell quoted, a formula-looking cel
   assert.ok(csv.startsWith("﻿"), "the BOM");
   assert.ok(csv.endsWith("\r\n"));
   const lines = csv.slice(1).split("\r\n");
-  assert.equal(lines[0], '"Vendor","Bill No","Bill Date","Due Date","Amount","Category","Customer/Project","Memo","Approved By","Approved On","Portal Bill ID"');
-  assert.equal(lines[1], '"Peña Framing","V-100","2026-10-01","2026-10-31","1000.00","Material supplier","A900 — Made-up Cabin","\'=cmd|\' /C calc\'!A0","Ada Admin","2026-10-05","9"');
+  assert.equal(lines[0], '"Vendor","Bill No","Bill Date","Due Date","Amount","Category","Customer/Project","Memo","Approved By","Approved On","Pay Method","Portal Bill ID"');
+  assert.equal(lines[1], '"Peña Framing","V-100","2026-10-01","2026-10-31","1000.00","Material supplier","A900 — Made-up Cabin","\'=cmd|\' /C calc\'!A0","Ada Admin","2026-10-05","Check","9"');
+  // how the approver said it is paid (owner decision 2026-10-21: also by bank transfer and by card)
+  const ways = M.buildDesk({ bills: ["check", "cash", "both", "transfer", "card"].map((m, i) => approved({ id: 20 + i, pay_method: m })), projects, contacts },
+    { today: TODAY, nameOf });
+  const cells = M.toCsv(ways.ready, M.BILL_COLUMNS).slice(1).split("\r\n").slice(1, -1).map((l) => l.split('","')[10]);
+  assert.deepEqual(cells, ["Check", "Cash", "Check or cash", "Bank transfer", "Card"]);
   assert.ok(!/\r\n\r\n/.test(csv));
   assert.equal(M.csvName("bills", TODAY), "dcr-bills-2026-10-21.csv");
   const iv = M.toInvoice({ id: 4, project_id: 2, number: "A901-01", invoice_date: "2026-10-02", due_date: "2026-10-17", status: "paid", sent_date: "2026-10-02",

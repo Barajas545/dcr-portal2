@@ -15,7 +15,8 @@
                                switch: quote_prices), the documents (document_file_id and the files linked to it);
    * approvals(me)             the bills waiting for approval, across every project (approvers only: the card).
    Writes:
-   * approve(bill, method, note)     rpc approve_bill(id, pay_method, version, note): the pay method is REQUIRED, the
+   * approve(bill, method, note)     rpc approve_bill(id, pay_method, version, note): the pay method (check | cash | both |
+                                     transfer | card - owner decision 2026-10-21) is REQUIRED, the
                                      version is the one on screen (PT409 otherwise), the document must be attached;
                                      an admin or a manager with the approve switch - an accountant is refused;
    * setPayMethod(bill, method)      rpc set_bill_pay_method(p_id, p_method, p_version): approve authority, an approved
@@ -23,9 +24,10 @@
    * markBillsEntered(ids, ref) / unmarkBillsEntered(ids) / markInvoicesEntered(ids, ref) / unmarkInvoicesEntered(ids):
                                      the M5b RPCs -> {marked, refused[]} (only live, approved, documented, not-entered
                                      bills are marked; the rest come back in refused[] with the reason);
-   * recordPayment(bill, f)          a payments row (money editors): the method the approver allowed, a check's number,
+   * recordPayment(bill, f)          a payments row (money editors): the method the approver allowed (a check, cash, ACH,
+                                     wire or a card), a check's number - any other method's confirmation or reference -,
                                      payee (<= 200) and memo (<= 100); the database refuses more than the approved
-                                     amount still owed (acceptance check 2);
+                                     amount still owed (acceptance check 2) and any other way of paying;
    * markTold(payment, how)          rpc payment_told(p_id, p_how, p_version) (M6): phone, in person, email or text;
                                      how = null clears it. A payment once told cannot be deleted (M5b's guard). */
 
@@ -38,10 +40,11 @@ import { ymd } from "../map/pacific.js";
 export const BILL_COLS = "id, project_id, estimate_item_id, quote_id, vendor_contact_id, vendor_name, invoice_number, invoice_date, due_date, " +
   "amount, description, document_file_id, void, approved_by, approved_at, approved_amount, pay_method, approval_note, kind, " +
   "qbo_entered_at, qbo_entered_by, qbo_ref, deleted_at, created_at, created_by, version";
-// books_desk (M5b): the bill's own columns plus the database's paid_total, owed, state and reason
+// books_desk (M5b): the bill's own columns plus the database's paid_total, owed, state, reason and pay_pile (check_desk |
+// transfer_card)
 export const DESK_COLS = "id, project_id, kind, vendor_contact_id, vendor_name, invoice_number, invoice_date, due_date, amount, description, " +
   "estimate_item_id, quote_id, document_file_id, void, approved_by, approved_at, approved_amount, pay_method, approval_note, " +
-  "qbo_entered_at, qbo_entered_by, qbo_ref, created_at, created_by, version, paid_total, owed, state, reason";
+  "qbo_entered_at, qbo_entered_by, qbo_ref, created_at, created_by, version, paid_total, owed, state, reason, pay_pile";
 export const PAYMENT_COLS = "id, bill_id, project_id, paid_date, amount, method, check_number, reference, notes, payee, memo, " +
   "pickup_told_at, pickup_told_by, pickup_told_how, created_at, created_by, version";
 export const INVOICE_COLS = "id, project_id, number, invoice_date, due_date, description, status, sent_date, qbo_entered_at, qbo_entered_by, " +
@@ -163,7 +166,7 @@ export async function approvals(me) {
 
 function one(res) { return Array.isArray(res) ? res[0] || null : res; }
 
-/** Approve `bill` (as shown: its version) to be paid by `method` (check | cash | both) - REQUIRED. */
+/** Approve `bill` (as shown: its version) to be paid by `method` (check | cash | both | transfer | card) - REQUIRED. */
 export async function approve(bill, method, note) {
   const c = await db();
   const n = String(note == null ? "" : note).trim().slice(0, APPROVAL_NOTE_MAX);
@@ -207,7 +210,8 @@ export async function unmarkInvoicesEntered(list) {
   return markResult(must(await c.rpc("unmark_invoices_entered", { p_ids: ids(list) })));
 }
 
-/** Record a payment against `bill` (check or cash, as the approver allowed): -> the payments row. */
+/** Record a payment against `bill` (a check, cash, ACH, wire or a card, as the approver allowed): -> the payments row. A
+    check carries its number; any other method its confirmation or reference (optional). */
 export async function recordPayment(bill, f) {
   const c = await db();
   const method = String(f.method || "").toLowerCase();
@@ -218,7 +222,7 @@ export async function recordPayment(bill, f) {
     amount: Number(f.amount),
     method: method,
     check_number: method === "check" ? number || null : null,
-    reference: method === "cash" ? number || null : null,
+    reference: method !== "check" ? number || null : null,
     payee: String(f.payee == null ? "" : f.payee).trim().slice(0, PAYEE_MAX) || null,
     memo: String(f.memo == null ? "" : f.memo).replace(/\s+/g, " ").trim().slice(0, MEMO_MAX) || null,
   };

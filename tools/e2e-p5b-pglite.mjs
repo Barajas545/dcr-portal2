@@ -20,6 +20,9 @@
      clears the approval; a payment over the approved amount, or by a method the approver did not allow, is refused;
    - the check desk: payee and memo, the check recorded, the payee told by phone (payment_told), a told payment
      cannot be deleted (M5b's guard);
+   - bank transfer and card (owner decision 2026-10-21): the approver approves a bill for a bank transfer through the
+     bill page; the accountant pays it by ACH from "Pay by bank transfer or card" (no check number, its confirmation
+     kept, never on the check desk, nobody told) and a card bill by card; anything else refused by the database;
    - P5 acceptance check 3: the bills CSV (a BOM, CRLF, every cell quoted, the formula guard), Mark entered with a
      bill un-approved meanwhile (refused[] said in full; the rest stamped by the accountant with the ref), Undo,
      the invoices' own marker;
@@ -260,7 +263,7 @@ async function main() {
       await modalOk(ap);
       await sleep(400);
       const err = await ap.eval("(document.getElementById('dcrMoErr') || {}).textContent || ''");
-      check("approver: the dialog refuses to approve without a pay method (nothing pre-selected)", /Choose check, cash or either/.test(err) && !(await bill(J.waiting)).approved_at, err);
+      check("approver: the dialog refuses to approve without a pay method (nothing pre-selected)", /Choose how it is paid: by check, in cash, either, by bank transfer or by card/.test(err) && !(await bill(J.waiting)).approved_at, err);
       await ap.eval("(() => { const s = document.querySelector('.dcr-mo.open select'); s.value = 'check'; s.dispatchEvent(new Event('change')); return true; })()");
       await four(ap, "approve_dialog_approver", false);
       await modalOk(ap);
@@ -366,6 +369,58 @@ async function main() {
       check("a payment once told cannot be deleted (M5b's guard, 23514)", !!del.error && del.error.code === "23514" && !!(await one("select id from public.payments where id = $1", [pay.id])), JSON.stringify(del));
     }, ac);
 
+    /* ── 4b. bank transfer and card (owner decision 2026-10-21) ──────────── */
+    if (ap && ac) await attempt("bank transfer and card: approved through the bill page, paid by ACH and by card from their own list", async () => {
+      await open(ap, "/bill.html?id=" + J.wire, BILL + " && !!document.getElementById('blGo')");
+      await ap.eval("document.getElementById('blGo').click(); true");
+      await ap.until(modalOpen, 5000);
+      const opts = await ap.eval("Array.from(document.querySelectorAll('.dcr-mo.open select option')).map(o => o.value)");
+      check("approver: the approve dialog offers check, cash, either, bank transfer and card (the database's five)",
+        JSON.stringify(opts) === JSON.stringify(["", "check", "cash", "both", "transfer", "card"]), JSON.stringify(opts));
+      await ap.eval("(() => { const s = document.querySelector('.dcr-mo.open select'); s.value = 'transfer'; s.dispatchEvent(new Event('change')); return true; })()");
+      await four(ap, "approve_transfer_approver", false);
+      await modalOk(ap);
+      await ap.until("/by bank transfer \\(ACH or wire\\)/.test(document.getElementById('blDecision').innerText)", 10000);
+      const w = await bill(J.wire);
+      check("approver: approved in the database to be paid by bank transfer", w.pay_method === "transfer" && w.approved_by === J.people.approver, JSON.stringify({ m: w.pay_method }));
+      await open(ac, "/accounting.html", DESK + " && !!document.querySelector('#secSend [data-open=\"" + J.wire + "\"]')");
+      const l = await ac.eval("({ send: Array.from(document.querySelectorAll('#secSend [data-open]')).map(r => Number(r.getAttribute('data-open'))), pay: Array.from(document.querySelectorAll('#secPay [data-open]')).map(r => Number(r.getAttribute('data-open'))) })");
+      check("accountant: the transfer and the card bill on 'Pay by bank transfer or card' (books_desk pay_pile), never on the check desk",
+        l.send.includes(J.wire) && l.send.includes(J.cardBill) && !l.pay.includes(J.wire) && !l.pay.includes(J.cardBill), JSON.stringify(l));
+      await ac.eval("document.querySelector('#secSend [data-open=\"" + J.wire + "\"]').click(); true");
+      await ac.until("!!document.getElementById('ckWrite') && !!document.querySelector('#ckHow [data-how=\"ach\"]')", 8000);
+      const rf = await ac.eval("({ lab: document.getElementById('ckRefLab').textContent, ph: document.getElementById('ckNumber').placeholder, disabled: document.getElementById('ckWrite').disabled })");
+      check("accountant: the transfer bill's panel asks for a confirmation number (optional) before ACH or wire is picked - never 'Check number'",
+        rf.lab === "Confirmation number (optional)" && !/2041/.test(rf.ph) && rf.disabled, JSON.stringify(rf));
+      await ac.eval("document.querySelector('#ckHow [data-how=\"ach\"]').click(); document.getElementById('ckAmount').value = '1000'; document.getElementById('ckNumber').value = 'ACH 0041-7781'; true");
+      await four(ac, "send_panel_accountant", false, async () => { await ac.eval("document.getElementById('ckPanel').scrollIntoView({ block: 'center' }); true"); });
+      await ac.eval("document.getElementById('ckWrite').click(); true");
+      await ac.until(modalOpen, 5000);
+      await modalOk(ac);
+      let pa = null;
+      for (let i = 0; i < 40 && !pa; i++) { pa = await one("select * from public.payments where bill_id = $1", [J.wire]); if (!pa) await sleep(250); }
+      check("accountant: the ACH payment in the database - method ach, no check number, the confirmation, 1,000 of 1,800, by the accountant",
+        pa && pa.method === "ach" && pa.check_number === null && pa.reference === "ACH 0041-7781" && Number(pa.amount) === 1000 && pa.created_by === J.people.accountant, JSON.stringify(pa));
+      const desk = await one("select pay_pile, to_tell, owed from public.books_desk where id = $1", [J.wire]);
+      check("books_desk: the transfer bill on transfer_card, nobody to tell, 800 still owed", desk.pay_pile === "transfer_card" && desk.to_tell === 0 && Number(desk.owed) === 800, JSON.stringify(desk));
+      await ac.until("!!document.querySelector('#secSend [data-open=\"" + J.wire + "\"]') && !document.querySelector('#secTell [data-load=\"" + pa.id + "\"]')", 10000);
+      const r1 = await repo(ac, "books", "R.recordPayment({ id: " + J.wire + ", projectId: " + J.p2.id + " }, { amount: 10, method: 'card', checkNumber: '' })");
+      const r2 = await repo(ac, "books", "R.recordPayment({ id: " + J.wire + ", projectId: " + J.p2.id + " }, { amount: 10, method: 'check', checkNumber: '1' })");
+      check("the database refuses a card or a check on the transfer bill, in its words (23514)",
+        !r1.ok && r1.code === "23514" && /approved to be paid by bank transfer \(ACH or wire\)/.test(r1.message) && !r2.ok && /approved for bank transfer payment/.test(r2.message), JSON.stringify([r1, r2]));
+      const r3 = await repo(ac, "books", "R.markTold({ paymentId: " + pa.id + ", version: " + pa.version + " }, 'phone')");
+      check("payment_told refuses an ACH payment (only a check or cash is picked up)", !r3.ok && r3.code === "22023", JSON.stringify(r3));
+      await ac.eval("document.querySelector('#secSend [data-open=\"" + J.cardBill + "\"]').click(); true");
+      await ac.until("!!document.getElementById('ckWrite') && (document.getElementById('ckHowFixed') || {}).value === 'card'", 8000);
+      await ac.eval("document.getElementById('ckNumber').value = 'AUTH 448120'; document.getElementById('ckWrite').click(); true");
+      await ac.until(modalOpen, 5000);
+      await modalOk(ac);
+      let cp = null;
+      for (let i = 0; i < 40 && !cp; i++) { cp = await one("select * from public.payments where bill_id = $1", [J.cardBill]); if (!cp) await sleep(250); }
+      check("accountant: the card payment in the database (method card, its authorisation, the full amount)",
+        cp && cp.method === "card" && cp.reference === "AUTH 448120" && cp.check_number === null && Number(cp.amount) === 386.5, JSON.stringify(cp));
+    }, ac);
+
     /* ── 5. QuickBooks: the CSV, Mark entered with refused[], Undo, invoices (acceptance check 3) ── */
     if (ac && ad) await attempt("accountant: the CSV and Mark entered (acceptance check 3)", async () => {
       await open(ac, "/accounting.html", DESK + " && document.querySelectorAll('#secQbo [data-pick]').length > 0");
@@ -376,7 +431,7 @@ async function main() {
       const lines = csv.replace(/^﻿/, "").split("\r\n");
       check("the bills CSV: a BOM, CRLF, every cell quoted, the Portal Bill ID column",
         bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf && lines.length >= 3 && lines[lines.length - 1] === "" && !/[^\r]\n/.test(csv) &&
-        /^"Vendor","Bill No","Bill Date","Due Date","Amount","Category","Customer\/Project","Memo","Approved By","Approved On","Portal Bill ID"$/.test(lines[0]) &&
+        /^"Vendor","Bill No","Bill Date","Due Date","Amount","Category","Customer\/Project","Memo","Approved By","Approved On","Pay Method","Portal Bill ID"$/.test(lines[0]) &&
         lines.slice(1, -1).every((l) => /^"([^"]|"")*"(,"([^"]|"")*")*$/.test(l)), lines.slice(0, 3).join(" / "));
       check("the bills CSV: a memo beginning with '-' is made text (the formula guard); the database's kind words", csv.includes("\"'-10% retainage held until the final walk\"") && csv.includes("\"Subcontractor\""), csv.slice(0, 700));
       await ac.eval("document.getElementById('acAll').click(); true");
