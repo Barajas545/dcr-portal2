@@ -11,7 +11,11 @@
    prices switch), Log, Journal, Mailing, Files (with the capture bar); P3: Tasks (the project's
    tasks, the tick through complete_task, a new task, the updates); P5a: Estimate and Takeoffs (read only,
    Q12: the estimates, change orders and takeoffs as DCR Desktop 2 has them, the amounts only for people
-   who see prices, Print to report-estimate.html / report-takeoff.html). The money tabs come with P5b.
+   who see prices, Print to report-estimate.html / report-takeoff.html); P5b: Expenses (the project's cost rows,
+   filtered, printed to report-expenses.html, as CSV) and Payments (vendor bills and their payments, invoices and
+   the client's payments) — only for people with the financials switch (the database reads them nobody else):
+   their buttons stay hidden, a ?tab= link to them opens the Overview, and their code and stylesheet are fetched
+   only when one is opened (a crew phone never downloads them).
 
    Live: the project row, its activity, journal, files and tasks (and their notes) are watched; a
    change made elsewhere lands in place (an untouched field takes it, a field being edited meets the
@@ -35,12 +39,16 @@ import * as estimateTab from "./project-estimate.js";
 import * as takeoffsTab from "./project-takeoffs.js";
 import { startSweeper } from "./journal-sync.js";
 
-const TABS = ["overview", "estimate", "takeoffs", "log", "journal", "mailing", "files", "tasks"];
+const TABS = ["overview", "estimate", "takeoffs", "log", "journal", "mailing", "files", "tasks", "expenses", "payments"];
+const MONEY_TABS = ["expenses", "payments"];
+/** app.can_financials() for hiding the money tabs (map/ledger.js seesLedger; kept here so the page's static
+    code stays what a crew phone keeps offline) */
+function seesMoney(me) { return !!me && me.active !== false && me.role !== "agents" && (me.role === "admin" || !!me.can_see_financials); }
 const ALIASES = { logs: "log", estimates: "estimate", takeoff: "takeoffs" };
 
 const ctx = {
   pid: null, project: null, me: null, mask: null,
-  canWrite: false, canLog: false, canJournal: false, canFiles: false, prices: false,
+  canWrite: false, canLog: false, canJournal: false, canFiles: false, prices: false, money: false,
   editing: false,
   live: null,
   refreshHeader: function () { renderHead(); },
@@ -153,7 +161,7 @@ function activeTab() {
 
 function switchTab(name) {
   name = ALIASES[name] || name;
-  if (TABS.indexOf(name) === -1) name = "overview";
+  if (TABS.indexOf(name) === -1 || (MONEY_TABS.indexOf(name) !== -1 && !ctx.money)) name = "overview";
   document.querySelectorAll(".pj-tab").forEach(function (t) {
     const on = t.getAttribute("data-tab") === name;
     t.classList.toggle("active", on);
@@ -176,6 +184,47 @@ function loadTab(name) {
   else if (name === "tasks") { tasksTab.render(ctx, el("pane-tasks")); watchTasks(); }
   else if (name === "estimate") { estimateTab.render(ctx, el("pane-estimate")); watchEstimates(); }
   else if (name === "takeoffs") { takeoffsTab.render(ctx, el("pane-takeoffs")); watchTakeoffs(); }
+  else if (MONEY_TABS.indexOf(name) !== -1) openMoneyTab(name);
+}
+
+/* P5b: the money tabs, fetched on demand with their stylesheet (financials only) */
+const moneyTabs = {};
+function ledgerCss() {
+  return new Promise(function (done) {
+    if (document.getElementById("pjLedgerCss")) { done(); return; }
+    const l = document.createElement("link");
+    l.id = "pjLedgerCss"; l.rel = "stylesheet"; l.href = "css/ledger.css";
+    l.addEventListener("load", function () { done(); });
+    l.addEventListener("error", function () { done(); });
+    document.head.appendChild(l);
+  });
+}
+async function openMoneyTab(name) {
+  const pane = el("pane-" + name);
+  if (!ctx.money) { pane.innerHTML = '<div class="pj-empty">This tab shows money: it needs the financials switch.</div>'; return; }
+  try {
+    const [m] = await Promise.all([name === "expenses" ? import("./project-expenses.js") : import("./project-payments.js"), ledgerCss()]);
+    moneyTabs[name] = m;
+    m.render(ctx, pane);
+    watchMoney();
+  } catch (e) {
+    loaded[name] = false;
+    pane.innerHTML = '<div class="pj-empty">' + esc(errorText(e)) + "</div>";
+  }
+}
+let moneyWatched = false;
+function watchMoney() {
+  const live = ctx.live;
+  if (moneyWatched || !live || typeof live.watch !== "function" || !ctx.money) return;
+  moneyWatched = true;
+  const f = "project_id=eq." + ctx.pid;
+  const again = function (which) { return function () { const m = moneyTabs[which]; if (m && typeof m.reload === "function") m.reload(ctx); }; };
+  try {
+    live.watch("costs", f, again("expenses"));               // (a receipt linked or replaced: the files watch below)
+    live.watch("bills", f, again("payments"));
+    live.watch("payments", f, again("payments"));
+    live.watch("invoices", f, again("payments"));
+  } catch (e) { /* the tabs read again when opened */ }
 }
 
 /* the Estimate and Takeoffs tabs' live channels, only once each tab has been opened: the project's rows,
@@ -339,10 +388,14 @@ async function startLive() {
       });
       live.watch("activity", f, function () { logTab.reload(ctx); });
       live.watch("journal_entries", f, function () { journalTab.reload(ctx); });
-      live.watch("files", f, function () { filesTab.reload(ctx); journalTab.reload(ctx, { media: true }); });
+      live.watch("files", f, function () {
+        filesTab.reload(ctx); journalTab.reload(ctx, { media: true });
+        if (moneyTabs.expenses && typeof moneyTabs.expenses.reload === "function") moneyTabs.expenses.reload(ctx);   // a receipt (files.cost_id)
+      });
       if (loaded.tasks) watchTasks();
       if (loaded.estimate) watchEstimates();
       if (loaded.takeoffs) watchTakeoffs();
+      if (loaded.expenses || loaded.payments) watchMoney();
     }
     if (typeof live.onPresence === "function") live.onPresence(paintPresence);
   } catch (e) { /* live updates are a nicety; the page works without them */ }
@@ -359,6 +412,11 @@ async function init() {
   ctx.canJournal = can(ctx.me, "journal");
   ctx.canFiles = can(ctx.me, "files");
   ctx.prices = seesPrices(ctx.me);
+  ctx.money = seesMoney(ctx.me);
+  MONEY_TABS.forEach(function (t) {
+    const b = document.querySelector('.pj-tab[data-tab="' + t + '"]');
+    if (b) b.hidden = !ctx.money;
+  });
   if (!ctx.pid || !/^\d{1,18}$/.test(ctx.pid)) {
     el("pjTitle").textContent = "No project selected";
     el("pane-overview").innerHTML = '<div class="pj-empty">Open a project from the <a href="board.html">Board</a> or <a href="search.html">Search</a>.</div>';

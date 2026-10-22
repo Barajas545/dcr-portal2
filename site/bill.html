@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Bill</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      /* the old bill.html's look, on Portal 2's theme tokens (light and dark) */
+      *, *::before, *::after { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      .bl { max-width: 1240px; margin: auto; padding: 18px 16px 40px;
+        --acc:#2f80d8; --gold:#a8790a; --ok:#1f8a5f; --err:#c8371f; --acc-tint:rgba(47,128,216,.12); }
+      @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bl { --acc:#6aa9ec; --gold:#e0b049; --ok:#4cc28f; --err:#f0937f; --acc-tint:rgba(47,128,216,.18); } }
+      :root[data-theme="dark"] .bl { --acc:#6aa9ec; --gold:#e0b049; --ok:#4cc28f; --err:#f0937f; --acc-tint:rgba(47,128,216,.18); }
+
+      .bl-top { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+      .bl-top > div:first-child { min-width: 0; flex: 1 1 260px; }
+      .bl-top h2 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+      .bl-top h2 .no { color: var(--text-muted); font-weight: 400; }
+      .bl-sub { color: var(--text-muted); font-size: 13px; margin: 2px 0 0; overflow-wrap: anywhere; }
+      .bl-amt { margin-left: auto; text-align: right; }
+      .bl-amt .v { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text); }
+      .bl-amt .n { font-size: 12px; color: var(--text-muted); }
+      .bl-state { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .05em; padding: 3px 9px; border-radius: 6px; vertical-align: middle; white-space: nowrap; }
+      .bl-state.wait { background: rgba(184,134,11,.15); color: var(--gold); border: 1px solid var(--gold); }
+      .bl-state.ok { background: rgba(31,157,85,.14); color: var(--ok); border: 1px solid var(--ok); }
+      .bl-state.void { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+      .bl-state.qbo { background: var(--acc-tint); color: var(--acc); border: 1px solid var(--acc); }
+
+      /* paperwork on the left, the facts and the decision on the right; on a phone the facts come first */
+      .bl-grid { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(320px,1fr); gap: 16px; margin-top: 16px; align-items: start; }
+      @media (max-width: 900px) { .bl-grid { grid-template-columns: minmax(0, 1fr); } .bl-grid .bl-view { order: 2; } .bl-grid .bl-side { order: 1; } }
+      .bl-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; box-shadow: var(--shadow); min-width: 0; }
+      .bl-card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 10px; font-weight: 700; }
+      .bl-rows { font-size: 13.5px; }
+      .bl-rows > div { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+      .bl-rows > div:last-child { border-bottom: 0; }
+      .bl-rows .k { color: var(--text-muted); flex: none; }
+      .bl-rows .v { text-align: right; font-weight: 600; overflow-wrap: anywhere; color: var(--text); min-width: 0; }
+      .bl-rows .v.late { color: var(--err); }
+      .bl-desc { font-size: 13.5px; white-space: pre-line; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+      .bl-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+      .bl-tabs button { padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 12.5px; border: 1px solid var(--border); background: var(--surface);
+        color: var(--text); font-weight: 600; font-family: inherit; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bl-tabs button[aria-pressed="true"] { border-color: var(--acc); color: var(--acc); background: var(--acc-tint); }
+      .bl-stage { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface-2); min-height: 220px;
+        display: flex; align-items: center; justify-content: center; }
+      .bl-stage img { max-width: 100%; max-height: 78vh; display: block; }
+      .bl-stage .bl-smsg { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13.5px; line-height: 1.6; }
+      .bl-stage .bl-smsg b { color: var(--text); }
+      .bl-viewbar { display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--text-muted); flex-wrap: wrap; }
+      .bl-viewbar button { border: 0; background: none; color: var(--acc); font: inherit; cursor: pointer; padding: 0; font-weight: 600; }
+      .bl-approve { width: 100%; padding: 14px; font-size: 15px; font-weight: 700; border: 0; border-radius: 10px; background: var(--ok); color: #fff;
+        cursor: pointer; font-family: inherit; }
+      .bl-approve:disabled { opacity: .5; cursor: default; }
+      .bl-secondary { display: block; width: 100%; text-align: center; padding: 11px; margin-top: 8px; border-radius: 10px; border: 1px solid var(--border);
+        background: var(--surface); color: var(--text); font-size: 13.5px; font-weight: 600; text-decoration: none; cursor: pointer; font-family: inherit; }
+      .bl-secondary:hover { border-color: var(--acc); color: var(--acc); }
+      .bl-note { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text);
+        font-size: 13.5px; font-family: inherit; margin-bottom: 8px; }
+      .bl-why { font-size: 12.5px; color: var(--gold); font-weight: 600; margin-bottom: 8px; line-height: 1.5; }
+      .bl-msg { font-size: 12.5px; margin-top: 8px; color: var(--text); }
+      .bl-msg.err { color: var(--err); font-weight: 600; }
+      .bl-ok { border: 1px solid var(--ok); background: rgba(31,157,85,.08); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--text); line-height: 1.6; }
+      .bl-pay { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--border); color: var(--text); flex-wrap: wrap; }
+      .bl-pay:last-child { border-bottom: 0; }
+      .bl-pay .t { color: var(--text-muted); font-size: 12px; }
+      .bl-pay b { font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="bl" id="blRoot">
+      <div class="bl-card" id="blLoading">Loading the bill…</div>
+    </main>
+    <script type="module" src="js/pages/bill.js"></script>
+  </body>
+</html>

@@ -37,7 +37,7 @@
       quote_prices: { quote_id: null, amount: null, document_url: null, notes: null },
       bills: { id: null, project_id: null, estimate_item_id: null, quote_id: null, vendor_contact_id: null, vendor_name: null, invoice_number: null,
         invoice_date: null, due_date: null, amount: 0, description: null, document_file_id: null, void: false, approved_by: null, approved_at: null,
-        approved_amount: null, pay_method: null, approval_note: null, payee: null, memo: null, deleted_at: null },
+        approved_amount: null, pay_method: null, approval_note: null, deleted_at: null },
       payments: { id: null, bill_id: null, project_id: null, paid_date: null, amount: null, method: "check", check_number: null, reference: null, notes: null },
       invoices: { id: null, project_id: null, number: null, invoice_date: null, due_date: null, description: null, status: "draft", sent_date: null,
         terms: null, notes: null, deleted_at: null },
@@ -264,7 +264,7 @@
       const id = ++ids.b;
       const row = Object.assign({ id, project_id: project.id, estimate_item_id: null, quote_id: null, vendor_contact_id: null, vendor_name: null,
         invoice_number: "INV-" + (4100 + id), invoice_date: day(days), due_date: day(days - 30), amount: 0, description: null, document_file_id: null,
-        void: false, approved_by: null, approved_at: null, approved_amount: null, pay_method: null, approval_note: null, payee: null, memo: null,
+        void: false, approved_by: null, approved_at: null, approved_amount: null, pay_method: null, approval_note: null,
         deleted_at: null }, f, audit(days, P.accountant));
       out.bills.push(row);
       return row;

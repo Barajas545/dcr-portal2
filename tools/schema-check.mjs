@@ -2031,6 +2031,16 @@ section = "P5a: acceptance check 1 as a sweep of raw REST answers, and check 5 f
 // ===========================================================================================
 await (await import("./schema-p5a-sweep.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, catalog, SITE });
 
+// ===========================================================================================
+section = "P5b: the expense ledger, the project's Expenses and Payments (repo/ledger.js, migration M5b)";
+// ===========================================================================================
+await (await import("./schema-check-p5b-ledger.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE });
+
+// ===========================================================================================
+section = "P5b: The Books, the bill page and the approvals card (repo/books.js, migration M5b)";
+// ===========================================================================================
+await (await import("./schema-check-p5b-books.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

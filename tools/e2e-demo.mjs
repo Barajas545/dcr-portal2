@@ -33,7 +33,14 @@
    (--p6 shots: screenshots into <out>/p6): "P6: ...". Then (--p5pm checks, the default) the P5a Progress Chart walk,
    tools/e2e-p5a-pm.mjs, the same way (--p5pm shots: screenshots into <out>/p5pm): "P5a PM: ...". Then (--p5est checks,
    the default) the P5a estimates walk (the Estimate and Takeoffs tabs, the printed estimate, change order, material list
-   and quote), tools/e2e-p5a-est.mjs (--p5est shots: screenshots into <out>/p5est): "P5a estimates: ...".
+   and quote), tools/e2e-p5a-est.mjs (--p5est shots: screenshots into <out>/p5est): "P5a estimates: ...". Then
+   (--p5ledger checks, the default) the P5b ledger walk (Expenses & receipts, the project's Expenses and Payments tabs,
+   the printed expense report), tools/e2e-p5b-ledger.mjs (--p5ledger shots: screenshots into <out>/p5ledger):
+   "P5b ledger: ...". Then (--p5books checks, the default) the P5b books walk (The Books, the bill page with its
+   approval, the home page's approvals card), tools/e2e-p5b-books.mjs (--p5books shots: screenshots into <out>/p5books):
+   "P5b books: ...". Then, when PGLITE_DIR is set (or --p5pglite checks), the P5b pages on the REAL database rules,
+   tools/e2e-p5b-pglite.mjs (every page's calls replayed on PGlite with every DCR Desktop 2 migration; --p5pglite shots:
+   screenshots into <out>/p5pglite): "P5b PGlite: ...".
 
    Prints a JSON summary; exit code 1 when a check failed. */
 import { spawn } from "node:child_process";
@@ -53,6 +60,9 @@ const P3 = arg("--p3", "checks");
 const P6 = arg("--p6", "checks");
 const P5PM = arg("--p5pm", "checks");
 const P5EST = arg("--p5est", "checks");
+const P5LEDGER = arg("--p5ledger", "checks");
+const P5BOOKS = arg("--p5books", "checks");
+const P5PGLITE = arg("--p5pglite", process.env.PGLITE_DIR ? "checks" : "none");
 
 /** A later phase's walk (tools/e2e-p2.mjs, e2e-p3.mjs, e2e-p6.mjs) as a child: -> its JSON summary, or {ok: false, error}. */
 function runWalk(file, mode, sub) {
@@ -571,9 +581,39 @@ async function main() {
         results.push({ name: "P5a estimates: the estimates walk (tools/e2e-p5a-est.mjs) ran", ok: false, detail: es.error || "" });
       }
     }
+    let p5ledgerShots = 0;
+    if (P5LEDGER !== "none") {
+      const lg = await runWalk("e2e-p5b-ledger.mjs", P5LEDGER, "p5ledger");
+      if (Array.isArray(lg.results)) {
+        lg.results.forEach((r) => results.push({ name: "P5b ledger: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5ledgerShots = lg.shots || 0;
+      } else {
+        results.push({ name: "P5b ledger: the ledger walk (tools/e2e-p5b-ledger.mjs) ran", ok: false, detail: lg.error || "" });
+      }
+    }
+    let p5booksShots = 0;
+    if (P5BOOKS !== "none") {
+      const bk = await runWalk("e2e-p5b-books.mjs", P5BOOKS, "p5books");
+      if (Array.isArray(bk.results)) {
+        bk.results.forEach((r) => results.push({ name: "P5b books: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5booksShots = bk.shots || 0;
+      } else {
+        results.push({ name: "P5b books: the books walk (tools/e2e-p5b-books.mjs) ran", ok: false, detail: bk.error || "" });
+      }
+    }
+    let p5pgShots = 0;
+    if (P5PGLITE !== "none") {
+      const pg = await runWalk("e2e-p5b-pglite.mjs", P5PGLITE, "p5pglite");
+      if (Array.isArray(pg.results)) {
+        pg.results.forEach((r) => results.push({ name: "P5b PGlite: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5pgShots = (pg.shots || []).length || 0;
+      } else {
+        results.push({ name: "P5b PGlite: the walk on the real database rules (tools/e2e-p5b-pglite.mjs) ran", ok: false, detail: pg.error || "" });
+      }
+    }
     const summary = { base, out: OUT, passed: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length,
       failures: results.filter((x) => !x.ok), results: results.map((r) => (r.ok ? "ok   " : "FAIL ") + r.name),
-      screenshots: shots.length + p2shots + p3shots + p6shots + p5pmShots + p5estShots };
+      screenshots: shots.length + p2shots + p3shots + p6shots + p5pmShots + p5estShots + p5ledgerShots + p5booksShots + p5pgShots };
     console.log(JSON.stringify(summary, null, 1));
     process.exitCode = summary.failed ? 1 : 0;
   }

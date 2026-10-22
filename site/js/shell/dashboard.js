@@ -10,7 +10,11 @@
    an admin also has DCR Agents 2 (the web console: the agents, photo plans, assistants and training on the
    DCR server, with the server's dot) and Assistants (who has one, the office reading, the office's items).
    P5a: everyone has the Progress Chart (pm.html: stages, estimate items, quotes and change orders; amounts only with
-   the prices switch, the money tiles with financials too). */
+   the prices switch, the money tiles with financials too).
+   P5b: The Books (accounting.html) for whoever has the financials switch; and, above the cards, the bills waiting
+   for approval across every project - ONLY for an approver (an admin, or a manager with the approve switch and
+   financials; never an accountant): vendor, job, due day, "needs the invoice attached", the amount, and a link to the
+   bill page. Read through a dynamic import (repo/books.js), so a crew phone never loads the money code. */
 import { requireAuth, topbar, el, companyInfo, roleLabel } from "../common2.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
@@ -63,6 +67,13 @@ export function cardsFor(p, opts) {
     { href: "timesheet-batch.html", ic: "👥", tt: "Batch Entry", show: role === "admin" || role === "manager" || (role === "lead" && hasCrew),
       ds: "Submit time for a whole crew at once." },
   ] });
+  /* P5b: the accountant's desk - the financials switch (bills, payments and invoices are refused without it) */
+  if (role === "admin" || p.can_see_financials) {
+    sections.push({ label: "Office", cards: [
+      { href: "accounting.html", ic: "📒", tt: "The Books", id: "hmBooks",
+        ds: "What is ready to enter in QuickBooks, the checks to write and who to tell, and what is already in." },
+    ] });
+  }
   sections.push({ label: "You", cards: [
     /* beside Settings: the other card about the person's own day; its badge says how many answers they
        have not read, or what is due today */
@@ -162,6 +173,42 @@ function notes() {
     "that came from the old portal stay there: each such project has an <b>Old portal</b> link." }));
 }
 
+/** An approver: an admin, or a manager with the approve switch and financials (app.can_approve - UI only). */
+export function isApprover(p) {
+  return !!p && p.active !== false && (p.role === "admin" || (p.role === "manager" && !!p.can_approve_payments && !!p.can_see_financials));
+}
+
+const AP_MAX = 8;
+/** The bills waiting for approval (approvers only); nothing waiting, no access or offline: says nothing. */
+async function approvalsCard(p) {
+  const slot = $("hmApprovals");
+  if (!slot || !isApprover(p)) return;
+  let d = null, M = null;
+  try {
+    const [repo, map] = await Promise.all([import("../repo/books.js"), import("../map/books.js")]);
+    M = map;
+    d = await repo.approvals(p);
+  } catch (e) { return; }
+  if (!d || !d.count) return;
+  const money = M.fmtMoney;
+  const rows = d.queue.slice(0, AP_MAX).map((b) => el("tr", null,
+    el("td", null,
+      el("span", { class: "who" }, b.vendor || "(no vendor)"),
+      b.invoiceNumber ? el("span", { class: "meta no" }, " #" + b.invoiceNumber) : null,
+      el("div", { class: "meta" }, (b.projectLabel || "") + (b.dueText ? " · due " + b.dueText : "")),
+      b.late ? el("span", { class: "late" }, "OVERDUE ") : null,
+      b.hasDocument ? null : el("span", { class: "nodoc" }, "needs the invoice attached")),
+    el("td", { class: "amt" }, money(b.amount)),
+    el("td", { class: "amt" }, el("a", { class: "go", href: M.billHref(b.id) }, "Open →"))));
+  slot.innerHTML = "";
+  slot.appendChild(el("div", { class: "hm-ap", id: "hmApprovalsCard" },
+    el("h3", null, "⚑ " + d.count + (d.count === 1 ? " bill waiting for approval" : " bills waiting for approval")),
+    el("div", { class: "sub" }, money(d.amount) + " in total" + (d.missingDocument ? " · " + d.missingDocument + " still need the invoice attached" : "")),
+    el("table", null, el("tbody", null, rows)),
+    d.count > AP_MAX ? el("div", { class: "more" }, "and " + (d.count - AP_MAX) + " more… (The Books lists them all)") : null));
+  slot.hidden = false;
+}
+
 async function start() {
   const p = await requireAuth();
   const wide = window.matchMedia && window.matchMedia("(min-width: 761px) and (pointer: fine)").matches;
@@ -180,6 +227,7 @@ async function start() {
   myTasksBadge();
   myAssistantBadge();
   if (p.role === "admin") agentsLine();
+  approvalsCard(p);
   notes();
   mountSwitch("pushSlot");
   // journal entries written with no signal are created (the app may have been killed since), then

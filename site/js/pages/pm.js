@@ -197,7 +197,9 @@ function moneyPanel() {
   }).join("") : '<div class="mn-none">Nothing invoiced to the client yet.</div>';
   const outRows = bills.length ? bills.map(function (b) {
     const st = billState(b);
-    return '<div class="mn-row"><span class="mn-dot ' + st.cls + '"></span><span class="mn-main"><b>' + esc(b.vendor) + "</b>" +
+    // P5b: the bill page (approve with a pay method; the paperwork) - the old chart's bill rows opened it too
+    return '<div class="mn-row"><span class="mn-dot ' + st.cls + '"></span><span class="mn-main"><b><a class="mn-bill" href="bill.html?id=' +
+      encodeURIComponent(b.id) + '">' + esc(b.vendor) + "</a></b>" +
       '<span class="mn-sub">' + esc([b.invoiceNumber ? "#" + b.invoiceNumber : "", b.description, b.hasDocument ? "" : "no document yet"].filter(Boolean).join(" · ")) + "</span></span>" +
       '<span class="mn-amt">' + m$(b.amount) + (b.paid > 0 && b.owed > 0 ? '<span class="mn-sub">' + m$(b.paid) + " paid</span>" : "") + "</span>" +
       '<span class="mn-st ' + st.cls + '">' + esc(st.text) + (b.approved ? '<span class="mn-by">' + esc(b.approvedBy || "") + "</span>" : "") + "</span></div>";
@@ -218,7 +220,8 @@ function moneyPanel() {
       "<footer><span>Billed to us <b>" + m$(outAll) + "</b></span>" +
       '<span class="' + (outWait > 0 ? "warn" : "") + '">Awaiting approval <b>' + m$(outWait) + "</b></span>" +
       '<span class="mn-gap ' + (outOwed > 0 ? "warn" : "") + '">Still to pay <b>' + m$(outOwed) + "</b></span></footer>" +
-      '<div class="mn-note">Bills are entered, approved and paid in DCR Desktop 2.</div></section></div>';
+      '<div class="mn-note">Bills are entered in DCR Desktop 2; open one to see its paperwork and approve it. ' +
+      '<a class="mn-bill" href="accounting.html">The Books</a> pay them.</div></section></div>';
 }
 
 /* Costs and bills no estimate item accounts for - the concrete pump nobody priced - and quotes not tied to

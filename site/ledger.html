@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Expenses &amp; receipts</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/ledger.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <div class="lg" id="lgPage">
+      <nav class="lg-tabs" aria-label="The Books">
+        <a href="accounting.html">The Books</a>
+        <a href="ledger.html" aria-current="page">Expenses &amp; receipts</a>
+      </nav>
+
+      <div class="lg-head"><h2>Expenses</h2><span class="pill" id="lgSpan" hidden></span></div>
+      <p class="lg-lead">
+        Every purchase and cost on the job ledger. Fold it by project, by who spent it, by what paid for it or by
+        month — the grouping is this same table, so a summary and its rows can never disagree.
+      </p>
+
+      <div id="lgMain" hidden>
+        <div class="lg-bar">
+          <div class="lg-chips" id="lgPeriods" role="group" aria-label="Period"></div>
+          <input class="lg-search" id="lgQ" type="search" placeholder="Search description, vendor, project, card — or type an amount" aria-label="Search the ledger" />
+          <select class="lg-sel" id="lgGroup" aria-label="Group the rows"></select>
+          <label class="lg-toggle"><input type="checkbox" id="lgZero" /> show rows with no amount</label>
+          <span class="lg-sp"></span>
+          <button class="lg-b" id="lgCsv" type="button" title="Download the rows on screen as a spreadsheet">&#8615; Export CSV</button>
+        </div>
+
+        <div class="lg-bulk" id="lgBulk" hidden>
+          <b id="lgBulkN"></b>
+          <select class="lg-sel" id="lgBulkCard" aria-label="Paid with, for the selected rows"></select>
+          <button class="lg-b go" id="lgBulkApply" type="button">Apply to selected</button>
+          <button class="lg-b" id="lgBulkRec" type="button">&#10003; Mark reconciled</button>
+          <button class="lg-b" id="lgBulkClear" type="button">Clear</button>
+          <span class="lg-msg" id="lgBulkMsg" role="status"></span>
+        </div>
+
+        <div class="lg-scope" id="lgScope"></div>
+        <div class="lg-tot" id="lgTotals"></div>
+
+        <div class="lg-cols">
+          <div>
+            <div class="lg-wrap"><div id="lgBody"><div class="lg-none">Loading…</div></div></div>
+          </div>
+          <div>
+            <div class="lg-side" style="margin-bottom:14px">
+              <h3>Hours worked</h3>
+              <p class="why">
+                From the timesheets, for the same period. Shown beside the money and never turned into it — no
+                employee pay rate is stored, so a labour cost made from hours would be invented.
+              </p>
+              <div id="lgHours"></div>
+            </div>
+            <div class="lg-side">
+              <h3>What this screen cannot tell you</h3>
+              <ul class="lg-cant" id="lgCant"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="lg-denied" id="lgDenied" hidden></div>
+    </div>
+
+    <div class="lg-peek" id="lgPeek" hidden></div>
+
+    <div class="lg-view" id="lgView" hidden>
+      <div class="lg-view-card" role="dialog" aria-modal="true" aria-labelledby="lgViewName">
+        <div class="lg-view-hd">
+          <button class="lg-b" id="lgViewPrev" type="button" title="Previous (left arrow)">&#8592;</button>
+          <button class="lg-b" id="lgViewNext" type="button" title="Next (right arrow)">&#8594;</button>
+          <span class="nm" id="lgViewName"></span>
+          <span class="n" id="lgViewN"></span>
+          <button class="lg-b" id="lgViewOpen" type="button">Open in a new tab &#8599;</button>
+          <button class="lg-b" id="lgViewClose" type="button" title="Close (Esc)">&#10005;</button>
+        </div>
+        <div class="lg-view-bd" id="lgViewBody"></div>
+      </div>
+    </div>
+
+    <script type="module" src="js/pages/ledger.js"></script>
+  </body>
+</html>

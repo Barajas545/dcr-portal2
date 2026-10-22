@@ -46,6 +46,15 @@ site/                       published as is
   report-takeoff.html       the Material List (everyone; typed amounts masked) / the Material Quote with tax (prices)
   css/estimates.css         the Estimate and Takeoffs tabs
   css/agents-console.css, css/console-print.css   the old console's styles, unchanged
+  accounting.html           The Books (P5b, the financials switch): the old accountant's desk on Desktop 2's data -
+                            the picture or the tiles, what needs doing, bills to pay (the check desk: payee, memo,
+                            the amount capped at the approved amount still owed, the documents), payees to tell
+                            (payment_told), ready to enter in QuickBooks (a CSV built in the browser with the formula
+                            guard, a BOM and CRLF - Q13: a MANUAL hand-off; mark_bills_entered with refused[] shown),
+                            money in (the invoices' own marker), not ready and on whom, already entered (Undo)
+  bill.html                 one bill, its paperwork and the decision (P5b): approve_bill with a REQUIRED pay method
+                            (an admin, or a manager with the approve switch - an accountant never sees a working
+                            approve button), set_bill_pay_method; the home page's approvals card links here (approvers)
   js/console/*.js           the old console: shell.js (agents-console.js, its four network points through
                             bridge.js) and console-*.js (the eight tabs, byte for byte the old portal's);
                             bridge.js the module under them (supabase-js, Realtime); framed.js (no framing)
@@ -81,6 +90,17 @@ tools/e2e-p5a-est.mjs       the P5a Estimate and Takeoffs tabs and the printed e
                             e2e-demo runs it (--p5est)
 tools/e2e-p5a-pm.mjs        the P5a Progress Chart and its report (every role, phone and desk, light and dark);
                             e2e-demo runs it (--p5pm)
+tools/e2e-p5b-books.mjs     the P5b books: The Books, the bill page, the approvals card (admin, a manager with approve,
+                            a manager without, accountant, lead, field, view-only; phone and desk, light and dark;
+                            acceptance checks 2, 3 and 5); e2e-demo runs it (--p5books); the demo approver is
+                            approver@demo.test
+tools/e2e-p5b-ledger.mjs    the P5b ledger: Expenses & receipts, the project's Expenses and Payments tabs, the printed
+                            expense report (every role; phone and desk, light and dark); e2e-demo runs it (--p5ledger)
+tools/pglite-serve.mjs      PGLITE mode: the site with every page's supabase-js calls replayed on PGlite loaded with
+                            every DCR Desktop 2 migration, as the signed-in person (tools/fake/pglite-client.js is
+                            the page side); made-up people <role>@e2e.test, password pglite-<role>-2026
+tools/e2e-p5b-pglite.mjs    every P5b page as every role on pglite-serve (the REAL database rules: acceptance checks 2,
+                            3 and 5 through the pages, refusals by HTTP status); e2e-demo runs it when PGLITE_DIR is set
 tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite); tools/schema-pm.mjs
                             is its Progress Chart part, tools/schema-check-p5a-est.mjs its estimates part and
                             tools/schema-p5a-sweep.mjs the P5 acceptance check 1 as a sweep of raw REST answers (every
@@ -142,7 +162,11 @@ node tools/e2e-p3.mjs --out <folder>               # the P3 walk alone + screens
 node tools/e2e-p6.mjs --out <folder>               # the P6 walk alone + screenshots (p6_*.png; --shots none)
 node tools/e2e-p5a-pm.mjs --out <folder>           # the Progress Chart walk alone + screenshots (pm_*.png; --shots none)
 node tools/e2e-p5a-est.mjs --out <folder>          # the estimates walk alone + screenshots (est_*.png; --shots none)
+node tools/e2e-p5b-books.mjs --out <folder>       # the books walk alone + screenshots (books_*.png; --shots none)
+node tools/e2e-p5b-ledger.mjs --out <folder>      # the ledger walk alone + screenshots (ledger_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
+PGLITE_DIR=<folder> node tools/pglite-serve.mjs    # the site over PGlite with the real migrations (127.0.0.1:8793)
+PGLITE_DIR=<folder> node tools/e2e-p5b-pglite.mjs --out <folder>   # the P5b pages on it + screenshots (p5b_final_*.png)
 ```
 
 - `tools/check-pages.mjs` and `tools/e2e-demo.mjs` start the demo server on a free port and run a

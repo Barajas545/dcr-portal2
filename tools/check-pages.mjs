@@ -208,7 +208,11 @@ async function main() {
       await signIn(a, "admin@demo.test", true, "dashboard.html");
       for (const path of ["dashboard.html", "settings.html", "board.html", "project.html?id=268", "search.html?q=A24", "logs.html",
         "capture.html", "report-journal.html?id=268", "my-tasks.html", "my-tasks.html?task=1", "tasks-map.html", "project.html?id=268&tab=tasks",
-        "agents-console.html", "agents-console.html#/photo", "my-assistant.html", "assistant-admin.html"]) {
+        "agents-console.html", "agents-console.html#/photo", "my-assistant.html", "assistant-admin.html",
+        // P5b: The Books, the bill page (the demo's first bill), Expenses & receipts, the printed expense report and
+        // the project's money tabs
+        "accounting.html", "bill.html?id=1", "ledger.html", "report-expenses.html?id=268", "project.html?id=268&tab=expenses",
+        "project.html?id=268&tab=payments"]) {
         await a.goto(base + "/" + path, 1500);
       }
       // P5a: the Estimate and Takeoffs tabs and their printed pages, as the admin (prices) and, on a phone, as a lead
@@ -226,6 +230,16 @@ async function main() {
         if (/\$\s?\d/.test(t) || !/Sandbox/.test(t)) seen.push(path + ": " + ((t.match(/.{0,30}\$\s?\d.{0,12}/) || ["(not drawn)"])[0]));
       }
       check("P5a: a lead's Estimate and Takeoffs tabs and printed pages carry no amount", seen.length === 0, seen.join(" | "));
+      // P5b: the money pages, as the same lead on a phone - refused or hidden, not one amount (the refusal dialogs
+      // send them home: what is checked is every page as it was drawn)
+      const seen5b = [];
+      for (const path of ["accounting.html", "bill.html?id=1", "ledger.html", "report-expenses.html?id=268", "project.html?id=268&tab=expenses",
+        "project.html?id=268&tab=payments"]) {
+        await le.goto(base + "/" + path, 1800);
+        const t = await le.eval("document.documentElement.outerHTML");
+        if (/\$\s?\d/.test(t)) seen5b.push(path + ": " + ((t.match(/.{0,30}\$\s?\d.{0,12}/) || [""])[0]));
+      }
+      check("P5b: a lead's view of The Books, a bill, the ledger, the expense report and the money tabs carries no amount", seen5b.length === 0, seen5b.join(" | "));
     }
   } finally {
     const all = pages.flatMap((p) => p.log.map((e) => Object.assign({ page: p.name }, e)));
