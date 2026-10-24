@@ -51,7 +51,7 @@ export function checkFile(file) {
 export function hitLines(p) {
   return {
     title: [p && p.number, p && p.name].filter(Boolean).join(" — "),
-    where: [p && p.address, p && p.city].filter(Boolean).join(", "),
+    where: [p && p.city].filter(Boolean).join(", "),       // the town only: the street is never sent (owner, 2026-10-23)
   };
 }
 

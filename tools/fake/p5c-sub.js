@@ -411,7 +411,7 @@
         const terms = q.split(" ");
         const hits = rows.projects.filter((p) => open(p) && terms.every((t) => [p.number, p.name, p.address, p.city, p.client_name].map((v) => String(v || "").toLowerCase()).join("\n").indexOf(t) !== -1))
           .sort((x, y) => String(y.number).localeCompare(String(x.number)) || x.id - y.id);
-        return answer(200, { projects: hits.slice(0, 8).map((p) => ({ id: p.id, number: text(p.number, 40), name: text(p.name, 160), address: text(p.address, 160), city: text(p.city, 80) })),
+        return answer(200, { projects: hits.slice(0, 8).map((p) => ({ id: p.id, number: text(p.number, 40), name: text(p.name, 160), city: text(p.city, 80) })),
           more: Math.max(0, hits.length - 8), min: 3 });
       }
       if (b.op === "submit") {

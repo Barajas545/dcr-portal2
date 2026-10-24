@@ -33,10 +33,10 @@ test("checkFile: up to 25 MB, not empty, with a label", () => {
   assert.equal(F.fmtSize(3.4 * 1024 * 1024), "3.4 MB");
 });
 
-test("a found job reads 'A041 — Deck rebuild' over its street and town; nothing else is there to show", () => {
+test("a found job reads 'A041 — Deck rebuild' over its town; a street address is never shown (owner, 2026-10-23)", () => {
   const p = { id: 41, number: "A041", name: "Deck rebuild", address: "12 Cedar Ln", city: "Pine Hollow" };
-  assert.deepEqual(F.hitLines(p), { title: "A041 — Deck rebuild", where: "12 Cedar Ln, Pine Hollow" });
-  assert.equal(F.pickedLabel(p), "A041 — Deck rebuild · 12 Cedar Ln, Pine Hollow");
+  assert.deepEqual(F.hitLines(p), { title: "A041 — Deck rebuild", where: "Pine Hollow" });
+  assert.equal(F.pickedLabel(p), "A041 — Deck rebuild · Pine Hollow");
   assert.deepEqual(F.hitLines({ id: 1, number: "A1" }), { title: "A1", where: "" });
 });
 

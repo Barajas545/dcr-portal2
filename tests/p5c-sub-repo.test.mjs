@@ -74,12 +74,12 @@ async function refused(fn, code) {
   assert.fail("expected a refusal " + (code || ""));
 }
 
-test("the public form, with no sign-in: open jobs only, the five public fields, at least 3 characters", { skip }, async () => {
+test("the public form, with no sign-in: open jobs only, the four public fields (no street address), at least 3 characters", { skip }, async () => {
   await setup();
   const job = openJob();
   const d = await subform.searchProjects(job.number);
   assert.deepEqual(d.projects.map((p) => p.id), [job.id]);
-  assert.deepEqual(Object.keys(d.projects[0]).sort(), ["address", "city", "id", "name", "number"]);
+  assert.deepEqual(Object.keys(d.projects[0]).sort(), ["city", "id", "name", "number"], "no street address (owner, 2026-10-23)");
   assert.ok(!JSON.stringify(d).includes(job.client_name), "the client never leaves");
   assert.deepEqual((await subform.searchProjects("ab")).projects, []);
   const shut = closedJob();

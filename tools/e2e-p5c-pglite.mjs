@@ -25,7 +25,7 @@
      drawings" policy), the money only in sales_estimate_prices; Sasha's save leaves the prices untouched; the database
      refuses the rest (a lead writing leads, a manager without financials writing a cost or a price, the accountant
      writing the library, a person writing a NEW "cad" drawing, Sasha reading prices);
-   - P5 acceptance check 4: the PUBLIC form (submit.html) signed out on a phone - the five public fields of OPEN jobs
+   - P5 acceptance check 4: the PUBLIC form (submit.html) signed out on a phone - the four public fields (no street address) of OPEN jobs
      only (3 characters at least, never the client), every problem at once, the honeypot, the amount limits, the
      signature and the paperwork under f/{job}/receipts/ through ONE signed upload, "attached" once; the function refuses
      another site (403) and answers CORS for portal.dcrframing.com only; anon itself reads nothing; then the review:

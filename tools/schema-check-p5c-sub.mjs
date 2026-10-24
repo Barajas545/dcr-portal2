@@ -5,7 +5,7 @@
    submissions.js (the review page's module) runs over PGlite loaded with every DCR Desktop 2 migration, M5c
    20261027000100_office_lists.sql included, as each role:
 
-   * P5 acceptance check 4, signed out: only OPEN projects' id, number, name, address and city come back (3 characters at
+   * P5 acceptance check 4, signed out: only OPEN projects' id, number, name and city come back (the street is searched, never returned) (3 characters at
      least, 8 at most; the client searched, never returned); every problem at once; the honeypot; the amount limits; a
      project that is not open; the signature and the document under f/{project}/receipts/ - a money editor reads them
      (app.storage_can_read), a lead, a field account and a manager without financials do not; "attached" once and only
@@ -142,7 +142,7 @@ export async function run(h) {
     await as(null);
     const found = await subform.searchProjects(J.open.number);
     same(found.projects.map((p) => p.id), [J.open.id], "the open job by its number");
-    same(Object.keys(found.projects[0]).sort(), ["address", "city", "id", "name", "number"], "the five public fields");
+    same(Object.keys(found.projects[0]).sort(), ["city", "id", "name", "number"], "the four public fields (no street address)");
     same((await subform.searchProjects("Quillon")).projects.map((p) => p.id), [J.open.id], "the client's name finds it");
     ok(!JSON.stringify(await subform.searchProjects("Quillon")).includes("Quillon"), "the client is never returned");
     same((await subform.searchProjects(J.closed.number)).projects, [], "a closed job is not offered");

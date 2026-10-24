@@ -9,7 +9,7 @@
 
    - the PUBLIC form (submit.html) on a phone, signed out, in a browser that never signed in: no sign-in page, no top
      bar; a search of fewer than 3 characters asks nothing; a job is found by its number (open jobs only - a closed one is
-     not offered; the five public fields, never the client); every problem at once; the honeypot refused in the generic
+     not offered; the four public fields (no street address), never the client); every problem at once; the honeypot refused in the generic
      words with nothing stored; the amount limits; then a real submission: the drawn signature, the paperwork (one signed
      upload under f/{job}/receipts/), "attached", the reference on screen - and in the database a PENDING submission
      (never a bill) whose notices to the office carry no amount;
