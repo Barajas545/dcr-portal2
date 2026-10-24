@@ -167,15 +167,45 @@
               if (r.error) return { data: null, error: r.error };
               return { data: r.data.map((x) => Object.assign({}, x, { signedUrl: x.signedUrl ? root.location.origin + x.signedUrl : null })), error: null };
             },
-            async upload() { return { data: null, error: { message: "uploads are not simulated in PGlite mode", statusCode: "400" } }; },
+            // the bytes stay in the page: the server records the object (name, type, size) as the caller, under
+            // storage.objects' RLS - an upload the database would refuse is refused (403), a name taken is 409
+            async upload(path, blob, opts) {
+              const o = opts || {};
+              const r = await call({ op: "upload", token: self.auth.token(), bucket, path, upsert: !!o.upsert,
+                contentType: o.contentType || (blob && blob.type) || "application/octet-stream", size: (blob && blob.size) || 0 });
+              return r.error ? { data: null, error: r.error } : { data: r.data, error: null };
+            },
+            async remove(paths) {
+              const r = await call({ op: "remove", token: self.auth.token(), bucket, paths: clone(paths || []) });
+              return r.error ? { data: null, error: r.error } : { data: r.data, error: null };
+            },
+            // the one upload an Edge Function signed for this path (no session needed: the token is the right)
+            async uploadToSignedUrl(path, token, blob, opts) {
+              const o = opts || {};
+              const r = await call({ op: "signedUpload", bucket, path, token,
+                contentType: o.contentType || (blob && blob.type) || "application/octet-stream", size: (blob && blob.size) || 0 });
+              return r.error ? { data: null, error: r.error } : { data: r.data, error: null };
+            },
           };
         },
       };
       this.realtime = { setAuth: async () => {} };
-      // Edge Functions: none here (the push function answers as an unconfigured project would)
+      // Edge Functions: the public form's "subform" is the REAL function (DCR Desktop 2's handler.ts, run by the
+      // server as the service role); any other answers as an unconfigured project would (the push function)
       this.functions = {
-        invoke: async () => ({ data: null, error: { name: "FunctionsHttpError", message: "Edge Function returned a non-2xx status code",
-          context: new Response(JSON.stringify({ error: "push_not_configured" }), { status: 503, headers: { "content-type": "application/json" } }) } }),
+        invoke: async (name, o) => {
+          if (name === "subform") {
+            const r = await call({ op: "fn", token: self.auth.token(), name, body: clone((o && o.body) || {}),
+              ip: root.__pgliteIp || null, origin: root.__pgliteOrigin || null });
+            const f = r.fn || { status: 500, body: { error: "server_error" } };
+            if (f.status >= 200 && f.status < 300) return { data: f.body, error: null };
+            const headers = Object.assign({ "content-type": "application/json" }, f.headers || {});
+            return { data: null, error: { name: "FunctionsHttpError", message: "Edge Function returned a non-2xx status code",
+              context: new Response(JSON.stringify(f.body), { status: f.status, headers }) } };
+          }
+          return { data: null, error: { name: "FunctionsHttpError", message: "Edge Function returned a non-2xx status code",
+            context: new Response(JSON.stringify({ error: "push_not_configured" }), { status: 503, headers: { "content-type": "application/json" } }) } };
+        },
       };
     }
     from(table) { return recorder(this, table); }

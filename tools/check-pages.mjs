@@ -93,7 +93,8 @@ async function main() {
     // the card's own words (the My Tasks card also carries its badge, P3; My Assistant for everyone, P6 - a
     // manager has no DCR Agents 2 nor Assistants card: an admin's)
     check("home cards for a manager", (await d.eval("Array.from(document.querySelectorAll('.hm-card .tt')).map(n=>n.childNodes[0].textContent).join('|')")) ===
-      "Project Board|Progress Chart|Search|Log History|My Tasks|Tasks on Map|Site Photos|Time Sheet|Team Sheets|Batch Entry|My Assistant|Settings|Employees & crews");
+      "Project Board|Progress Chart|Search|Log History|Leads|Marketing Tasks|My Tasks|Tasks on Map|Site Photos|Time Sheet|Team Sheets|Batch Entry|Vehicles|" +
+      "My Assistant|Settings|Employees & crews");    // P5c: Leads and Marketing Tasks (the office's lists), Vehicles (everyone's)
     check("kept signed in: the session is in localStorage", await d.eval("!!localStorage.getItem('dcr2-auth') && !sessionStorage.getItem('dcr2-auth')"));
     check("top bar: Portal 2 badge and the user", await d.eval("document.querySelector('.dcr2-topbar .p2-badge') && document.getElementById('userPill').textContent.includes('Morgan')"));
     await sleep(800);
@@ -212,7 +213,14 @@ async function main() {
         // P5b: The Books, the bill page (the demo's first bill), Expenses & receipts, the printed expense report and
         // the project's money tabs
         "accounting.html", "bill.html?id=1", "ledger.html", "report-expenses.html?id=268", "project.html?id=268&tab=expenses",
-        "project.html?id=268&tab=payments"]) {
+        "project.html?id=268&tab=payments",
+        // P5c: the office lists
+        "leads.html", "vehicles.html", "vehicles.html?id=1", "marketing.html",
+        // P5c sales (Q10: the admin holds the Sales estimates switch): the hub, a saved estimate on its last step's
+        // way in, a new one, the Materials Library and the drawing tool on its own
+        "estimates.html", "estimate-deck.html?id=1", "estimate-deck.html?new=1", "materials-library.html", "cme.html",
+        // P5c sub form: the review queue, and the public form (its own client: a signed-in browser changes nothing)
+        "submissions.html", "submit.html"]) {
         await a.goto(base + "/" + path, 1500);
       }
       // P5a: the Estimate and Takeoffs tabs and their printed pages, as the admin (prices) and, on a phone, as a lead
@@ -240,6 +248,27 @@ async function main() {
         if (/\$\s?\d/.test(t)) seen5b.push(path + ": " + ((t.match(/.{0,30}\$\s?\d.{0,12}/) || [""])[0]));
       }
       check("P5b: a lead's view of The Books, a bill, the ledger, the expense report and the money tabs carries no amount", seen5b.length === 0, seen5b.join(" | "));
+      // P5c: the office lists, as the same lead on a phone - Leads and Marketing are the office's (no row of either in the
+      // page), the Vehicle Board without a service's material cost
+      const seen5c = [];
+      for (const path of ["leads.html", "marketing.html", "vehicles.html?id=1"]) {
+        await le.goto(base + "/" + path, 1800);
+        const t = await le.eval("document.documentElement.outerHTML");
+        const rows = await le.eval("document.querySelectorAll('.ld-card, tr.mk-row').length");
+        if (/\$\s?\d/.test(t) || rows) seen5c.push(path + ": " + rows + " rows " + ((t.match(/.{0,30}\$\s?\d.{0,12}/) || [""])[0]));
+      }
+      check("P5c: a lead's view of Leads, Marketing Tasks and the Vehicle Board carries no lead, no task and no amount", seen5c.length === 0, seen5c.join(" | "));
+      // P5c sales (Q10): the same lead has no Sales estimates switch - every sales page says so and shows no saved
+      // estimate, no comp, no material and no amount (the database answers no row; the page asks for nothing more)
+      const seenSales = [];
+      for (const path of ["estimates.html", "estimate-deck.html?id=1", "materials-library.html"]) {
+        await le.goto(base + "/" + path, 1800);
+        const t = await le.eval("document.documentElement.outerHTML");
+        const rows = await le.eval("document.querySelectorAll('#seList tr.row, #refList tr.row, .ml-card, #f_client').length");
+        const said = await le.eval("/Sales estimates switch/.test(document.body.innerText)");
+        if (/\$\s?\d/.test(t) || rows || !said) seenSales.push(path + ": " + rows + " rows, told " + said + " " + ((t.match(/.{0,30}\$\s?\d.{0,12}/) || [""])[0]));
+      }
+      check("P5c sales: a lead without the Sales estimates switch is told so on Sales Estimates, the deck wizard and the Materials Library: no estimate, comp, material or amount", seenSales.length === 0, seenSales.join(" | "));
     }
   } finally {
     const all = pages.flatMap((p) => p.log.map((e) => Object.assign({ page: p.name }, e)));

@@ -41,6 +41,19 @@
    "P5b books: ...". Then, when PGLITE_DIR is set (or --p5pglite checks), the P5b pages on the REAL database rules,
    tools/e2e-p5b-pglite.mjs (every page's calls replayed on PGlite with every DCR Desktop 2 migration; --p5pglite shots:
    screenshots into <out>/p5pglite): "P5b PGlite: ...".
+   (--p5sub checks, the default) the P5c subcontractor form and its review (submit.html signed out on a phone,
+   submissions.html for every role, accept / reject / "already done"), tools/e2e-p5c-sub.mjs (--p5sub shots: screenshots
+   into <out>/p5sub): "P5c sub form: ...".
+   (--p5sales checks, the default) the P5c sales walk (Sales Estimates, the deck wizard with photos, markup and a CME
+   drawing, the Materials Library; the Sales estimates switch and the prices switch per role), tools/e2e-p5c-sales.mjs
+   (--p5sales shots: screenshots into <out>/p5sales): "P5c sales: ...".
+   (--p5lists checks, the default) the P5c office lists (Leads with convert to a project, the Vehicle Board with its
+   maintenance, Marketing Tasks; the home page's cards; costs and prices only with financials), tools/e2e-p5c-lists.mjs
+   (--p5lists shots: screenshots into <out>/p5lists): "P5c lists: ...".
+   Then, when PGLITE_DIR is set (or --p5cpglite checks), the P5c pages on the REAL database rules, tools/e2e-p5c-pglite.mjs
+   (every role on Leads, the Vehicle Board, Marketing Tasks, the sales tools and CME, the public form through DCR Desktop 2's
+   own subform function, the review queue and The Books - on PGlite with every DCR Desktop 2 migration, M5c included;
+   --p5cpglite shots: screenshots into <out>/p5cpglite): "P5c PGlite: ...".
 
    Prints a JSON summary; exit code 1 when a check failed. */
 import { spawn } from "node:child_process";
@@ -62,7 +75,11 @@ const P5PM = arg("--p5pm", "checks");
 const P5EST = arg("--p5est", "checks");
 const P5LEDGER = arg("--p5ledger", "checks");
 const P5BOOKS = arg("--p5books", "checks");
+const P5SUB = arg("--p5sub", "checks");
+const P5SALES = arg("--p5sales", "checks");
+const P5LISTS = arg("--p5lists", "checks");
 const P5PGLITE = arg("--p5pglite", process.env.PGLITE_DIR ? "checks" : "none");
+const P5CPGLITE = arg("--p5cpglite", process.env.PGLITE_DIR ? "checks" : "none");
 
 /** A later phase's walk (tools/e2e-p2.mjs, e2e-p3.mjs, e2e-p6.mjs) as a child: -> its JSON summary, or {ok: false, error}. */
 function runWalk(file, mode, sub) {
@@ -601,6 +618,36 @@ async function main() {
         results.push({ name: "P5b books: the books walk (tools/e2e-p5b-books.mjs) ran", ok: false, detail: bk.error || "" });
       }
     }
+    let p5subShots = 0;
+    if (P5SUB !== "none") {
+      const sb = await runWalk("e2e-p5c-sub.mjs", P5SUB, "p5sub");
+      if (Array.isArray(sb.results)) {
+        sb.results.forEach((r) => results.push({ name: "P5c sub form: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5subShots = sb.shots || 0;
+      } else {
+        results.push({ name: "P5c sub form: the subcontractor form and review walk (tools/e2e-p5c-sub.mjs) ran", ok: false, detail: sb.error || "" });
+      }
+    }
+    let p5salesShots = 0;
+    if (P5SALES !== "none") {
+      const sl = await runWalk("e2e-p5c-sales.mjs", P5SALES, "p5sales");
+      if (Array.isArray(sl.results)) {
+        sl.results.forEach((r) => results.push({ name: "P5c sales: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5salesShots = sl.shots || 0;
+      } else {
+        results.push({ name: "P5c sales: the sales walk (tools/e2e-p5c-sales.mjs) ran", ok: false, detail: sl.error || "" });
+      }
+    }
+    let p5listsShots = 0;
+    if (P5LISTS !== "none") {
+      const ls = await runWalk("e2e-p5c-lists.mjs", P5LISTS, "p5lists");
+      if (Array.isArray(ls.results)) {
+        ls.results.forEach((r) => results.push({ name: "P5c lists: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5listsShots = ls.shots || 0;
+      } else {
+        results.push({ name: "P5c lists: the office lists walk (tools/e2e-p5c-lists.mjs) ran", ok: false, detail: ls.error || "" });
+      }
+    }
     let p5pgShots = 0;
     if (P5PGLITE !== "none") {
       const pg = await runWalk("e2e-p5b-pglite.mjs", P5PGLITE, "p5pglite");
@@ -611,9 +658,19 @@ async function main() {
         results.push({ name: "P5b PGlite: the walk on the real database rules (tools/e2e-p5b-pglite.mjs) ran", ok: false, detail: pg.error || "" });
       }
     }
+    let p5cpgShots = 0;
+    if (P5CPGLITE !== "none") {
+      const pc = await runWalk("e2e-p5c-pglite.mjs", P5CPGLITE, "p5cpglite");
+      if (Array.isArray(pc.results)) {
+        pc.results.forEach((r) => results.push({ name: "P5c PGlite: " + r.name, ok: !!r.ok, detail: r.detail }));
+        p5cpgShots = (pc.shots || []).length || 0;
+      } else {
+        results.push({ name: "P5c PGlite: the walk on the real database rules (tools/e2e-p5c-pglite.mjs) ran", ok: false, detail: pc.error || "" });
+      }
+    }
     const summary = { base, out: OUT, passed: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length,
       failures: results.filter((x) => !x.ok), results: results.map((r) => (r.ok ? "ok   " : "FAIL ") + r.name),
-      screenshots: shots.length + p2shots + p3shots + p6shots + p5pmShots + p5estShots + p5ledgerShots + p5booksShots + p5pgShots };
+      screenshots: shots.length + p2shots + p3shots + p6shots + p5pmShots + p5estShots + p5ledgerShots + p5booksShots + p5subShots + p5salesShots + p5listsShots + p5pgShots + p5cpgShots };
     console.log(JSON.stringify(summary, null, 1));
     process.exitCode = summary.failed ? 1 : 0;
   }

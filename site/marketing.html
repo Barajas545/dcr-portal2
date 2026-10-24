@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Marketing Tasks</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/lists.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <main class="mk" id="mkPage">
+      <div class="ls-head">
+        <h2>&#128227; Marketing Tasks</h2>
+        <input class="ls-search" id="mkSearch" type="search" placeholder="Search tasks…" aria-label="Search tasks" />
+        <button class="ls-btn ls-btn-primary" id="mkNewBtn" type="button" hidden>&#65291; New task</button>
+        <button class="ls-btn" id="mkRefresh" type="button" title="Read the tasks again" aria-label="Read the tasks again">&#8635;</button>
+        <a class="ls-btn" href="board.html?view=marketing">Marketing Board</a>
+      </div>
+      <div id="mkMain" hidden>
+        <div class="ls-chips" id="mkChips" role="group" aria-label="Which tasks"></div>
+        <div class="mk-totals" id="mkTotals" hidden></div>
+        <p class="ls-lead" id="mkNoPrices" hidden>Prices are kept with the books: they show for people with the financials switch.</p>
+        <div id="mkList"><div class="ls-empty">Loading tasks…</div></div>
+      </div>
+      <div class="ls-denied" id="mkDenied" hidden></div>
+    </main>
+
+    <!-- the task form -->
+    <div class="ls-overlay" id="mkModal">
+      <form class="ls-modal" id="mkForm" role="dialog" aria-modal="true" aria-labelledby="mkModalTitle" novalidate autocomplete="off">
+        <h3 id="mkModalTitle">Marketing task</h3>
+        <div class="ls-grid">
+          <div class="ls-f full"><label for="mf_marketingTaskName">Task name *</label><input id="mf_marketingTaskName" maxlength="200" /></div>
+          <div class="ls-f"><label for="mf_project">Project</label><input id="mf_project" list="mkProjects" placeholder="Number — name (optional)" /><datalist id="mkProjects"></datalist></div>
+          <div class="ls-f"><label for="mf_marketingTaskCaterogy">Category</label><input id="mf_marketingTaskCaterogy" list="mkCats" maxlength="100" /><datalist id="mkCats"></datalist></div>
+          <div class="ls-f"><label for="mf_marketingTaskDate">Date</label><input type="date" id="mf_marketingTaskDate" /></div>
+          <div class="ls-f" id="mfPriceRow" hidden><label for="mf_marketingTaskPrice">Price $</label><input id="mf_marketingTaskPrice" inputmode="decimal" maxlength="12" /></div>
+          <div class="ls-f full"><label for="mf_marketingTaskDescripiton">Description</label><textarea id="mf_marketingTaskDescripiton" rows="3" maxlength="20000"></textarea></div>
+          <div class="ls-f full"><label for="mf_marketingTaskCompletedWork">Completed work</label><textarea id="mf_marketingTaskCompletedWork" rows="2" maxlength="20000"></textarea></div>
+        </div>
+        <div class="ls-msg err" id="mkModalMsg" role="alert"></div>
+        <div class="ls-modal-actions">
+          <button class="ls-btn" id="mkCancel" type="button">Cancel</button>
+          <button class="ls-btn ls-btn-primary" id="mkSave" type="submit">&#10003; Save task</button>
+        </div>
+      </form>
+    </div>
+
+    <script type="module" src="js/pages/marketing.js"></script>
+  </body>
+</html>

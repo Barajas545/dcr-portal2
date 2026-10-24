@@ -16,7 +16,8 @@
      -> INSERT ... ON CONFLICT (cols) DO NOTHING | DO UPDATE SET <the other columns> = excluded.*;
    - rpc(name, args) -> public.name(arg => $1 ...) matched by argument NAME (an unknown or missing
      argument: PGRST202, as PostgREST answers); set-returning -> array, composite -> object;
-   - storage.from(bucket): upload (INSERT into storage.objects under its RLS), createSignedUrl(s)
+   - storage.from(bucket): upload (INSERT into storage.objects under its RLS; {upsert: true} -> ON CONFLICT
+     DO UPDATE, so an existing object is replaced only where an UPDATE policy lets it), createSignedUrl(s)
      (the object must be visible to the caller: storage.objects SELECT policy);
    - channel(topic, {config: {private: true}}).subscribe(cb): SUBSCRIBED when the caller may read
      realtime.messages for that topic (Realtime's own check), CHANNEL_ERROR otherwise;
@@ -408,13 +409,25 @@ export function makeClient({ db, catalog, passwords, onQuery }) {
     return {
       async upload(path, _body, opts) {
         try {
-          await run(() => exec("insert into storage.objects (bucket_id, name, owner, owner_id, metadata) values ($1, $2, auth.uid(), auth.uid()::text, $3::jsonb)",
-            [id, path, JSON.stringify({ mimetype: (opts && opts.contentType) || "application/octet-stream" })]));
+          const upsert = opts && opts.upsert
+            ? " on conflict (bucket_id, name) do update set metadata = excluded.metadata, owner = excluded.owner, owner_id = excluded.owner_id, updated_at = now()" : "";
+          await run(() => exec("insert into storage.objects (bucket_id, name, owner, owner_id, metadata) values ($1, $2, auth.uid(), auth.uid()::text, $3::jsonb)" + upsert,
+            [id, path, JSON.stringify(Object.assign({ mimetype: (opts && opts.contentType) || "application/octet-stream" },
+              opts && opts.size ? { size: Number(opts.size) } : {}))]));
           return { data: { path, fullPath: id + "/" + path }, error: null };
         } catch (e) {
           const dup = String(e.code) === "23505";
           return { data: null, error: { message: dup ? "The resource already exists" : "new row violates row-level security policy",
             statusCode: dup ? "409" : "403", code: e.code } };
+        }
+      },
+      /** Storage's remove: each object the caller may delete (storage.objects DELETE policy); the rest stay, unsaid */
+      async remove(paths) {
+        try {
+          const rows = await run(() => exec("delete from storage.objects where bucket_id = $1 and name = any($2::text[]) returning name", [id, paths || []]));
+          return { data: rows.map((r) => ({ name: r.name, bucket_id: id })), error: null };
+        } catch (e) {
+          return { data: null, error: { message: String(e.message || e), statusCode: "400", code: e.code } };
         }
       },
       async createSignedUrl(path, seconds) {

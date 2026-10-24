@@ -14,8 +14,16 @@
    P5b: The Books (accounting.html) for whoever has the financials switch; and, above the cards, the bills waiting
    for approval across every project - ONLY for an approver (an admin, or a manager with the approve switch and
    financials; never an accountant): vendor, job, due day, "needs the invoice attached", the amount, and a link to the
-   bill page. Read through a dynamic import (repo/books.js), so a crew phone never loads the money code. */
-import { requireAuth, topbar, el, companyInfo, roleLabel } from "../common2.js";
+   bill page. Read through a dynamic import (repo/books.js), so a crew phone never loads the money code.
+   P5c: Sales & Marketing - Leads (admin, manager, accountant, view-only: the leads table's readers) with the old badge of
+   leads nobody has called in two weeks, and Marketing Tasks (the same readers; prices only with financials); the Vehicle
+   Board in Field & Time for everyone, with how many oil changes, services and papers are due this month. The badges are
+   counts only and read through dynamic imports (repo/leads.js, repo/vehicles.js), so a phone loads them only here.
+   P5c sales (Q10): Sales Estimates in Sales & Marketing for whoever holds the Sales estimates switch (an admin always;
+   anyone else once repo/sales.js salesAccess, a dynamic import, says so).
+   P5c sub form: Sub submissions in Office for the money editors (an admin, or a manager or accountant with financials -
+   the readers of sub_submissions), with "N waiting" (repo/submissions.js pendingCount, a dynamic import). */
+import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday } from "../common2.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
 import { summaryOf, badgeOf } from "../map/tasks.js";
@@ -48,6 +56,18 @@ export function cardsFor(p, opts) {
     { href: "search.html", ic: "🔎", tt: "Search", ds: "Projects, contacts, tasks and files, by name, number, address or phone." },
     { href: "logs.html", ic: "📜", tt: "Log History", ds: "Today's project logs, grouped by project, or any period." },
   ] });
+  /* P5c: the office lists the database lets this person read (leads and marketing tasks: admin, manager, accountant,
+     view-only — the old portal's rule; a marketing price needs financials) */
+  const office = ["admin", "manager", "accountant", "viewer"].indexOf(role) !== -1;
+  sections.push({ label: "Sales & Marketing", cards: [
+    { href: "leads.html", ic: "📞", tt: "Leads", id: "hmLeads", show: office,
+      ds: role === "admin" || role === "manager" ? "Sales pipeline: track contacts, convert to projects." : "The sales pipeline: who called, who to call back." },
+    { href: "marketing.html", ic: "📣", tt: "Marketing Tasks", show: office,
+      ds: role === "admin" || p.can_see_financials ? "Billable marketing work — done, invoiced, paid." : "Marketing work by project — done, invoiced, paid." },
+    /* P5c sales (Q10): the Sales estimates switch — an admin always; anyone else once the database says so (salesCard) */
+    { href: "estimates.html", ic: "💰", tt: "Sales Estimates", id: "hmSales", show: role === "admin" || !!(opts && opts.sales),
+      ds: "Deck estimates from past projects, the comps library and the materials offered." },
+  ] });
   const teams = ["admin", "manager", "accountant", "lead"].indexOf(role) !== -1;
   sections.push({ label: "Field & Time", cards: [
     /* first in the row: the one card that is somebody's job today; its badge says how many tasks are
@@ -66,12 +86,19 @@ export function cardsFor(p, opts) {
       links: [["Time card", "report-timecard.html"]] },
     { href: "timesheet-batch.html", ic: "👥", tt: "Batch Entry", show: role === "admin" || role === "manager" || (role === "lead" && hasCrew),
       ds: "Submit time for a whole crew at once." },
+    /* P5c: the fleet board (everyone reads it; the office schedules and completes services) */
+    { href: "vehicles.html", ic: "🚚", tt: "Vehicles", id: "hmVehicles",
+      ds: role === "admin" || role === "manager" ? "Fleet board: oil changes, services due, history." : "The trucks: oil changes and services due, and each one's history." },
   ] });
   /* P5b: the accountant's desk - the financials switch (bills, payments and invoices are refused without it) */
   if (role === "admin" || p.can_see_financials) {
     sections.push({ label: "Office", cards: [
       { href: "accounting.html", ic: "📒", tt: "The Books", id: "hmBooks",
         ds: "What is ready to enter in QuickBooks, the checks to write and who to tell, and what is already in." },
+      /* P5c: what subcontractors send through the public form (submit.html) - the money editors review it (M5c) */
+      { href: "submissions.html", ic: "📥", tt: "Sub submissions", id: "hmSubs",
+        show: role === "admin" || ((role === "manager" || role === "accountant") && !!p.can_see_financials),
+        ds: "Invoices and change orders subcontractors sent through the public form: accept as a bill or reject." },
     ] });
   }
   sections.push({ label: "You", cards: [
@@ -140,6 +167,63 @@ async function myAssistantBadge() {
   const old = tt.querySelector(".hm-badge");
   if (old) old.remove();
   tt.appendChild(el("span", { class: "hm-badge " + b.cls }, b.text));
+}
+
+/** A card's badge (counts only); a card that is not there, or no badge, leaves it. */
+function cardBadge(id, b) {
+  const card = $(id);
+  if (!card || !b) return;
+  const tt = card.querySelector(".tt");
+  const old = tt.querySelector(".hm-badge");
+  if (old) old.remove();
+  tt.appendChild(el("span", { class: "hm-badge " + b.cls, title: b.title || null }, b.text));
+}
+
+/** P5c: Leads — "N to call" (open leads nobody has called in two weeks, red), else the open leads (dim); Vehicles —
+    "N due" this month (oil changes, services and papers). Read on demand; any failure (M5c not deployed yet, offline)
+    leaves the cards as they are. */
+async function listBadges() {
+  const today = companyToday();
+  if ($("hmLeads")) {
+    try {
+      const [repo, map] = await Promise.all([import("../repo/leads.js"), import("../map/leads.js")]);
+      const s = map.leadsSummary(await repo.loadLeads({ names: false }), today);
+      cardBadge("hmLeads", s.stale ? { cls: "warn", text: s.stale + " to call", title: "Open leads nobody has called in two weeks" }
+        : s.open ? { cls: "dim", text: s.open + " open" } : null);
+    } catch (e) { /* no badge */ }
+  }
+  if ($("hmVehicles")) {
+    try {
+      const [repo, map] = await Promise.all([import("../repo/vehicles.js"), import("../map/vehicles.js")]);
+      const d = await repo.loadFleet({ costs: false });
+      const b = map.board(d.vehicles, d.maintenance, today, "");
+      cardBadge("hmVehicles", b.dueCount ? { cls: "", text: b.dueCount + " due", title: "Oil changes, services and papers due this month" } : null);
+    } catch (e) { /* no badge */ }
+  }
+  /* Sub submissions — "N waiting" (the subcontractors' invoices and change orders nobody has reviewed yet) */
+  if ($("hmSubs")) {
+    try {
+      const repo = await import("../repo/submissions.js");
+      const n = await repo.pendingCount((window.DCR2 || {}).profile);
+      cardBadge("hmSubs", n ? { cls: "warn", text: n + " waiting", title: "Submissions waiting for review" } : null);
+    } catch (e) { /* no badge */ }
+  }
+}
+
+/** P5c (Q10): the Sales Estimates card for someone holding the Sales estimates switch. The switch is read on its own
+    (repo/sales.js salesAccess, through a dynamic import: a crew phone loads it only here); no switch, M5c not deployed
+    yet or offline: no card. */
+async function salesCard(p, homeOpts) {
+  try {
+    const repo = await import("../repo/sales.js");
+    const a = await repo.salesAccess(p);
+    if (!a.sales) return;
+    homeOpts.sales = true;
+    render(p, homeOpts);
+    myTasksBadge();
+    myAssistantBadge();
+    listBadges();
+  } catch (e) { /* no card */ }
 }
 
 /** The DCR Agents 2 card's dot: green while the server reports, amber once it has gone quiet. */
@@ -221,13 +305,16 @@ async function start() {
     const q = $("hmSearch").value.trim();
     if (q.length >= 2) location.href = "search.html?q=" + encodeURIComponent(q);
   });
-  render(p);
+  const homeOpts = {};
+  render(p, homeOpts);
   // a lead's Batch Entry card waits for their crew (crew_members: their own rows)
-  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { render(p, { hasCrew: true }); myTasksBadge(); myAssistantBadge(); } }).catch(() => null);
+  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { homeOpts.hasCrew = true; render(p, homeOpts); myTasksBadge(); myAssistantBadge(); listBadges(); } }).catch(() => null);
+  if (p.role !== "admin") salesCard(p, homeOpts);
   myTasksBadge();
   myAssistantBadge();
   if (p.role === "admin") agentsLine();
   approvalsCard(p);
+  listBadges();
   notes();
   mountSwitch("pushSlot");
   // journal entries written with no signal are created (the app may have been killed since), then

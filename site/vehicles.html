@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Vehicles</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/lists.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <main class="vb" id="vbPage">
+      <div class="ls-head">
+        <h2>&#128666; Vehicle Board</h2>
+        <input class="ls-search" id="vbSearch" type="search" placeholder="Search vehicles…" aria-label="Search vehicles" />
+        <button class="ls-btn ls-btn-primary" id="vbSchedBtn" type="button" hidden>&#65291; Schedule service</button>
+        <button class="ls-btn" id="vbAddBtn" type="button" hidden>&#65291; Add vehicle</button>
+        <button class="ls-btn" id="vbRefresh" type="button" title="Read the board again" aria-label="Read the board again">&#8635;</button>
+      </div>
+
+      <div class="vb-main" id="vbMain">
+        <div>
+          <div class="vb-sec"><h3>&#128738; Oil change due <span class="vb-count" id="vbOilCount">0</span></h3><div id="vbOilList"></div></div>
+          <div class="vb-sec"><h3>&#128295; Service due <span class="vb-count" id="vbSvcCount">0</span></h3><div id="vbSvcList"></div></div>
+          <div class="vb-sec"><h3>&#128196; Registration, emissions &amp; DOT due <span class="vb-count" id="vbPaperCount">0</span></h3><div id="vbPaperList"></div></div>
+          <div class="vb-sec"><h3>&#128666; All vehicles <span class="vb-count" id="vbAllCount">0</span>
+            <label class="ls-check vb-retired" id="vbRetiredWrap" hidden><input type="checkbox" id="vbRetired" /> show retired <span id="vbRetiredN"></span></label></h3>
+            <div id="vbAllList"><div class="vb-empty">Loading vehicles…</div></div></div>
+        </div>
+        <aside class="vb-panel" id="vbPanel" hidden aria-live="polite">
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <div style="min-width:0"><h3 id="vpName"></h3><div class="vb-sub" id="vpSub"></div></div>
+            <button class="ls-btn ls-btn-sm vb-close" id="vpClose" type="button">Close</button>
+          </div>
+          <div style="margin-top:10px" id="vpInfo"></div>
+          <div class="vb-panel-acts" id="vpActs"></div>
+          <div class="vb-sec2">Open maintenance</div>
+          <div id="vpOpen"></div>
+          <div class="vb-sec2">History</div>
+          <div id="vpHistory"></div>
+          <div class="ls-msg" id="vpMsg" role="status"></div>
+        </aside>
+      </div>
+    </main>
+
+    <!-- schedule a service -->
+    <div class="ls-overlay" id="schedModal">
+      <form class="ls-modal narrow" id="schedForm" role="dialog" aria-modal="true" aria-labelledby="smTitle" novalidate autocomplete="off">
+        <h3 id="smTitle">Schedule service</h3>
+        <div class="ls-f" style="margin-bottom:10px"><label for="smVehicle">Vehicle *</label><select id="smVehicle"></select></div>
+        <div class="ls-f" style="margin-bottom:10px"><label for="smDate">Next service date</label><input type="date" id="smDate" /></div>
+        <div class="ls-f"><label for="smReq">Service needed / requirements</label><textarea id="smReq" rows="3" maxlength="4000"></textarea></div>
+        <div class="ls-msg err" id="smMsg" role="alert"></div>
+        <div class="ls-modal-actions">
+          <button class="ls-btn" id="smCancel" type="button">Cancel</button>
+          <button class="ls-btn ls-btn-primary" id="smSave" type="submit">&#10003; Schedule</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- complete a service -->
+    <div class="ls-overlay" id="doneModal">
+      <form class="ls-modal narrow" id="doneForm" role="dialog" aria-modal="true" aria-labelledby="dmTitle" novalidate autocomplete="off">
+        <h3 id="dmTitle">Complete service</h3>
+        <div class="vb-sub" id="dmWhat" style="margin-bottom:10px"></div>
+        <div class="ls-f" style="margin-bottom:10px"><label for="dmWork">Work performed</label><textarea id="dmWork" rows="3" maxlength="4000"></textarea></div>
+        <div class="ls-grid" style="margin-bottom:10px">
+          <div class="ls-f"><label for="dmMiles">Current mileage (optional)</label><input type="text" id="dmMiles" inputmode="numeric" maxlength="9" /></div>
+          <div class="ls-f"><label for="dmLabor">Labour time (optional)</label><input type="text" id="dmLabor" maxlength="100" placeholder="e.g. 1.5 h" /></div>
+          <div class="ls-f full" id="dmCostRow" hidden><label for="dmCost">Material cost (optional)</label><input type="text" id="dmCost" inputmode="decimal" maxlength="12" placeholder="$" />
+            <div class="hint">Kept with the books: only people with the financials switch see it.</div></div>
+        </div>
+        <div class="ls-f" style="margin-bottom:10px"><label for="dmRec">Next service recommendations (optional)</label><textarea id="dmRec" rows="2" maxlength="4000"></textarea></div>
+        <div class="ls-f"><label class="ls-check"><input type="checkbox" id="dmOil" /> This was an oil change (update the vehicle's oil-change record)</label></div>
+        <div class="ls-msg err" id="dmMsg" role="alert"></div>
+        <div class="ls-modal-actions">
+          <button class="ls-btn" id="dmCancel" type="button">Cancel</button>
+          <button class="ls-btn ls-btn-primary" id="dmSave" type="submit">&#10003; Mark complete</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- edit a scheduled service -->
+    <div class="ls-overlay" id="editMModal">
+      <form class="ls-modal narrow" id="editMForm" role="dialog" aria-modal="true" aria-labelledby="emTitle" novalidate autocomplete="off">
+        <h3 id="emTitle">Edit scheduled service</h3>
+        <div class="ls-f" style="margin-bottom:10px"><label for="emDate">Next service date</label><input type="date" id="emDate" /></div>
+        <div class="ls-f"><label for="emReq">Service needed / requirements</label><textarea id="emReq" rows="3" maxlength="4000"></textarea></div>
+        <div class="ls-msg err" id="emMsg" role="alert"></div>
+        <div class="ls-modal-actions">
+          <button class="ls-btn" id="emCancel" type="button">Cancel</button>
+          <button class="ls-btn ls-btn-primary" id="emSave" type="submit">&#10003; Save</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- add or edit a vehicle (never an insurance policy number: Q18) -->
+    <div class="ls-overlay" id="vehModal">
+      <form class="ls-modal" id="vehForm" role="dialog" aria-modal="true" aria-labelledby="vfTitle" novalidate autocomplete="off">
+        <h3 id="vfTitle">Vehicle</h3>
+        <div class="ls-grid">
+          <div class="ls-f"><label for="vf_fleetNumber">Fleet #</label><input id="vf_fleetNumber" maxlength="40" /></div>
+          <div class="ls-f"><label for="vf_licensePlateNumber">License plate</label><input id="vf_licensePlateNumber" maxlength="20" /></div>
+          <div class="ls-f"><label for="vf_vehicleYear">Year</label><input id="vf_vehicleYear" inputmode="numeric" maxlength="4" /></div>
+          <div class="ls-f"><label for="vf_vehicleMake">Make</label><input id="vf_vehicleMake" maxlength="60" /></div>
+          <div class="ls-f"><label for="vf_vehicleModel">Model</label><input id="vf_vehicleModel" maxlength="80" /></div>
+          <div class="ls-f"><label for="vf_vehicleVIN">VIN</label><input id="vf_vehicleVIN" maxlength="40" /></div>
+          <div class="ls-f full"><label for="vf_vehicleDescription">Description</label><input id="vf_vehicleDescription" maxlength="300" placeholder="e.g. White F-250, ladder rack" /></div>
+          <div class="ls-f full"><label for="vf_vehicleDriverInformation">Driver</label><input id="vf_vehicleDriverInformation" maxlength="300" /></div>
+          <div class="ls-f"><label for="vf_oilChangeIntervalMonths">Oil change every (months)</label><input id="vf_oilChangeIntervalMonths" inputmode="numeric" maxlength="3" /></div>
+          <div class="ls-f"><label for="vf_oilChangeIntervalMiles">… or every (miles)</label><input id="vf_oilChangeIntervalMiles" inputmode="numeric" maxlength="6" /></div>
+          <div class="ls-f"><label for="vf_lastOilChangeDate">Last oil change</label><input type="date" id="vf_lastOilChangeDate" /></div>
+          <div class="ls-f"><label for="vf_lastOilChangeMileage">… at (miles)</label><input id="vf_lastOilChangeMileage" inputmode="numeric" maxlength="9" /></div>
+          <div class="ls-f"><label for="vf_currentMileage">Current mileage</label><input id="vf_currentMileage" inputmode="numeric" maxlength="9" /></div>
+          <div class="ls-f"><label for="vf_registrationExpirationDate">Registration expires</label><input type="date" id="vf_registrationExpirationDate" /></div>
+          <div class="ls-f"><label for="vf_emissionsDueDate">Emissions due</label><input type="date" id="vf_emissionsDueDate" /></div>
+          <div class="ls-f"><label for="vf_dOTInspectionDueDate">DOT inspection due</label><input type="date" id="vf_dOTInspectionDueDate" /></div>
+          <div class="ls-f full"><label for="vf_insuranceProvider">Insurance provider</label><input id="vf_insuranceProvider" maxlength="120" />
+            <div class="hint">The provider only. Policy numbers are not kept in Portal 2.</div></div>
+          <div class="ls-f full"><label for="vf_vehicleNotes">Notes</label><textarea id="vf_vehicleNotes" rows="3" maxlength="20000"></textarea></div>
+          <div class="ls-f full"><label class="ls-check"><input type="checkbox" id="vf_vehicleActive" checked /> In service (a retired vehicle is due nothing)</label></div>
+        </div>
+        <div class="ls-msg err" id="vfMsg" role="alert"></div>
+        <div class="ls-modal-actions">
+          <button class="ls-btn" id="vfCancel" type="button">Cancel</button>
+          <button class="ls-btn ls-btn-primary" id="vfSave" type="submit">&#10003; Save vehicle</button>
+        </div>
+      </form>
+    </div>
+
+    <script type="module" src="js/pages/vehicles.js"></script>
+  </body>
+</html>

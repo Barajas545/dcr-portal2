@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Materials Library</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/materials-library.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <div class="ml" id="mlPage">
+      <div class="ml-back"><a href="estimates.html">&larr; Sales Estimates</a></div>
+      <div class="ml-head">
+        <h2>🧱 Materials Library</h2>
+        <input id="mlSearch" type="search" placeholder="Search materials, colors, categories…" aria-label="Search the library">
+        <button class="btn btn-sm" id="mlAdd" type="button">+ Add material</button>
+      </div>
+      <p class="ml-sub" id="mlSub">Organized by construction division → category → sub-category. Click a card to edit; click a color square to edit that color. Add as many photos as you need to every item.</p>
+      <div id="mlGroups"><div class="ml-empty">Loading…</div></div>
+    </div>
+
+    <!-- editor modal (product or color) -->
+    <div class="ml-overlay" id="mlModal">
+      <div class="ml-modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+        <h3 id="mTitle">Edit material</h3>
+
+        <label style="margin-top:0">Pictures <span style="color:var(--text-muted);font-weight:400">— first one is the cover shown on cards &amp; estimates</span></label>
+        <div id="mGallery"></div>
+
+        <div class="ml-mgrid" style="margin-top:8px">
+          <div class="full"><label for="mName">Name</label><input id="mName"></div>
+          <div><label for="mDivision">Division</label><input id="mDivision" list="dlDivisions" placeholder="06 - Wood, Plastics…"></div>
+          <div><label for="mCategory">Category</label><input id="mCategory" list="dlCategories" placeholder="Decking"></div>
+          <div><label for="mSubCat">Sub-category</label><input id="mSubCat" list="dlSubCats" placeholder="Composite Decking"></div>
+          <datalist id="dlDivisions"></datalist>
+          <datalist id="dlCategories"></datalist>
+          <datalist id="dlSubCats"></datalist>
+          <div><label for="mBrand">Brand</label><input id="mBrand"></div>
+          <div id="mTierWrap"><label for="mTier">Market tier</label>
+            <select id="mTier"><option>Entry</option><option>Value</option><option>Mid</option><option>Premium</option><option>Luxury</option></select></div>
+          <div><label for="mStatus">Status</label>
+            <select id="mStatus"><option value="active">Active</option><option value="pending_catalog_review">Pending review</option><option value="retired">Retired</option></select></div>
+          <div><label for="mSelectable">Offered in estimates</label>
+            <select id="mSelectable"><option value="true">Yes</option><option value="false">No</option></select></div>
+          <div class="c2" id="mWarrWrap"><label for="mWarranty">Warranty</label><input id="mWarranty" placeholder="25-years limited residential"></div>
+          <div class="full" id="mDescWrap"><label for="mDesc">Description</label><textarea id="mDesc" rows="2"></textarea></div>
+          <div class="full" id="mHighWrap"><label for="mHigh">Sales highlights (one per line)</label><textarea id="mHigh" rows="2"></textarea></div>
+          <div class="full"><label for="mManUrl">Manufacturer page</label><input id="mManUrl" placeholder="https://…"></div>
+        </div>
+        <div class="ml-mactions">
+          <button class="btn btn-ghost" id="mCancel" type="button">Cancel</button>
+          <button class="btn btn-danger" id="mDelete" type="button" style="display:none">Delete</button>
+          <button class="btn" id="mSave" type="button">Save</button>
+        </div>
+        <div id="mMsg" role="status" style="font-size:12.5px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <script type="module" src="js/pages/materials-library.js"></script>
+  </body>
+</html>

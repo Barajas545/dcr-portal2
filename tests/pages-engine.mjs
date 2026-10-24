@@ -9,6 +9,9 @@ const P5A = new URL("../tools/fake/p5a-est.js", import.meta.url);  // P5a estima
 const P5A_PM = new URL("../tools/fake/p5a-pm.js", import.meta.url); // P5a progress chart (flags, quotes, money): after p5a-est.js
 const P5B_LEDGER = new URL("../tools/fake/p5b-ledger.js", import.meta.url); // P5b ledger (M5b costs columns, RPCs, rows): after p5a-pm.js
 const P5B_BOOKS = new URL("../tools/fake/p5b-books.js", import.meta.url);   // P5b books (bills, payments, invoices rules, M5b RPCs, rows): after p5b-ledger.js
+const P5C_LISTS = new URL("../tools/fake/p5c-lists.js", import.meta.url);   // P5c office lists (leads, vehicles, marketing tasks; M5c rules and rows)
+const P5C_SUB = new URL("../tools/fake/p5c-sub.js", import.meta.url);       // P5c sub submissions + the subform function's stand-in: after p5b-books.js
+const P5C_SALES = new URL("../tools/fake/p5c-sales.js", import.meta.url);   // P5c sales (the switch, comps, sales estimates, materials, sales-media)
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
 const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
 const SEED = new URL("../tools/fake/seed.js", import.meta.url);
@@ -24,6 +27,9 @@ export async function loadFake() {
     if (existsSync(P5A_PM)) await import(P5A_PM.href);
     if (existsSync(P5B_LEDGER)) await import(P5B_LEDGER.href);
     if (existsSync(P5B_BOOKS)) await import(P5B_BOOKS.href);
+    if (existsSync(P5C_LISTS)) await import(P5C_LISTS.href);
+    if (existsSync(P5C_SUB)) await import(P5C_SUB.href);
+    if (existsSync(P5C_SALES)) await import(P5C_SALES.href);
     await import(ENGINE.href);
     if (existsSync(PC)) await import(PC.href);
     await import(SEED.href);

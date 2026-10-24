@@ -1,0 +1,69 @@
+/* Sales Estimates (estimates.html): the old page's own styles, moved out of the page unchanged (Portal 2 keeps the look). */
+
+.se{--acc:#2f80d8; --acc-2:#1f6fc8; --tint:rgba(47,128,216,.12); --tint-2:rgba(47,128,216,.25);
+  --gold:#d6a13a; --ok:#2fa679; --err:#d9614f;
+  max-width:980px; margin:0 auto; padding:16px 16px 70px;}
+/* Portal 2: in dark the blue as text is lighter (#6aa9ec: 4.5:1 or more on the dark surfaces), as on submit.html and
+   submissions.html */
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .se{--acc:#6aa9ec; --acc-2:#8fbff2; --tint:rgba(47,128,216,.18);} }
+:root[data-theme="dark"] .se{--acc:#6aa9ec; --acc-2:#8fbff2; --tint:rgba(47,128,216,.18);}
+
+.se h2{margin:14px 0 4px; font-size:20px;}
+.se-sub{font-size:13px; color:var(--text-muted); margin:0 0 14px;}
+
+.se-trades{display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:12px; margin-bottom:22px;}
+.se-trade{border:1px solid var(--border); border-radius:14px; padding:16px; background:var(--surface);
+  text-decoration:none; color:var(--text); display:flex; flex-direction:column; gap:5px;
+  transition:border-color .1s, transform .06s;}
+.se-trade:hover{border-color:var(--acc); transform:translateY(-1px);}
+.se-trade .ic{font-size:24px;}
+.se-trade .tt{font-weight:700; font-size:15px;}
+.se-trade .ds{font-size:11.5px; color:var(--text-muted); line-height:1.35;}
+.se-trade.soon{opacity:.5; pointer-events:none;}
+.se-trade.soon .tt::after{content:" · soon"; font-size:10px; color:var(--text-muted);}
+
+table.se-tbl{width:100%; border-collapse:collapse; font-size:13px; background:var(--surface);
+  border:1px solid var(--border); border-radius:12px; overflow:hidden;}
+.se-tbl th{text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+  color:var(--text-muted); padding:9px 10px; border-bottom:2px solid var(--border); background:var(--surface-2);}
+.se-tbl td{padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top;}
+.se-tbl tr:last-child td{border-bottom:none;}
+.se-tbl tr.row{cursor:pointer;}
+.se-tbl tr.row:hover td{background:var(--tint);}
+.se-tbl .num{text-align:right; white-space:nowrap;}
+.se-status{font-size:11px; font-weight:700; padding:2px 9px; border-radius:10px; white-space:nowrap;}
+.st-draft{background:var(--surface-2); color:var(--text-muted);}
+.st-preliminary{background:rgba(47,128,216,.13); color:var(--acc);}
+.st-reviewed{background:rgba(214,161,58,.15); color:var(--gold);}
+.st-sent{background:rgba(47,128,216,.2); color:var(--acc);}
+.st-won{background:rgba(47,166,121,.16); color:var(--ok);}
+.st-lost{background:rgba(217,97,79,.13); color:var(--err);}
+.se-empty{padding:26px; text-align:center; color:var(--text-muted); background:var(--surface);
+  border:1px solid var(--border); border-radius:12px; font-size:13.5px;}
+.se-badge-sample{font-size:10px; font-weight:700; padding:2px 7px; border-radius:8px;
+  background:var(--surface-2); color:var(--text-muted);}
+.se-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+.se-head h2{flex:1; margin:14px 0;}
+
+/* modal (reference project editor) */
+.se-overlay{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none;
+  align-items:center; justify-content:center; z-index:80; padding:14px;}
+.se-overlay.open{display:flex;}
+.se-modal{background:var(--surface); color:var(--text); border:1px solid var(--border);
+  border-radius:13px; width:100%; max-width:640px; max-height:92vh; overflow:auto; padding:20px;}
+.se-modal h3{margin:0 0 10px;}
+.se-grid{display:grid; grid-template-columns:1fr 1fr; gap:0 14px;}
+.se-grid .full{grid-column:1/-1;}
+@media (max-width:560px){ .se-grid{grid-template-columns:1fr;} }
+.se-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:14px;}
+label{margin-top:10px;}
+
+/* Portal 2 */
+#seSearch{max-width:260px;}
+.se-trade.off{opacity:.5; pointer-events:none;}
+.se-noprice{border-left:3px solid var(--gold); padding:6px 10px; background:var(--surface);}
+.se-noprice-note{font-size:12px; color:var(--text-muted); margin-top:10px;}
+.se-denied{margin-top:12px;}
+.se-tbl tr.row:focus-visible td{background:var(--tint); outline:none;}
+@media (max-width:560px){ .se-head input[type=search]{max-width:none; flex:1 1 100%;} }
+.se-modal textarea{font-family:inherit;}

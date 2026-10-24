@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <!-- A drawing tool: pinch must zoom the model, not the page. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Drawing</title>
+    <!--
+      CME's stylesheet only (the Construction Modeling Engine, ported from the old portal unchanged). It
+      declares color-scheme:dark and font-family on bare :root and styles bare h2/small/button; the portal's
+      styles.css declares a LIGHT token set on the same :root with a dark override. Loading both is a fight over
+      :root that resolves by source order and breaks in one of the two themes. This is a full-bleed dark tool,
+      so it owns the page.
+    -->
+    <link rel="stylesheet" href="cme/src/ui/styles.css" />
+    <style>
+      /* Full-viewport, no portal chrome. */
+      html, body { height: 100%; margin: 0; overscroll-behavior: none; }
+      #app { height: 100dvh; }
+      /* Shown only if the module graph fails to load or the person may not draw, so a blank screen is never the
+         whole story. */
+      #cmeBootError {
+        display: none; position: fixed; inset: 0; z-index: 9999;
+        background: #0d1114; color: #e6edf3; padding: 28px;
+        font: 14px/1.6 system-ui, Segoe UI, Arial, sans-serif;
+      }
+      #cmeBootError a { color: #7cc4ff; }
+    </style>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0d1114" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="cmeBootError" role="alert">
+      <h2 style="margin:0 0 10px">The drawing tool could not start</h2>
+      <p id="cmeBootWhy"></p>
+      <p id="cmeBootOffline">
+        The first time this page is opened it has to download while online. If you are in the field with no
+        signal, open it once on Wi-Fi and it will work offline afterwards.
+      </p>
+      <p><a href="estimates.html">&larr; Back to Sales Estimates</a></p>
+    </div>
+
+    <!-- A classic script runs before any module: it listens for a script that fails to load (a failed module
+         import is otherwise a silent blank screen). -->
+    <script src="cme/boot-guard.js"></script>
+    <script type="module" src="cme/boot.js"></script>
+  </body>
+</html>

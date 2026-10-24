@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Deck Estimate</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/estimate-deck.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <div class="ed" id="edPage">
+      <div id="printHead">
+        <img id="phLogo" src="icons/logo.jpg" alt="" />
+        <div class="co" id="phCo"></div>
+        <div style="flex:1"></div>
+        <div style="font-size:18px;font-weight:800">PRELIMINARY DECK ESTIMATE</div>
+      </div>
+
+      <div class="ed-back no-print"><a href="estimates.html">&larr; Sales Estimates</a></div>
+
+      <div class="ed-steps" id="edSteps">
+        <div class="ed-step" data-step="1">1 · Project</div>
+        <div class="ed-step" data-step="2">2 · Similar projects</div>
+        <div class="ed-step" data-step="3">3 · Materials</div>
+        <div class="ed-step" data-step="4">4 · Review</div>
+        <div class="ed-step" data-step="5">5 · Estimate</div>
+      </div>
+
+      <div id="edApp"><div class="ed-card">Loading…</div></div>
+    </div>
+
+    <!-- Product detail — lives outside #edApp so a step-3 re-render can't close it mid-conversation with the
+         client. -->
+    <div class="mv-overlay" id="matModal" hidden>
+      <div class="mv" role="dialog" aria-modal="true" aria-labelledby="mvTitle">
+        <button class="mv-x" id="mvClose" type="button" title="Close (Esc)" aria-label="Close">✕</button>
+        <div class="mv-body" id="mvBody"></div>
+      </div>
+    </div>
+
+    <script type="module" src="js/pages/estimate-deck.js"></script>
+  </body>
+</html>

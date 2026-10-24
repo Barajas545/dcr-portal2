@@ -1,0 +1,69 @@
+/* the Materials Library (materials-library.html): the old page's own styles, moved out of the page unchanged (Portal 2 keeps the look). */
+
+.ml{--acc:#2f80d8; --acc-2:#1f6fc8; --tint:rgba(47,128,216,.12); --tint-2:rgba(47,128,216,.25);
+  --gold:#d6a13a; --ok:#2fa679; --err:#d9614f;
+  max-width:1060px; margin:0 auto; padding:16px 16px 70px;}
+/* Portal 2: in dark the blue as text is lighter (#6aa9ec: 4.5:1 or more on the dark surfaces), as on submit.html and
+   submissions.html */
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .ml{--acc:#6aa9ec; --acc-2:#8fbff2; --tint:rgba(47,128,216,.18);} }
+:root[data-theme="dark"] .ml{--acc:#6aa9ec; --acc-2:#8fbff2; --tint:rgba(47,128,216,.18);}
+
+.ml-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px;}
+.ml-head h2{margin:0; font-size:20px; flex:1;}
+.ml-sub{font-size:13px; color:var(--text-muted); margin:2px 0 16px;}
+
+/* hierarchy */
+.ml-div{margin:26px 0 6px; padding-bottom:6px; border-bottom:2px solid var(--acc);
+  font-size:16px; font-weight:800; color:var(--acc); letter-spacing:.02em;}
+.ml-cat{margin:14px 0 2px; font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.06em;}
+.ml-subcat{margin:8px 0 8px; font-size:11.5px; font-weight:700; color:var(--text-muted);
+  text-transform:uppercase; letter-spacing:.06em;}
+.ml-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; margin-bottom:8px;}
+
+.ml-card{background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden;
+  display:flex; flex-direction:column;}
+.ml-pic{height:150px; background:var(--surface-2); display:flex; align-items:center; justify-content:center;
+  font-size:34px; color:var(--text-muted); position:relative; cursor:pointer;}
+.ml-pic img{width:100%; height:100%; object-fit:cover;}
+.ml-pic .tier{position:absolute; top:8px; left:8px; font-size:10.5px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; padding:3px 10px; border-radius:10px; background:rgba(0,0,0,.55); color:#fff;}
+.ml-pic .stat{position:absolute; top:8px; right:8px; font-size:10.5px; font-weight:700;
+  padding:3px 10px; border-radius:10px; background:rgba(0,0,0,.55); color:#ffd47f;}
+.ml-pic .pcount{position:absolute; bottom:8px; right:8px; font-size:10.5px; font-weight:700;
+  padding:3px 9px; border-radius:10px; background:rgba(0,0,0,.55); color:#fff;}
+.ml-body{padding:12px 14px 14px; display:flex; flex-direction:column; gap:6px; flex:1;}
+.ml-name{font-weight:700; font-size:15px;}
+.ml-desc{font-size:12px; color:var(--text-muted); line-height:1.4; flex:1;}
+.ml-colors{display:flex; gap:6px; flex-wrap:wrap; margin-top:4px;}
+.ml-swatch{width:34px; height:34px; border-radius:8px; border:1.5px solid var(--border); overflow:hidden;
+  background:var(--surface-2); cursor:pointer; display:flex; align-items:center; justify-content:center;
+  font-size:9px; color:var(--text-muted); text-align:center; line-height:1.05;}
+.ml-swatch img{width:100%; height:100%; object-fit:cover;}
+.ml-swatch.addc{border-style:dashed; font-size:16px;}
+.ml-actions{display:flex; gap:8px; margin-top:8px;}
+.ml-empty{padding:30px; text-align:center; color:var(--text-muted); background:var(--surface);
+  border:1px solid var(--border); border-radius:12px;}
+
+/* modal */
+.ml-overlay{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none;
+  align-items:center; justify-content:center; z-index:80; padding:14px;}
+.ml-overlay.open{display:flex;}
+.ml-modal{background:var(--surface); color:var(--text); border:1px solid var(--border);
+  border-radius:13px; width:100%; max-width:720px; max-height:94vh; overflow:auto; padding:20px;}
+.ml-modal h3{margin:0 0 10px;}
+.ml-mgrid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px;}
+.ml-mgrid .c2{grid-column:span 2;}
+.ml-mgrid .full{grid-column:1/-1;}
+@media (max-width:620px){ .ml-mgrid{grid-template-columns:1fr;} .ml-mgrid .c2{grid-column:auto;} }
+.ml-mactions{display:flex; justify-content:flex-end; gap:8px; margin-top:14px;}
+label{margin-top:10px;}
+
+/* picture gallery styles come from the shared gallery.js widget */
+
+/* Portal 2 */
+.ml-head input[type=search]{max-width:250px;}
+.ml-back{margin:2px 0 6px; font-size:13px;}
+.ml-back a{color:var(--acc); text-decoration:none; font-weight:600;}
+.ml-back a:hover{text-decoration:underline;}
+@media (max-width:560px){ .ml-head input[type=search]{max-width:none; flex:1 1 100%; order:3;} .ml-grid{grid-template-columns:1fr;} }
+.ml-modal textarea{font-family:inherit;}

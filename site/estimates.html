@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Sales Estimates</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/sales-estimates.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <div class="se" id="sePage">
+      <h2>💰 Sales Estimates</h2>
+      <p class="se-sub" id="seIntro">Estimate new work from your completed-project history. Start with a trade:</p>
+
+      <div class="se-denied se-empty" id="seDenied" hidden></div>
+
+      <div id="seMain" hidden>
+        <div class="se-trades" id="seTrades">
+          <a class="se-trade" href="estimate-deck.html?new=1" id="seTradeDeck"><span class="ic">🪵</span><span class="tt">Deck</span>
+            <span class="ds">New decks, resurfacing, expansions — priced from past deck projects.</span></a>
+          <a class="se-trade soon" href="#" aria-disabled="true" tabindex="-1"><span class="ic">🏠</span><span class="tt">Siding</span><span class="ds">Coming next.</span></a>
+          <a class="se-trade soon" href="#" aria-disabled="true" tabindex="-1"><span class="ic">🎨</span><span class="tt">Painting</span><span class="ds">Coming next.</span></a>
+          <a class="se-trade soon" href="#" aria-disabled="true" tabindex="-1"><span class="ic">🧱</span><span class="tt">Drywall</span><span class="ds">Coming next.</span></a>
+          <a class="se-trade soon" href="#" aria-disabled="true" tabindex="-1"><span class="ic">⚡</span><span class="tt">Electrical</span><span class="ds">Coming next.</span></a>
+          <a class="se-trade" href="materials-library.html"><span class="ic">🧱</span><span class="tt">Materials Library</span>
+            <span class="ds">Product lines, colors &amp; photos offered in estimates.</span></a>
+        </div>
+
+        <p class="se-sub se-noprice" id="seReadOnly" hidden>
+          You can read Sales Estimates. Making and changing them is for an admin, or a manager with the Sales estimates switch.
+        </p>
+        <p class="se-sub se-noprice" id="seNoPrices" hidden>
+          Amounts are hidden: the benchmarks, ranges and past prices need the prices switch as well as Sales estimates.
+        </p>
+
+        <div class="se-head"><h2>Saved estimates</h2>
+          <button class="btn btn-sm" id="seNew" type="button">+ New estimate</button>
+          <input id="seSearch" type="search" placeholder="Search client, address, status…" aria-label="Search the saved estimates">
+          <button class="btn btn-ghost btn-sm" id="seReload" type="button" title="Reload" aria-label="Reload">↻</button></div>
+        <div id="seList"><div class="se-empty">Loading…</div></div>
+
+        <div class="se-head"><h2>Reference projects (comps)</h2>
+          <button class="btn btn-sm" id="refAdd" type="button">+ Add past project</button></div>
+        <p class="se-sub">Completed projects the estimator compares against. Keep these accurate — they drive every benchmark.</p>
+        <div id="refList"><div class="se-empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- reference project editor -->
+    <div class="se-overlay" id="refModal">
+      <div class="se-modal" role="dialog" aria-modal="true" aria-labelledby="refTitle">
+        <h3 id="refTitle">Add past project</h3>
+        <label style="display:block;font-size:13px;font-weight:600;margin:4px 0 6px">Project photos
+          <span style="color:var(--text-muted);font-weight:400">— shown while estimating; first one is the cover</span></label>
+        <div id="refGallery" style="margin-bottom:10px"></div>
+        <div class="se-grid">
+          <div><label for="r_ref">Project ref (ID)</label><input id="r_ref" placeholder="DCR-DECK-007"></div>
+          <div><label for="r_name">Project name</label><input id="r_name"></div>
+          <div><label for="r_city">City</label><input id="r_city"></div>
+          <div><label for="r_type">Project type</label>
+            <select id="r_type"><option>new-deck</option><option>resurface</option><option>deck-expansion</option><option>partial-rebuild</option></select></div>
+          <div><label for="r_cx">Complexity</label>
+            <select id="r_cx"><option>standard</option><option>moderate</option><option>complex</option></select></div>
+          <div><label for="r_done">Completed date</label><input id="r_done" type="date"></div>
+          <div><label for="r_sf">Decking area (SF)</label><input id="r_sf" type="number" min="0"></div>
+          <div><label for="r_frame">Framing area (SF)</label><input id="r_frame" type="number" min="0"></div>
+          <div><label for="r_rail">Railing (LF)</label><input id="r_rail" type="number" min="0"></div>
+          <div><label for="r_stairs">Stairs</label><input id="r_stairs" type="number" min="0"></div>
+          <div class="se-money"><label for="r_price">Final price ($)</label><input id="r_price" type="number" min="0"></div>
+          <div><label for="r_hours">Total man-hours</label><input id="r_hours" type="number" min="0"></div>
+          <div><label for="r_mfr">Decking manufacturer</label><input id="r_mfr" placeholder="Trex / TimberTech…"></div>
+          <div><label for="r_line">Product line</label><input id="r_line"></div>
+          <div class="full"><label for="r_notes">Notes</label><textarea id="r_notes" rows="2"></textarea></div>
+          <div><label for="r_active">Active as reference</label>
+            <select id="r_active"><option value="true">Yes</option><option value="false">No</option></select></div>
+          <div id="r_cpsWrap" class="se-money"><label for="r_cps">Cost / SF <span style="color:var(--text-muted);font-weight:400">(auto)</span></label>
+            <input id="r_cps" disabled></div>
+          <div class="full se-noprice-note" id="r_noPrice" hidden>
+            The final price and cost per SF are kept apart and need the prices switch: someone who has it adds them.
+          </div>
+        </div>
+        <div class="se-actions">
+          <button class="btn btn-ghost" id="refCancel" type="button">Cancel</button>
+          <button class="btn btn-danger" id="refDelete" type="button" style="display:none">Delete</button>
+          <button class="btn" id="refSave" type="button">Save</button>
+        </div>
+        <div id="refMsg" role="status" style="font-size:12.5px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <script type="module" src="js/pages/sales-estimates.js"></script>
+  </body>
+</html>

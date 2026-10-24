@@ -87,7 +87,8 @@
     profiles: Object.assign({ id: null, full_name: "", email: null, phone: null, role: "viewer", can_see_prices: false,
       can_see_financials: false, can_approve_payments: false, active: true, color: null, must_change_password: false }, AUDIT),
     settings: Object.assign({ id: 1, company_name: "DCR Framing LLC", address: null, phone: null, email: null, license: null,
-      tax_rate: 8, next_project_number: 291, invoice_terms: null, agents_checks_enabled: false, task_email_enabled: false }, AUDIT),
+      tax_rate: 8, next_project_number: 291, invoice_terms: null, agents_checks_enabled: false, task_email_enabled: false,
+        sub_email_enabled: true }, AUDIT),
     settings_prices: Object.assign({ id: 1, default_labor_rate: 110, local_labor_rate: 90, out_of_area_labor_rate: 110 }, AUDIT),
     contacts: Object.assign({ id: null, name: null, company: null, kind: "client", trade: null, phone: null, email: null,
       address: null, city: null, notes: null, deleted_at: null }, AUDIT),
@@ -1693,7 +1694,12 @@
 
     /* ── Storage (bucket project-files) ─────────────────────────────── */
     const KEY_RE = /^([pf])\/([0-9]+)\/([a-z]+)\/[^/]+\/[^/]+$/;
+    /* P5c (tools/fake/p5c-sales.js): another bucket's objects (sales-media: materials/, references/, estimates/,
+       legacy/ - names project-files never uses) are ruled by the extension that owns them */
+    const objectOwner = (key) => exts.find((x) => typeof x.ownsObject === "function" && x.ownsObject(key)) || null;
     function canUploadObject(w, key) {
+      const own = objectOwner(key);
+      if (own) return !!w.active && own.canUploadObject(w, key);
       const m = KEY_RE.exec(key);
       if (!m || !w.active) return false;
       const folder = m[3];
@@ -1706,6 +1712,8 @@
       return true;
     }
     function canReadObject(w, key) {
+      const own = objectOwner(key);
+      if (own) return !!w.active && own.canReadObject(w, key);
       return readable(w, "files").some((f) => f.storage_path === key || f.preview_path === key);
     }
     function storageErr(status, statusCode, error, message) {
@@ -1726,6 +1734,11 @@
         if (!w.uid) throw storageErr(400, 403, "Unauthorized", "new row violates row-level security policy");
         if (!canUploadObject(w, key)) throw storageErr(400, 403, "Unauthorized", "new row violates row-level security policy");
         if (objects.has(key) && !upsert) throw storageErr(400, 409, "Duplicate", "The resource already exists");
+        if (objects.has(key) && upsert) {
+          // replacing an object is its own policy (an UPDATE on storage.objects); project-files has none for people
+          const own = objectOwner(key);
+          if (!own || !own.canReplaceObject || !own.canReplaceObject(w, key)) throw storageErr(400, 403, "Unauthorized", "new row violates row-level security policy");
+        }
         if (opt.maxFileSize && size > opt.maxFileSize) throw storageErr(413, 413, "Payload too large", "The object exceeded the maximum allowed size");
         putObject(w, key, size, mime, blob);
         return { Key: BUCKET + "/" + key, Id: "obj-" + objects.size };
@@ -1840,6 +1853,13 @@
       return null;
     }
     storage.request = storageRequest;
+    /* P5c (tools/fake/p5c-sub.js): an upload to a signed upload URL an Edge Function minted (uploadToSignedUrl) is
+       answered by the extension that minted it; none -> refused as Storage refuses an unknown token */
+    storage.uploadSigned = (key, token, size, mime, blob, bucket) => {
+      const x = exts.find((e) => typeof e.signedUpload === "function");
+      if (!x) throw storageErr(400, 400, "InvalidJWT", "invalid signature");
+      return x.signedUpload(key, token, size, mime, blob, bucket);
+    };
 
     /* ── phone reminders (M3, BLUEPRINT 3.3.8): push_subscriptions and the Edge Function "push" ──
        push_subscriptions: own rows only (select, insert, delete; Portal 2 never updates one), profile_id
@@ -1878,7 +1898,12 @@
     function invokeFunction(ctx, name, body) {
       const out = (status, data) => ({ status, data: clone(data) });
       const bad = (message) => out(400, { error: "invalid", message });
-      if (name !== "push") return out(404, { code: "NOT_FOUND", message: "Requested function was not found" });
+      if (name !== "push") {
+        // P5c: the later phases' functions (tools/fake/p5c-sub.js: "subform", the public form - no sign-in)
+        const x = exts.find((e) => Array.isArray(e.functions) && e.functions.includes(name));
+        if (x) { const r = x.invoke(ctx, name, body); return out(r.status, r.data); }
+        return out(404, { code: "NOT_FOUND", message: "Requested function was not found" });
+      }
       const w = who(ctx);
       if (!w.uid) return out(401, { error: "unauthorized", message: "sign in first" });
       const b = body && typeof body === "object" && !Array.isArray(body) ? body : null;
@@ -2008,6 +2033,18 @@
       server: () => agentsServer, beat: (at) => { if (agentsServer) { agentsServer.at = at || nowIso(); } },
       myTasks: (w, view) => myTasks(w, view), myEmployeeId,
       canEdit, projectVisible, logActivity,
+      // P5c (tools/fake/p5c-lists.js convert_lead): another RPC of this engine as the same caller, with all its rules
+      callRpc: (w, name, args) => rpc({ uid: w.uid }, name, args),
+      // P5c (tools/fake/p5c-sub.js, the subform function's stand-in): Storage as the function's own service role
+      // (the bytes are kept for the other demo tabs too - fake-supabase.js NS.keepBlob - so the review page shows the
+      // signature a sub just drew on the public form)
+      objectPut: (key, size, mime, blob) => {
+        putObject({ uid: null }, key, size, mime, blob);
+        if (blob && typeof NS.keepBlob === "function") NS.keepBlob(key, blob);
+      },
+      objectMeta: (key) => (objects.has(key) ? clone(objects.get(key)) : null),
+      objectRemove: (key) => { if (objects.delete(key)) { blobs.delete(key); emitOp({ k: "objdel", key }); } },
+      storageErr,
     };
     if (typeof NS.p6 === "function") ext = NS.p6(internals);
     for (const install of NS.extInstall || []) {

@@ -56,6 +56,54 @@ site/                       published as is
   bill.html                 one bill, its paperwork and the decision (P5b): approve_bill with a REQUIRED pay method
                             (by check, in cash, either, by bank transfer - ACH or wire - or by card) (an admin, or a manager with the approve switch - an accountant never sees a working
                             approve button), set_bill_pay_method; the home page's approvals card links here (approvers)
+  submit.html               the PUBLIC subcontractor form (P5c; BLUEPRINT 2.2.7: the only page nobody signs in to; no top
+                            bar, no app, not indexed; phone first): invoice or change order, a job found by number, name,
+                            street or town (open jobs only, five public fields), the details, the paperwork (one signed
+                            upload into the private inbox subform-inbox - 25 MB, a photo, scan or PDF; "attached" copies it
+                            under f/ - financials), a drawn signature, the declaration, a honeypot; everything goes
+                            through js/repo/subform.js to DCR Desktop 2's Edge Function "subform" with its OWN client that
+                            keeps no session (never the staff sign-in); a reference to quote on the phone at the end
+  submissions.html          the review queue (P5c; money editors: an admin, or a manager or accountant with financials):
+                            waiting / accepted / rejected, the paperwork and the signature through short signed links,
+                            accept_submission (an invoice -> a bill NOT approved, billed against a quote or not; a change
+                            order -> the job's change order) and reject_submission with a note, the version shown ("already
+                            done" when somebody was faster); ?ref= from the office's e-mail; what became of each waiting
+                            submission's e-mail (sub_submission_notices: "Nobody was e-mailed about this: ..." as the old
+                            page said); an accepted invoice's bill as it is now; the home page's card with a badge
+  leads.html                Sales Leads (P5c; admin, manager, accountant, view-only read - admin and manager write): the
+                            category chips, open / converted / all, "contacted Nd ago" in company days, Contacted today,
+                            Edit, Delete (versioned), Convert to project (rpc convert_lead: the project with the next
+                            number and the lead linked in one step); a lead or field account is told it is the office's
+  vehicles.html             the Vehicle Board (P5c; everyone reads, admin and manager write): oil changes due (by date
+                            this month, or by miles), services due, registration / emissions / DOT due, every vehicle
+                            (retired ones on request), the panel with open maintenance and history; schedule, complete
+                            (rpc complete_vehicle_maintenance: today, the oil stamp, the mileage only forward), add and
+                            edit a vehicle (never an insurance policy number - Q18); a service's material cost only with
+                            the financials switch
+  marketing.html            Marketing Tasks (P5c, Q17; the leads' readers and writers): Open / Completed / Not invoiced /
+                            Not paid / All, grouped by project, Done / Invoiced / Paid marks (Done: the database stamps the
+                            day); the price column, the totals and the price box only with the financials switch; a card
+                            per task on a phone. In all three, words people typed that quote an amount read "(amount
+                            hidden)" without the prices switch, and an edit form shows such a box masked and read only and
+                            never sends it (js/map/masked-form.js; the project Overview's rule)
+  css/lists.css             the three office lists' looks (the old pages' own blue, light and dark)
+  estimates.html            Sales Estimates (P5c, Q10: the Sales estimates switch): the saved sales estimates and the
+                            comps library (past projects with their photos); the trade cards (Deck; the others "coming
+                            next", as in the old portal); benchmarks, ranges and past prices only with the prices switch
+                            too; New / Add / Delete for a sales editor (an admin, or a manager with the switch)
+  estimate-deck.html        the deck estimate wizard (P5c): project -> similar projects (scored comps) -> materials (the
+                            product viewer) -> review (the estimator's rates) -> preliminary estimate (save, print);
+                            photos with markup, CME drawings and voice notes with transcripts in sales-media; the money
+                            only in sales_estimate_prices (never sent by someone without prices); read only for a reader
+  materials-library.html    the Materials Library (P5c): division -> category -> sub-category, a product and its colors,
+                            each with a picture gallery (the cover first); offered in the wizard (deck-materials.json is
+                            only the fallback when the library is empty)
+  cme.html, cme/            the Construction Modeling Engine (P5c), the old portal's drawing tool unchanged (cme/src) with
+                            its two portal files rewritten (cme/boot.js: Portal 2's sign-in, the switch, no framing by
+                            another site, a per-person per-estimate drawing library; cme/portal-bridge.js); opened over the
+                            wizard by js/sales/cme-launcher.js, its PNG in sales-media, the drawing under the entry's "cme"
+  js/sales/*.js             deck-engine.js (the wizard's arithmetic, pure), gallery.js (sales-media pictures, signed URLs),
+                            photo-annotate.js (markup, the old editor), cme-launcher.js (the drawing overlay)
   js/console/*.js           the old console: shell.js (agents-console.js, its four network points through
                             bridge.js) and console-*.js (the eight tabs, byte for byte the old portal's);
                             bridge.js the module under them (supabase-js, Realtime); framed.js (no framing)
@@ -97,11 +145,36 @@ tools/e2e-p5b-books.mjs     the P5b books: The Books, the bill page, the approva
                             approver@demo.test
 tools/e2e-p5b-ledger.mjs    the P5b ledger: Expenses & receipts, the project's Expenses and Payments tabs, the printed
                             expense report (every role; phone and desk, light and dark); e2e-demo runs it (--p5ledger)
+tools/e2e-p5c-sub.mjs       the P5c subcontractor form signed out on a phone (search, refusals, honeypot, the paperwork,
+                            the reference) and its review for every role (accept, "already done", reject, the change
+                            order; acceptance checks 4 and 5; phone and desk, light and dark); e2e-demo runs it (--p5sub)
+tools/schema-check-p5c-sub.mjs  the same on the REAL rules: repo/subform.js through DCR Desktop 2's own subform handler
+                            and SQL, repo/submissions.js as every role, on PGlite with every migration (schema-check runs it)
+tools/e2e-p5c-sales.mjs     the P5c sales walk: who (the Sales estimates switch, the prices switch, a sales editor or a
+                            reader), a deck estimate from scratch (a photo, its markup, a CME drawing saved and saved
+                            again, the reference, the materials and the viewer, the rates, step 5 saved with its money
+                            apart, print), a 409, the library (phone and desk, light and dark); e2e-demo runs it (--p5sales)
+tools/schema-check-p5c-sales.mjs  the same module on the REAL rules (M5c): every column, who reads and writes, the prices
+                            rows' versioned PATCH, the "cad" rule, sales-media's names and its one replace (schema-check)
+tools/e2e-p5c-lists.mjs     the P5c office lists: Leads, the Vehicle Board, Marketing Tasks and the home page's cards for
+                            every role (admin, manager, accountant, lead, field, view-only, the demo approver); a lead
+                            added with HTML in its name, edited, contacted, converted and deleted; a service completed
+                            as an oil change with its cost; a vehicle retired; a task done and priced; no cost or price
+                            without financials; a manager without prices edits a task whose words quote an amount (masked,
+                            read only, kept); phone and desk, light and dark (lists_*.png); e2e-demo runs it (--p5lists)
+tools/schema-check-p5c-lists.mjs  the same on the REAL rules (M5c): repo/leads.js, repo/vehicles.js, repo/marketing.js as
+                            every role on PGlite with every migration, convert_lead and complete_vehicle_maintenance as
+                            Portal 2 calls them, P5 check 5, and the demo's columns against the real ones (schema-check)
 tools/pglite-serve.mjs      PGLITE mode: the site with every page's supabase-js calls replayed on PGlite loaded with
                             every DCR Desktop 2 migration, as the signed-in person (tools/fake/pglite-client.js is
                             the page side); made-up people <role>@e2e.test, password pglite-<role>-2026
 tools/e2e-p5b-pglite.mjs    every P5b page as every role on pglite-serve (the REAL database rules: acceptance checks 2,
                             3 and 5 through the pages, refusals by HTTP status); e2e-demo runs it when PGLITE_DIR is set
+tools/e2e-p5c-pglite.mjs    every P5c page as every role (and signed out: submit.html) on pglite-serve in P5c mode
+                            (tools/pglite-p5c.mjs: the demo's made-up lists and sales rows loaded into the REAL M5c
+                            tables - drift stops it -, DCR Desktop 2's own subform function as the service role, the
+                            signed upload): acceptance checks 4 and 5, accept -> a bill waiting for approval in The
+                            Books, the notices for DCR Agents 2; e2e-demo runs it when PGLITE_DIR is set
 tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite); tools/schema-pm.mjs
                             is its Progress Chart part, tools/schema-check-p5a-est.mjs its estimates part and
                             tools/schema-p5a-sweep.mjs the P5 acceptance check 1 as a sweep of raw REST answers (every
@@ -165,9 +238,11 @@ node tools/e2e-p5a-pm.mjs --out <folder>           # the Progress Chart walk alo
 node tools/e2e-p5a-est.mjs --out <folder>          # the estimates walk alone + screenshots (est_*.png; --shots none)
 node tools/e2e-p5b-books.mjs --out <folder>       # the books walk alone + screenshots (books_*.png; --shots none)
 node tools/e2e-p5b-ledger.mjs --out <folder>      # the ledger walk alone + screenshots (ledger_*.png; --shots none)
+node tools/e2e-p5c-sales.mjs --out <folder>       # the sales walk alone + screenshots (sales_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
 PGLITE_DIR=<folder> node tools/pglite-serve.mjs    # the site over PGlite with the real migrations (127.0.0.1:8793)
 PGLITE_DIR=<folder> node tools/e2e-p5b-pglite.mjs --out <folder>   # the P5b pages on it + screenshots (p5b_final_*.png)
+PGLITE_DIR=<folder> node tools/e2e-p5c-pglite.mjs --out <folder>   # the P5c pages on it + screenshots (p5c_final_*.png)
 ```
 
 - `tools/check-pages.mjs` and `tools/e2e-demo.mjs` start the demo server on a free port and run a
@@ -363,6 +438,28 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - Guided Assist is not built (Q21: dropped). The service worker keeps My Assistant ahead on phones, not the
   admins' pages.
 
+## Sales estimates (P5c) in short
+
+- **Who (Q10, owner 2026-10-21).** The "Sales estimates" switch (`profiles.can_sales_estimates`, migration M5c
+  `20261027000100_office_lists`): an admin always has it; an admin gives it to anyone in DCR Desktop 2 (Users). With it a
+  person READS the sales tables and the sales-media bucket; WRITING them is `app.can_edit('sales')` — an admin, or a manager
+  with the switch — so anyone else with it opens everything read only. The pages read the switch on their own
+  (`repo/sales.js salesAccess`); the home page's Sales Estimates card (Sales & Marketing) appears once it says so.
+- **Money (2.1, Q10).** A comp's final price and cost per SF are `sales_reference_prices`; an estimate's benchmark, range,
+  the estimator's rates and the priced output are `sales_estimate_prices`; both need the prices switch as well. Without it
+  they never reach the browser (the embeds come back null), the columns and the money steps are not shown, and a save from
+  such a person never sends them, so it never touches what a priced estimator worked out. The price rows are made by the
+  database with every comp and estimate and written with a versioned PATCH (409 on a stale one). Words a person typed that
+  quote an amount (notes, transcripts) are masked for anyone without prices and are then read only (a masked copy is never
+  saved over the words).
+- **Pictures, drawings, voice notes.** Everything is in the private bucket `sales-media`
+  (`estimates|references|materials/<…>/<uuid>/<name>`, opened with signed URLs). A CME drawing is saved under the gallery
+  entry's `cme` key, its PNG at `estimates/<EST-ref>/cme/cme-<drawing id>.png` — the one name the bucket lets a sales editor
+  replace in place (one drawing, one file); a person can never write a new `cad` value (the old sketch tool's drawings are
+  only kept, and opened in the old portal). The pictures' "URL" intake is gone (the security policy shows no other site's
+  picture); an old link is kept as a link.
+- **Not built (Q20):** the plans library, takeoff-web and the `.takeoff` archive stay on the old portal.
+
 ## Rules for every page
 
 - The `Content-Security-Policy` meta tag of `index.html`, word for word, first in `<head>` after
@@ -458,6 +555,17 @@ runbook with every command and the expected counts is DCR Desktop 2's `tools/leg
     phone whose site data was cleared (reminders not turned off) is pruned on the next notice.
 11. Delete the smoke test's tasks (DCR Desktop 2 → the task → Delete task). Tell the crews: Add to Home
     Screen, turn reminders on (the old portal's subscriptions cannot move).
+
+**P5c (office lists, sales tools, the public subcontractor form) go-live, in order, each live step after the owner's
+OK.** The full runbook with every command and the expected counts is DCR Desktop 2's `tools/legacy_import/README.md`,
+"Portal 2 phase 5c: go-live, everything in order". In short: both repositories committed and the offline checks green
+(here also `PGLITE_DIR=<folder> node tools/e2e-p5c-pglite.mjs`); a backup from today; database change M5c
+(`20261027000100_office_lists`); the `subform` function (`npx supabase functions deploy subform --use-api
+--no-verify-jwt`: the public form's only door, no sign-in); DCR Desktop 2 2.20.0 the same day, after the push (2.19 keeps
+working on M5c; 2.20 needs it); a fresh read and rehearsal, the sales pictures, then the five office-list imports; then
+`TZ=UTC node --test` and `node --test` green and this repository's `main` pushed; then the smoke test on A000T2 (a test
+invoice from a phone that is not signed in, the e-mailed notice, accepted - a bill waiting for approval - and deleted).
+`submit.html` is public: its link can go to subcontractors only after that smoke test.
 
 **Owner, once (any time before the first publish)**
 

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Subcontractor submissions</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+    <style>
+      /* the old submissions.html's look, on Portal 2's theme tokens (light and dark) */
+      *, *::before, *::after { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      .sb { max-width: 1000px; margin: auto; padding: 18px 16px 40px;
+        --acc:#2f80d8; --gold:#a8790a; --ok:#1f8a5f; --err:#c8371f; --acc-tint:rgba(47,128,216,.12); --gold-tint:rgba(184,134,11,.14); }
+      @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .sb { --acc:#6aa9ec; --gold:#e0b049; --ok:#4cc28f; --err:#f0937f; --acc-tint:rgba(47,128,216,.18); --gold-tint:rgba(224,176,73,.16); } }
+      :root[data-theme="dark"] .sb { --acc:#6aa9ec; --gold:#e0b049; --ok:#4cc28f; --err:#f0937f; --acc-tint:rgba(47,128,216,.18); --gold-tint:rgba(224,176,73,.16); }
+      .sb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+      .sb-head h2 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text); }
+      .sb-lead { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; line-height: 1.55; }
+      .sb-lead a { font-weight: 600; color: var(--acc); }
+
+      .sb-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+      .sb-tabs button { padding: 8px 14px; border-radius: 999px; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+        font-size: 13px; font-weight: 600; font-family: inherit; }
+      .sb-tabs button[aria-pressed="true"] { border-color: var(--acc); background: var(--acc-tint); color: var(--acc); }
+      .sb-tabs .n { font-variant-numeric: tabular-nums; opacity: .8; margin-left: 4px; }
+      .sb-tabs .sp { flex: 1; }
+
+      .sb-card { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; background: var(--surface); box-shadow: var(--shadow); min-width: 0; }
+      .sb-card.pending { border-left: 4px solid var(--gold); }
+      .sb-card.focus { box-shadow: 0 0 0 2px var(--acc), var(--shadow); }
+      .sb-top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+      .sb-top > div:first-child { min-width: 0; flex: 1 1 260px; }
+      .sb-who { font-size: 16px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+      .sb-kind { font-size: 10.5px; font-weight: 800; letter-spacing: .05em; padding: 2px 7px; border-radius: 5px; vertical-align: middle; margin-left: 6px; white-space: nowrap; }
+      .sb-kind.inv { background: var(--acc-tint); color: var(--acc); border: 1px solid var(--acc); }
+      .sb-kind.co { background: var(--gold-tint); color: var(--gold); border: 1px solid var(--gold); }
+      .sb-amt { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text); }
+      .sb-meta { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; overflow-wrap: anywhere; }
+      .sb-desc { font-size: 13.5px; margin: 10px 0; white-space: pre-line; border-left: 3px solid var(--border); padding-left: 10px; color: var(--text); overflow-wrap: anywhere; }
+      .sb-files { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; align-items: center; }
+      .sb-files button, .sb-chip { font-size: 12.5px; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--acc);
+        font-family: inherit; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sb-chip { color: var(--text-muted); cursor: default; white-space: normal; }
+      .sb-nodoc { font-size: 12.5px; padding: 6px 10px; border-radius: 7px; color: var(--err); border: 1px solid var(--err); font-weight: 700; }
+      .sb-sig { height: 46px; max-width: 160px; border: 1px solid var(--border); border-radius: 6px; background: #fff; padding: 2px 6px; vertical-align: middle; object-fit: contain; }
+      .sb-warn { font-size: 12.5px; color: var(--gold); margin: 8px 0; font-weight: 600; line-height: 1.5; }
+      .sb-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+      .sb-acts select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 13px;
+        font-family: inherit; max-width: 100%; flex: 1 1 220px; }
+      /* the same deep green in both themes: white words stay readable (the dark theme's --ok is a light green) */
+      .btn-accept { background: #1f8a5f; color: #fff; border: 0; padding: 10px 16px; border-radius: 7px; font-weight: 700; font-size: 13.5px; cursor: pointer; font-family: inherit; }
+      .btn-reject { background: none; border: 1px solid var(--border); color: var(--text-muted); padding: 10px 14px; border-radius: 7px; font-size: 13.5px; cursor: pointer; font-family: inherit; }
+      .btn-reject:hover { border-color: var(--err); color: var(--err); }
+      .btn-accept:disabled, .btn-reject:disabled { opacity: .5; cursor: default; }
+      .sb-msg { font-size: 12.5px; margin-top: 8px; color: var(--text); }
+      .sb-msg.err { color: var(--err); font-weight: 600; }
+      .sb-done { font-size: 12.5px; color: var(--text-muted); margin-top: 8px; overflow-wrap: anywhere; }
+      .sb-done a { font-weight: 600; }
+      .sb-empty { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+      @media (max-width: 560px) { .sb-acts > button { flex: 1 1 auto; } }
+    </style>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="sb" id="sbRoot">
+      <div class="sb-head">
+        <h2>Subcontractor submissions</h2>
+        <span class="pill" id="sbCount"></span>
+      </div>
+      <p class="sb-lead" id="sbLead">
+        Invoices and change orders sent in by subcontractors through the <a href="submit.html" target="_blank" rel="noopener">public form</a> (no account needed:
+        send them that link). Accepting an invoice files it as a bill waiting for approval; accepting a change order records it on the job.
+        Accepting is not approving — releasing money still needs approve authority.
+      </p>
+      <div class="sb-tabs" role="group" aria-label="Which submissions">
+        <button type="button" id="sbTab-pending" data-tab="pending" aria-pressed="true">Waiting<span class="n"></span></button>
+        <button type="button" id="sbTab-accepted" data-tab="accepted" aria-pressed="false">Accepted<span class="n"></span></button>
+        <button type="button" id="sbTab-rejected" data-tab="rejected" aria-pressed="false">Rejected<span class="n"></span></button>
+        <span class="sp"></span>
+        <button type="button" id="sbRefresh">&#8635; Refresh</button>
+      </div>
+      <div id="sbList"><div class="sb-empty">Loading…</div></div>
+    </main>
+    <script type="module" src="js/pages/submissions.js"></script>
+  </body>
+</html>

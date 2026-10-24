@@ -107,6 +107,8 @@
     if (!db || !blob) return;
     try { db.transaction("o", "readwrite").objectStore("o").put(blob, key); } catch (e) { /* */ }
   }
+  // P5c: an object an Edge Function's stand-in made (tools/fake/p5c-sub.js: the drawn signature) is kept the same way
+  F.keepBlob = keepBlob;
   async function findBlob(key) {
     const mem = engine.storage.blob(key);
     if (mem) return mem;
@@ -126,6 +128,15 @@
   function placeholder(key, meta) {
     const leaf = decodeURIComponent(String(key).split("/").pop());
     const mime = (meta && meta.mime) || "";
+    // P5c: a made-up submission's signature (the seed has no bytes for it) looks like ink on paper, not a photo
+    if (/ signature\.png$/.test(leaf)) {
+      const k = hash(key) % 40;
+      const sig = '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340"><rect width="100%" height="100%" fill="#fff"/>' +
+        '<path d="M70 ' + (220 + k) + " C140 " + (90 + k) + " 190 " + (300 - k) + " 250 180 S360 " + (110 + k) + " 410 210 S520 " + (260 - k) +
+        " 580 160 S700 " + (230 + k) + ' 820 150" fill="none" stroke="#12243a" stroke-width="7" stroke-linecap="round"/>' +
+        '<line x1="40" y1="290" x2="860" y2="290" stroke="#c9d2dd" stroke-width="2"/></svg>';
+      return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(sig);
+    }
     const hue = hash(key) % 360;
     const thumb = /\/thumbnail\//.test(key);
     const small = /preview-320/.test(key);
@@ -341,7 +352,10 @@
       return { data: null, error: err, count: null, status, statusText: status === 0 ? "" : "Error" };
     }
     _rowsBy(ctx, made) {
-      const pk = this.t === "project_prices" ? "project_id" : "id";
+      // the table's own key: project_prices, and the later phases' one-row-per-record tables (P5c: the costs and prices
+      // rows keyed by maintenance_id / task_id, NS.extTables[].pk) — an update's answer is the changed rows, as RETURNING
+      let pk = this.t === "project_prices" ? "project_id" : "id";
+      [F.p6Tables].concat(F.extTables || []).forEach((x) => { if (x && x.pk && x.pk[this.t]) pk = x.pk[this.t]; });
       if (!made.length) return [];
       return engine.select(ctx, this.t, { columns: this.q.columns, filters: [{ col: pk, op: "in", val: made.map((r) => r[pk]) }],
         orders: [{ col: pk, asc: true }], foreignLimits: this.q.foreignLimits }).data;
@@ -483,6 +497,17 @@
           engine.storage.upload(client._ctx(), path, size || 0, (o && o.contentType) || (body && body.type) || "application/octet-stream", body, !!(o && o.upsert));
           keepBlob(path, body);
           return { data: { path, id: "demo-" + hash(path), fullPath: bucket + "/" + path }, error: null };
+        } catch (e) { return { data: null, error: storageError(e) }; }
+      },
+      /* P5c: the one upload the subform function minted (no sign-in: the token is the permission) */
+      async uploadToSignedUrl(path, token, body, o) {
+        await delay();
+        if (state.offline) return off();
+        try {
+          const size = body && (body.size !== undefined ? body.size : body.byteLength || String(body).length);
+          engine.storage.uploadSigned(path, token, size || 0, (o && o.contentType) || (body && body.type) || "application/octet-stream", body, bucket);
+          keepBlob(path, body);
+          return { data: { path, fullPath: bucket + "/" + path }, error: null };
         } catch (e) { return { data: null, error: storageError(e) }; }
       },
       async createSignedUrl(path) {

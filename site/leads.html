@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Leads</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/lists.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+
+    <main class="ld" id="ldPage">
+      <div class="ls-head">
+        <h2>&#128222; Sales Leads</h2>
+        <input class="ls-search" id="ldSearch" type="search" placeholder="Search leads…" aria-label="Search leads" />
+        <button class="ls-btn ls-btn-primary" id="ldNewBtn" type="button" hidden>&#65291; New lead</button>
+        <button class="ls-btn" id="ldRefresh" type="button" title="Read the leads again" aria-label="Read the leads again">&#8635;</button>
+        <a class="ls-btn" href="board.html?view=sales">Sales Board</a>
+      </div>
+      <div id="ldMain" hidden>
+        <div class="ls-head" style="margin-bottom:6px">
+          <div class="ls-chips" id="ldChips" role="group" aria-label="Category" style="margin-bottom:0"></div>
+          <label class="ld-show"><span class="vb-sub">Show</span>
+            <select id="ldShow" aria-label="Which leads">
+              <option value="open">Open leads</option>
+              <option value="converted">Converted to a project</option>
+              <option value="all">All leads</option>
+            </select>
+          </label>
+        </div>
+        <div id="ldList"><div class="ls-empty">Loading leads…</div></div>
+      </div>
+      <div class="ls-denied" id="ldDenied" hidden></div>
+    </main>
+
+    <!-- the lead form -->
+    <div class="ls-overlay" id="ldModal">
+      <form class="ls-modal" id="ldForm" role="dialog" aria-modal="true" aria-labelledby="ldModalTitle" novalidate autocomplete="off">
+        <h3 id="ldModalTitle">Lead</h3>
+        <div class="ls-grid">
+          <div class="ls-f"><label for="lf_leadClientName">Client name *</label><input id="lf_leadClientName" maxlength="200" /></div>
+          <div class="ls-f"><label for="lf_leadClientPhone">Phone</label><input id="lf_leadClientPhone" type="tel" maxlength="80" /></div>
+          <div class="ls-f full"><label for="lf_leadClientAddress">Address</label><input id="lf_leadClientAddress" maxlength="500" /></div>
+          <div class="ls-f"><label for="lf_leadProjectName">Project name</label><input id="lf_leadProjectName" maxlength="200" /></div>
+          <div class="ls-f"><label for="lf_leadCategory">Category</label><input id="lf_leadCategory" list="ldCats" maxlength="100" /><datalist id="ldCats"></datalist></div>
+          <div class="ls-f"><label for="lf_leadSource">Source</label><input id="lf_leadSource" list="ldSrcs" maxlength="100" /><datalist id="ldSrcs"></datalist></div>
+          <div class="ls-f"><label for="lf_leadDate">Lead date</label><input type="date" id="lf_leadDate" /></div>
+          <div class="ls-f full"><label for="lf_leadNotes">Notes</label><textarea id="lf_leadNotes" rows="4" maxlength="20000"></textarea></div>
+        </div>
+        <div class="ls-msg err" id="ldModalMsg" role="alert"></div>
+        <div class="ls-modal-actions">
+          <button class="ls-btn" id="ldCancel" type="button">Cancel</button>
+          <button class="ls-btn ls-btn-primary" id="ldSave" type="submit">&#10003; Save lead</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- convert to a project -->
+    <div class="ls-overlay" id="cvModal">
+      <form class="ls-modal narrow" id="cvForm" role="dialog" aria-modal="true" aria-labelledby="cvTitle" novalidate autocomplete="off">
+        <h3 id="cvTitle">Convert lead to project</h3>
+        <div class="ls-f" style="margin-bottom:10px"><label for="cvName">Project name *</label><input id="cvName" maxlength="200" /></div>
+        <div class="ls-grid">
+          <div class="ls-f"><label for="cvAddr">Address</label><input id="cvAddr" maxlength="300" /></div>
+          <div class="ls-f"><label for="cvCity">City</label><input id="cvCity" maxlength="100" /></div>
+        </div>
+        <p class="ls-note" id="cvWhat">Creates the project as a <b>New Request</b> on the Board, with the client's name and phone from the lead.
+          The database gives it the next project number, and the lead is marked converted in the same step.</p>
+        <div class="ls-msg err" id="cvMsg" role="alert"></div>
+        <div class="ls-modal-actions">
+          <button class="ls-btn" id="cvCancel" type="button">Cancel</button>
+          <button class="ls-btn ls-btn-primary" id="cvGo" type="submit">&#8594; Create project</button>
+        </div>
+      </form>
+    </div>
+
+    <script type="module" src="js/pages/leads.js"></script>
+  </body>
+</html>

@@ -59,6 +59,10 @@ export const PEOPLE = {
   field: { id: "e5b00000-0000-4000-8000-000000000006", name: "Flo Field", role: "field" },
   viewer: { id: "e5b00000-0000-4000-8000-000000000007", name: "Vi Viewer", role: "viewer" },
 };
+/* P5c only (startPgliteServer({p5c: true})): a manager with the Sales estimates switch and no prices (Q10) */
+export const P5C_PEOPLE = {
+  sales: { id: "e5c00000-0000-4000-8000-000000000008", name: "Sasha Seller", role: "manager", sales: true },
+};
 export const emailOf = (k) => k + "@e2e.test";
 export const passwordOf = (k) => "pglite-" + k + "-2026";
 
@@ -101,13 +105,18 @@ export async function startPgliteServer(opts) {
   const { freshDatabase } = await import(pathToFileURL(LIB).href);
   const { db } = await freshDatabase();
   const catalog = await loadCatalog(db);
-  const passwords = Object.fromEntries(Object.keys(PEOPLE).map((k) => [emailOf(k), passwordOf(k)]));
+  // P5c (opts.p5c): Sasha Seller (a manager with the Sales estimates switch, no prices) and the accountant holding the
+  // switch too (a reader who is no sales editor) - the made-up people of tools/fake/p5c-sales.js
+  const people = o.p5c ? Object.assign({}, PEOPLE, P5C_PEOPLE, { accountant: Object.assign({}, PEOPLE.accountant, { sales: true }) }) : PEOPLE;
+  const passwords = Object.fromEntries(Object.keys(people).map((k) => [emailOf(k), passwordOf(k)]));
   const client = makeClient({ db, catalog, passwords });
   /** SQL as the database owner, in turn with the pages' calls (PGlite has one connection) */
   const sql = (text, params) => client.run(async () => (await db.query(text, params || [])).rows, "owner");
   const one = async (text, params) => (await sql(text, params))[0];
   const asPerson = (uid, text, params) => client.run(async () => (await db.query(text, params || [])).rows, uid);
-  const J = await seed({ sql, one, asPerson });
+  const J = await seed({ sql, one, asPerson, people });
+  // P5c: the office lists, the sales tools and the public form's function (tools/pglite-p5c.mjs)
+  const X = o.p5c ? await (await import("./pglite-p5c.mjs")).setupP5c({ db, client, catalog, sql, one, asPerson, J, people, REPO, D2 }) : null;
   const PICTURE = png();
 
   const calls = [];
@@ -119,7 +128,7 @@ export async function startPgliteServer(opts) {
   /** One call, as the person whose token it carries; noted in `calls` with what it answered (rows, refusal). */
   async function answer(body) {
     const uid = uidOf(body.token);
-    const rec = { uid, op: body.op, table: body.table || body.name || body.topic || null };
+    const rec = { uid, op: body.op, table: body.table || body.name || body.topic || body.bucket || null };
     calls.push(rec);
     client.as(uid);
     const out = await reply(body, uid);
@@ -171,6 +180,26 @@ export async function startPgliteServer(opts) {
         client.channels.delete(ch);
         return { data: { status }, error: null, status: 200 };
       }
+      /* Storage as the signed-in person (storage.objects under its RLS): an upload - the bytes never leave the page,
+         only the name, the type and the size are recorded -, and a removal */
+      case "upload": {
+        const r = await client.storage.from(String(body.bucket)).upload(String(body.path), null,
+          { contentType: body.contentType || "application/octet-stream", upsert: !!body.upsert, size: Number(body.size) || 0 });
+        return r.error ? { data: null, error: r.error, status: Number(r.error.statusCode) || 400 } : { data: r.data, error: null, status: 200 };
+      }
+      case "remove": {
+        const r = await client.storage.from(String(body.bucket)).remove(Array.isArray(body.paths) ? body.paths.map(String) : []);
+        return r.error ? { data: null, error: r.error, status: 400 } : { data: r.data, error: null, status: 200 };
+      }
+      /* an Edge Function (functions.invoke): the public form's "subform" in P5c mode (the real handler.ts as the service
+         role); any other answers as an unconfigured project would */
+      case "fn":
+        if (X && body.name === "subform") return await X.subform(body);
+        return { data: null, error: null, status: 503, fn: { status: 503, body: { error: "push_not_configured" } } };
+      /* the one signed upload a function minted (Storage's uploadToSignedUrl) */
+      case "signedUpload":
+        if (X) return await X.signedUpload(body);
+        return { data: null, error: { message: "invalid signature", statusCode: "400" }, status: 400 };
       default: return { data: null, error: { code: "PGRST100", message: "unknown op " + body.op }, status: 400 };
     }
   }
@@ -218,22 +247,25 @@ export async function startPgliteServer(opts) {
     await lock.catch(() => {});
     try { await db.close(); } catch (e) { /* already closed */ }
   };
-  return { server, base, sql, one, asPerson, J, calls, client, catalog, close };
+  return { server, base, sql, one, asPerson, J, calls, client, catalog, close, people, p5c: X };
 }
 
 /* ── the made-up job ─────────────────────────────────────────────────── */
-async function seed({ sql, one, asPerson }) {
-  for (const [k, p] of Object.entries(PEOPLE)) await sql("insert into auth.users (id, email) values ($1, $2)", [p.id, emailOf(k)]);
-  await sql("insert into public.profiles (id, full_name, email, role) values ($1, $2, $3, 'admin')", [PEOPLE.admin.id, PEOPLE.admin.name, emailOf("admin")]);
-  for (const [k, p] of Object.entries(PEOPLE)) {
+async function seed({ sql, one, asPerson, people }) {
+  const PP = people || PEOPLE;
+  for (const [k, p] of Object.entries(PP)) await sql("insert into auth.users (id, email) values ($1, $2)", [p.id, emailOf(k)]);
+  await sql("insert into public.profiles (id, full_name, email, role) values ($1, $2, $3, 'admin')", [PP.admin.id, PP.admin.name, emailOf("admin")]);
+  for (const [k, p] of Object.entries(PP)) {
     if (k === "admin") continue;
-    await asPerson(PEOPLE.admin.id, `insert into public.profiles (id, full_name, email, role, can_see_prices, can_see_financials, can_approve_payments)
-      values ($1, $2, $3, $4, $5, $6, $7)`, [p.id, p.name, emailOf(k), p.role, p.prices === undefined ? null : p.prices,
-      p.financials === undefined ? null : p.financials, p.approve === undefined ? null : p.approve]);
+    // the Sales estimates switch (M5c) only when the person sets it: otherwise its role default, as before
+    const sales = p.sales === undefined ? "" : ", can_sales_estimates";
+    await asPerson(PP.admin.id, `insert into public.profiles (id, full_name, email, role, can_see_prices, can_see_financials, can_approve_payments${sales})
+      values ($1, $2, $3, $4, $5, $6, $7${sales ? ", $8" : ""})`, [p.id, p.name, emailOf(k), p.role, p.prices === undefined ? null : p.prices,
+      p.financials === undefined ? null : p.financials, p.approve === undefined ? null : p.approve].concat(sales ? [p.sales] : []));
   }
   const today = (await one("select app.today()::text as d")).d;
   const ago = (n) => { const [y, m, d] = today.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10); };
-  const J = { today, people: Object.fromEntries(Object.entries(PEOPLE).map(([k, p]) => [k, p.id])) };
+  const J = { today, people: Object.fromEntries(Object.entries(PP).map(([k, p]) => [k, p.id])) };
   J.p1 = await one("insert into public.projects (name, address, city, client_name, status) values ('Madeup Garage', '12 Example Lane', 'Sandbox', 'Pat Example', 'in_progress') returning id, number");
   J.p2 = await one("insert into public.projects (name, address, city, client_name, status) values ('Madeup Porch', '40 Sample Road', 'Sandbox', 'Sam Sample', 'in_progress') returning id, number");
   J.est = (await one("insert into public.estimates (project_id, name, status) values ($1, 'Garage framing', 'approved') returning id", [J.p1.id])).id;

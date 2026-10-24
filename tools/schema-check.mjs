@@ -2041,6 +2041,21 @@ section = "P5b: The Books, the bill page and the approvals card (repo/books.js, 
 // ===========================================================================================
 await (await import("./schema-check-p5b-books.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE });
 
+// ===========================================================================================
+section = "P5c: Leads, the Vehicle Board and Marketing Tasks (repo/leads.js, repo/vehicles.js, repo/marketing.js, migration M5c)";
+// ===========================================================================================
+await (await import("./schema-check-p5c-lists.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
+// ===========================================================================================
+section = "P5c: Sales Estimates, the deck wizard, the Materials Library and sales-media (repo/sales.js, migration M5c)";
+// ===========================================================================================
+await (await import("./schema-check-p5c-sales.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
+// ===========================================================================================
+section = "P5c: the public subcontractor form (DCR Desktop 2's subform function) and its review (repo/subform.js, repo/submissions.js, migration M5c)";
+// ===========================================================================================
+await (await import("./schema-check-p5c-sub.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";
