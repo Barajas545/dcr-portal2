@@ -135,6 +135,8 @@ test("the Takeoffs tab: the Plans Archive link is built with encodeURIComponent,
 test("OneDrive: the pages reach the function only through repo/onedrive.js, which names no Microsoft host and no secret", () => {
   const od = read("js/repo/onedrive.js");
   assert.match(code(od), /op: "ensure_folder", project_id: pid/);
-  assert.ok(!/sharepoint|graph\.microsoft|login\.microsoftonline|client_secret|tenant/i.test(code(od)));
+  // the one Microsoft host it names is the OneDrive upload host (ONEDRIVE_HOST, also in project.html's connect-src)
+  const bare = code(od).replace(/export const ONEDRIVE_HOST = "[a-z0-9-]+\.sharepoint\.com";/, "");
+  assert.ok(!/sharepoint|graph\.microsoft|login\.microsoftonline|client_secret|tenant/i.test(bare));
   for (const f of walk(join(SITE, "js", "pages"))) assert.ok(!/functions\.invoke/.test(code(readFileSync(f, "utf8"))), f);
 });

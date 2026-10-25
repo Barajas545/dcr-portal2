@@ -208,7 +208,8 @@ test("lineChoices: the project's live lines of live, unarchived estimates, estim
 /* ── OneDrive (the folder step) ── */
 test("onedrive.ensureFolder: op ensure_folder with the project's id; made / exists / not deployed / not configured / another folder / offline", async () => {
   let c = stub({}, { invoke: () => ({ data: { created: ["A306 - x"], existed: [] }, error: null }) });
-  assert.deepEqual(await onedrive.ensureFolder("31"), { state: "made", message: "" });
+  const made = await onedrive.ensureFolder("31");
+  assert.deepEqual([made.state, made.message], ["made", ""]);
   assert.deepEqual(c.calls[0], { invoke: "onedrive", body: { op: "ensure_folder", project_id: 31 } });
   stub({}, { invoke: () => ({ data: { created: [], existed: ["A306 - x"] }, error: null }) });
   assert.equal((await onedrive.ensureFolder(31)).state, "exists");
@@ -216,7 +217,7 @@ test("onedrive.ensureFolder: op ensure_folder with the project's id; made / exis
   assert.deepEqual(await onedrive.ensureFolder(31), { state: "not_deployed", message: "" }, "the gateway's 404: quiet");
   stub({}, { invoke: () => httpError(404, { error: "not_found", message: "no such project" }) });
   assert.equal((await onedrive.ensureFolder(31)).state, "failed", "the broker's own 404 is not 'not deployed'");
-  stub({}, { invoke: () => httpError(503, { error: "onedrive_not_configured", message: "ONEDRIVE_CLIENT_ID missing" }) });
+  stub({}, { invoke: () => httpError(503, { error: "onedrive_not_configured", message: "a setting is missing" }) });
   const nc = await onedrive.ensureFolder(31);
   assert.deepEqual(nc, { state: "not_configured", message: "The OneDrive connection is not set up yet." }, "never the broker's words (they name settings)");
   // every 503 of the broker has its own sentence; a 503 without one of its codes is not "not set up"

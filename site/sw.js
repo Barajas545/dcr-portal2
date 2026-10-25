@@ -24,7 +24,11 @@
    never fetches them itself). tests/core-sw.test.mjs runs both.
    Part 3 (owner 2026-10-24) keeps "dcr-portal2-v3" the same way: the shared New Project dialog (the Board's and the
    project page's), its OneDrive folder step, the admin page's Access switches and the project picture's maker join
-   the list; the Expenses tab's cost dialog and form rules (money code) stay out of it, as the money tabs do. */
+   the list; the Expenses tab's cost dialog and form rules (money code) stay out of it, as the money tabs do.
+   Part 4 (the Files tab's OneDrive part, owner 2026-10-24) keeps "dcr-portal2-v3" the same way: its broker module,
+   its rules and the uploader join the list (project.html loads them); the admin's self-test (js/pages/
+   onedrive-selftest.js, loaded only when an admin clicks it on the test project) stays out of it, as the admins'
+   pages do. Nothing of OneDrive is kept for offline use but the code: no listing, link or upload address. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
@@ -54,6 +58,8 @@ const SHELL = [
   "js/pages/est-render.js", "js/pages/project-estimate.js", "js/pages/project-takeoffs.js", "js/pages/report-estimate.js", "js/pages/report-takeoff.js",
   // Part 3: New Project (board.html, project.html), the Access tab (admin.html), the project picture
   "js/pages/new-project.js", "js/repo/onedrive.js", "js/map/access.js", "js/thumb-prep.js",
+  // Part 4: the Files tab's OneDrive part (its rules and the uploader; the broker module is listed above)
+  "js/map/onedrive.js", "js/onedrive-upload.js", "js/scrub-money.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

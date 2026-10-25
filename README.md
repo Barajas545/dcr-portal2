@@ -120,6 +120,17 @@ site/                       published as is
                             (opts.lost: hear {type: "LOST"} when the channel goes, to pace one's own reads)
   js/money-mask.js          maskAmounts / fmtMoney, ported from Desktop 2 (shared test vectors)
   js/upload-queue2.js       IndexedDB custody + resumable uploads to Storage + the files row
+  project.html tab Files    (Part 4, owner 2026-10-24 D9 / D10) "OneDrive project folder": the project's folder in the
+                            owner's OneDrive through the broker (browse, open for every active person; upload to
+                            Documents / Floor Plans for people with "Can upload to OneDrive"), then "Stored in DCR" (the
+                            cloud rows, the capture bar's photos, videos and notes) - see "The Files tab's OneDrive part"
+  js/repo/onedrive.js       the broker's client (the Edge Function "onedrive" of DCR Desktop 2: list, download,
+                            upload_session, upload_done, ensure_folder, status); LIVE (off until the go-live);
+                            ONEDRIVE_HOST, the one OneDrive host the site names (with project.html's connect-src)
+  js/map/onedrive.js        the broker's name and path rules repeated for the page (pure; the same answers as its paths.ts)
+  js/onedrive-upload.js     chunks straight from the browser to the upload URL (no sign-in header), resumable within the
+                            page, kept in memory only (never the upload queue)
+  js/pages/onedrive-selftest.js  the admin's OneDrive self-test on the test project A000T2 (loaded only when clicked)
   js/timesheet-pdf.js       the timesheet PDF in the DCR paper form (jsPDF 2.5.2 + AutoTable 3.8.4 from
                             jsDelivr, exact versions with integrity hashes; only the two Time Sheet pages
                             name them in their script-src)
@@ -159,6 +170,13 @@ tools/e2e-p5b-ledger.mjs    the P5b ledger: Expenses & receipts, the project's E
 tools/e2e-p5c-sub.mjs       the P5c subcontractor form signed out on a phone (search, refusals, honeypot, the paperwork,
                             the reference) and its review for every role (accept, "already done", reject, the change
                             order; acceptance checks 4 and 5; phone and desk, light and dark); e2e-demo runs it (--p5sub)
+tools/fake/p7-onedrive.js   Part 4: the OneDrive broker's stand-in and a made-up OneDrive behind it (demo only; the OneDrive
+                            host is answered in the page's fetch / XMLHttpRequest: nothing reaches Microsoft)
+tools/e2e-p7-onedrive.mjs   the Files tab's OneDrive part as every role (what is hidden, who may upload, a lead's upload
+                            from a phone, opening a file, Make the folder, the admin's self-test; phone and desk, light
+                            and dark)
+tools/schema-check-p7-onedrive.mjs  the same modules through DCR Desktop 2's OWN broker (handler.ts with its fake Graph) and
+                            the REAL migrations (20261028000200_onedrive): drift, gates, the files row (schema-check runs it)
 tools/schema-check-p5c-sub.mjs  the same on the REAL rules: repo/subform.js through DCR Desktop 2's own subform handler
                             and SQL, repo/submissions.js as every role, on PGlite with every migration (schema-check runs it)
 tools/e2e-p5c-sales.mjs     the P5c sales walk: who (the Sales estimates switch, the prices switch, a sales editor or a
@@ -234,6 +252,13 @@ Riley Lead and Avery Admin have assistants (the office reads Jordan's and Avery'
 managers have none ("ask the office"). On the console and assistant pages the DEMO button also offers "The DCR
 server is off" (requests and chats wait) and "The office writes to you in the assistant chat".
 
+The Files tab's OneDrive part (Part 4) is served switched on in the demo (`js/repo/onedrive.js` `LIVE` is off in the
+published file until its go-live): a made-up OneDrive per project (`tools/fake/p7-onedrive.js`) with Floor Plans, Photos,
+Documents and the old portal's copy, names about prices or money and a takeoff (hidden without prices), a program (never
+opened), 40 photos on the sandbox (the list's "Show more"); `lead@` and `manager2@` have "Can upload to OneDrive" (an admin
+always); A305 has no folder yet (Make the folder), A304 only a folder of another name (never a second one), and the test
+project A000T2 has the admin's OneDrive self-test. `node tools/devserve.mjs --onedrive-off` serves the module as published.
+
 In Claude Code the same server is the `portal2-demo` entry of `.claude/launch.json`.
 
 ## Tests
@@ -253,6 +278,7 @@ node tools/e2e-p7-est.mjs --out <folder>           # the estimate editor walk + 
 node tools/e2e-p5b-books.mjs --out <folder>       # the books walk alone + screenshots (books_*.png; --shots none)
 node tools/e2e-p5b-ledger.mjs --out <folder>      # the ledger walk alone + screenshots (ledger_*.png; --shots none)
 node tools/e2e-p5c-sales.mjs --out <folder>       # the sales walk alone + screenshots (sales_*.png; --shots none)
+node tools/e2e-p7-onedrive.mjs --out <folder>     # the Files tab's OneDrive part + screenshots (od_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
 PGLITE_DIR=<folder> node tools/pglite-serve.mjs    # the site over PGlite with the real migrations (127.0.0.1:8793)
 PGLITE_DIR=<folder> node tools/e2e-p5b-pglite.mjs --out <folder>   # the P5b pages on it + screenshots (p5b_final_*.png)
@@ -494,9 +520,8 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   replace in place (one drawing, one file); a person can never write a new `cad` value (the old sketch tool's drawings are
   only kept, and opened in the old portal). The pictures' "URL" intake is gone (the security policy shows no other site's
   picture); an old link is kept as a link.
-- **Not built (Q20, as the owner updated it on 2026-10-24):** no plans library here; the floor plans are in the project's
-  OneDrive Floor Plans folder and the `.takeoff` files in the Plans Archive, which takeoff-web opens (the project's
-  Takeoffs tab links to it).
+- **Not built here (Q20, updated by the owner 2026-10-24):** the plans library, takeoff-web and the `.takeoff` files stay
+  in the Plans Archive; floor-plan PDFs go into the project's OneDrive Floor Plans folder from the Files tab (Part 4).
 
 ## Part 3 (owner 2026-10-24): switches, New Project, the project picture, expenses, Takeoffs link
 
@@ -529,7 +554,52 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   credit. The dialog's code is fetched only when used (never on a crew phone, not in the offline list).
 - **Takeoffs:** "📐 Plans Archive (takeoff-web) ↗" opens takeoff-web at the project's number (Q20 as updated:
   the floor plans are in the project's OneDrive Floor Plans folder, the `.takeoff` files in the Plans Archive).
-- **Not here yet:** the OneDrive Files tab (list, open, upload) and the web estimate editor are separate parts.
+- **Elsewhere:** the OneDrive Files tab (list, open, upload) is Part 4 below; the web estimate editor has its own
+  section ("The web estimate editor").
+
+## The Files tab's OneDrive part (Part 4) in short
+
+- **What (owner 2026-10-24, D9 / D10; Q5 and the plans part of Q20 reversed).** The project's Files tab shows the
+  project's folder in the owner's OneDrive (`/Projects/<folder_name>/`: Floor Plans, Photos, Documents, "Old portal
+  documents" read only, and their folders - the folder DCR Desktop 2 and the office PCs have). Every active person
+  browses it and opens its files, on a phone too, without a Microsoft account; a person with **Can upload to OneDrive**
+  (`profiles.can_upload_onedrive`: an admin always; ticked per person for managers, accountants, leads and field) adds
+  files to **Documents** or **Floor Plans** (or the folder of them open now) - the picker, or dropped on the box.
+  Photos and voice notes keep the capture bar (cloud, kept on the device until sent); `.takeoff` files stay in the Plans
+  Archive and takeoff-web. Below it, "Stored in DCR" lists the cloud rows as before.
+- **How.** Through ONE Edge Function, DCR Desktop 2's `onedrive` (the "broker"; its `docs/ONEDRIVE.md` is the
+  Microsoft setup and §15 the contract), which holds the only Microsoft secret, acts with the person's own sign-in
+  (never a service key) and asks the database who may do what (`onedrive_context`, `record_onedrive_file`, migration
+  `20261028000200_onedrive`). `js/repo/onedrive.js` is the only code that calls it (pages never call a function). An
+  upload's bytes go **straight from the browser to Microsoft's upload URL** in chunks (multiples of 320 KiB, at most
+  191 of them, `Content-Range`, **no Authorization header**); the URL lives in the page's memory only (never the upload
+  queue, never stored, never logged); a lost connection resumes where Microsoft got to; a session that is gone starts
+  over only after the broker says the file is not there already (a lost last answer never makes a second copy). The
+  broker then records the file's row (storage local, source portal2: DCR Desktop 2 lists it as a file a PC copied there).
+  A download is a link made per click and opened at once (a file download: the page stays).
+- **Never shown, never sent.** For people without prices the broker leaves out `.takeoff` / `.pdfnotes`, names about
+  estimates, change orders, quotes, proposals, bids, contracts or money, and names that quote an amount (every name
+  with a money stem also without financials, one about prices too: "Subcontractor Invoices"; a word counts right after
+  a number too: "A253Estimate.pdf") - at every depth, as if missing; the page checks the same rules (`js/map/onedrive.js`)
+  before anything is sent and masks amounts on screen anyway. Uploads take PDFs, pictures, videos, Office files without
+  macros, text and CAD files (a takeoff with prices); never a lock or system file; never into Documents/Items; never a
+  name or folder hidden from the person uploading it. A 503 busy's `Retry-After` is read (the broker exposes it). Programs
+  and shortcuts are listed but never opened. A file the database will not list (a priced name a price person uploads)
+  stays in OneDrive and the page says so.
+- **The security policy.** `project.html` alone adds `https://netorgft10120038-my.sharepoint.com` (the OneDrive host,
+  `ONEDRIVE_HOST`) to `connect-src`; downloads are navigations. No tenant, app or drive id and no secret is anywhere in
+  this repository (`tests/core-site-guard.test.mjs` checks site, tools and tests).
+- **Off until its go-live.** `LIVE` in `js/repo/onedrive.js` is `false`: the published site makes no OneDrive call and
+  the Files tab is as before - except for an **admin on the test project A000T2**, who sees the OneDrive part and the
+  **OneDrive self-test** (eight steps, PASS / FAIL with the broker's code: status and the narrow grant, the folder, an
+  upload in two chunks straight to OneDrive, recorded, recorded again (`already`), the same name renamed, listed and
+  opened with a ranged GET, a program refused). Every other OneDrive call of the site (the New Project dialog's folder
+  step too) waits for the same switch.
+  The self-test's two files are deleted by the owner afterwards (OneDrive and DCR Desktop 2): the portal never deletes.
+- **Tests.** `tests/p7-onedrive-*.test.mjs` (the rules with the shared stem vectors, the client's bodies and error
+  mapping, the uploader over a made-up upload session, the demo's broker as every role, the self-test end to end, the
+  page sources); `tools/schema-check-p7-onedrive.mjs` (inside `schema-check`) runs the same modules through DCR Desktop
+  2's own `handler.ts` on the real migrations; `tools/e2e-p7-onedrive.mjs` in a real browser.
 
 ## Rules for every page
 
@@ -566,7 +636,8 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   is always used.
 - A page that needs another CDN library names its exact file in its own `script-src` and nowhere else
   (`tests/core-site-guard.test.mjs PAGE_LIBS`): today the two Time Sheet pages and jsPDF, and the tasks
-  map and Leaflet (with its integrity hashes).
+  map and Leaflet (with its integrity hashes). A page that talks to another host names it in its own
+  `connect-src` and nowhere else (`PAGE_CONNECT`): today `project.html` and the OneDrive host (Part 4).
 - The service worker precaches every page with everything it loads (`tests/core-sw.test.mjs` checks the
   whole import graph), so the installed app also opens offline from a cold start; a new page or module is
   added to `SHELL` in `site/sw.js` (and the cache name bumped with each release that changes the worker).
@@ -649,6 +720,22 @@ OneDrive folder that deleting the project does not remove) - a live New Project 
 first. The OneDrive part comes later and separately: the Microsoft setup, database change `20261028000200_onedrive`,
 the `onedrive` function and its secrets (typed by the owner), its status check, then the Files tab in the release
 that sets `LIVE = true` in `js/repo/onedrive.js`; until then New Project's folder step is off and says nothing.
+
+**Part 4 (the Files tab's OneDrive part) go-live, in order, each live step after the owner's OK.** The Microsoft side and
+the broker are DCR Desktop 2's `docs/ONEDRIVE.md` (the owner's click-by-click setup) and its `tools/legacy_import/README.md`
+("OneDrive broker: go-live"). This repository's part:
+
+1. Before (any time): this site may be published with `LIVE = false` - nothing changes for anybody but an admin on
+   A000T2, whose OneDrive part answers "not set up yet" until step 3.
+2. The Microsoft setup (M0-M6), then a backup, migration `20261028000200_onedrive`, `npx supabase functions deploy
+   onedrive`, the settings typed in by the owner (DCR Desktop 2 `tools/onedrive/set_secrets.mjs`), the read-only probe.
+3. The admin's **OneDrive self-test** on A000T2 in the published site (project → Files → 🧪 OneDrive self-test): eight
+   PASS lines (step 3 proves the browser's chunked upload to OneDrive across sites; step 4 Microsoft's stamp of the app).
+   Then the owner deletes `Documents\DCR self-test` of A000T2 in OneDrive and its two rows in DCR Desktop 2.
+4. The release that turns it on: `export const LIVE = true;` in `site/js/repo/onedrive.js` (and the one assertion of
+   `tests/p7-onedrive-repo.test.mjs` that says it is off), `TZ=UTC node --test` and `schema-check` green, push `main`.
+5. The owner ticks "Can upload to OneDrive" for the people who add documents and floor plans from the web (DCR Desktop 2
+   → Users, or the Access tab).
 
 **Owner, once (any time before the first publish)**
 

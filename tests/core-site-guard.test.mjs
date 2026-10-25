@@ -28,6 +28,11 @@ export const PDF_LIBS = ["https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.um
 export const LEAFLET_JS = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
 export const LEAFLET_CSS = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
 export const PAGE_LIBS = { "timesheet.html": PDF_LIBS, "timesheet-mobile.html": PDF_LIBS, "tasks-map.html": [LEAFLET_JS] };
+// A page that talks to another host names it in connect-src, and only that page (owner decision D10, 2026-10-24): the
+// project page's Files tab sends upload chunks straight to the owner's OneDrive and asks a download link once (the
+// admin's self-test); downloads themselves are navigations. js/repo/onedrive.js names the same host (ONEDRIVE_HOST).
+export const ONEDRIVE = "https://netorgft10120038-my.sharepoint.com";
+export const PAGE_CONNECT = { "project.html": [ONEDRIVE] };
 
 function walk(dir) {
   const out = [];
@@ -70,7 +75,9 @@ test("every page carries the security policy of BLUEPRINT 2.2.1, before any scri
     assert.ok(m, rel(f) + ": no Content-Security-Policy meta tag");
     const got = parseCsp(m[1]);
     const extra = PAGE_LIBS[rel(f)] || [];
-    const wantHere = Object.assign({}, want, { "script-src": want["script-src"].split(" ").concat(extra).sort().join(" ") });
+    const connect = PAGE_CONNECT[rel(f)] || [];
+    const wantHere = Object.assign({}, want, { "script-src": want["script-src"].split(" ").concat(extra).sort().join(" "),
+      "connect-src": want["connect-src"].split(" ").concat(connect).sort().join(" ") });
     for (const d of REQUIRED) assert.equal(got[d], wantHere[d], rel(f) + ": " + d + " differs from the blueprint's");
     for (const [d, v] of Object.entries(got)) {
       if (REQUIRED.includes(d)) continue;
@@ -83,6 +90,22 @@ test("every page carries the security policy of BLUEPRINT 2.2.1, before any scri
   // Portal 2's own pages carry it word for word (the copy to take for a new page)
   for (const p of ["index.html", "change-password.html", "dashboard.html", "settings.html"]) {
     assert.ok(read(join(SITE, p)).includes('content="' + CSP + '"'), p);
+  }
+});
+
+test("the OneDrive host: exactly the one js/repo/onedrive.js names, in project.html's connect-src only (D10)", () => {
+  const repo = read(join(SITE, "js/repo/onedrive.js"));
+  const host = /export const ONEDRIVE_HOST = "([^"]+)";/.exec(repo);
+  assert.ok(host, "repo/onedrive.js exports ONEDRIVE_HOST");
+  assert.equal("https://" + host[1], ONEDRIVE, "the policy's host is the module's");
+  assert.equal(new URL(ONEDRIVE).hostname, host[1]);
+  for (const f of html) {
+    const csp = parseCsp(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(read(f))[1]);
+    const has = Object.values(csp).some((v) => v.split(" ").includes(ONEDRIVE));
+    assert.equal(has, rel(f) === "project.html", rel(f) + (has ? ": names the OneDrive host" : ": must name the OneDrive host in connect-src"));
+    if (rel(f) === "project.html") {
+      for (const [d, v] of Object.entries(csp)) if (d !== "connect-src") assert.ok(!v.includes("sharepoint"), "project.html: " + d + " names SharePoint");
+    }
   }
 });
 
@@ -163,11 +186,16 @@ test("Portal 2's own browser-side names, never the old portal's (Appendix C)", (
     [/dcr_portal_token/, "the old session key"], [/\bdcrUploads\b/, "the old upload queue"], [/["'`]dcr-portal-v\d/, "the old cache"],
     [/dcrJrnDraft:/, "the old journal draft key"], [/["'`]dcr_theme["'`]/, "the old theme key"], [/\bdcrCityGeo\b/, "the old city cache"],
     [/\bdcrPlanRecent\b/, "the old plan recents"], [/dcr-portal-single-instance/, "the old lock"], [/pm_employee_order_v1/, "the old row order"],
-    [/share-point-api\.vercel\.app|\/api\/portal\b/, "the old server"], [/graph\.microsoft\.com|sharepoint\.com/i, "SharePoint / Graph"],
+    [/share-point-api\.vercel\.app|\/api\/portal\b/, "the old server"],
+    [/graph\.microsoft\.com|login\.microsoftonline\.com/i, "Microsoft Graph or its sign-in (only the broker talks to Microsoft)"],
+    [/sharepoint\.com/i, "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)"],
     [/["'`]tsView["'`]/, "the old time-sheet view key"],
   ];
+  const HOST_OK = ["project.html", "js/repo/onedrive.js"];
   for (const f of scripts.concat(html)) {
-    const src = read(f);
+    let src = read(f);
+    // the one exact host string, in the two files that may name it (D10): stripped before the test
+    if (HOST_OK.includes(rel(f))) src = src.split(new URL(ONEDRIVE).hostname).join("onedrive-host");
     for (const [re, what] of old) assert.ok(!re.test(src), rel(f) + ": uses " + what);
   }
   const sw = read(join(SITE, "sw.js"));
@@ -188,6 +216,29 @@ test("nothing from the demo mode is published, and no secret", () => {
   assert.match(key, /^sb_publishable_/, "only the publishable key");
   assert.match(cfg, /SITE_URL:\s*"https:\/\/portal\.dcrframing\.com"/);
   assert.ok(!/VAPID/.test(cfg.replace(/\/\*[\s\S]*?\*\//g, "")), "no VAPID key in config.js: push2.js asks the push function (op public_key)");
+});
+
+test("no Microsoft secret, tenant, app or drive id anywhere in the repository (site, tools, tests): the broker's settings live in the function only", () => {
+  const ROOT = fileURLToPath(new URL("../", import.meta.url));
+  const SELF = fileURLToPath(import.meta.url);
+  const all = [].concat(...["site", "tools", "tests"].map((d) => walk(join(ROOT, d))))
+    .filter((f) => !/\.(png|jpe?g|ico|webp|gif)$/i.test(f) && f !== SELF);
+  const GUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  const NEVER = [
+    [/ONEDRIVE_(TENANT_ID|CLIENT_ID|CLIENT_SECRET|DRIVE_ID|PROJECTS_ITEM_ID|WIDE_GRANT)/, "a OneDrive broker setting"],
+    [/client_secret\s*[=:]\s*["'`][^"'`\s]{6,}/i, "a client secret value"],
+    [/[A-Za-z0-9_~.-]{3}\dQ~[A-Za-z0-9_~.-]{31,34}/, "a Microsoft Entra client secret"],   // DCR Desktop 2's pattern (any digit before Q~)
+    [new RegExp("tenant[^\\n]{0,80}" + GUID, "i"), "a tenant id"],
+    [/login\.microsoftonline\.com/i, "Microsoft's sign-in"],
+    [/\bb![A-Za-z0-9_-]{30,}/, "a OneDrive drive id"],
+    [/sb_secret_[A-Za-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-ant-[A-Za-z0-9_-]{8,}/, "a secret key"],
+  ];
+  // the Entra pattern catches the secret's shape whatever its digit (made up, built here: never in a file)
+  for (const d of ["7", "8", "0"]) assert.ok(NEVER[2][0].test("abc" + d + "Q~" + "Zx9-_.".repeat(5) + "Zx9w"), d + "Q~");
+  for (const f of all) {
+    const src = readFileSync(f, "utf8");
+    for (const [re, what] of NEVER) assert.ok(!re.test(src), relative(ROOT, f).replace(/\\/g, "/") + ": " + what);
+  }
 });
 
 test("the manifest is Portal 2's own app", () => {

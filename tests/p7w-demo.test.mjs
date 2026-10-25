@@ -278,11 +278,13 @@ test("New Project: a zone alone from a manager without prices (priced by the dat
   await assert.rejects(projects.createProject({ name: "Made-up" }), (x) => x.code === "42501");
 });
 
-test("OneDrive folder step: the demo has no 'onedrive' function yet — ensureFolder reads the gateway's 404 as not deployed (the pages do not call it while LIVE is off)", { skip }, async () => {
+test("OneDrive folder step: the published module ships with LIVE off (the pages do not call it); the demo's broker stand-in (Part 4) answers ensureFolder", { skip }, async () => {
   assert.equal(onedrive.LIVE, false);
   const engine = await freshEngine();
   await as("manager", engine);
-  assert.deepEqual(await onedrive.ensureFolder(sandbox(engine).id), { state: "not_deployed", message: "" });
+  const r = await onedrive.ensureFolder(sandbox(engine).id);
+  assert.ok(["made", "exists"].includes(r.state), r.state);
+  assert.equal(r.message, "");
 });
 
 test("the Access tab: admin_set_profile — an admin's only; Estimator for managers (a lead: 23514); OneDrive not for view-only; stale versions PT409; nobody changes their own switch", { skip }, async () => {
