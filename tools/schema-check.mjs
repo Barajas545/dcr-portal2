@@ -2056,6 +2056,11 @@ section = "P5c: the public subcontractor form (DCR Desktop 2's subform function)
 // ===========================================================================================
 await (await import("./schema-check-p5c-sub.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "Part 3: New Project, the project picture, costs and receipts, the Estimator and OneDrive switches (migration 20261028000100)";
+// ===========================================================================================
+await (await import("./schema-check-p7w.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";
