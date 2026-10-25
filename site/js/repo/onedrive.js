@@ -41,7 +41,7 @@ import { sameName, renamedFrom } from "../map/onedrive.js";
 
 export const FUNCTION = "onedrive";
 /** The pages call the function only when this is true (see the header): set by the Files tab's OneDrive go-live. */
-export const LIVE = false;
+export const LIVE = true;
 /** The owner's OneDrive host: where every upload and download link must point (docs/ONEDRIVE.md ONEDRIVE_HOST). */
 export const ONEDRIVE_HOST = "netorgft10120038-my.sharepoint.com";
 /** The test project of the admin's self-test (docs/ONEDRIVE.md §13: never a real project). */

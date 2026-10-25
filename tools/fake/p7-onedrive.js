@@ -341,7 +341,7 @@
         if (!w.active) return fail("forbidden");
         if (!w.admin) return fail("forbidden", null, "The OneDrive status is for admins.");
         return answer(200, { ok: true, grant: "folder", checks: ["token", "tenant_and_app", "grant_exactly_selected", "projects_folder",
-          "drive_root_refused", "users_refused"].map((n) => ({ name: n, ok: true })) });
+          "top_level_only_projects", "users_refused"].map((n) => ({ name: n, ok: true })) });
       }
       const pid = b.project_id;
       if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return bad("project_id", "project_id must be a positive whole number");

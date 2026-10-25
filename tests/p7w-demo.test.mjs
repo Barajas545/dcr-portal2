@@ -278,8 +278,8 @@ test("New Project: a zone alone from a manager without prices (priced by the dat
   await assert.rejects(projects.createProject({ name: "Made-up" }), (x) => x.code === "42501");
 });
 
-test("OneDrive folder step: the published module ships with LIVE off (the pages do not call it); the demo's broker stand-in (Part 4) answers ensureFolder", { skip }, async () => {
-  assert.equal(onedrive.LIVE, false);
+test("OneDrive folder step: LIVE is on since the go-live (2026-10-25); the demo's broker stand-in (Part 4) answers ensureFolder", { skip }, async () => {
+  assert.equal(onedrive.LIVE, true);
   const engine = await freshEngine();
   await as("manager", engine);
   const r = await onedrive.ensureFolder(sandbox(engine).id);

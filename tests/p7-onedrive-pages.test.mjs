@@ -58,12 +58,14 @@ test("the live files watch hands its event to the Files tab (the OneDrive box re
   assert.match(files, /OD_LIVE_MS = 5000/);
 });
 
-test("LIVE: the published module ships with the OneDrive part off; the demo server serves it on (and --onedrive-off as published)", () => {
+test("LIVE: the published module has the OneDrive part on since its go-live (2026-10-25); the demo server serves it as is", () => {
   const src = read("site/js/repo/onedrive.js");
-  assert.match(src, /^export const LIVE = false;$/m);
+  assert.match(src, /^export const LIVE = true;$/m);
   const served = onedriveLive(src);
-  assert.match(served, /^export const LIVE = true;/m);
-  assert.equal(served.replace(/export const LIVE = true;[^\n]*/, "export const LIVE = false;"), src, "nothing else is changed");
+  assert.equal(served, src, "nothing is changed for the demo any more");
+  // a module still shipped dark would be switched on for the demo, and only that line
+  const dark = src.replace("export const LIVE = true;", "export const LIVE = false;");
+  assert.equal(onedriveLive(dark).replace(/export const LIVE = true;[^\n]*/, "export const LIVE = true;"), src);
   const dev = read("tools/devserve.mjs");
   assert.match(dev, /"p5c-sales\.js", ("p7-web\.js", )?"p7-onedrive\.js", "engine\.js"/, "the demo's broker before engine.js (after Part 3's p7-web.js)");
   assert.match(dev, /path === "\/js\/repo\/onedrive\.js"\) body = onedriveLive/);

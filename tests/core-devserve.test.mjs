@@ -38,9 +38,10 @@ test("the server: pages with the stand-in, the bundle, 404s, no way out of site/
   assert.equal((await fetch(base + "/nope.html")).status, 404);
   assert.equal((await fetch(base + "/..%2F..%2Fpackage.json")).status, 403);
   assert.equal((await fetch(base + "/..%2fdocs%2fBLUEPRINT.md")).status, 403);
-  // the Files tab's OneDrive part: served switched on in demo mode (tools/fake/p7-onedrive.js answers it); site/ untouched
+  // the Files tab's OneDrive part: on in the published site since its go-live (2026-10-25) and in the demo
+  // (tools/fake/p7-onedrive.js answers it); site/ untouched
   assert.match(await (await fetch(base + "/js/repo/onedrive.js")).text(), /^export const LIVE = true;/m);
-  assert.match(readFileSync(new URL("../site/js/repo/onedrive.js", import.meta.url), "utf8"), /^export const LIVE = false;$/m);
+  assert.match(readFileSync(new URL("../site/js/repo/onedrive.js", import.meta.url), "utf8"), /^export const LIVE = true;$/m);
   assert.match(js, /p7-onedrive\.js/, "the OneDrive broker's stand-in is in the bundle");
   const css = await fetch(base + "/css/styles.css");
   assert.match(css.headers.get("content-type"), /text\/css/);

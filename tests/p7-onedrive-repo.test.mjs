@@ -162,13 +162,19 @@ test("repo/onedrive: findFile pages through a folder for an upload whose last an
   assert.deepEqual(calls.map((c) => c.body.cursor || null), [null, "p2"]);
 });
 
-test("repo/onedrive: LIVE is off until the go-live; the self-test project shows it to an admin before anybody else", () => {
-  assert.equal(onedrive.LIVE, false, "the Files tab's OneDrive part ships dark: the go-live sets LIVE to true (README)");
+test("repo/onedrive: LIVE is on since the go-live (2026-10-25); the self-test project still shows the self-test to an admin only", () => {
+  assert.equal(onedrive.LIVE, true, "the Files tab's OneDrive part went live after the probe and the self-test (README)");
   assert.equal(onedrive.SELF_TEST_PROJECT, "A000T2");
   const admin = { role: "admin", active: true }, manager = { role: "manager", active: true };
+  // live: every active person sees the project's OneDrive folder on every project (the database's rules decide the rest)
   assert.equal(onedrive.shownFor(admin, { internalIDNumber: "A000T2" }), true);
-  assert.equal(onedrive.shownFor(admin, { internalIDNumber: "A267" }), false);
-  assert.equal(onedrive.shownFor(manager, { internalIDNumber: "A000T2" }), false);
+  assert.equal(onedrive.shownFor(admin, { internalIDNumber: "A267" }), true);
+  assert.equal(onedrive.shownFor(manager, { internalIDNumber: "A000T2" }), true);
+  assert.equal(onedrive.shownFor({ role: "field", active: false }, { internalIDNumber: "A253" }), false, "a turned-off account: never");
+  // the self-test stays the admin's, on the test project only
+  assert.equal(onedrive.selfTestFor(admin, { number: "A000T2" }), true);
+  assert.equal(onedrive.selfTestFor(manager, { number: "A000T2" }), false);
+  assert.equal(onedrive.selfTestFor(admin, { number: "A267" }), false);
   assert.equal(onedrive.selfTestFor({ role: "admin", active: false }, { number: "A000T2" }), false);
   assert.equal(onedrive.selfTestFor(admin, { number: "A000T2-B" }), false);
   assert.equal(onedrive.shownFor({ role: "agents", active: true }, { number: "A000T2" }), false);

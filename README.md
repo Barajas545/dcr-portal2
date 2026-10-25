@@ -589,6 +589,8 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - **The security policy.** `project.html` alone adds `https://netorgft10120038-my.sharepoint.com` (the OneDrive host,
   `ONEDRIVE_HOST`) to `connect-src`; downloads are navigations. No tenant, app or drive id and no secret is anywhere in
   this repository (`tests/core-site-guard.test.mjs` checks site, tools and tests).
+- **Live since 2026-10-25** (`LIVE = true` in `js/repo/onedrive.js`, after the probe's 9 PASS - the top level shows the
+  app nothing but Projects - and the self-test's 8 PASS on A000T2). Before that, as shipped first:
 - **Off until its go-live.** `LIVE` in `js/repo/onedrive.js` is `false`: the published site makes no OneDrive call and
   the Files tab is as before - except for an **admin on the test project A000T2**, who sees the OneDrive part and the
   **OneDrive self-test** (eight steps, PASS / FAIL with the broker's code: status and the narrow grant, the folder, an
@@ -732,8 +734,9 @@ the broker are DCR Desktop 2's `docs/ONEDRIVE.md` (the owner's click-by-click se
 3. The admin's **OneDrive self-test** on A000T2 in the published site (project → Files → 🧪 OneDrive self-test): eight
    PASS lines (step 3 proves the browser's chunked upload to OneDrive across sites; step 4 Microsoft's stamp of the app).
    Then the owner deletes `Documents\DCR self-test` of A000T2 in OneDrive and its two rows in DCR Desktop 2.
-4. The release that turns it on: `export const LIVE = true;` in `site/js/repo/onedrive.js` (and the one assertion of
-   `tests/p7-onedrive-repo.test.mjs` that says it is off), `TZ=UTC node --test` and `schema-check` green, push `main`.
+4. The release that turns it on: `export const LIVE = true;` in `site/js/repo/onedrive.js` (and the assertions that said
+   it is off: `p7-onedrive-repo`, `p7-onedrive-pages`, `core-devserve`, `p7w-repo`, `p7w-demo`), `TZ=UTC node --test`
+   and `schema-check` green, push `main`. **Done 2026-10-25.**
 5. The owner ticks "Can upload to OneDrive" for the people who add documents and floor plans from the web (DCR Desktop 2
    → Users, or the Access tab).
 

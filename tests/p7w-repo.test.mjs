@@ -247,6 +247,6 @@ test("onedrive.ensureFolder: op ensure_folder with the project's id; made / exis
   assert.equal(c.calls.length, 0, "a project id only");
 });
 
-test("onedrive.LIVE is off until the Files tab's OneDrive part ships: the pages make no OneDrive call before it", () => {
-  assert.equal(onedrive.LIVE, false, "switched on in the same release as the Files tab's OneDrive part (README, Part 3 go-live)");
+test("onedrive.LIVE is on since the Files tab's OneDrive part went live (2026-10-25): New Project and lead conversion make the folder", () => {
+  assert.equal(onedrive.LIVE, true, "switched on in the release after the probe and the self-test (README, Part 4 go-live)");
 });
