@@ -296,6 +296,18 @@ export function folderIcon(path, name) {
   return FOLDER_ICONS[nfc(name).toLowerCase()] || "📁";
 }
 
+/** A OneDrive file's icon by its type (the broker sends no MIME type): pictures, videos, PDFs, sheets, plans. */
+export function fileIconOf(name) {
+  const e = extOf(name);
+  if (["jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff"].indexOf(e) !== -1) return "🖼️";
+  if (["mp4", "mov", "m4v"].indexOf(e) !== -1) return "🎬";
+  if (["m4a", "mp3", "wav", "webm"].indexOf(e) !== -1) return "🎙️";
+  if (e === "pdf") return "📕";
+  if (["xls", "xlsx", "csv"].indexOf(e) !== -1) return "📊";
+  if (["dwg", "dxf", "takeoff", "pdfnotes"].indexOf(e) !== -1) return "📐";
+  return "📄";
+}
+
 /** A local files row's path below its project's folder ("A267 - x/Floor Plans/A1.pdf" -> "Floor Plans/A1.pdf"). */
 export function belowProject(relPath) {
   const s = String(relPath || "");

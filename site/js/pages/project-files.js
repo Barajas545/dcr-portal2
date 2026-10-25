@@ -88,7 +88,7 @@ function listHtml(ctx) {
     ? esc(CLOUD_LABEL) + ": photos, videos and notes from the buttons above, journal photos — they open here."
     : esc(CLOUD_LABEL) + ": opens here. " + esc(LOCAL_LABEL) +
       ": floor plans, photos and documents kept in the project's OneDrive folder — open them on an office PC." +
-      (st.odOn && st.od && st.od.state === "down" ? " (The OneDrive folder above could not be read just now: its files the project's list knows are here by name.)" : "");
+      (st.odOn && st.od && st.od.state === "down" ? " (The OneDrive folder above cannot be read just now: the files the project's list knows from it are listed here by name.)" : "");
   return '<div class="pj-crumb">' + cr + "</div>" + '<div class="pj-tblwrap">' + (rows.join("") || empty) + "</div>" +
     '<div class="pj-sub" style="margin-top:8px">' + note + "</div>";
 }
@@ -241,7 +241,7 @@ function odListHtml(ctx) {
     const busy = od.opening === e.id;
     return '<div class="pj-file od-row' + (open ? "" : " local") + '" data-odid="' + esc(e.id) + '"' + (open ? ' role="button" tabindex="0"' : "") +
       ' title="' + esc(open ? "Open " + name : name + " — programs and shortcuts are not opened from the portal") + '">' +
-      "<span>" + fileIcon({ name: e.name }) + '</span><span class="pj-fname">' + esc(name) +
+      "<span>" + OD.fileIconOf(e.name) + '</span><span class="pj-fname">' + esc(name) +
         (e.caption ? '<span class="pj-fdesc">' + esc(ctx.mask(e.caption)) + "</span>" : "") + "</span>" +
       '<span class="meta">' + esc(busy ? "Opening…" : [fmtSize(e.size), fmtDay(e.modified), e.versionNo > 1 ? "v" + e.versionNo : ""].filter(Boolean).join(" · ")) +
         '<span class="pj-where od">OneDrive</span></span>' +

@@ -123,6 +123,7 @@ test("the browser's shapes: crumbs, icons, the project file list's caption and v
   assert.equal(OD.folderIcon([], "Floor Plans"), "📐");
   assert.equal(OD.folderIcon(["Floor Plans"], "Level 1"), "📁");
   assert.equal(OD.belowProject("A267 - x/Floor Plans/A1.pdf"), "Floor Plans/A1.pdf");
+  assert.deepEqual(["IMG_1.JPG", "clip.mov", "A1.pdf", "Bid.xlsx", "Deck.dwg", "notes.txt"].map(OD.fileIconOf), ["🖼️", "🎬", "📕", "📊", "📐", "📄"]);
   const items = [
     { id: 1, cloud: false, relPath: "A267 - x/Floor Plans/A1 - Floor plan.pdf", description: "the old set", versionNo: 1 },
     { id: 2, cloud: false, relPath: "A267 - x/floor plans/a1 - floor plan.pdf", description: "the new set", versionNo: 2 },
