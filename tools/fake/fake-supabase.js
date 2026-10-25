@@ -806,10 +806,37 @@
     return r;
   }
 
+  /* Part 4 (tools/fake/p7-onedrive.js): the OneDrive host - the upload URLs the demo's broker made (PUT in chunks,
+     GET how far) and this tab's download links (the self-test's ranged GET) - answered here: nothing reaches Microsoft */
+  const odExt = () => (engine.exts || []).find((x) => x && x.name === "p7-onedrive") || null;
+  function odOwns(url) { const x = odExt(); return !!(x && x.owns(url)); }
+  async function onedriveHttp(method, url, headers, body, onProgress) {
+    const size = body && body.size !== undefined ? body.size : 0;
+    if (method === "PUT" && size) {
+      const steps = Math.max(1, Math.min(12, Math.ceil(size / (256 * 1024))));
+      const total = Math.min(4000, (size / UPLOAD_SPEED) * 1000);
+      for (let i = 1; i <= steps; i++) {
+        await sleep(total / steps);
+        if (state.offline) throw new TypeError("Failed to fetch (demo: offline)");
+        if (onProgress) onProgress(Math.round((size * i) / steps), size);
+      }
+    } else {
+      await delay();
+    }
+    const r = odExt().http(method, String(url), headers || {}, body);
+    return r || { status: 404, headers: {}, body: "" };
+  }
+
   const realFetch = root.fetch ? root.fetch.bind(root) : null;
   if (realFetch) {
     root.fetch = async function (input, init) {
       const url = typeof input === "string" ? input : input && input.url;
+      if (odOwns(url)) {
+        if (state.offline) throw new TypeError("Failed to fetch (demo: offline)");
+        const i = init || {};
+        const r = await onedriveHttp(String(i.method || "GET").toUpperCase(), url, headerMap(i.headers), i.body);
+        return new Response(r.status === 204 ? null : r.body, { status: r.status, headers: r.headers });
+      }
       const geo = geocodeAnswer(url);
       if (geo) {
         if (state.offline) throw new TypeError("Failed to fetch (demo: offline)");
@@ -831,6 +858,7 @@
       open(method, url, ...rest) {
         const u = supaUrl(url);
         this._demo = u ? { method: String(method).toUpperCase(), u, headers: {} } : null;
+        if (!u && odOwns(url)) this._demo = { method: String(method).toUpperCase(), u: null, od: String(url), headers: {} };
         if (!this._demo) return super.open(method, url, ...rest);
         return undefined;
       }
@@ -854,7 +882,7 @@
         (async () => {
           try {
             if (state.offline) throw new TypeError("offline");
-            const r = await storageHttp(d.method, d.u, d.headers, body, (loaded, total) => {
+            const r = await (d.od ? onedriveHttp.bind(null, d.method, d.od) : storageHttp.bind(null, d.method, d.u))(d.headers, body, (loaded, total) => {
               const up = self.upload;
               if (up && typeof up.onprogress === "function") {
                 try { up.onprogress({ lengthComputable: true, loaded, total }); } catch (e) { /* */ }
@@ -863,7 +891,7 @@
             if (self._aborted) { fire("abort"); return; }
             self._demoRes = r;
             Object.defineProperty(self, "status", { value: r.status, configurable: true });
-            Object.defineProperty(self, "responseText", { value: r.text || "", configurable: true });
+            Object.defineProperty(self, "responseText", { value: (d.od ? (typeof r.body === "string" ? r.body : "") : r.text) || "", configurable: true });
             Object.defineProperty(self, "readyState", { value: 4, configurable: true });
             fire("readystatechange");
             fire("load");

@@ -8,6 +8,9 @@
    seed.js + fake-supabase.js + push-demo.js): made-up data in the browser, no request to Supabase at all. The files in site/
    are never changed; the published site has no switch that could turn this on.
 
+   The Files tab's OneDrive part (site/js/repo/onedrive.js LIVE, off until its go-live) is served switched ON in demo mode
+   (tools/fake/p7-onedrive.js answers it: nothing reaches Microsoft); --onedrive-off serves the module as published.
+
    Binds to 127.0.0.1 only. PORT / DCR2_DEV_PORT override the port; --no-demo serves site/ untouched
    (it would then talk to the real project: do not sign in with real accounts from here). */
 import { createServer } from "node:http";
@@ -25,11 +28,13 @@ const FAKE_DIR = resolve(HERE, "fake");
 // p5b-books.js after it - the books' rules of bills, payments and invoices, their RPCs, books_desk and rows;
 // P5c: p5c-lists.js - the office lists: leads and convert_lead, the vehicle board, marketing tasks and their prices;
 // p5c-sub.js after p5b-books.js - sub_submissions, accept / reject, and the public "subform" function's stand-in;
-// p5c-sales.js - the sales switch, the comps, the saved sales estimates, the materials library and sales-media)
-const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
+// p5c-sales.js - the sales switch, the comps, the saved sales estimates, the materials library and sales-media;
+// Part 4: p7-onedrive.js - the OneDrive broker's stand-in and the owner's OneDrive behind it, for the Files tab)
+const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "p7-onedrive.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.DCR2_DEV_PORT || process.env.PORT || 8792);
 const DEMO = !process.argv.includes("--no-demo");
+const ONEDRIVE_ON = !process.argv.includes("--onedrive-off");
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
@@ -40,6 +45,11 @@ const TYPES = {
 
 const SUPABASE_TAG = /<script\b[^>]*\bsrc=["'][^"']*@supabase\/supabase-js@[^"']*["'][^>]*>\s*<\/script>\s*/gi;
 const FAKE_TAG = '<script src="/__dev/fake-supabase.js"></script>\n';
+
+/** site/js/repo/onedrive.js as served in demo mode: its OneDrive part switched on (the demo's broker answers it). */
+export function onedriveLive(src) {
+  return String(src).replace(/export const LIVE = false;/, "export const LIVE = true;   // (demo server: tools/fake/p7-onedrive.js answers)");
+}
 
 /** The page as served in demo mode: the stand-in before the first script, the real library out. */
 export function injectDemo(html) {
@@ -86,6 +96,7 @@ export function startServer(port = PORT) {
       const ext = extname(file).toLowerCase();
       let body = await readFile(file);
       if (ext === ".html" && DEMO) body = injectDemo(body.toString("utf8"));
+      if (DEMO && ONEDRIVE_ON && path === "/js/repo/onedrive.js") body = onedriveLive(body.toString("utf8"));
       const extra = path === "/sw.js" ? { "service-worker-allowed": "/" } : {};
       return send(res, 200, req.method === "HEAD" ? "" : body, TYPES[ext] || "application/octet-stream", extra);
     } catch (e) {

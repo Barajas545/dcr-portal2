@@ -2045,6 +2045,9 @@
       objectMeta: (key) => (objects.has(key) ? clone(objects.get(key)) : null),
       objectRemove: (key) => { if (objects.delete(key)) { blobs.delete(key); emitOp({ k: "objdel", key }); } },
       storageErr,
+      // Part 4 (tools/fake/p7-onedrive.js, the OneDrive broker's stand-in): a row inserted AS THE PERSON with every rule
+      // of this engine (RLS, the version chain, the activity line), as record_onedrive_file runs as the caller
+      insertAs: (w, table, row) => insert({ uid: w.uid }, table, row)[0],
     };
     if (typeof NS.p6 === "function") ext = NS.p6(internals);
     for (const install of NS.extInstall || []) {
