@@ -6,6 +6,9 @@
                             color, can_see_prices, can_see_financials, ...};
    * can(me, area)          the role matrix of app.can_edit (Desktop 2 foundation migration) for
                             HIDING controls only — the database decides every write (BLUEPRINT 2.1);
+                            the areas a switch decides (RULES: estimates = an admin, or a manager with
+                            the Estimator switch; money = an admin, or a manager or accountant with
+                            financials; onedrive_upload = app.can_upload_onedrive()) are hints too;
    * maskFor(me)            amounts typed into notes read "(amount hidden)" for people without the
                             prices switch (Q28: on screen only); identity for the others;
    * esc / toast / confirm / errorText / modal: DCR2's, with a plain fallback so a page never
@@ -78,8 +81,19 @@ const EDIT = {
   location: ["admin", "manager", "accountant", "lead", "field"],     // set_project_location: any active non-viewer
 };
 
+/* The areas a person's switch decides (migration 20261028000100_estimator.sql, M5b): they only hide buttons, the
+   database decides (app.can_edit('estimates'), app.can_edit('money'), app.can_upload_onedrive()). */
+const RULES = {
+  estimates: function (me) { return me.role === "admin" || (me.role === "manager" && !!me.can_estimate); },
+  money: function (me) { return me.role === "admin" || ((me.role === "manager" || me.role === "accountant") && !!me.can_see_financials); },
+  onedrive_upload: function (me) {
+    return me.role === "admin" || (["manager", "accountant", "lead", "field"].indexOf(String(me.role || "")) !== -1 && !!me.can_upload_onedrive);
+  },
+};
+
 export function can(me, area) {
-  if (!me || me.active === false) return false;
+  if (!me || me.active === false || me.role === "agents") return false;
+  if (Object.prototype.hasOwnProperty.call(RULES, area)) return RULES[area](me);
   const list = EDIT[area];
   return !!list && list.indexOf(String(me.role || "")) !== -1;
 }

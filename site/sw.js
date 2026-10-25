@@ -21,7 +21,10 @@
    A new name must never cost a phone its offline libraries: install also keeps supabase-js (PINNED_PRECACHE),
    and activate copies every pinned CDN file an older "dcr-portal2-*" cache held into the new one BEFORE
    that cache is deleted (the visit that installs the new worker is still served by the old one, so it
-   never fetches them itself). tests/core-sw.test.mjs runs both. */
+   never fetches them itself). tests/core-sw.test.mjs runs both.
+   Part 3 (owner 2026-10-24) keeps "dcr-portal2-v3" the same way: the shared New Project dialog (the Board's and the
+   project page's), its OneDrive folder step, the admin page's Access switches and the project picture's maker join
+   the list; the Expenses tab's cost dialog and form rules (money code) stay out of it, as the money tabs do. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
@@ -49,6 +52,8 @@ const SHELL = [
   // P5a: the read-only Estimate and Takeoffs tabs of project.html and their printed pages
   "report-estimate.html", "report-takeoff.html", "css/estimates.css", "js/repo/estimates.js", "js/map/estimates.js", "js/map/takeoffs.js",
   "js/pages/est-render.js", "js/pages/project-estimate.js", "js/pages/project-takeoffs.js", "js/pages/report-estimate.js", "js/pages/report-takeoff.js",
+  // Part 3: New Project (board.html, project.html), the Access tab (admin.html), the project picture
+  "js/pages/new-project.js", "js/repo/onedrive.js", "js/map/access.js", "js/thumb-prep.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

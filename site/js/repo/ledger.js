@@ -27,14 +27,29 @@
                                      confirmed (NULL: nobody) — the database's inferred guess becomes a fact.
    M5b answers {changed: [ids], unchanged: [ids], refused: [{id, reason}], …}; outcome() reads it as
    {changed: n, unchanged: n, refused} (refused rows are said, never dropped).
+   Adding and correcting a cost (the project's Expenses tab, owner decision 2026-10-24 D13; DCR Desktop 2's CostDialog
+   does the same plain writes: MoneyRepo.add_cost / update_cost) — costs RLS and t01_money_writer refuse anyone but
+   a money editor (42501), t10_costs works out a labour amount, t12_costs_ledger stamps "Paid with" and infers the
+   employee; only the columns of COST_WRITE are ever sent (never card_by / card_at, reconciled_*, employee_*: the
+   database refuses them from a person). Costs have NO delete here: a wrong one is corrected, or a negative credit
+   added.
+   * getCost(id)                     the raw row (COST_COLS: the words as typed, never the ledger's tidied ones);
+   * addCost(fields)                 one INSERT (once: no retry) -> the row;
+   * updateCost(row, patch)          a versioned PATCH of the changed columns (not project_id) -> the row; PT409 with
+                                     err.current = the row now;
+   * lineChoices(projectId, keepId)  [{id, label}] the live estimate lines a cost can be booked to (map/ledger.js
+                                     lineLabel: "CO #2 · Walls — Exterior walls"), archived estimates left out —
+                                     but the line keepId (the cost being corrected is booked to it) is always kept,
+                                     marked "(archived estimate)" or "(removed)", so an edit shows the line it has.
 
    The RPC names and arguments live in RPC below and nowhere else. */
 
-import { db, must, idOf, pageAll } from "./_db.js";
+import { db, must, idOf, pageAll, versioned } from "./_db.js";
+import { insertOne } from "./_rows.js";
 import { loadProjects } from "./projects.js";
 import { nameBook } from "./people.js";
 import { signedUrl } from "./files.js";
-import { toLedgerRow, CARDS, hoursByEmployee } from "../map/ledger.js";
+import { toLedgerRow, CARDS, hoursByEmployee, lineLabel } from "../map/ledger.js";
 
 export const COST_COLS = "id, project_id, estimate_item_id, cost_date, kind, description, vendor, amount, hours, rate, " +
   "card, card_by, card_at, reconciled_by, reconciled_at, employee_id, employee_source, version";
@@ -204,4 +219,64 @@ export async function confirmEmployee(ids, employeeId) {
   if (emp !== null && typeof emp !== "number") throw Object.assign(new Error("Which employee?"), { code: "22023", status: 400 });
   const c = await db();
   return outcome(must(await c.rpc(RPC.confirm.name, RPC.confirm.args(list, emp))), list.length);
+}
+
+/* ── adding and correcting a cost (no delete) ── */
+export const COST_WRITE = Object.freeze(["project_id", "kind", "cost_date", "description", "vendor", "amount", "hours", "rate",
+  "estimate_item_id", "card"]);
+const COST_EDIT = COST_WRITE.filter((k) => k !== "project_id");
+
+function pick(obj, keys) {
+  const out = {};
+  Object.keys(obj || {}).forEach((k) => {
+    if (keys.indexOf(k) === -1) throw new Error("not a cost column this page writes: " + k);
+    out[k] = obj[k];
+  });
+  return out;
+}
+
+export async function getCost(id) {
+  const c = await db();
+  const rows = must(await c.from("costs").select(COST_COLS).eq("id", idOf(id))) || [];
+  return rows[0] || null;
+}
+
+export async function addCost(fields) {
+  const row = pick(fields, COST_WRITE);
+  if (row.project_id === undefined || row.project_id === null) throw Object.assign(new Error("A cost belongs to a project."), { code: "22023", status: 400 });
+  row.project_id = idOf(row.project_id);
+  if (row.estimate_item_id !== undefined && row.estimate_item_id !== null) row.estimate_item_id = idOf(row.estimate_item_id);
+  return insertOne("costs", row, COST_COLS);
+}
+
+export async function updateCost(row, patch) {
+  const body = pick(patch, COST_EDIT);
+  if (body.estimate_item_id !== undefined && body.estimate_item_id !== null) body.estimate_item_id = idOf(body.estimate_item_id);
+  if (!Object.keys(body).length) return row;
+  return versioned("costs", idOf(row.id), row.version, body, COST_COLS);
+}
+
+/** The project's live estimate lines (not an archived estimate's), in estimate and line order; plus the line
+    `keepId` whatever its estimate (a cost's present line). */
+export async function lineChoices(projectId, keepId) {
+  const pid = idOf(projectId);
+  const keep = keepId === null || keepId === undefined || keepId === "" ? null : String(keepId);
+  const [items, estimates] = await Promise.all([
+    pageAll((cl) => cl.from("estimate_items").select("id, estimate_id, name, description, group_name, sort, deleted_at").eq("project_id", pid)
+      .order("id", { ascending: true })),
+    pageAll((cl) => cl.from("estimates").select("id, kind, number, co_number, name, archived_at, deleted_at").eq("project_id", pid)
+      .order("id", { ascending: true })),
+  ]);
+  const est = {}, all = {};
+  estimates.forEach((e) => { all[String(e.id)] = e; if (!e.deleted_at && !e.archived_at) est[String(e.id)] = e; });
+  const live = (i) => !i.deleted_at && !!est[String(i.estimate_id)];
+  const order = (e) => (!e ? 2e6 : e.kind === "change_order" ? 1e6 + Number(e.co_number || 0) : Number(e.number || 0));
+  const why = (i) => {
+    const e = all[String(i.estimate_id)];
+    return e && !e.deleted_at && !i.deleted_at ? " (archived estimate)" : " (removed)";
+  };
+  return items.filter((i) => live(i) || (keep !== null && String(i.id) === keep))
+    .sort((a, b) => order(all[String(a.estimate_id)]) - order(all[String(b.estimate_id)]) || a.estimate_id - b.estimate_id ||
+      Number(a.sort || 0) - Number(b.sort || 0) || a.id - b.id)
+    .map((i) => ({ id: i.id, label: lineLabel(i, all[String(i.estimate_id)] || null) + (live(i) ? "" : why(i)) }));
 }

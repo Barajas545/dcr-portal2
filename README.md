@@ -23,7 +23,8 @@ site/                       published as is
   timesheet-batch.html      Batch Entry (one entry for many employees, a result per row)
   timesheet-manager.html    Team Sheets (the week grid, overtime / weekend marks, CSV, sign-off, live)
   report-timecard.html      the printable weekly Time Card
-  admin.html                Employees & crews (admin, manager): employees, account links, each lead's crew
+  admin.html                Employees & crews (admin, manager): employees, account links, each lead's crew; the
+                            Access tab (admins, Part 3): Sees prices, Estimator, Can upload to OneDrive per sign-in
   my-tasks.html             My Tasks (P3: your open tasks, ?task= from a reminder, updates, Mark complete)
   tasks-map.html            Tasks on Map (P3: Leaflet 1.9.4, a pin per job, New task here, moving a pin)
   css/styles.css            the old portal's styles plus the Portal 2 accent
@@ -195,7 +196,8 @@ address search of Site Photos is answered from made-up towns (nothing goes to Op
 Sign in with any demo account from the orange **DEMO** button (any password except `wrong`):
 `admin@`, `manager@` (no prices: the owner's Q1), `manager2@` (prices switched on), `accountant@`,
 `lead@`, `field@`, `viewer@`, `agents@` (refused), `inactive@` (refused), `newhire@` (temporary
-password), all `@demo.test`. For the tasks the demo has two dozen made-up tasks over the sandbox and the
+password), `estimator@` (Robin Estimator: a manager with the Estimator switch and no prices, Part 3), all
+`@demo.test`. For the tasks the demo has two dozen made-up tasks over the sandbox and the
 busy jobs: quiet ones ("needs an update"), a task due tomorrow morning, a Photo & Video Agent shoot with
 its brief and shot list, a Recurring Tasks agent task ("Weekly on Mondays"), a task imported from the old
 portal with its old notes and a texted reply filed for Jordan, an amount in a task's words (hidden without
@@ -458,7 +460,42 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   replace in place (one drawing, one file); a person can never write a new `cad` value (the old sketch tool's drawings are
   only kept, and opened in the old portal). The pictures' "URL" intake is gone (the security policy shows no other site's
   picture); an old link is kept as a link.
-- **Not built (Q20):** the plans library, takeoff-web and the `.takeoff` archive stay on the old portal.
+- **Not built (Q20, as the owner updated it on 2026-10-24):** no plans library here; the floor plans are in the project's
+  OneDrive Floor Plans folder and the `.takeoff` files in the Plans Archive, which takeoff-web opens (the project's
+  Takeoffs tab links to it).
+
+## Part 3 (owner 2026-10-24): switches, New Project, the project picture, expenses, Takeoffs link
+
+- **Switches (migration `20261028000100_estimator`, DCR Desktop 2).** `profiles.can_estimate` — the Estimator switch:
+  `app.can_edit('estimates')` is an admin, or a manager with it (managers only; an admin always has it) — and
+  `profiles.can_upload_onedrive` — adds files to the project's OneDrive folder through the web broker (every role but
+  view-only; an admin always). Both are off by default for everyone but an admin. An admin sets them, with Sees
+  prices, on admin.html → **Access** (`rpc admin_set_profile`; ticking Estimator ticks prices too — untick prices
+  for a quantities-only estimator); financials, approving payments and Sales estimates stay in DCR Desktop 2 →
+  Users. DCR Desktop 2 itself is not gated by the OneDrive switch (each PC writes through its own OneDrive sync).
+  The sign-in reads the two columns when the database has them and asks again without them before that
+  migration, so the site may go out first; `shell.js can()` uses them as button hints only.
+- **New Project** (the Board's "＋ New Project", `board.html?new=1`, and "＋ New project" on a project page):
+  one dialog (`js/pages/new-project.js`): name, address, city, state, ZIP, the client, start date, how it starts,
+  scope and the labor rate's zone (a zone alone needs no prices switch; a custom rate does). One attempt: Create
+  waits for its answer, a lost answer says the project may exist and sends nothing more; closing the dialog
+  mid-create still says the number with its link. Then the project's OneDrive folder (`js/repo/onedrive.js`, the
+  Edge Function `onedrive`, op `ensure_folder`) and the project's page. The folder step is off until `LIVE` in
+  `js/repo/onedrive.js` is set to `true`, in the same release as the Files tab's OneDrive part: before that no
+  OneDrive call is made and nothing is said (a browser cannot tell a function that is not deployed from being
+  offline). Once on, a folder not made is said with its reason, and that DCR Desktop 2 (the project's Files tab)
+  makes it. A lead converted to a project gets the folder step too.
+- **The project picture** (admin, manager): 📷 on the project header (camera or library), made in the browser at
+  most 800 px and drawn again (no EXIF / GPS; JPEG, PNG only for transparency; never SVG; over 60 megapixels or
+  40 MB refused before decoding), straight to Storage `p/{project}/thumbnail/{uuid}/thumbnail.jpg`, its `files`
+  row, then the project's pointer (versioned). ✕ takes it off.
+- **Expenses** (money editors: an admin, or a manager or accountant with financials): "＋ Add expense", ✎ on a row
+  and ＋📎 for another receipt, with DCR Desktop 2's cost form rules (`js/map/cost-form.js`); receipts go through
+  the upload queue to `f/{project}/receipts/…` with the cost's id. No delete: correct a cost, or add a negative
+  credit. The dialog's code is fetched only when used (never on a crew phone, not in the offline list).
+- **Takeoffs:** "📐 Plans Archive (takeoff-web) ↗" opens takeoff-web at the project's number (Q20 as updated:
+  the floor plans are in the project's OneDrive Floor Plans folder, the `.takeoff` files in the Plans Archive).
+- **Not here yet:** the OneDrive Files tab (list, open, upload) and the web estimate editor are separate parts.
 
 ## Rules for every page
 
@@ -566,6 +603,18 @@ working on M5c; 2.20 needs it); a fresh read and rehearsal, the sales pictures, 
 `TZ=UTC node --test` and `node --test` green and this repository's `main` pushed; then the smoke test on A000T2 (a test
 invoice from a phone that is not signed in, the e-mailed notice, accepted - a bill waiting for approval - and deleted).
 `submit.html` is public: its link can go to subcontractors only after that smoke test.
+
+**Part 3 (switches, New Project, picture, expenses, Takeoffs link) go-live, in order, each live step after the owner's
+OK.** A backup from today → database change `20261028000100_estimator` (DCR Desktop 2: `npx supabase db push`) → DCR
+Desktop 2 2.21 on the admin PC the same day (its Users page sets the switches too) → push this repository's `main`
+(the tests run first) → the owner ticks Estimator (and, later, OneDrive upload) for the people he chooses on admin.html
+→ Access → smoke test on **A000T2** only: a picture, a test cost and its receipt corrected to zero. New Project is
+checked in the demo (`node tools/devserve.mjs`, `tests/p7w-demo.test.mjs`) and by the PGlite schema check, never on the live
+site: a project made there uses up the next real project number (and, once the OneDrive part is on, makes a
+OneDrive folder that deleting the project does not remove) - a live New Project test needs the owner's OK for that
+first. The OneDrive part comes later and separately: the Microsoft setup, database change `20261028000200_onedrive`,
+the `onedrive` function and its secrets (typed by the owner), its status check, then the Files tab in the release
+that sets `LIVE = true` in `js/repo/onedrive.js`; until then New Project's folder step is off and says nothing.
 
 **Owner, once (any time before the first publish)**
 

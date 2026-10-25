@@ -26,6 +26,9 @@ test("objectKey: p/{project}/{folder}/{32 hex}/{slug}, the shape the files check
   assert.match(newUid(), /^[0-9a-f]{32}$/);
   assert.equal(previewKeyFor("p/5/photos/" + "a".repeat(32) + "/IMG.jpg"), "p/5/photos/" + "a".repeat(32) + "/preview-320.jpg");
   assert.equal(previewKeyFor("p/5/photos/x/preview-320.jpg"), "p/5/photos/x/preview-320-b.jpg");
+  // a receipt is a financial file: f/ (files_storage_path_shape, app.storage_can_write), never p/
+  assert.equal(objectKey(5, "receipts", "Receipt 2026-10-20 09.15.00.jpg", "cd".repeat(16)), "f/5/receipts/" + "cd".repeat(16) + "/Receipt 2026-10-20 09.15.00.jpg");
+  assert.equal(previewKeyFor("f/5/receipts/" + "c".repeat(32) + "/r.jpg"), "f/5/receipts/" + "c".repeat(32) + "/preview-320.jpg", "its preview beside it");
 });
 
 test("display names: IMG/VID + company time stamp + -n, the device's own extension", () => {
@@ -47,7 +50,9 @@ test("display names: IMG/VID + company time stamp + -n, the device's own extensi
   assert.equal(guessMime("a.unknown"), "application/octet-stream");
 });
 
-test("placeFor: every upload has a folder AND a sub-folder", () => {
+test("placeFor: every upload has a folder AND a sub-folder (but a receipt: the receipts folder itself, as Desktop 2 files it)", () => {
+  assert.deepEqual(placeFor("receipt", {}, "2026-10-20T06:30:00Z"), { folder: "receipts", subpath: "" });
+  assert.deepEqual(placeFor("receipt", { folder: "photos" }, "2026-10-20T06:30:00Z"), { folder: "receipts", subpath: "" }, "never another folder");
   const when = "2026-10-20T06:30:00Z";                    // 11:30 pm PDT on the 19th
   assert.deepEqual(placeFor("photo", {}, when), { folder: "photos", subpath: "2026-10-19" });
   assert.deepEqual(placeFor("video", {}, when), { folder: "photos", subpath: "2026-10-19" });

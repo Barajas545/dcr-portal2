@@ -25,8 +25,9 @@ const FAKE_DIR = resolve(HERE, "fake");
 // p5b-books.js after it - the books' rules of bills, payments and invoices, their RPCs, books_desk and rows;
 // P5c: p5c-lists.js - the office lists: leads and convert_lead, the vehicle board, marketing tasks and their prices;
 // p5c-sub.js after p5b-books.js - sub_submissions, accept / reject, and the public "subform" function's stand-in;
-// p5c-sales.js - the sales switch, the comps, the saved sales estimates, the materials library and sales-media)
-const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
+// p5c-sales.js - the sales switch, the comps, the saved sales estimates, the materials library and sales-media;
+// Part 3: p7-web.js after them - the Estimator and OneDrive upload switches, admin_set_profile and the estimator)
+const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "p7-web.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.DCR2_DEV_PORT || process.env.PORT || 8792);
 const DEMO = !process.argv.includes("--no-demo");

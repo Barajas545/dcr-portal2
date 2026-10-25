@@ -7,15 +7,20 @@
      phone (the database derives the texting number), e-mail, address, normal hours; add, edit,
      deactivate (they stay in the history); link to an account (one employee per account).
    - Crews: each lead's crew (crew_members), added and removed one person at a time.
+   - Access (an admin only; owner decisions 2026-10-24): per sign-in, Sees prices, Estimator (managers) and Can
+     upload to OneDrive (everyone but view-only) through rpc admin_set_profile (map/access.js words it; ticking
+     Estimator ticks prices too, which may be unticked again); financials, approving payments and sales estimates
+     are shown and changed in DCR Desktop 2 → Users. Managers keep the page without this tab.
    Never pay rates (Q16), never the old portal's address/password columns. The database refuses
-   every write from anyone but an admin or a manager. */
+   every write from anyone but an admin or a manager (the switches: an admin only). */
 
 import { boot, el, esc, errorText, toast, confirmBox } from "./shell.js";
 import * as employees from "../repo/employees.js";
 import { scheduleText, hm, hoursText } from "../map/timesheets.js";
+import { offers, tick, diff, stateOf, saveProblem } from "../map/access.js";
 import { avatarInitials } from "./ts-shared.js";
 
-const state = { list: [], accounts: [], crews: [], tab: "emp" };
+const state = { list: [], accounts: [], crews: [], tab: "emp", me: null, access: [], accReady: true, accLoaded: false, acc: {} };
 const ROLE_WORD = { admin: "Admin", manager: "Manager", accountant: "Accountant", lead: "Lead", field: "Field", viewer: "View only" };
 
 function account(id) { return state.accounts.find(function (a) { return String(a.id) === String(id); }) || null; }
@@ -212,6 +217,101 @@ async function onCrewClick(ev) {
   }
 }
 
+/* ── access (admin) ────────────────────────────────────────────────────── */
+
+function accRow(id) { return state.access.find(function (a) { return String(a.id) === String(id); }) || null; }
+/** The person's switches as ticked on screen (their saved row until a box is changed). */
+function accEdit(a) {
+  const k = String(a.id);
+  if (!state.acc[k]) state.acc[k] = { state: stateOf(a), hint: "", msg: "", busy: false };
+  return state.acc[k];
+}
+
+function renderAccess() {
+  const box = el("adAccess");
+  if (!state.access.length) { box.innerHTML = '<div class="ad-empty">No sign-in accounts.</div>'; return; }
+  box.innerHTML = (state.accReady ? "" : '<div class="ad-note">The Estimator and OneDrive switches arrive with the database update ' +
+    "20261028000100; until then only Sees prices can be changed here.</div>") +
+    '<div class="ad-grid">' + state.access.map(function (a) {
+      const ed = accEdit(a);
+      const changes = diff(a, ed.state);
+      const dirty = Object.keys(changes).length > 0;
+      return '<div class="ad-card' + (a.active === false ? " off" : "") + '" data-acc="' + esc(a.id) + '">' +
+        '<div class="ad-top"><div class="ad-av">' + esc(avatarInitials(a.full_name)) + '</div><div style="min-width:0;flex:1"><div class="ad-nm">' +
+        esc(String(a.full_name || "").trim() || "(no name)") + '</div><div class="ad-no">' + esc(ROLE_WORD[a.role] || a.role) +
+        (a.active === false ? " · turned off" : "") + "</div></div></div>" +
+        offers(a, state.accReady, ed.state).map(function (o) {
+          return '<label class="ad-sw' + (o.disabled ? " ro" : "") + '"><input type="checkbox" data-sw="' + esc(o.key) + '"' + (o.on ? " checked" : "") +
+            (o.disabled || ed.busy ? " disabled" : "") + "><span>" + esc(o.label) + (o.note ? "<small>" + esc(o.note) + "</small>" : "") + "</span></label>";
+        }).join("") +
+        (ed.hint ? '<div class="ad-hint" role="status">' + esc(ed.hint) + "</div>" : "") +
+        (ed.msg ? '<div class="ad-accmsg" role="alert">' + esc(ed.msg) + "</div>" : "") +
+        (dirty ? '<div class="ad-acts"><button type="button" class="btn btn-sm" data-accsave="1"' + (ed.busy ? " disabled" : "") + ">" +
+          (ed.busy ? "Saving…" : "Save") + '</button><button type="button" class="btn btn-ghost btn-sm" data-acccancel="1"' + (ed.busy ? " disabled" : "") +
+          ">Cancel</button></div>" : "") +
+        "</div>";
+    }).join("") + "</div>";
+}
+
+function onAccessChange(ev) {
+  const inp = ev.target.closest("[data-sw]");
+  const card = ev.target.closest("[data-acc]");
+  if (!inp || !card) return;
+  const a = accRow(card.getAttribute("data-acc"));
+  if (!a) return;
+  const ed = accEdit(a);
+  const t = tick(ed.state, inp.getAttribute("data-sw"), inp.checked);
+  ed.state = t.state;
+  ed.hint = t.hint || (inp.getAttribute("data-sw") === "can_see_prices" ? "" : ed.hint);
+  ed.msg = "";
+  renderAccess();
+}
+
+async function onAccessClick(ev) {
+  const card = ev.target.closest("[data-acc]");
+  if (!card) return;
+  const a = accRow(card.getAttribute("data-acc"));
+  if (!a) return;
+  const ed = accEdit(a);
+  if (ev.target.closest("[data-acccancel]")) { delete state.acc[String(a.id)]; renderAccess(); return; }
+  if (!ev.target.closest("[data-accsave]") || ed.busy) return;
+  const changes = diff(a, ed.state);
+  if (!Object.keys(changes).length) return;
+  ed.busy = true; ed.msg = "";
+  renderAccess();
+  try {
+    const row = await employees.setAccess(a, changes);
+    delete state.acc[String(a.id)];
+    toast("Saved — " + (String(a.full_name || "").trim() || "this person") + " sees the change on their next page.", "ok");
+    if (row && row.id) state.access = state.access.map(function (x) { return String(x.id) === String(row.id) ? Object.assign({}, x, row) : x; });
+    renderAccess();
+  } catch (e) {
+    ed.busy = false;
+    ed.msg = saveProblem(e) || errorText(e);
+    if (e && (e.code === "PT409" || e.status === 409)) {
+      delete state.acc[String(a.id)];
+      await loadAccess();
+      const again = accRow(a.id);
+      if (again) accEdit(again).msg = saveProblem(e);
+      renderAccess();
+      return;
+    }
+    renderAccess();
+  }
+}
+
+async function loadAccess() {
+  try {
+    const got = await employees.listAccess();
+    state.access = got.rows;
+    state.accReady = got.ready;
+    state.accLoaded = true;
+    renderAccess();
+  } catch (e) {
+    el("adAccess").innerHTML = '<div class="ad-empty">' + esc(errorText(e)) + "</div>";
+  }
+}
+
 /* ── load, tabs ────────────────────────────────────────────────────────── */
 
 async function load() {
@@ -227,21 +327,30 @@ async function load() {
 }
 
 function tab(which) {
+  if (which === "acc" && !(state.me && state.me.role === "admin")) which = "emp";
   state.tab = which;
   el("tabEmp").setAttribute("aria-selected", which === "emp" ? "true" : "false");
   el("tabCrew").setAttribute("aria-selected", which === "crew" ? "true" : "false");
+  el("tabAcc").setAttribute("aria-selected", which === "acc" ? "true" : "false");
   el("paneEmp").hidden = which !== "emp";
   el("paneCrew").hidden = which !== "crew";
-  try { history.replaceState(null, "", which === "crew" ? "admin.html?tab=crews" : "admin.html"); } catch (e) { /* */ }
+  el("paneAcc").hidden = which !== "acc";
+  el("adNew").hidden = which === "acc";
+  try { history.replaceState(null, "", which === "crew" ? "admin.html?tab=crews" : which === "acc" ? "admin.html?tab=access" : "admin.html"); } catch (e) { /* */ }
+  if (which === "acc" && !state.accLoaded) loadAccess();
 }
 
 async function start() {
-  await boot("admin", { roles: ["admin", "manager"] });
+  state.me = await boot("admin", { roles: ["admin", "manager"] });
+  el("tabAcc").hidden = !(state.me && state.me.role === "admin");    // the switches: an admin's (admin_set_profile)
   el("adNew").addEventListener("click", function () { openEditor(null); });
   el("adSearch").addEventListener("input", renderEmployees);
   el("adInactive").addEventListener("change", renderEmployees);
   el("tabEmp").addEventListener("click", function () { tab("emp"); });
   el("tabCrew").addEventListener("click", function () { tab("crew"); });
+  el("tabAcc").addEventListener("click", function () { tab("acc"); });
+  el("adAccess").addEventListener("change", onAccessChange);
+  el("adAccess").addEventListener("click", onAccessClick);
   el("adList").addEventListener("click", function (ev) {
     const ed = ev.target.closest("[data-edit]"), ac = ev.target.closest("[data-active]");
     if (ed) openEditor(employee(ed.getAttribute("data-edit")));
@@ -250,6 +359,7 @@ async function start() {
   el("adCrews").addEventListener("click", onCrewClick);
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && el("adModal").firstChild) el("adModal").innerHTML = ""; });
   if (/[?&]tab=crews\b/.test(location.search)) tab("crew");
+  else if (/[?&]tab=access\b/.test(location.search)) tab("acc");
   await load();
 }
 

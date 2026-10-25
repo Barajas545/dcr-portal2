@@ -368,6 +368,12 @@ tbody tr:hover { background: var(--surface-2); }
 .dcr-mo-err { color: #d9614f; font-size: 12.5px; min-height: 16px; margin-top: 6px; }
 .dcr-mo-ft { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 .dcr-mo-danger { background: #c44b3b; border-color: #c44b3b; color: #fff; }
+/* the New Project dialog (js/pages/new-project.js): two columns on a computer, one on a phone */
+.dcr-mo-card.np-card { max-width: 620px; max-height: 92vh; overflow-y: auto; }
+.np-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.np-grid .np-wide { grid-column: 1 / -1; }
+.np-pair { display: grid; grid-template-columns: 70px 1fr; gap: 0 8px; }
+@media (max-width: 560px) { .np-grid { grid-template-columns: 1fr; } }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .dcr-mo-hd img { filter: invert(1); }
 }

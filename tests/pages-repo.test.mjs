@@ -129,7 +129,7 @@ test("updateProject: no price row read (prices hidden) -> a rate change is refus
   assert.equal(c.calls.filter((x) => x.op === "update").length, 0);
 });
 
-test("createProject: rpc create_project with the name, address and city only", async () => {
+test("createProject: rpc create_project; the old modal's keys still map to name, address and city (blank ones left out)", async () => {
   const c = fresh({
     create_project: (args, t) => {
       const r = { id: 30, number: "A301", name: args.fields.name, address: args.fields.address, city: args.fields.city, status: "new_request", version: 1 };

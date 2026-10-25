@@ -108,17 +108,7 @@
       .bd-msg{font-size:12px; margin-top:6px; min-height:16px;}
       .bd-msg.ok{color:var(--ok);} .bd-msg.err{color:var(--err);}
 
-      /* ── modal (new project) ── */
-      .bd-overlay{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index:60; padding:16px;}
-      .bd-overlay.open{display:flex;}
-      .bd-modal{background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:14px; width:100%; max-width:420px; padding:22px; box-shadow:0 8px 32px rgba(0,0,0,.35);}
-      .bd-modal h3{margin:0 0 6px; font-size:16px;}
-      .bd-modal .hint{font-size:12.5px; color:var(--text-muted); margin:0 0 12px;}
-      .bd-field{margin-bottom:11px;}
-      .bd-field label{display:block; font-size:12px; font-weight:600; color:var(--text-muted); margin:0 0 4px;}
-      .bd-field input{width:100%; box-sizing:border-box; padding:9px 11px; font-size:14px;
-        border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);}
-      .bd-modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:14px;}
+      /* New Project: the shared dialog (css/styles.css .np-card, js/pages/new-project.js) */
 
       @media (max-width:900px){
         .bd-toolbar{flex-wrap:wrap; overflow:visible;}
@@ -183,21 +173,6 @@
             <div id="bdLogs"><div class="bd-note">Loading…</div></div>
           </div>
         </aside>
-      </div>
-    </div>
-
-    <div class="bd-overlay" id="bdNewModal" role="dialog" aria-modal="true" aria-labelledby="npTitle">
-      <div class="bd-modal">
-        <h3 id="npTitle">New Project (starts as New request)</h3>
-        <p class="hint">The project number is given by the database when the project is created.</p>
-        <div class="bd-field"><label for="npName">Project name *</label><input id="npName" placeholder="e.g. Smith Residence" /></div>
-        <div class="bd-field"><label for="npAddr">Address</label><input id="npAddr" /></div>
-        <div class="bd-field"><label for="npCity">City</label><input id="npCity" /></div>
-        <div class="bd-msg err" id="npMsg" role="alert"></div>
-        <div class="bd-modal-actions">
-          <button class="bd-btn" id="npCancel" type="button">Cancel</button>
-          <button class="bd-btn bd-btn-primary" id="npCreate" type="button">✓ Create project</button>
-        </div>
       </div>
     </div>
 

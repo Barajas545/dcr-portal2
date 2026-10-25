@@ -71,8 +71,13 @@ test("profile shape: name falls back to the e-mail; admins hold every switch", (
   const p = shapeProfile({ id: "u1", full_name: " ", email: "a@demo.test", role: "lead", can_see_prices: false, active: true, version: 3 });
   assert.equal(p.name, "a@demo.test");
   assert.equal(p.must_change_password, false);
+  assert.equal(p.can_estimate, false, "a database without the column: off");
+  assert.equal(p.can_upload_onedrive, false);
   const a = shapeProfile({ id: "u2", full_name: "Avery", email: "x@demo.test", role: "admin", can_see_prices: false, can_see_financials: false, can_approve_payments: false });
   assert.ok(a.can_see_prices && a.can_see_financials && a.can_approve_payments);
+  assert.ok(a.can_estimate && a.can_upload_onedrive, "Part 3's switches too");
+  const m = shapeProfile({ id: "u4", email: "m@demo.test", role: "manager", can_estimate: true, can_upload_onedrive: true });
+  assert.ok(m.can_estimate && m.can_upload_onedrive);
   assert.equal(shapeProfile({ id: "u3", email: "y", role: "field", active: false }).active, false);
   assert.equal(shapeProfile(null), null);
 });

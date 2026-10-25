@@ -28,6 +28,13 @@
       .pj-thumb{width:92px; height:60px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2);
         flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:10px; overflow:hidden;}
       .pj-thumb img{width:100%; height:100%; object-fit:cover;}
+      /* the picture's buttons (admin, manager): change it (camera or library), take it off */
+      .pj-thumbbox{position:relative; flex-shrink:0;}
+      .pj-thumbbtn{position:absolute; bottom:-6px; right:-6px; width:28px; height:28px; border-radius:50%; border:1px solid var(--border);
+        background:var(--surface); color:var(--text); font-size:13px; line-height:1; cursor:pointer; padding:0; box-shadow:0 1px 4px rgba(0,0,0,.2);}
+      .pj-thumbbtn.del{right:auto; left:-6px; font-size:12px;}
+      .pj-thumbbtn:disabled{opacity:.5; cursor:default;}
+      .pj-thumb.busy{opacity:.55;}
       .pj-title{font-size:19px; font-weight:800; color:var(--text); line-height:1.25;}
       .pj-sub{font-size:12.5px; color:var(--text-muted); margin-top:2px;}
       .pj-status{display:inline-block; padding:3px 11px; border-radius:14px; font-size:12px; font-weight:700;
@@ -223,7 +230,12 @@
 
     <div class="pj">
       <div class="pj-head">
-        <div class="pj-thumb" id="pjThumb">…</div>
+        <div class="pj-thumbbox">
+          <div class="pj-thumb" id="pjThumb">…</div>
+          <button class="pj-thumbbtn" id="pjThumbEdit" type="button" hidden title="Change the project picture" aria-label="Change the project picture">📷</button>
+          <button class="pj-thumbbtn del" id="pjThumbDel" type="button" hidden title="Take the picture off" aria-label="Take the project picture off">✕</button>
+          <input type="file" id="pjThumbIn" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" hidden />
+        </div>
         <div style="flex:1;min-width:200px">
           <div class="pj-title" id="pjTitle">Loading…</div>
           <div class="pj-sub" id="pjSub"></div>
@@ -238,6 +250,7 @@
           title="This project came from the old portal: its old estimates, money and documents are there">Old portal ↗</a>
         <a class="pj-btn" id="pjPm" href="pm.html" title="The progress chart: every stage, estimate item and quote of this project">📊 Progress chart</a>
         <button class="pj-btn" id="pjSave" type="button" title="This page saves by itself — use this only to save right now">💾 Save now</button>
+        <button class="pj-btn" id="pjNew" type="button" hidden title="Create another project (the database gives its number)">＋ New project</button>
       </div>
       <div style="display:flex;gap:12px;align-items:center;min-height:18px;margin-bottom:6px">
         <span class="dcr-live" id="pjMsg"></span>

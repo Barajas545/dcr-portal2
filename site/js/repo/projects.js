@@ -10,11 +10,13 @@
                            row; the status note stays as it is, as Desktop 2's set_status does);
    * updateProject(p, ch)  Overview autosave: old-key changes, versioned; the labor rate goes to
                            project_prices with that row's own version (prices people only);
-   * createProject(f)      rpc create_project (admin, manager): the database gives the number;
+   * createProject(f)      rpc create_project (admin, manager): the database gives the number; the New
+                           Project dialog's fields (a zone alone needs no prices, a custom rate does);
+   * setThumbnail(p, id)   the project's picture (projects.thumbnail_file_id), versioned;
    * setLocation(...)      rpc set_project_location (write-once rules live in the database). */
 
 import { db, must, versioned, pageAll, conflict, notFound, forbidden, idOf } from "./_db.js";
-import { toProject, toDbPatch } from "../map/projects.js";
+import { toProject, toDbPatch, NEW_PROJECT_KEYS } from "../map/projects.js";
 import { statusForWrite } from "../map/projects.js";
 import { isStatus } from "../map/status.js";
 
@@ -95,23 +97,44 @@ export async function updateProject(project, changes) {
   return out;
 }
 
-/** f: {projectName, projectAddress, projectCity} (the old modal's fields; the number is the
-    database's). Returns the new project. */
+const OLD_CREATE_KEYS = { projectName: "name", projectAddress: "address", projectCity: "city" };
+
+/** f: the New Project dialog's fields (map/projects.js newProjectFields: name, address, city, state, zip, client_*,
+    status, scope, start_date, rate_source, labor_rate) — the old modal's projectName / projectAddress / projectCity
+    still map to name / address / city. Blank text is left out; any other key throws (a typo must not vanish). The
+    number is the database's. Returns the new project. */
 export async function createProject(f) {
   const fields = {};
-  const name = String((f && (f.projectName || f.name)) || "").trim();
-  if (!name) throw Object.assign(new Error("A project needs a name."), { code: "22023", status: 400 });
-  fields.name = name;
-  const addr = String((f && (f.projectAddress || f.address)) || "").trim();
-  const city = String((f && (f.projectCity || f.city)) || "").trim();
-  if (addr) fields.address = addr;
-  if (city) fields.city = city;
+  Object.keys(f || {}).forEach(function (k) {
+    const col = OLD_CREATE_KEYS[k] || k;
+    if (NEW_PROJECT_KEYS.indexOf(col) === -1) throw new Error("unknown project field: " + k);
+    const v = f[k];
+    if (v === null || v === undefined) return;
+    if (col === "labor_rate") { fields[col] = Math.round(Number(v) * 100) / 100; return; }
+    const s = String(v).trim();
+    if (s) fields[col] = s;
+  });
+  if (!fields.name) throw Object.assign(new Error("A project needs a name."), { code: "22023", status: 400 });
   const c = await db();
   const res = must(await c.rpc("create_project", { fields: fields }));
   const row = Array.isArray(res) ? res[0] : res;
   if (!row || row.id == null) throw new Error("The project was not created.");
   forgetProjects();
   return toProject(row);
+}
+
+/** The project's picture: projects.thumbnail_file_id = fileId (a live file of this project in the thumbnail folder —
+    t12_projects_thumbnail refuses anything else with 23514), or null for none. A versioned PATCH of that one column:
+    when someone else changed the project meanwhile it is sent once more at their version (nothing else is sent, so
+    nothing of theirs is overwritten). Returns the project as the database has it. */
+export async function setThumbnail(project, fileId) {
+  const patch = { thumbnail_file_id: fileId === null || fileId === undefined ? null : idOf(fileId) };
+  try {
+    return toProject(await versioned("projects", idOf(project.id), project.version, patch, PRICE_EMBED));
+  } catch (e) {
+    if (!(e && e.code === "PT409" && e.current)) throw e;
+    return toProject(await versioned("projects", idOf(project.id), e.current.version, patch, PRICE_EMBED));
+  }
 }
 
 /** -> whatever the RPC answers (the project row, or {stored:false, reason}); errors throw. */

@@ -16,7 +16,9 @@
    - images also get a <= 320 px JPEG preview uploaded next to the original (files.preview_path);
    - once the object is complete, the files row is inserted: photos -> folder "photos", sub-folder
      the day taken; journal -> "journal" with journal_entry_id, sub-folder the entry's day; voice
-     and text notes -> "documents"/"Site Notes"; caption -> files.description; source "portal2".
+     and text notes -> "documents"/"Site Notes"; receipts (a cost's, D13) -> "receipts" with cost_id,
+     no sub-folder, under f/{project}/receipts/… (financial: a money editor's); caption ->
+     files.description; source "portal2".
      Every upload has a sub-folder (one "Files uploaded to …" log line per person, folder and hour)
      and a unique display name ("IMG 2026-10-19 14.30.12-2.jpg"): the same name in the same place
      would become a new VERSION hiding the earlier photo, and iPhones call every capture image.jpg.
@@ -26,7 +28,9 @@
    - one tab drains at a time (Web Lock "dcr2-upload-queue").
 
    API: enqueue({projectId, file, kind, caption, takenAt, gps, name?, journalEntryId?, entryDate?,
-   pendingEntry?, folder?, subpath?, tag?}) -> id once the bytes are safe on this device;
+   pendingEntry?, folder?, subpath?, tag?, costId?, keepName?, preview?}) -> id once the bytes are safe on
+   this device (costId: a receipt's cost, required for kind "receipt"; keepName: the name as given, even when
+   the place has one already — the database then makes it a new version; preview: false, no small preview);
    onProgress(cb) -> unsubscribe; drain(); list(); listFor(projectId); remove(id); retryAll();
    bindEntry(localKey, entryId); durable(); online().                                            */
 
@@ -92,10 +96,11 @@ export function newUid() {
   return s;
 }
 
-/** p/{project_id}/{folder}/{uuid}/{ascii_slug(name)} (f/… is for receipts and bill documents,
-    which Portal 2 never uploads). */
+/** {p|f}/{project_id}/{folder}/{uuid}/{ascii_slug(name)}: f/ for receipts (financial files: the files check
+    and the Storage policy want them there, and only a money editor writes one), p/ for everything else
+    (Portal 2 never uploads a bill's document). */
 export function objectKey(projectId, folder, name, uid) {
-  return "p/" + projectId + "/" + folder + "/" + (uid || newUid()) + "/" + asciiSlug(name);
+  return (folder === "receipts" ? "f" : "p") + "/" + projectId + "/" + folder + "/" + (uid || newUid()) + "/" + asciiSlug(name);
 }
 
 export function previewKeyFor(key) {
@@ -138,7 +143,7 @@ export function stamp(when) {
   return day + " " + get("hour").replace("24", "00") + "." + get("minute") + "." + get("second");
 }
 
-const PREFIX = { photo: "IMG ", video: "VID ", voice: "Voice note ", note: "Note ", journal: "IMG ", document: "Document " };
+const PREFIX = { photo: "IMG ", video: "VID ", voice: "Voice note ", note: "Note ", journal: "IMG ", document: "Document ", receipt: "Receipt " };
 
 /** The display name of an upload: "IMG 2026-10-19 14.30.12-2.jpg" (n > 1 adds "-n"). */
 export function displayName(kind, file, when, n) {
@@ -157,6 +162,7 @@ export function bumpName(name, n) {
 /** Where a kind of upload goes: folder and sub-folder. */
 export function placeFor(kind, o, takenAt) {
   const opt = o || {};
+  if (kind === "receipt") return { folder: "receipts", subpath: opt.subpath ? String(opt.subpath) : "" };   // Desktop 2: none
   if (opt.folder) return { folder: opt.folder, subpath: opt.subpath !== undefined ? String(opt.subpath) : companyDay(takenAt) };
   if (kind === "journal") return { folder: "journal", subpath: opt.subpath || opt.entryDate || companyDay(takenAt) };
   if (kind === "voice" || kind === "note" || kind === "document") return { folder: "documents", subpath: opt.subpath || "Site Notes" };
@@ -278,7 +284,7 @@ export function createQueue(parts) {
       size: r.size || 0, sent, pct: r.size ? Math.min(100, Math.round((sent / r.size) * 100)) : 0,
       state: r.state || "waiting", stage: r.stage, error: r.error || "", tries: r.tries || 0, added: r.added,
       caption: r.caption || "", takenAt: r.takenAt, journalEntryId: r.journalEntryId ?? null,
-      pendingEntry: r.pendingEntry || null, tag: r.tag || "", mime: r.mime,
+      pendingEntry: r.pendingEntry || null, tag: r.tag || "", mime: r.mime, costId: r.costId ?? null,
     };
   }
 
@@ -317,6 +323,11 @@ export function createQueue(parts) {
     }
     const mime = String(opt.mime || file.type || guessMime(file.name));
     const kind = opt.kind || (mime.indexOf("video/") === 0 ? "video" : mime.indexOf("audio/") === 0 ? "voice" : "photo");
+    const costId = opt.costId === undefined || opt.costId === null || opt.costId === "" ? null
+      : (/^\d+$/.test(String(opt.costId)) ? Number(opt.costId) : opt.costId);
+    if (kind === "receipt" && costId === null) {
+      throw qerr("A receipt belongs to a cost.", { code: "local_rule", kind: "validation", fatal: true });
+    }
     const when = opt.takenAt ? new Date(opt.takenAt) : new Date(d.now());
     const takenAt = isNaN(when.getTime()) ? new Date(d.now()).toISOString() : when.toISOString();
     const place = placeFor(kind, opt, takenAt);
@@ -336,7 +347,7 @@ export function createQueue(parts) {
       kind, folder: place.folder, subpath: place.subpath,
       journalEntryId: opt.journalEntryId ?? null, pendingEntry: opt.pendingEntry || null,
       name, mime, size: file.size, blob: file, preview: null, caption: String(opt.caption || ""),
-      takenAt, gps: opt.gps || null, tag: opt.tag || "",
+      takenAt, gps: opt.gps || null, tag: opt.tag || "", costId, keepName: !!opt.keepName,
       key: objectKey(projectId, place.folder, name, d.uid()), previewKey: null,
       tus: null, sent: 0, stage: "object", state: "waiting", error: "", tries: 0, waitUntil: 0,
       added: d.now(), ready: false,
@@ -346,13 +357,15 @@ export function createQueue(parts) {
     }
     await d.store.put(rec);                 // the bytes are on this device now
     emit();
-    try {
-      const pv = await Promise.race([
-        d.makePreview(file, mime),
-        new Promise((r) => d.setTimeout(() => r(null), 4000)),
-      ]);
-      if (pv && pv.size) { rec.preview = pv; rec.previewKey = previewKeyFor(rec.key); }
-    } catch (e) { /* no preview: the file still goes up */ }
+    if (opt.preview !== false) {             // preview: false — no small copy next to it
+      try {
+        const pv = await Promise.race([
+          d.makePreview(file, mime),
+          new Promise((r) => d.setTimeout(() => r(null), 4000)),
+        ]);
+        if (pv && pv.size) { rec.preview = pv; rec.previewKey = previewKeyFor(rec.key); }
+      } catch (e) { /* no preview: the file still goes up */ }
+    }
     rec.ready = true;
     if (!removed.has(rec.id)) await d.store.put(rec);
     emit();
@@ -516,8 +529,10 @@ export function createQueue(parts) {
     const existing = await d.db.findByPath(r.key);
     if (existing) return existing;                       // an earlier attempt's answer was lost
     const place = { project_id: r.projectKey ?? r.projectId, folder: r.folder, subpath: r.subpath, journal_entry_id: entryId ?? null };
+    if (r.costId !== null && r.costId !== undefined) place.cost_id = r.costId;
     let name = r.name;
-    for (let n = 2; n < 60 && await d.db.nameTaken(place, name); n++) name = bumpName(r.name, n);
+    // keepName: the same name in the same place on purpose (a new version of it); else a free name
+    if (!r.keepName) for (let n = 2; n < 60 && await d.db.nameTaken(place, name); n++) name = bumpName(r.name, n);
     const row = Object.assign({}, place, {
       name, storage_path: r.key, size: r.size, mime: r.mime,
       description: r.caption ? r.caption : null, preview_path: r.previewKey || null, source: FILE_SOURCE,
@@ -728,6 +743,8 @@ export function filesDb(client) {
         .ilike("subpath", likeExact(place.subpath || "")).ilike("name", likeExact(name)).limit(1);
       q = place.journal_entry_id === null || place.journal_entry_id === undefined
         ? q.is("journal_entry_id", null) : q.eq("journal_entry_id", place.journal_entry_id);
+      // a receipt's name is its cost's: the same name for two costs is two receipts (M5b's version chain)
+      if (place.cost_id !== null && place.cost_id !== undefined) q = q.eq("cost_id", place.cost_id);
       const { data, error, status } = await q;
       if (error) { error.status = status; throw error; }
       return !!(data && data.length);

@@ -12,6 +12,7 @@ const P5B_BOOKS = new URL("../tools/fake/p5b-books.js", import.meta.url);   // P
 const P5C_LISTS = new URL("../tools/fake/p5c-lists.js", import.meta.url);   // P5c office lists (leads, vehicles, marketing tasks; M5c rules and rows)
 const P5C_SUB = new URL("../tools/fake/p5c-sub.js", import.meta.url);       // P5c sub submissions + the subform function's stand-in: after p5b-books.js
 const P5C_SALES = new URL("../tools/fake/p5c-sales.js", import.meta.url);   // P5c sales (the switch, comps, sales estimates, materials, sales-media)
+const P7_WEB = new URL("../tools/fake/p7-web.js", import.meta.url);         // Part 3 (the Estimator / OneDrive switches, admin_set_profile)
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
 const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
 const SEED = new URL("../tools/fake/seed.js", import.meta.url);
@@ -30,6 +31,7 @@ export async function loadFake() {
     if (existsSync(P5C_LISTS)) await import(P5C_LISTS.href);
     if (existsSync(P5C_SUB)) await import(P5C_SUB.href);
     if (existsSync(P5C_SALES)) await import(P5C_SALES.href);
+    if (existsSync(P7_WEB)) await import(P7_WEB.href);
     await import(ENGINE.href);
     if (existsSync(PC)) await import(PC.href);
     await import(SEED.href);
@@ -104,9 +106,25 @@ export function clientAs(engine, uid) {
     },
     storage: {
       from: () => ({
+        upload: async (p, body, o) => {
+          try {
+            const size = body && (body.size !== undefined ? body.size : body.byteLength || String(body).length);
+            engine.storage.upload(ctx(), p, size || 0, (o && o.contentType) || (body && body.type) || "application/octet-stream", body, !!(o && o.upsert));
+            return { data: { path: p }, error: null };
+          } catch (e) { return { data: null, error: { message: e.message, statusCode: e.body ? e.body.statusCode : String(e.status || 400), status: e.status || 400 } }; }
+        },
         createSignedUrl: async (p) => signOne(p),
         createSignedUrls: async (paths) => ({ data: paths.map((p) => { const r = signOne(p); return { path: p, signedUrl: r.data && r.data.signedUrl, error: r.error ? r.error.message : null }; }), error: null }),
       }),
+    },
+    // the Edge Functions as supabase-js answers them (engine.invoke: a function the demo has, or the gateway's 404)
+    functions: {
+      invoke: async (name, opts) => {
+        const r = engine.invoke(ctx(), String(name), opts && opts.body !== undefined ? clone(opts.body) : {});
+        if (r.status >= 200 && r.status < 300) return { data: r.data, error: null };
+        return { data: null, error: { name: "FunctionsHttpError", message: "Edge Function returned a non-2xx status code",
+          context: new Response(JSON.stringify(r.data), { status: r.status, headers: { "content-type": "application/json" } }) } };
+      },
     },
   };
 }

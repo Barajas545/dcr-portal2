@@ -2,7 +2,7 @@
 // each queued file, one project's summary, and the names of notes. Made-up data only.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { progressItems, summaryOf, itemLabel, noteName, isVideoFile } from "../site/js/pages/uploads.js";
+import { progressItems, summaryOf, itemLabel, noteName, isVideoFile, queueOptions } from "../site/js/pages/uploads.js";
 
 test("uploads: the queue's items become what the pages draw", () => {
   const items = progressItems([
@@ -34,4 +34,17 @@ test("uploads: a note's name carries a file-safe title, in company time", () => 
   assert.equal(isVideoFile({ type: "video/quicktime", name: "image.mov" }), true);
   assert.equal(isVideoFile({ type: "", name: "clip.MP4" }), true);
   assert.equal(isVideoFile({ type: "image/jpeg", name: "image.jpg" }), false);
+});
+
+test("uploads: Part 3's options reach the queue (a receipt's cost, the name as given, no preview, another place) and its items carry the cost", () => {
+  const file = { name: "r.pdf", size: 10 };
+  const when = new Date("2026-10-20T16:00:00Z");
+  const o = queueOptions({ projectId: 7, file, kind: "receipt", costId: 41, keepName: true, preview: false, folder: "receipts", subpath: "", takenAt: when });
+  assert.deepEqual(o, { projectId: 7, file, kind: "receipt", caption: "", takenAt: when, gps: null, costId: 41, keepName: true, preview: false,
+    folder: "receipts", subpath: "" });
+  const plain = queueOptions({ projectId: 7, file, kind: "photo", takenAt: when });
+  for (const k of ["costId", "keepName", "preview", "folder", "subpath", "name"]) assert.ok(!(k in plain), k + " only when given");
+  assert.equal(queueOptions({ projectId: 7, file, kind: "photo", preview: true, takenAt: when }).preview, undefined, "only false is passed on");
+  const items = progressItems([{ id: "r", projectId: 7, name: "Receipt x.pdf", state: "uploading", pct: 10, costId: 41 }, { id: "p", projectId: 7, name: "IMG.jpg" }]);
+  assert.deepEqual(items.map((i) => i.costId), [41, null]);
 });
