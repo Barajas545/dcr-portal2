@@ -39,13 +39,17 @@ site/                       published as is
                             tiles and quote_commitments only with prices AND financials; no ?id=: the picker)
   report-pm.html            the printable project status report (the worksite copy for anyone without prices)
   js/pm-chart.js            the chart engine both share (derive / layout / svg; pure)
-  project.html tabs Estimate, Takeoffs   (P5a, read only - Q12: edits stay in DCR Desktop 2) the estimates and change
-                            orders in the office's order, crew lines, item flags; Labor / Material / Total and the
-                            contract strip with prices only; the takeoffs by level, category and sub-category
+  project.html tabs Estimate, Takeoffs   (P5a, view and print; Q12 reversed 2026-10-24 for estimates: an Estimator edits
+                            them, see "The web estimate editor" below) the estimates and change orders in the office's
+                            order, crew lines, item flags; Labor / Material / Total and the contract strip with prices
+                            only; the takeoffs by level, category and sub-category (view and print only)
   report-estimate.html      the printed estimate / several with a GRAND TOTAL / a change order with its contract
                             figures; the worksite copy (no amount at all) for anyone without prices
   report-takeoff.html       the Material List (everyone; typed amounts masked) / the Material Quote with tax (prices)
-  css/estimates.css         the Estimate and Takeoffs tabs
+  css/estimates.css         the Estimate and Takeoffs tabs (and the editor's sheets)
+  js/pages/project-estimate-edit.js, est-sheet.js, js/repo/estimate-edit.js, js/map/estimate-edit.js
+                            the web estimate and change-order editor (owner 2026-10-24), fetched only for an Estimator
+                            (never in a phone's offline list)
   css/agents-console.css, css/console-print.css   the old console's styles, unchanged
   accounting.html           The Books (P5b, the financials switch): the old accountant's desk on Desktop 2's data -
                             the picture or the tiles, what needs doing, bills to pay (the check desk: payee, memo,
@@ -138,6 +142,12 @@ tools/e2e-p5a-est.mjs       the P5a Estimate and Takeoffs tabs and the printed e
                             prices, accountant, lead, field, view-only; phone and desk, light and dark, the print
                             preview; every amount the admin sees is looked for in the no-prices pages' HTML);
                             e2e-demo runs it (--p5est)
+tools/e2e-p7-est.mjs        the web estimate editor (owner 2026-10-24): the quantities-only Estimator on a 375 px phone
+                            and a desk (no amount, no price box, the full-screen sheet with Save in view, a quantity
+                            saved, amount words refused before sending, the approved lock, a locked word, a new change
+                            order, an item in a new group, a group renamed), an Estimator with prices (the live total,
+                            someone else's save and the conflict panel), a manager without the switch and a lead read
+                            only (the editor's code never downloaded); est7_*.png
 tools/e2e-p5a-pm.mjs        the P5a Progress Chart and its report (every role, phone and desk, light and dark);
                             e2e-demo runs it (--p5pm)
 tools/e2e-p5b-books.mjs     the P5b books: The Books, the bill page, the approvals card (admin, a manager with approve,
@@ -177,7 +187,8 @@ tools/e2e-p5c-pglite.mjs    every P5c page as every role (and signed out: submit
                             signed upload): acceptance checks 4 and 5, accept -> a bill waiting for approval in The
                             Books, the notices for DCR Agents 2; e2e-demo runs it when PGLITE_DIR is set
 tools/schema-check.mjs      Portal 2's own modules against the REAL database rules (PGlite); tools/schema-pm.mjs
-                            is its Progress Chart part, tools/schema-check-p5a-est.mjs its estimates part and
+                            is its Progress Chart part, tools/schema-check-p5a-est.mjs its estimates part, tools/schema-check-p7-est.mjs the web
+                            estimate editor's (migration 20261028000100: every refusal, no money without prices) and
                             tools/schema-p5a-sweep.mjs the P5 acceptance check 1 as a sweep of raw REST answers (every
                             price / money table, quotes, the print RPCs, search) per role, plus check 5 for M5a's log lines
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
@@ -238,6 +249,7 @@ node tools/e2e-p3.mjs --out <folder>               # the P3 walk alone + screens
 node tools/e2e-p6.mjs --out <folder>               # the P6 walk alone + screenshots (p6_*.png; --shots none)
 node tools/e2e-p5a-pm.mjs --out <folder>           # the Progress Chart walk alone + screenshots (pm_*.png; --shots none)
 node tools/e2e-p5a-est.mjs --out <folder>          # the estimates walk alone + screenshots (est_*.png; --shots none)
+node tools/e2e-p7-est.mjs --out <folder>           # the estimate editor walk + screenshots (est7_*.png; --shots none)
 node tools/e2e-p5b-books.mjs --out <folder>       # the books walk alone + screenshots (books_*.png; --shots none)
 node tools/e2e-p5b-ledger.mjs --out <folder>      # the ledger walk alone + screenshots (ledger_*.png; --shots none)
 node tools/e2e-p5c-sales.mjs --out <folder>       # the sales walk alone + screenshots (sales_*.png; --shots none)
@@ -439,6 +451,28 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   `my_assistant` with `p_summary`); DCR Agents 2 (with the server's dot) and Assistants for admins.
 - Guided Assist is not built (Q21: dropped). The service worker keeps My Assistant ahead on phones, not the
   admins' pages.
+
+## The web estimate editor (owner 2026-10-24: Q12 reversed) in short
+
+- **Who.** An Estimator: an admin, or a manager with the Estimator switch (`profiles.can_estimate`, migration
+  `20261028000100_estimator` in DCR Desktop 2; set by an admin). The Estimate tab reads the switch fresh
+  (`repo/estimates.js estimateAccess`) and only then fetches the editor; everyone else keeps the view-and-print tab
+  ("view only"). A database without the migration (no column, no `estimate_edit_read`) keeps the tab read only, so the
+  site may go out before or after it. Takeoffs stay view and print.
+- **What.** ＋ Estimate / ＋ Change order (a plain insert: the database numbers it); a tap opens a sheet - the estimate
+  (name, description, the terms with prices, status, archive, duplicate with prices, delete), a group (rename, code,
+  Up / Down, a new item in it) or an item (name, type with Labor / Material / Sub-contractor boxes, a switch that
+  clears what the type hides after asking, assigned, notes and the live total with prices; Up / Down, Move to group,
+  Move to estimate, Delete). Every write carries the versions it was shown (`save_estimate_item`: the row and its price
+  row in one transaction); someone else's save first: the same changes again when they touched other fields, else the
+  conflict panel (Keep theirs / Use mine). A full-screen sheet on a phone, Save always in view, 44 px controls.
+- **Without prices** (a quantities-only Estimator): the database sends no amount, note or term at all
+  (`estimate_edit_read`), the words amount-free; a word that quotes an amount is shown that way, read only, never
+  sent; no price box, no Approved, no Duplicate; an approved estimate's status, archive, items, type and quantities are
+  kept; a group whose name or code quotes an amount is not renamed, moved into or reordered. Each of these is the
+  database's rule too (the approval gate, the approved lock, the words guard), so nothing typed elsewhere gets round it.
+- **Demo:** `estimator@demo.test` (Robin Estimator, a manager with the switch and no prices) and `manager2@demo.test`
+  (Quinn, an Estimator with prices); `manager@` stays a manager without the switch (read only).
 
 ## Sales estimates (P5c) in short
 

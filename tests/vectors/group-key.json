@@ -1,0 +1,170 @@
+{
+ "about": "Group names as the app (dcrdesk/domain/estimate_order.py clean_name, group_key, clean_group_order) and the database (app.tidy_name, app.group_key, app.clean_group_order) must see them: the same white space (str.split's), lower() letter by letter (never a case fold). Checked by tests/test_estimate_order_archive.py and tools/pglite_check/estimate_order_archive.mjs.",
+ "cases": [
+  {
+   "name": " Exterior   Walls ",
+   "clean": "Exterior Walls",
+   "key": "exterior walls"
+  },
+  {
+   "name": "Floor\u00a0Framing",
+   "clean": "Floor Framing",
+   "key": "floor framing"
+  },
+  {
+   "name": "Roof\u2003Trusses",
+   "clean": "Roof Trusses",
+   "key": "roof trusses"
+  },
+  {
+   "name": "Deck\u3000Boards",
+   "clean": "Deck Boards",
+   "key": "deck boards"
+  },
+  {
+   "name": "Tab\tand\nnew\r\nline",
+   "clean": "Tab and new line",
+   "key": "tab and new line"
+  },
+  {
+   "name": "Unit\u001fSep",
+   "clean": "Unit Sep",
+   "key": "unit sep"
+  },
+  {
+   "name": "Next\u0085Line",
+   "clean": "Next Line",
+   "key": "next line"
+  },
+  {
+   "name": "Narrow\u202fNo-break",
+   "clean": "Narrow No-break",
+   "key": "narrow no-break"
+  },
+  {
+   "name": "Ogham\u1680Space",
+   "clean": "Ogham Space",
+   "key": "ogham space"
+  },
+  {
+   "name": "Line\u2028Para\u2029End",
+   "clean": "Line Para End",
+   "key": "line para end"
+  },
+  {
+   "name": "Math\u205fSpace",
+   "clean": "Math Space",
+   "key": "math space"
+  },
+  {
+   "name": "Zero\u200bWidth",
+   "clean": "Zero\u200bWidth",
+   "key": "zero\u200bwidth"
+  },
+  {
+   "name": "Stra\u00dfe",
+   "clean": "Stra\u00dfe",
+   "key": "stra\u00dfe"
+  },
+  {
+   "name": "STRASSE",
+   "clean": "STRASSE",
+   "key": "strasse"
+  },
+  {
+   "name": "\u00c9COLE \u00e9cole",
+   "clean": "\u00c9COLE \u00e9cole",
+   "key": "\u00e9cole \u00e9cole"
+  },
+  {
+   "name": "\u0130zmir",
+   "clean": "\u0130zmir",
+   "key": "izmir"
+  },
+  {
+   "name": "\u039f\u0394\u039f\u03a3",
+   "clean": "\u039f\u0394\u039f\u03a3",
+   "key": "\u03bf\u03b4\u03bf\u03c3"
+  },
+  {
+   "name": "MiXeD CaSe",
+   "clean": "MiXeD CaSe",
+   "key": "mixed case"
+  },
+  {
+   "name": "",
+   "clean": "",
+   "key": ""
+  },
+  {
+   "name": null,
+   "clean": "",
+   "key": ""
+  },
+  {
+   "name": "   ",
+   "clean": "",
+   "key": ""
+  },
+  {
+   "name": "\u00a0",
+   "clean": "",
+   "key": ""
+  },
+  {
+   "name": "\u2003Indented\u3000",
+   "clean": "Indented",
+   "key": "indented"
+  }
+ ],
+ "orders": [
+  {
+   "names": [
+    "  Framing ",
+    "framing",
+    "",
+    "Roof   Trusses",
+    null,
+    "ROOF trusses"
+   ],
+   "clean": [
+    "Framing",
+    "",
+    "Roof Trusses"
+   ]
+  },
+  {
+   "names": [
+    "Floor\u00a0Framing",
+    "floor framing",
+    "FLOOR\u2003FRAMING"
+   ],
+   "clean": [
+    "Floor Framing"
+   ]
+  },
+  {
+   "names": [
+    "Stra\u00dfe",
+    "STRASSE",
+    "strasse"
+   ],
+   "clean": [
+    "Stra\u00dfe",
+    "STRASSE"
+   ]
+  },
+  {
+   "names": [
+    "\u0130zmir",
+    "izmir",
+    "\u039f\u0394\u039f\u03a3",
+    "\u03bf\u03b4\u03bf\u03c3"
+   ],
+   "clean": [
+    "\u0130zmir",
+    "\u039f\u0394\u039f\u03a3"
+   ]
+  }
+ ]
+}

@@ -1,5 +1,7 @@
-/* Estimates and change orders on Portal 2 (BLUEPRINT 3.3.11 "Estimates and change orders"; owner answer
-   Q12: view and print only — editing stays in DCR Desktop 2; P5 acceptance check 1).
+/* Estimates and change orders on Portal 2 (BLUEPRINT 3.3.11 "Estimates and change orders"; P5 acceptance check 1;
+   owner answer Q12 — view and print only — REVERSED 2026-10-24: an Estimator (an admin, or a manager with the
+   Estimator switch) edits them on the web too: estimateEditor below, the editor's own rules in map/estimate-edit.js,
+   loaded only for an Estimator).
 
    The database does the estimate's work (migration M5a, rpc estimate_print — DCR Desktop 2's printing rules):
    the groups in the order the office arranged them, the items in a group, the item money (the
@@ -141,6 +143,15 @@ export function statusWord(s) { return STATUS_LABELS[s] ? s : "draft"; }
 export function statusText(s) { return STATUS_LABELS[statusWord(s)]; }
 
 export function isChangeOrder(e) { return !!e && e.kind === "change_order"; }
+
+/** Whether the project page offers this person the estimate editor (it only shows the controls - the database decides
+    every write, app.can_edit('estimates')): an active admin, or an active manager whose Estimator switch is on as the
+    database has it (access: repo/estimates.js estimateAccess). The agents account never. */
+export function estimateEditor(me, access) {
+  if (!me || me.active === false || me.role === "agents") return false;
+  if (me.role === "admin") return true;
+  return me.role === "manager" && !!(access && access.can_estimate);
+}
 export function isArchived(e) { return !!(e && e.archived_at); }
 export function isDeleted(e) { return !!(e && e.deleted_at); }
 /** An estimate counts in totals, print lists and the contract only when neither archived nor deleted. */

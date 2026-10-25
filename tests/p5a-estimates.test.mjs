@@ -209,6 +209,8 @@ function keysDeep(v, out) {
 
 test("listEstimates / listTakeoffs: a person WITHOUT prices is sent no amount at all — no money key, typed amounts scrubbed, no price table read", { skip }, async () => {
   const e = await freshEngine();
+  // "manager" stays a manager WITHOUT the Estimator switch (20261028000100): the read-only tab, as before; the
+  // no-price Estimator's editor reads are tests/p7-est-edit-repo.test.mjs's
   for (const key of ["manager", "lead", "field", "viewer"]) {
     const p = await person(key);
     const r = recording(e, p.id);

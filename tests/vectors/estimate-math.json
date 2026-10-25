@@ -1,0 +1,139 @@
+{
+  "about": "Estimate-item math cases (DESIGN-v2 §3, one rounding rule): checked against dcrdesk/domain/estimate_math.py by tests/test_estimate_math.py and against the estimate_item_totals view by tools/pglite_check/check.mjs. Money as exact text.",
+  "cases": [
+    {
+      "name": "the DESIGN-v2 example (crew + per-qty labor, material markup)",
+      "item": {
+        "labor_guys": 2,
+        "labor_days": 3,
+        "labor_qty": 10,
+        "material_qty": 100
+      },
+      "prices": {
+        "labor_rate": 100,
+        "labor_unit_price": 5,
+        "labor_markup_pct": 20,
+        "material_unit_price": 2.5,
+        "material_markup_pct": 10
+      },
+      "expected": {
+        "men_hours": 48.0,
+        "labor_total": "5820.00",
+        "material_total": "275.00",
+        "total": "6095.00",
+        "labor_per_area": null,
+        "material_per_area": null
+      }
+    },
+    {
+      "name": "half cents: labor and material each round up, the total comes from the unrounded sum",
+      "item": {
+        "labor_qty": 1,
+        "material_qty": 0.5
+      },
+      "prices": {
+        "labor_unit_price": 0.01,
+        "labor_markup_pct": 50,
+        "material_unit_price": 0.03,
+        "material_markup_pct": 0
+      },
+      "expected": {
+        "men_hours": 0.0,
+        "labor_total": "0.02",
+        "material_total": "0.02",
+        "total": "0.03",
+        "labor_per_area": null,
+        "material_per_area": null
+      }
+    },
+    {
+      "name": "markups with two decimals, fractional quantities, a labor area",
+      "item": {
+        "labor_guys": 3,
+        "labor_days": 5,
+        "labor_qty": 7.125,
+        "material_qty": 13.333,
+        "labor_area": 37.5,
+        "material_area": 0
+      },
+      "prices": {
+        "labor_rate": 87.5,
+        "labor_unit_price": 12.34,
+        "labor_markup_pct": 33.33,
+        "material_unit_price": 7.77,
+        "material_markup_pct": 12.5
+      },
+      "expected": {
+        "men_hours": 120.0,
+        "labor_total": "14116.88",
+        "material_total": "116.55",
+        "total": "14233.42",
+        "labor_per_area": "376.45",
+        "material_per_area": null
+      }
+    },
+    {
+      "name": "a credit line rounds half away from zero",
+      "item": {
+        "labor_qty": 1
+      },
+      "prices": {
+        "labor_unit_price": -0.01,
+        "labor_markup_pct": 50,
+        "material_markup_pct": 0
+      },
+      "expected": {
+        "men_hours": 0.0,
+        "labor_total": "-0.02",
+        "material_total": "0.00",
+        "total": "-0.02",
+        "labor_per_area": null,
+        "material_per_area": null
+      }
+    },
+    {
+      "name": "blank prices count as 0; area 0 or blank gives no per-area figure",
+      "item": {
+        "labor_guys": 2,
+        "labor_days": 1.5,
+        "labor_area": 100
+      },
+      "prices": {
+        "labor_markup_pct": 0,
+        "material_markup_pct": 0
+      },
+      "expected": {
+        "men_hours": 24.0,
+        "labor_total": "0.00",
+        "material_total": "0.00",
+        "total": "0.00",
+        "labor_per_area": "0.00",
+        "material_per_area": null
+      }
+    },
+    {
+      "name": "per-area figures are rounded to cents",
+      "item": {
+        "labor_guys": 1,
+        "labor_days": 1,
+        "material_qty": 1,
+        "labor_area": 3,
+        "material_area": 7
+      },
+      "prices": {
+        "labor_rate": 10,
+        "material_unit_price": 10,
+        "labor_markup_pct": 0,
+        "material_markup_pct": 0
+      },
+      "expected": {
+        "men_hours": 8.0,
+        "labor_total": "80.00",
+        "material_total": "10.00",
+        "total": "90.00",
+        "labor_per_area": "26.67",
+        "material_per_area": "1.43"
+      }
+    }
+  ]
+}

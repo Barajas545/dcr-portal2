@@ -2027,6 +2027,11 @@ section = "P5a: estimates, change orders and takeoffs (repo/estimates.js, migrat
 await (await import("./schema-check-p5a-est.mjs")).run({ check, results, section, as, client, sql, one, SITE, PEOPLE, ok, same, refused, catalog });
 
 // ===========================================================================================
+section = "The web estimate editor (repo/estimate-edit.js, migration 20261028000100: estimate_edit_read, save_estimate_item, the guards)";
+// ===========================================================================================
+await (await import("./schema-check-p7-est.mjs")).run({ check, results, section, as, client, sql, one, SITE, PEOPLE, ok, same, refused, catalog });
+
+// ===========================================================================================
 section = "P5a: acceptance check 1 as a sweep of raw REST answers, and check 5 for M5a's log lines (every role)";
 // ===========================================================================================
 await (await import("./schema-p5a-sweep.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, catalog, SITE });

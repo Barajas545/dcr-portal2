@@ -149,16 +149,22 @@ export function contractStripHtml(estimates, show) {
 }
 
 /** The estimate cards (the old Estimate tab: one card per estimate, groups, items; Labor / Material /
-    Total with prices). opts: {show, pid}. */
+    Total with prices). opts: {show, pid, edit}. With `edit` (the web editor, pages/project-estimate-edit.js; owner
+    2026-10-24) the cards carry its hooks — "✎ Edit" on the estimate, "⋯" on a group (its database gid in data-grp,
+    never its name), every item row a button, "＋ Item" under a group a person may add to (e.addable, g.addable: the
+    approved lock and the locked groups without prices) and "＋ Item in a new group"; without it nothing changes. */
 export function estimateCardsHtml(estimates, opts) {
   const o = opts || {};
   const show = !!o.show;
+  const edit = !!o.edit;
   const m = function (c) { return c ? moneyText(c) : ""; };
   const cols = show ? 4 : 1;
   return (estimates || []).map(function (e) {
     const t = e.total;
     let html = '<div class="es-card' + (e.archived ? " es-archived" : "") + (isChangeOrder(e) ? " es-co" : "") + '" data-est="' + esc(e.id) + '">' +
-      '<table class="pj-tbl es-tbl"><thead><tr class="es-head"><td><div class="es-name">' + (isChangeOrder(e) ? "🧾 " : "📄 ") + esc(wordsFor(show)(e.displayName)) + "</div>" +
+      '<table class="pj-tbl es-tbl"><thead><tr class="es-head"><td>' +
+      (edit ? '<button type="button" class="es-act es-edit" data-act="est" data-est="' + esc(e.id) + '" title="Name, description, status, archive, delete">✎ Edit</button>' : "") +
+      '<div class="es-name">' + (isChangeOrder(e) ? "🧾 " : "📄 ") + esc(wordsFor(show)(e.displayName)) + "</div>" +
       '<div class="es-sub">' + esc(e.label) + " " + statusChip(e) + (e.archived ? ' <span class="es-st es-st-archived">Archived</span>' : "") +
       ' · <a class="es-print" href="report-estimate.html?id=' + encodeURIComponent(o.pid) + "&amp;est=" + encodeURIComponent(e.id) + '">🖨 Print</a></div>' +
       (plain(e.description).trim() ? '<div class="es-desc">' + multilineMasked(e.description, wordsFor(show)) + "</div>" : "") + "</td>" +
@@ -166,17 +172,26 @@ export function estimateCardsHtml(estimates, opts) {
       '<tr class="es-colhead"><th>Item</th>' + (show ? '<th class="num es-mob-hide">Labor</th><th class="num es-mob-hide">Material</th><th class="num">Total</th>' : "") + "</tr></thead><tbody>";
     if (!e.items.length) html += '<tr><td colspan="' + cols + '" class="es-none">No items yet.</td></tr>';
     e.groups.forEach(function (g) {
-      html += '<tr class="pj-grp"><td colspan="' + cols + '">' + esc(wordsFor(show)(g.label)) + (g.code ? ' <span class="es-code">' + esc(wordsFor(show)(g.code)) + "</span>" : "") + "</td></tr>";
+      html += '<tr class="pj-grp"><td colspan="' + cols + '">' + esc(wordsFor(show)(g.label)) + (g.code ? ' <span class="es-code">' + esc(wordsFor(show)(g.code)) + "</span>" : "") +
+        (edit ? '<button type="button" class="es-act es-grp-act" data-act="grp" data-est="' + esc(e.id) + '" data-grp="' + esc(g.gid) + '" aria-label="Group: rename, code, move" title="Group: rename, code, move"></button>' : "") +
+        "</td></tr>";
       g.items.forEach(function (it) {
-        html += '<tr class="es-item" data-item="' + esc(it.id) + '"><td class="pj-il">' + itemScreenHtml(it, show) + "</td>" +
+        html += '<tr class="es-item' + (edit ? " es-item-edit" : "") + '" data-item="' + esc(it.id) + '"' +
+          (edit ? ' data-act="item" data-est="' + esc(e.id) + '" tabindex="0" role="button" aria-label="Edit this item"' : "") + '><td class="pj-il">' + itemScreenHtml(it, show) + "</td>" +
           (show && it.money ? '<td class="num es-mob-hide">' + esc(m(it.money.labor)) + '</td><td class="num es-mob-hide">' + esc(m(it.money.material)) +
             '</td><td class="num"><b>' + esc(m(it.money.total)) + "</b></td>" : show ? '<td class="num es-mob-hide"></td><td class="num es-mob-hide"></td><td class="num"></td>' : "") + "</tr>";
       });
+      if (edit && g.addable !== false && e.addable !== false) {
+        html += '<tr class="es-add"><td colspan="' + cols + '"><button type="button" class="es-act" data-act="add" data-est="' + esc(e.id) + '" data-grp="' + esc(g.gid) + '">＋ Item</button></td></tr>';
+      }
       if (show && g.total && e.groups.length > 1) {
         html += '<tr class="pj-grpTot"><td>Subtotal — ' + esc(wordsFor(show)(g.label)) + '</td><td class="num es-mob-hide">' + esc(m(g.total.labor)) +
           '</td><td class="num es-mob-hide">' + esc(m(g.total.material)) + '</td><td class="num">' + esc(moneyText(g.total.total)) + "</td></tr>";
       }
     });
+    if (edit && e.addable !== false) {
+      html += '<tr class="es-add es-add-grp"><td colspan="' + cols + '"><button type="button" class="es-act" data-act="addgrp" data-est="' + esc(e.id) + '">＋ Item in a new group</button></td></tr>';
+    }
     return html + "</tbody></table></div>";
   }).join("");
 }
