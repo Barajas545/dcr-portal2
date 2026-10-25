@@ -29,7 +29,7 @@ function co() {
 function render() {
   const list = pickForPrint(state.all, state.which);
   if (!list.length) {
-    el("rpSheet").innerHTML = '<div class="rp-loading">' + (state.which === "all" ? "This project has no estimates yet. Estimates are written in DCR Desktop 2."
+    el("rpSheet").innerHTML = '<div class="rp-loading">' + (state.which === "all" ? "This project has no estimates yet."
       : "That estimate is not there any more — it may have been deleted.") + "</div>";
     return;
   }
