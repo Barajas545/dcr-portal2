@@ -15,7 +15,9 @@
      project's picture is refused (23514);
    * costs and receipts (already live: M5b): repo/ledger addCost / updateCost / getCost / lineChoices as the
      accountant (the labour amount 2.5 h x 33.33 = 83.33 is the database's), a manager without financials refused
-     (42501); a receipt under f/{project}/receipts/… with its cost_id by the accountant, a lead refused;
+     (42501); a cost whose line's estimate is archived later keeps its line through an edit of its words (the line
+     kept in lineChoices, never sent); a receipt under f/{project}/receipts/… with its cost_id by the accountant, a
+     lead refused;
    * drift: the demo database (tools/fake/p7-web.js, engine.js) has the same profiles switches.
    Made-up people and jobs only. */
 import { existsSync } from "node:fs";
@@ -93,6 +95,26 @@ export async function run(h) {
     J.cost = fixed;
     const lines = await ledger.lineChoices(J.p.id);
     ok(Array.isArray(lines), "line choices answer");
+    // a cost booked to a line whose estimate is archived later: not offered for a new cost, kept for this cost's
+    // edit, and an edit of its words (no line select drawn) never unties it
+    await sql("reset role");
+    const e = await one("insert into public.estimates (project_id, name, status) values ($1, 'P7w lines', 'draft') returning id", [J.p.id]);
+    const it = await one("insert into public.estimate_items (estimate_id, name, group_name) values ($1, 'P7w walls', 'Framing') returning id", [e.id]);
+    await as("accountant");
+    const linked = await ledger.addCost(CF.payload({ kind: "material", cost_date: "2026-10-20", description: "P7w studs", amount: "40",
+      estimate_item_id: String(it.id) }, { projectId: J.p.id }));
+    same(String(linked.estimate_item_id), String(it.id), "booked to the line");
+    await sql("reset role");
+    await sql("update public.estimates set archived_at = now() where id = $1", [e.id]);
+    await as("accountant");
+    ok(!(await ledger.lineChoices(J.p.id)).some((l) => String(l.id) === String(it.id)), "an archived estimate's line is not offered for a new cost");
+    const kept = (await ledger.lineChoices(J.p.id, linked.estimate_item_id)).find((l) => String(l.id) === String(it.id));
+    same(kept && kept.label, "Framing — P7w walls (archived estimate)", "kept for this cost's edit");
+    const b4 = await ledger.getCost(linked.id);
+    const patch = CF.payload({ kind: "material", cost_date: "2026-10-20", description: "P7w studs (typo fixed)", amount: "40", estimate_item_id: undefined },
+      { editing: true, before: b4 });
+    same(Object.keys(patch), ["description"], "only the words are sent");
+    same(String((await ledger.updateCost(b4, patch)).estimate_item_id), String(it.id), "still booked to its line");
   });
 
   await check("Part 3 receipts: under f/{project}/receipts/… with its cost_id by the accountant; a lead can write neither the object nor the link", async () => {
