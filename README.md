@@ -484,7 +484,8 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   replace in place (one drawing, one file); a person can never write a new `cad` value (the old sketch tool's drawings are
   only kept, and opened in the old portal). The pictures' "URL" intake is gone (the security policy shows no other site's
   picture); an old link is kept as a link.
-- **Not built (Q20):** the plans library, takeoff-web and the `.takeoff` archive stay on the old portal.
+- **Not built here (Q20, updated by the owner 2026-10-24):** the plans library, takeoff-web and the `.takeoff` files stay
+  in the Plans Archive; floor-plan PDFs go into the project's OneDrive Floor Plans folder from the Files tab (Part 4).
 
 ## The Files tab's OneDrive part (Part 4) in short
 
