@@ -173,7 +173,7 @@ export function estimateCardsHtml(estimates, opts) {
     if (!e.items.length) html += '<tr><td colspan="' + cols + '" class="es-none">No items yet.</td></tr>';
     e.groups.forEach(function (g) {
       html += '<tr class="pj-grp"><td colspan="' + cols + '">' + esc(wordsFor(show)(g.label)) + (g.code ? ' <span class="es-code">' + esc(wordsFor(show)(g.code)) + "</span>" : "") +
-        (edit ? '<button type="button" class="es-act es-grp-act" data-act="grp" data-est="' + esc(e.id) + '" data-grp="' + esc(g.gid) + '" aria-label="Group: rename, code, move">⋯</button>' : "") +
+        (edit ? '<button type="button" class="es-act es-grp-act" data-act="grp" data-est="' + esc(e.id) + '" data-grp="' + esc(g.gid) + '" aria-label="Group: rename, code, move" title="Group: rename, code, move"></button>' : "") +
         "</td></tr>";
       g.items.forEach(function (it) {
         html += '<tr class="es-item' + (edit ? " es-item-edit" : "") + '" data-item="' + esc(it.id) + '"' +

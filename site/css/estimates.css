@@ -86,6 +86,7 @@
    cards' edit hooks and the sheets. A sheet is a centred panel of at most 640 px; on a phone it is the whole screen
    with its footer (Save) always in view. Every control is at least 44 px high in a sheet and on a phone. */
 .es-editor .es-head .es-edit{float:right; margin:0 0 4px 8px;}
+.es-editor.es-busy, .es-editor.es-busy .es-act{cursor:progress;}
 .es-act{display:inline-flex; align-items:center; justify-content:center; gap:4px; min-height:36px; padding:6px 12px; border:1px solid var(--border);
   border-radius:8px; background:var(--surface); color:var(--text); font:inherit; font-size:12.5px; font-weight:700; cursor:pointer; white-space:nowrap;}
 .es-act:hover{border-color:var(--acc); color:var(--acc);}
@@ -95,7 +96,8 @@
 .es-act.es-danger{color:#c44b3b; border-color:#e2a59b;}
 .es-act.es-danger:hover{background:#c44b3b; color:#fff; border-color:#c44b3b;}
 .es-act.es-danger:disabled{background:var(--surface); color:var(--text-muted); border-color:var(--border);}
-.es-tbl .pj-grp .es-grp-act{float:right; min-height:28px; padding:2px 10px; margin:-3px 0; font-size:14px; line-height:1;}
+.es-tbl .pj-grp .es-grp-act{float:right; min-height:28px; min-width:40px; padding:2px 10px; margin:-3px 0; font-size:14px; line-height:1;}
+.es-tbl .pj-grp .es-grp-act::before{content:"⋯";}   /* drawn, not text: a group row reads as its name and code */
 .es-tbl tr.es-item-edit{cursor:pointer;}
 .es-tbl tr.es-item-edit:hover td{background:var(--tint);}
 .es-tbl tr.es-item-edit:focus{outline:2px solid var(--acc); outline-offset:-2px;}
@@ -120,7 +122,7 @@ body.es-sheet-open{overflow:hidden;}
 .es-sheet .es-act{min-height:44px;}
 .es-form label{margin:12px 0 5px; font-size:12.5px;}
 .es-form input, .es-form select, .es-form textarea{min-height:44px; font-size:15px;}
-.es-form textarea{resize:vertical; line-height:1.4;}
+.es-form textarea{resize:vertical; line-height:1.4; font-family:inherit;}
 .es-form input:disabled, .es-form select:disabled, .es-form textarea:disabled{background:var(--surface-2); color:var(--text-muted); cursor:not-allowed;}
 .es-f2{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
 .es-part{margin:14px 0 0; padding:2px 12px 12px; border:1px solid var(--border); border-radius:10px;}

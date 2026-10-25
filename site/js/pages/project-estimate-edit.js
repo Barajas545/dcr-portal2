@@ -252,6 +252,7 @@ function notice(text) {
 }
 function setBusy(on) {
   state.busy = on;
+  if (host) { host.classList.toggle("es-busy", !!on); host.setAttribute("aria-busy", on ? "true" : "false"); }
   const box = $("esSheet");
   if (box) box.querySelectorAll(".es-sheet-ft button, .es-moves button, .es-clash button").forEach(function (b) {
     if (on) { b.dataset.wasDisabled = b.disabled ? "1" : ""; b.disabled = true; }
@@ -345,13 +346,13 @@ async function newEstimate(kind) {
     },
   });
   if (!v || !host) return;
-  state.busy = true;
+  setBusy(true);
   try {
     const row = await repo.createEstimate(cx.pid, kind, { name: v.name, description: cleanName(v.description) ? v.description : null });
     state.filter = String(row.id);
     await afterWrite((co ? "Change order #" + row.co_number : "Estimate #" + row.number) + " created.", true);
   } catch (e) { refused(e, "toast"); }
-  finally { state.busy = false; }
+  finally { setBusy(false); }
 }
 
 /* ── the estimate sheet ────────────────────────────────────────────── */
