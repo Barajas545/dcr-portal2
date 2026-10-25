@@ -7,7 +7,7 @@
    * Convert to project is ONE database step (rpc convert_lead): the project is created (the database gives it the
      next number — nobody types an "Internal ID" any more) and the lead is linked to it, or neither happens. A
      converted lead links to its project, and the new project's OneDrive folder is made as New Project makes it
-     (new-project.js makeFolder; owner 2026-10-24);
+     (new-project.js makeFolder, once repo/onedrive.js LIVE is on; owner 2026-10-24);
    * the list starts on the open leads (Show: converted, all); "contacted today" and the ages are company days;
    * who: admin, manager, accountant and view-only read; admin and manager write. A lead or a field account is told
      leads are kept by the office and the page asks the database for nothing (it would answer no rows). */
@@ -180,7 +180,7 @@ async function convert(e) {
     close("cvModal");
     render();
     toast("Project " + (got.project.number || "") + " created on the Board.", "ok");
-    // its OneDrive folder, as the New Project dialog makes it (nothing to say while the OneDrive function is not there)
+    // its OneDrive folder, as the New Project dialog makes it (repo/onedrive.js LIVE off: nothing asked, nothing said)
     makeFolder(got.project).then(function (note) { if (note) toast(note, "info"); }, function () {});
   } catch (err) {
     el("cvMsg").textContent = errorText(err);

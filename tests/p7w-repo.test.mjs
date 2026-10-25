@@ -217,7 +217,22 @@ test("onedrive.ensureFolder: op ensure_folder with the project's id; made / exis
   stub({}, { invoke: () => httpError(404, { error: "not_found", message: "no such project" }) });
   assert.equal((await onedrive.ensureFolder(31)).state, "failed", "the broker's own 404 is not 'not deployed'");
   stub({}, { invoke: () => httpError(503, { error: "onedrive_not_configured", message: "ONEDRIVE_CLIENT_ID missing" }) });
-  assert.equal((await onedrive.ensureFolder(31)).state, "not_configured");
+  const nc = await onedrive.ensureFolder(31);
+  assert.deepEqual(nc, { state: "not_configured", message: "The OneDrive connection is not set up yet." }, "never the broker's words (they name settings)");
+  // every 503 of the broker has its own sentence; a 503 without one of its codes is not "not set up"
+  const said = {};
+  for (const code of ["onedrive_not_authorized", "busy", "projects_root_missing"]) {
+    stub({}, { invoke: () => httpError(503, { error: code, message: "x" }) });
+    const r = await onedrive.ensureFolder(31);
+    said[r.state] = r.message;
+  }
+  assert.deepEqual(Object.keys(said), ["not_authorized", "busy", "projects_root_missing"]);
+  assert.match(said.not_authorized, /not allowed in/);
+  assert.match(said.busy, /busy/);
+  assert.match(said.projects_root_missing, /Projects folder/);
+  assert.equal(new Set(Object.values(said).concat(nc.message)).size, 4, "four different sentences");
+  stub({}, { invoke: () => httpError(503, { message: "worker limit" }) });
+  assert.deepEqual(await onedrive.ensureFolder(31), { state: "failed", message: "The OneDrive connection is not answering just now." });
   stub({}, { invoke: () => httpError(409, { error: "other_folder", message: "x" }) });
   const other = await onedrive.ensureFolder(31);
   assert.equal(other.state, "other_folder");
@@ -229,4 +244,8 @@ test("onedrive.ensureFolder: op ensure_folder with the project's id; made / exis
   c = stub({});
   assert.equal((await onedrive.ensureFolder("A306")).state, "failed");
   assert.equal(c.calls.length, 0, "a project id only");
+});
+
+test("onedrive.LIVE is off until the Files tab's OneDrive part ships: the pages make no OneDrive call before it", () => {
+  assert.equal(onedrive.LIVE, false, "switched on in the same release as the Files tab's OneDrive part (README, Part 3 go-live)");
 });

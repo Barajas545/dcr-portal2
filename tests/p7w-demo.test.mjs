@@ -253,7 +253,8 @@ test("New Project: a zone alone from a manager without prices (priced by the dat
   await assert.rejects(projects.createProject({ name: "Made-up" }), (x) => x.code === "42501");
 });
 
-test("OneDrive folder step: the demo has no 'onedrive' function yet — the gateway's 404, so nothing is said", { skip }, async () => {
+test("OneDrive folder step: the demo has no 'onedrive' function yet — ensureFolder reads the gateway's 404 as not deployed (the pages do not call it while LIVE is off)", { skip }, async () => {
+  assert.equal(onedrive.LIVE, false);
   const engine = await freshEngine();
   await as("manager", engine);
   assert.deepEqual(await onedrive.ensureFolder(sandbox(engine).id), { state: "not_deployed", message: "" });

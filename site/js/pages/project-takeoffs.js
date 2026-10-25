@@ -1,7 +1,8 @@
 /* Project tab Takeoffs (P5a, MODULES §3 "Takeoffs"; BLUEPRINT 3.3.11; owner answer Q12 — the takeoff grid stays in
    DCR Desktop 2, view and print here — and Q20 as the owner updated it on 2026-10-24 (D13): the floor plans are in
-   the project's OneDrive Floor Plans folder (a floor-plan PDF added in the Files tab goes there) and the .takeoff
-   files stay in the Plans Archive, which takeoff-web opens: the bar always links to it, at this project's number).
+   the project's OneDrive Floor Plans folder (a floor-plan PDF added in the Files tab goes there — said only once
+   that tab's OneDrive part is out: repo/onedrive.js LIVE) and the .takeoff files stay in the Plans Archive, which
+   takeoff-web opens: the bar always links to it, at this project's number).
 
    The project's takeoffs, newest first, each a fold-out card: its name, date, the estimate item it belongs
    to, its rows by level, category and sub-category (L#, quantity, unit, item, purpose; with prices the
@@ -10,6 +11,7 @@
    project's takeoffs and rows (and, with prices, the row prices). */
 
 import * as estRepo from "../repo/estimates.js";
+import { LIVE as ONEDRIVE_LIVE } from "../repo/onedrive.js";
 import { takeoffCardsHtml, esc } from "./est-render.js";
 
 let host = null, seq = 0, timer = null;
@@ -67,8 +69,9 @@ function draw(ctx) {
     " · edited in DCR Desktop 2" + (ctx.prices ? "" : " · prices hidden") + "</span>";
   host.querySelector("#tkoList").innerHTML = list.length ? takeoffCardsHtml(list, { show: state.prices, pid: ctx.pid, open: state.open })
     : '<div class="pj-empty">No takeoffs yet. Takeoffs are made in DCR Desktop 2; floor plans and .takeoff files are in the Plans Archive ' +
-      "(takeoff-web opens it on a computer, in Chrome or Edge). Floor-plan PDFs added in the Files tab go to the project's OneDrive " +
-      "Floor Plans folder.</div>";
+      "(takeoff-web opens it on a computer, in Chrome or Edge). " +
+      (ONEDRIVE_LIVE ? "Floor-plan PDFs added in the Files tab go to the project's OneDrive Floor Plans folder."
+        : "Floor-plan PDFs are kept in the project's OneDrive Floor Plans folder.") + "</div>";
 }
 
 export function reload(ctx) {

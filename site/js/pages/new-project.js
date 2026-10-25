@@ -12,8 +12,10 @@
    (a second click, Enter, a double tap); an answer that never arrived leaves the dialog saying the project may exist
    and every later Create in it sends nothing. Closing the dialog while it creates does not stop it: the new number
    is still said (with its link) and the OneDrive folder still made. After creating: "Created A306", the project's
-   OneDrive folder (repo/onedrive.js ensureFolder, at most 8 seconds; the function not deployed yet: nothing to say),
-   then the project's page. Nothing typed is logged.
+   OneDrive folder (repo/onedrive.js ensureFolder, at most 8 seconds; only once onedrive.LIVE is switched on with
+   the Files tab's OneDrive part — until then no call and nothing said), then the project's page. A folder not made
+   is said with its reason, and that it can be made in DCR Desktop 2 (the project's Files tab). Nothing typed is
+   logged.
 
    Also used after a lead becomes a project (leads.js): makeFolder(project). Browser-only module. */
 
@@ -97,18 +99,30 @@ export function takeNotice(pid) {
   } catch (e) { return ""; }
 }
 
-/** The OneDrive folder of a project just made (also after a lead's conversion): -> the sentence to say, "" for none. */
+/* where a folder not made here is made (true today: DCR Desktop 2's Files tab makes it, never beside another) */
+const ELSEWHERE = " It can be made in DCR Desktop 2 (the project's Files tab).";
+const WHY = {
+  not_configured: "the OneDrive connection is not set up yet",
+  not_authorized: "the OneDrive connection is not allowed in just now (an admin checks it)",
+  projects_root_missing: "OneDrive's Projects folder is not where it was set up (an admin checks the OneDrive settings)",
+  busy: "OneDrive is busy just now",
+  offline: "there was no connection to DCR just now",
+  forbidden: "this account cannot make it",
+};
+
+/** The OneDrive folder of a project just made (also after a lead's conversion): -> the sentence to say, "" for none.
+    onedrive.LIVE off: no call, nothing to say. */
 export async function makeFolder(project) {
   const pid = project && project.id;
-  if (pid === null || pid === undefined) return "";
+  if (!onedrive.LIVE || pid === null || pid === undefined) return "";
   let timer = null;
   const slow = new Promise((done) => { timer = setTimeout(() => done({ state: "slow" }), FOLDER_WAIT_MS); });
   const r = await Promise.race([onedrive.ensureFolder(pid), slow]);
   clearTimeout(timer);
   if (!r || r.state === "made" || r.state === "exists" || r.state === "not_deployed") return "";
-  if (r.state === "slow") return "OneDrive is slow to answer: the project's OneDrive folder can be made from the Files tab.";
+  if (r.state === "slow") return "OneDrive is slow to answer: the project's OneDrive folder may not be made yet." + ELSEWHERE;
   if (r.state === "other_folder") return r.message;
-  return "The project's OneDrive folder was not made just now: it can be made from the Files tab.";
+  return "The project's OneDrive folder was not made: " + (WHY[r.state] || "OneDrive could not make it just now") + "." + ELSEWHERE;
 }
 
 /** A link to the new project in a toast (the dialog was closed while it was being created). */
@@ -162,7 +176,7 @@ async function create() {
   }
   say("");
   const b = node("npCreate");
-  if (b) b.textContent = "Created " + p.internalIDNumber + " · making its OneDrive folder…";
+  if (b) b.textContent = "Created " + p.internalIDNumber + (onedrive.LIVE ? " · making its OneDrive folder…" : " · opening it…");
   const note = await makeFolder(p);
   if (!(st.open && st.gen === gen)) {                 // closed while the folder was being made: no page change
     createdToast(p);

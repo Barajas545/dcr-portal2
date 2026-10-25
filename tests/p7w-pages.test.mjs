@@ -42,6 +42,12 @@ test("New Project: one attempt — Create is blocked while its answer is on the 
   assert.match(js, /createdToast\(p\)/, "closed while creating: the number with its link");
   assert.match(js, /makeFolder\(p\)/);
   assert.match(js, /FOLDER_WAIT_MS = 8000/);
+  // the folder step only once onedrive.LIVE is on (a browser cannot tell a function not deployed from offline), and
+  // never a promise of a web Files tab that is not there: a folder not made is made in DCR Desktop 2
+  assert.match(js, /if \(!onedrive\.LIVE \|\| pid === null \|\| pid === undefined\) return "";/);
+  assert.match(js, /onedrive\.LIVE \? " · making its OneDrive folder…" : /);
+  assert.ok(!/from the Files tab/.test(read("js/pages/new-project.js")));
+  assert.match(js, /It can be made in DCR Desktop 2 \(the project's Files tab\)\./);
   assert.ok(!/console\./.test(js), "nothing typed is logged");
   assert.ok(!/\.rpc\(|\.from\(|functions\.invoke/.test(js), "through repo/ only");
   assert.match(code(read("js/pages/leads.js")), /makeFolder\(got\.project\)/, "a converted lead gets its folder too");
@@ -120,7 +126,10 @@ test("the Takeoffs tab: the Plans Archive link is built with encodeURIComponent,
   assert.match(js, /https:\/\/barajas545\.github\.io\/takeoff-web\/index\.html/);
   assert.match(js, /target="_blank" rel="noopener"/);
   assert.ok(!/stay on the old portal/.test(js));
-  assert.match(js, /Floor-plan PDFs added in the Files tab go to the project's OneDrive/);
+  // D13's sentence, said only once the Files tab's OneDrive part is out (repo/onedrive.js LIVE)
+  assert.match(code(js), /ONEDRIVE_LIVE \? "Floor-plan PDFs added in the Files tab go to the project's OneDrive Floor Plans folder\."/);
+  assert.match(code(js), /: "Floor-plan PDFs are kept in the project's OneDrive Floor Plans folder\."/);
+  assert.ok(statics(js).includes("../repo/onedrive.js"));
 });
 
 test("OneDrive: the pages reach the function only through repo/onedrive.js, which names no Microsoft host and no secret", () => {

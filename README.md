@@ -480,8 +480,11 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   scope and the labor rate's zone (a zone alone needs no prices switch; a custom rate does). One attempt: Create
   waits for its answer, a lost answer says the project may exist and sends nothing more; closing the dialog
   mid-create still says the number with its link. Then the project's OneDrive folder (`js/repo/onedrive.js`, the
-  Edge Function `onedrive`, op `ensure_folder`; while that function is not deployed this step says nothing) and
-  the project's page. A lead converted to a project gets the folder step too.
+  Edge Function `onedrive`, op `ensure_folder`) and the project's page. The folder step is off until `LIVE` in
+  `js/repo/onedrive.js` is set to `true`, in the same release as the Files tab's OneDrive part: before that no
+  OneDrive call is made and nothing is said (a browser cannot tell a function that is not deployed from being
+  offline). Once on, a folder not made is said with its reason, and that DCR Desktop 2 (the project's Files tab)
+  makes it. A lead converted to a project gets the folder step too.
 - **The project picture** (admin, manager): 📷 on the project header (camera or library), made in the browser at
   most 800 px and drawn again (no EXIF / GPS; JPEG, PNG only for transparency; never SVG; over 60 megapixels or
   40 MB refused before decoding), straight to Storage `p/{project}/thumbnail/{uuid}/thumbnail.jpg`, its `files`
@@ -605,10 +608,13 @@ invoice from a phone that is not signed in, the e-mailed notice, accepted - a bi
 OK.** A backup from today → database change `20261028000100_estimator` (DCR Desktop 2: `npx supabase db push`) → DCR
 Desktop 2 2.21 on the admin PC the same day (its Users page sets the switches too) → push this repository's `main`
 (the tests run first) → the owner ticks Estimator (and, later, OneDrive upload) for the people he chooses on admin.html
-→ Access → smoke test on **A000T2** only: a New Project made and deleted, a picture, a test cost and its receipt
-corrected to zero. The OneDrive part comes later and separately: the Microsoft setup, database change
-`20261028000200_onedrive`, the `onedrive` function and its secrets (typed by the owner), then the Files tab; until the
-function is deployed New Project's folder step says nothing.
+→ Access → smoke test on **A000T2** only: a picture, a test cost and its receipt corrected to zero. New Project is
+checked in the demo (`node tools/devserve.mjs`, `tests/p7w-demo.test.mjs`) and by the PGlite schema check, never on the live
+site: a project made there uses up the next real project number (and, once the OneDrive part is on, makes a
+OneDrive folder that deleting the project does not remove) - a live New Project test needs the owner's OK for that
+first. The OneDrive part comes later and separately: the Microsoft setup, database change `20261028000200_onedrive`,
+the `onedrive` function and its secrets (typed by the owner), its status check, then the Files tab in the release
+that sets `LIVE = true` in `js/repo/onedrive.js`; until then New Project's folder step is off and says nothing.
 
 **Owner, once (any time before the first publish)**
 
