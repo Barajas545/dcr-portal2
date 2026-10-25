@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org https://netorgft10120038-my.sharepoint.com; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>DCR Portal 2 — Project</title>
@@ -163,6 +163,29 @@
         border:1px dashed var(--border); border-radius:10px; background:var(--surface);}
       .cap-title{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin-right:4px;}
       .cap-prog{font-size:12px; color:var(--text-muted); min-height:15px;}
+      /* the OneDrive project folder (the broker) above the files stored in DCR */
+      .od-box{border:1px solid var(--border); border-radius:12px; background:var(--surface); padding:12px; margin-bottom:14px;}
+      .od-box.over{border-color:var(--acc); box-shadow:0 0 0 3px var(--tint-2);}
+      .od-top{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;}
+      .od-title{font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted);}
+      .od-sub{margin:0; flex:1; min-width:140px;}
+      .od-bar{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;}
+      .od-to{font-size:12.5px; color:var(--text-muted); display:flex; align-items:center; gap:6px;}
+      .od-to select{padding:5px 8px; font-size:12.5px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text); max-width:260px;}
+      .od-hint{margin:0; flex:1 1 220px;}
+      .od-jobs:empty{display:none;}
+      .od-jobs{display:flex; flex-direction:column; gap:4px; margin-bottom:8px;}
+      .od-job{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; padding:6px 8px; border:1px solid var(--border); border-radius:8px; background:var(--surface-2);}
+      .od-job.err{border-color:var(--err);} .od-job.ok{border-color:var(--ok);}
+      .od-jname{flex:1 1 200px; min-width:0; word-break:break-word; color:var(--text);}
+      .od-jbar{flex:0 0 90px; height:6px; border-radius:3px; background:var(--border); overflow:hidden;}
+      .od-jbar i{display:block; height:100%; background:var(--acc); transition:width .2s linear;}
+      .od-jstate{color:var(--text-muted);} .od-job.err .od-jstate{color:var(--err);}
+      .pj-where.od{color:var(--acc);}
+      .od-test{border:1px dashed var(--gold); border-radius:12px; padding:12px; margin-bottom:14px; background:var(--surface);}
+      .od-step{font-size:13px; padding:4px 0; color:var(--text);} .od-step.ok b{color:var(--ok);} .od-step.err b{color:var(--err);}
+      .od-after{margin-top:8px;}
+      @media (max-width:640px){ .od-bar .pj-btn{min-height:40px;} .od-to select{max-width:100%;} }
 
       /* modals */
       .pj-overlay{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index:70; padding:14px;}

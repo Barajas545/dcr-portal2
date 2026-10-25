@@ -21,7 +21,11 @@
    A new name must never cost a phone its offline libraries: install also keeps supabase-js (PINNED_PRECACHE),
    and activate copies every pinned CDN file an older "dcr-portal2-*" cache held into the new one BEFORE
    that cache is deleted (the visit that installs the new worker is still served by the old one, so it
-   never fetches them itself). tests/core-sw.test.mjs runs both. */
+   never fetches them itself). tests/core-sw.test.mjs runs both.
+   Part 4 (the Files tab's OneDrive part, owner 2026-10-24) keeps "dcr-portal2-v3" the same way: its broker module,
+   its rules and the uploader join the list (project.html loads them); the admin's self-test (js/pages/
+   onedrive-selftest.js, loaded only when an admin clicks it on the test project) stays out of it, as the admins'
+   pages do. Nothing of OneDrive is kept for offline use but the code: no listing, link or upload address. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
@@ -49,6 +53,8 @@ const SHELL = [
   // P5a: the read-only Estimate and Takeoffs tabs of project.html and their printed pages
   "report-estimate.html", "report-takeoff.html", "css/estimates.css", "js/repo/estimates.js", "js/map/estimates.js", "js/map/takeoffs.js",
   "js/pages/est-render.js", "js/pages/project-estimate.js", "js/pages/project-takeoffs.js", "js/pages/report-estimate.js", "js/pages/report-takeoff.js",
+  // Part 4: the Files tab's OneDrive part (the broker, its rules, the uploader)
+  "js/repo/onedrive.js", "js/map/onedrive.js", "js/onedrive-upload.js", "js/scrub-money.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

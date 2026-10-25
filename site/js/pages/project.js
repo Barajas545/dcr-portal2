@@ -8,7 +8,8 @@
    round: view "project:<id>", project "<id>").
 
    Tabs (P1): Overview (Desktop 2's fields, autosaved with versions; the labor rate only with the
-   prices switch), Log, Journal, Mailing, Files (with the capture bar); P3: Tasks (the project's
+   prices switch), Log, Journal, Mailing, Files (with the capture bar; Part 4: the project's OneDrive folder through
+   the broker, js/repo/onedrive.js - its host is in this page's connect-src only); P3: Tasks (the project's
    tasks, the tick through complete_task, a new task, the updates); P5a: Estimate and Takeoffs (read only,
    Q12: the estimates, change orders and takeoffs as DCR Desktop 2 has them, the amounts only for people
    who see prices, Print to report-estimate.html / report-takeoff.html); P5b: Expenses (the project's cost rows,
@@ -388,8 +389,8 @@ async function startLive() {
       });
       live.watch("activity", f, function () { logTab.reload(ctx); });
       live.watch("journal_entries", f, function () { journalTab.reload(ctx); });
-      live.watch("files", f, function () {
-        filesTab.reload(ctx); journalTab.reload(ctx, { media: true });
+      live.watch("files", f, function (evt) {
+        filesTab.reload(ctx, evt); journalTab.reload(ctx, { media: true });     // (evt: the OneDrive box reads again for a OneDrive row only)
         if (moneyTabs.expenses && typeof moneyTabs.expenses.reload === "function") moneyTabs.expenses.reload(ctx);   // a receipt (files.cost_id)
       });
       if (loaded.tasks) watchTasks();
