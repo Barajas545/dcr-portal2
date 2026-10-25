@@ -136,7 +136,8 @@ export async function run(h) {
       same([P.MAX_NEW_FILE_NAME, P.MAX_FOLDER_NAME, P.MAX_SUBPATH, P.MAX_SUBPATH_PARTS, P.MAX_PROJECT_PATH, P.MAX_PATH_TEXT],
         [OD.MAX_NEW_FILE_NAME, OD.MAX_FOLDER_NAME, OD.MAX_SUBPATH, OD.MAX_SUBPATH_PARTS, OD.MAX_PROJECT_PATH, OD.MAX_PATH_TEXT], "the limits");
       const cors = fn.corsHeaders("https://portal.dcrframing.com");
-      ok(cors["Access-Control-Allow-Origin"] === "https://portal.dcrframing.com" && !fn.corsHeaders("https://evil.example")["Access-Control-Allow-Origin"], "CORS");    });
+      ok(cors["Access-Control-Allow-Origin"] === "https://portal.dcrframing.com" && !fn.corsHeaders("https://evil.example")["Access-Control-Allow-Origin"], "CORS");
+      same(cors["Access-Control-Expose-Headers"], "Retry-After", "repo/onedrive.js reads a 503 busy's Retry-After across sites");    });
     await check("Part 4 OneDrive: drift - the page's rules answer as the broker's paths.ts (stems, amounts, hiding, segments, upload names, the table's shape)", async () => {
       const names = ["Estimates", "Change_Orders", "Ｅｓｔｉｍａｔｅｓ", "Morbid", "2026 bids", "Invoices", "Old portal records", "Old portal documents", "Deck $4,500.pdf",
         "paid 4500 cash.txt", "L1.takeoff", "notes.PDFNOTES", "~$x.docx", "desktop.ini", ".hidden", "x.tmp", "_vti_cnf", "Floor Plans", "Permit.pdf", "a∕b",

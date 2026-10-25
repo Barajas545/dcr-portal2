@@ -100,11 +100,12 @@ export async function call(body) {
     try { info = await (ctx.clone ? ctx.clone() : ctx).json(); } catch (e) { info = null; }
   }
   const code = info && typeof info.error === "string" && CONTRACT.indexOf(info.error) !== -1 ? info.error : "";
+  // the broker exposes Retry-After to this site (Access-Control-Expose-Headers); a gateway answer without it: null
   let retryAfter = null;
   try {
     const ra = ctx && ctx.headers && typeof ctx.headers.get === "function" ? Number(ctx.headers.get("Retry-After")) : NaN;
     if (Number.isFinite(ra) && ra > 0) retryAfter = Math.min(ra, 300);
-  } catch (e) { /* the header is not readable across sites: the caller waits its own while */ }
+  } catch (e) { /* no header to read: the caller waits its own while */ }
   if (!status) throw failure(OFFLINE, "offline", 0);
   if (status === 404 && !code) throw failure("The OneDrive connection is not set up yet.", "not_deployed", 404);
   if (status === 503) {

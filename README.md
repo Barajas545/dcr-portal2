@@ -513,7 +513,7 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   a number too: "A253Estimate.pdf") - at every depth, as if missing; the page checks the same rules (`js/map/onedrive.js`)
   before anything is sent and masks amounts on screen anyway. Uploads take PDFs, pictures, videos, Office files without
   macros, text and CAD files (a takeoff with prices); never a lock or system file; never into Documents/Items; never a
-  name or folder hidden from the person uploading it. Programs
+  name or folder hidden from the person uploading it. A 503 busy's `Retry-After` is read (the broker exposes it). Programs
   and shortcuts are listed but never opened. A file the database will not list (a priced name a price person uploads)
   stays in OneDrive and the page says so.
 - **The security policy.** `project.html` alone adds `https://netorgft10120038-my.sharepoint.com` (the OneDrive host,
