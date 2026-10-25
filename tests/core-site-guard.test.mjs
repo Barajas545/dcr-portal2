@@ -227,12 +227,14 @@ test("no Microsoft secret, tenant, app or drive id anywhere in the repository (s
   const NEVER = [
     [/ONEDRIVE_(TENANT_ID|CLIENT_ID|CLIENT_SECRET|DRIVE_ID|PROJECTS_ITEM_ID|WIDE_GRANT)/, "a OneDrive broker setting"],
     [/client_secret\s*[=:]\s*["'`][^"'`\s]{6,}/i, "a client secret value"],
-    [/[A-Za-z0-9_~.-]{3}8Q~[A-Za-z0-9_~.-]{31,34}/, "a Microsoft Entra client secret"],
+    [/[A-Za-z0-9_~.-]{3}\dQ~[A-Za-z0-9_~.-]{31,34}/, "a Microsoft Entra client secret"],   // DCR Desktop 2's pattern (any digit before Q~)
     [new RegExp("tenant[^\\n]{0,80}" + GUID, "i"), "a tenant id"],
     [/login\.microsoftonline\.com/i, "Microsoft's sign-in"],
     [/\bb![A-Za-z0-9_-]{30,}/, "a OneDrive drive id"],
     [/sb_secret_[A-Za-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-ant-[A-Za-z0-9_-]{8,}/, "a secret key"],
   ];
+  // the Entra pattern catches the secret's shape whatever its digit (made up, built here: never in a file)
+  for (const d of ["7", "8", "0"]) assert.ok(NEVER[2][0].test("abc" + d + "Q~" + "Zx9-_.".repeat(5) + "Zx9w"), d + "Q~");
   for (const f of all) {
     const src = readFileSync(f, "utf8");
     for (const [re, what] of NEVER) assert.ok(!re.test(src), relative(ROOT, f).replace(/\\/g, "/") + ": " + what);
