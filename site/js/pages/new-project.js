@@ -160,11 +160,15 @@ async function create() {
     if (note) toast(note, "info");
     return;
   }
-  toast("Created " + p.internalIDNumber + ".", "ok");
   say("");
   const b = node("npCreate");
-  if (b) b.textContent = "Making the OneDrive folder…";
+  if (b) b.textContent = "Created " + p.internalIDNumber + " · making its OneDrive folder…";
   const note = await makeFolder(p);
+  if (!(st.open && st.gen === gen)) {                 // closed while the folder was being made: no page change
+    createdToast(p);
+    if (note) toast(note, "info");
+    return;
+  }
   if (note) leaveNotice(p.id, note);
   const done = st.resolve;
   st.resolve = null;
