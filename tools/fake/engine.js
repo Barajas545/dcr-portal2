@@ -54,9 +54,11 @@
   const JOURNAL_CATS = ["progress", "delay", "issue", "safety", "inspection", "delivery", "visitor", "weather", "change_order", "other"];
   const FOLDERS = ["plans", "photos", "documents", "estimates", "invoices", "receipts", "item", "journal", "thumbnail"];
   const ROLES = ["admin", "manager", "lead", "accountant", "field", "viewer", "agents"];
-  const SOFT = new Set(["contacts", "projects", "journal_entries", "files"]);
   // tools/fake/p6.js and the later phases' extensions (loaded first): one merged list of their tables
   const XT = [NS.p6Tables || { tables: [], cols: {}, pk: {}, uuid: [], noAudit: [] }].concat(NS.extTables || []);
+  // the soft-delete tables (rpc soft_delete, a DELETE hides the row): these, and an extension's own (its "soft" list -
+  // P5a's tools/fake/p5a-est.js: estimates, estimate_items, deleted from the web estimate editor)
+  const SOFT = new Set(["contacts", "projects", "journal_entries", "files"].concat(...XT.map((x) => x.soft || [])));
   const P6 = {
     tables: Array.from(new Set([].concat(...XT.map((x) => x.tables || [])))),
     cols: Object.assign({}, ...XT.map((x) => x.cols || {})),
@@ -425,7 +427,9 @@
       if (!w.active) return false;
       const r = w.role;
       switch (area) {
-        case "projects": case "estimates": case "catalog": case "all_files": return r === "admin" || r === "manager";
+        case "projects": case "catalog": case "all_files": return r === "admin" || r === "manager";
+        // 20261028000100 (D4): an admin, or a manager with the Estimator switch
+        case "estimates": return r === "admin" || (r === "manager" && !!(w.p && w.p.can_estimate));
         case "contacts": return ["admin", "manager", "accountant"].includes(r);
         case "takeoffs": case "tasks": case "all_journal": return ["admin", "manager", "lead"].includes(r);
         case "activity": return ["admin", "manager", "accountant", "lead"].includes(r);
@@ -1192,6 +1196,10 @@
     }
 
     function softDelete(w, table, old) {
+      // an extension's rules on the DELETE event (P5a: the approval gate and the approved lock refuse it before anything
+      // is written), and what follows the stamp (P5a: an estimate's items go with it, its log line)
+      const x = extFor(table);
+      if (x && x.beforeSoftDelete) x.beforeSoftDelete(w, table, old);
       const r = clone(old);
       r.deleted_at = nowIso();
       auditUpdate(w, table, r, old);
@@ -1199,6 +1207,7 @@
       const tomb = { id: nextId("deletions"), table_name: table, row_id: r.id,
         project_id: table === "projects" ? r.id : (r.project_id ?? null), deleted_at: r.deleted_at, deleted_by: w.uid };
       commitInsert("deletions", tomb);
+      if (x && x.afterSoftDelete) x.afterSoftDelete(w, table, old, r);
       return r;
     }
 
