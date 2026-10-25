@@ -393,6 +393,7 @@ async function estimateConflict(base, changes, attempt) {
   const plan = M.conflictPlan(base, cur, mine);
   if (plan.kind === "done") { await afterWrite("Saved — it was already so."); return; }
   if (plan.kind === "resend") { await sendEstimate(cur, plan.mine, attempt + 1); return; }
+  if (!state.sheet) return;
   state.sheet.pending = { kind: "est", cur, mine: plan.mine, attempt };
   showClash(plan.clash, cur, plan.mine, cur.updated_by);
 }
@@ -778,10 +779,21 @@ async function deleteItemSheet() {
 function adoptLive() {
   const s = state.sheet;
   if (!s || s.isNew || s.pending) return;
+  if (s.kind === "grp") {
+    // gids are per read: the same group again by its name (gone or renamed elsewhere: nothing here acts on it)
+    const est = findEst(s.estId);
+    const g = est && est.groups.find(function (x) { return M.groupKey(x.name) === s.key; });
+    if (g) { s.gid = g.gid; return; }
+    notice("This group was renamed or emptied by someone else — close it and open it again.");
+    const box = $("esSheet");
+    if (box) box.querySelectorAll(".es-sheet-bd button").forEach(function (b) { b.disabled = true; });
+    return;
+  }
   if (s.kind === "item") {
     const hit = findItem(null, s.itemId);
     if (!hit) { notice("This item was deleted."); disableSave(); return; }
     const cur = hit.item;
+    s.estId = hit.est.id;
     const priceMoved = prices() && cur.prices && s.base.prices && cur.prices.version !== s.base.prices.version;
     if (cur.version === s.base.version && !priceMoved) return;
     if (!s.dirty) { s.base = clone(cur); s.estId = hit.est.id; s.type = cur.item_type; mountItemSheet(); notice(firstName(cur.updated_by) + " saved this item: shown as it is now."); return; }
