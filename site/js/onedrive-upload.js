@@ -182,16 +182,31 @@ export function createUploader(parts) {
     }
   }
 
-  /** The session is gone: the file is there already (the last answer was lost) -> its id; else null (start over). */
+  /** The session is gone: is the file there already (the last answer was lost)? -> {id, result} (it is, recorded now),
+      null (it is not: start over), or {fail} (could not tell - never start over then: that could make a second copy). */
   async function lookForIt(j) {
-    let found = [];
-    try { found = (await d.broker.find(j)) || []; } catch (e) { found = []; }
+    let found = null;
+    while (found === null) {
+      try { found = (await d.broker.find(j)) || []; } catch (e) {
+        if (stopped(j)) return null;
+        if (RETRYABLE.indexOf(String((e && e.code) || "")) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
+        return stopped(j) ? null : { fail: "Could not check whether OneDrive kept the file. Retry when the connection is back." };
+      }
+    }
     for (const f of found.slice(0, 3)) {
       if (!f || !ITEM_ID.test(String(f.id))) continue;
-      try {
-        const r = await d.broker.done(j, f.id, j.session.ticket);
-        return { id: f.id, result: r };
-      } catch (e) { /* not this upload's file (someone else's of the same name and size): look on */ }
+      for (;;) {
+        try {
+          const r = await d.broker.done(j, f.id, j.session.ticket);
+          return { id: f.id, result: r };
+        } catch (e) {
+          if (stopped(j)) return null;
+          const code = String((e && e.code) || "");
+          if (code === "not_this_upload") break;                      // someone else's file of that name and size: look on
+          if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
+          return stopped(j) ? null : { fail: (e && e.message) || "Could not check whether OneDrive kept the file." };
+        }
+      }
     }
     return null;
   }
@@ -293,6 +308,7 @@ export function createUploader(parts) {
       // gone: the file may be there already (a lost last answer) - only then not, a new session from the start
       const hit = await lookForIt(j);
       if (stopped(j)) return;
+      if (hit && hit.fail) { setState(j, "failed", { error: hit.fail }); return; }      // Retry asks again (the session is kept)
       if (hit) { setState(j, "done", { result: hit.result, error: "", sent: j.size, itemId: hit.id }); return; }
       if (++restarts > 2) { setState(j, "failed", { error: "OneDrive kept closing the upload. Retry in a few minutes." }); return; }
       j.session = null;

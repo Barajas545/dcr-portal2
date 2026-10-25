@@ -201,3 +201,42 @@ test("uploader: nothing is kept on the device and nothing is logged (the upload 
   const od = page.slice(page.indexOf("the OneDrive project folder ─"), page.indexOf("/* ── capture"));
   assert.ok(od.length > 1000 && !/localStorage|sessionStorage|indexedDB|console\./.test(od), "the Files tab's OneDrive part keeps nothing either");
 });
+
+test("uploader: a lost last answer and a flaky connection - never a new session while it cannot tell whether OneDrive kept the file", async () => {
+  // find fails twice (offline), then answers; done fails once (offline), then records: one file, one session
+  const g = graph(), b = broker(g);
+  const find = b.find;
+  let findFails = 2, doneFails = 1;
+  b.find = async (j) => { if (findFails-- > 0) throw Object.assign(new Error("No connection"), { code: "offline" }); return find(j); };
+  const done = b.done;
+  b.done = async (j, id, t) => { if (doneFails-- > 0) throw Object.assign(new Error("No connection"), { code: "offline" }); return done(j, id, t); };
+  const up = make(g, b);
+  g.script = ["lose-final"];
+  up.add({ projectId: 9, file: file(500), folder: "Documents", name: "A.pdf" });
+  const [job] = await settle(up);
+  assert.equal(job.state, "done", job.error);
+  assert.deepEqual([b.sessions, g.items.size], [1, 1]);
+  // someone else's file of that name and size first (not_this_upload): looked on, ours recorded
+  const g2 = graph(), b2 = broker(g2);
+  g2.items.set("01OTHER00001", { id: "01OTHER00001", name: "B.pdf", size: 500 });
+  const done2 = b2.done;
+  b2.done = async (j, id, t) => { if (id === "01OTHER00001") throw Object.assign(new Error("That file is not the one this upload made."), { code: "not_this_upload" }); return done2(j, id, t); };
+  const up2 = make(g2, b2);
+  g2.script = ["lose-final"];
+  up2.add({ projectId: 9, file: file(500), folder: "Documents", name: "B.pdf" });
+  const [j2] = await settle(up2);
+  assert.deepEqual([j2.state, b2.sessions, b2.recorded.length], ["done", 1, 1], j2.error);
+  // the broker cannot be asked at all: the job fails (Retry keeps the session) - no second upload
+  const g3 = graph(), b3 = broker(g3);
+  b3.find = async () => { throw Object.assign(new Error("No connection"), { code: "offline" }); };
+  const up3 = make(g3, b3, { maxTries: 3 });
+  g3.script = ["lose-final"];
+  up3.add({ projectId: 9, file: file(500), folder: "Documents", name: "C.pdf" });
+  const [j3] = await settle(up3);
+  assert.deepEqual([j3.state, j3.canRetry, b3.sessions], ["failed", true, 1], j3.error);
+  assert.match(j3.error, /Could not check whether OneDrive kept the file/);
+  b3.find = async (j) => Array.from(g3.items.values()).filter((i) => i.name === j.name && i.size === j.size);
+  assert.equal(up3.retry(j3.id), true);
+  const [again] = await settle(up3);
+  assert.deepEqual([again.state, b3.sessions, g3.items.size], ["done", 1, 1], again.error);
+});

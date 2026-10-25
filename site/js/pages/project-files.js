@@ -256,10 +256,10 @@ function odListHtml(ctx) {
 function paintOd() {
   if (!st.odOn || !st.od) return;
   const ctx = st.ctx;
-  const list = document.getElementById("odList");
-  if (list) list.innerHTML = odListHtml(ctx);
-  const bar = document.getElementById("odBar");
-  if (bar) bar.innerHTML = odBarHtml(ctx);
+  // drawn again only when it changed (a cloud read repaints too: an open "to" list or a row being pressed stays put)
+  const put = function (node, html) { if (node && node._odHtml !== html) { node.innerHTML = html; node._odHtml = html; } };
+  put(document.getElementById("odList"), odListHtml(ctx));
+  put(document.getElementById("odBar"), odBarHtml(ctx));
   const inp = document.getElementById("odIn");
   if (inp) inp.setAttribute("accept", OD.acceptFor(viewer()));
   paintJobs();
