@@ -1,5 +1,7 @@
-/* Project tab Takeoffs (P5a, MODULES §3 "Takeoffs"; BLUEPRINT 3.3.11; owner answers Q12 — view and print only,
-   the takeoff grid stays in DCR Desktop 2 — and Q20 — the old .takeoff plan files stay on the old portal).
+/* Project tab Takeoffs (P5a, MODULES §3 "Takeoffs"; BLUEPRINT 3.3.11; owner answer Q12 — the takeoff grid stays in
+   DCR Desktop 2, view and print here — and Q20 as the owner updated it on 2026-10-24 (D13): the floor plans are in
+   the project's OneDrive Floor Plans folder (a floor-plan PDF added in the Files tab goes there) and the .takeoff
+   files stay in the Plans Archive, which takeoff-web opens: the bar always links to it, at this project's number).
 
    The project's takeoffs, newest first, each a fold-out card: its name, date, the estimate item it belongs
    to, its rows by level, category and sub-category (L#, quantity, unit, item, purpose; with prices the
@@ -12,6 +14,13 @@ import { takeoffCardsHtml, esc } from "./est-render.js";
 
 let host = null, seq = 0, timer = null;
 const state = { list: [], open: undefined, prices: false };
+
+export const TAKEOFF_WEB = "https://barajas545.github.io/takeoff-web/index.html";
+/** takeoff-web's Plans Archive at this project's plans ("#plans=A249"), or the archive itself without a number. */
+export function plansLink(number) {
+  const n = String(number == null ? "" : number).trim();
+  return TAKEOFF_WEB + (n ? "#plans=" + encodeURIComponent(n) : "#plans");
+}
 
 export function render(ctx, el) {
   host = el;
@@ -47,14 +56,19 @@ function draw(ctx) {
   const lines = list.reduce(function (s, t) { return s + t.lines; }, 0);
   const priced = state.prices && list.length && list.every(function (t) { return t.priced; }) && lines > 0;
   const all = "report-takeoff.html?id=" + encodeURIComponent(ctx.pid) + "&amp;tk=all";
-  host.querySelector("#tkoBar").innerHTML = (list.length > 1
+  const number = ctx.project && ctx.project.internalIDNumber;
+  host.querySelector("#tkoBar").innerHTML = '<a class="pj-btn pj-btn-sm" target="_blank" rel="noopener" href="' + esc(plansLink(number)) +
+    '" title="The floor plans and .takeoff files of this project in takeoff-web (on a computer, in Chrome or Edge)">📐 Plans Archive (takeoff-web) ↗</a>' +
+    (list.length > 1
     ? '<a class="pj-btn pj-btn-sm pj-btn-primary" href="' + all + '">🖨 All takeoffs (material list)</a>' +
       (priced ? '<a class="pj-btn pj-btn-sm" href="' + all + '&amp;kind=quote">🖨 All (material quote)</a>' : "") : "") +
     '<button class="pj-btn pj-btn-sm" id="tkoReload" type="button" title="Read again">↻</button>' +
     '<span class="es-count">' + list.length + " takeoff" + (list.length === 1 ? "" : "s") + " · " + lines + " line" + (lines === 1 ? "" : "s") +
     " · edited in DCR Desktop 2" + (ctx.prices ? "" : " · prices hidden") + "</span>";
   host.querySelector("#tkoList").innerHTML = list.length ? takeoffCardsHtml(list, { show: state.prices, pid: ctx.pid, open: state.open })
-    : '<div class="pj-empty">No takeoffs yet. Takeoffs are made in DCR Desktop 2; the old .takeoff plan files stay on the old portal.</div>';
+    : '<div class="pj-empty">No takeoffs yet. Takeoffs are made in DCR Desktop 2; floor plans and .takeoff files are in the Plans Archive ' +
+      "(takeoff-web opens it on a computer, in Chrome or Edge). Floor-plan PDFs added in the Files tab go to the project's OneDrive " +
+      "Floor Plans folder.</div>";
 }
 
 export function reload(ctx) {

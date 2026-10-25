@@ -80,6 +80,8 @@ test("pages: page scripts reach the data only through repo/ and map/ (and the sh
     assert.ok(!/\.from\(\s*["'][a-z_]+["']\s*\)/.test(s), f + ": a table read outside repo/");
     assert.ok(!/\.rpc\(/.test(s), f + ": an RPC outside repo/");
     assert.ok(!/\bsb\(\)/.test(s), f + ": the client used directly");
+    // an Edge Function too (repo/onedrive.js and its kind call them; Part 3)
+    assert.ok(!/functions\.invoke\(/.test(s), f + ": an Edge Function called outside repo/");
   }
 });
 

@@ -5,7 +5,10 @@
    switcher (every project, searchable by number, name, client, address, phone, e-mail), the "Old
    portal" link of an imported project (its old estimates, money and documents stay there), and
    who else has this project open (presence — Desktop 2 sees Portal 2 users here and the other way
-   round: view "project:<id>", project "<id>").
+   round: view "project:<id>", project "<id>"). For admin and manager (D13, owner 2026-10-24): 📷 changes the
+   picture (thumb-prep.js makes it in the browser: at most 800 px, re-drawn so no EXIF / GPS goes up, JPEG or PNG;
+   repo/files addThumbnail, then the versioned pointer; ✕ takes it off) and "＋ New project" opens the Board's
+   dialog (new-project.js).
 
    Tabs (P1): Overview (Desktop 2's fields, autosaved with versions; the labor rate only with the
    prices switch), Log, Journal, Mailing, Files (with the capture bar); P3: Tasks (the project's
@@ -38,6 +41,7 @@ import * as tasksTab from "./project-tasks.js";
 import * as estimateTab from "./project-estimate.js";
 import * as takeoffsTab from "./project-takeoffs.js";
 import { startSweeper } from "./journal-sync.js";
+import { openNewProject, takeNotice } from "./new-project.js";
 
 const TABS = ["overview", "estimate", "takeoffs", "log", "journal", "mailing", "files", "tasks", "expenses", "payments"];
 const MONEY_TABS = ["expenses", "payments"];
@@ -62,9 +66,11 @@ function setProject(p) {
   if (!p) return;
   if (ctx.project && Number(p.version || 0) < Number(ctx.project.version || 0)) return;
   if (ctx.project && p.prices === undefined) { p.prices = ctx.project.prices; p.projectLaborRate = ctx.project.projectLaborRate; }
+  const picture = !ctx.project || String(ctx.project.thumbnailFileId) !== String(p.thumbnailFileId);
   ctx.project = p;
   renderHead();
   overview.adopt(ctx, p);
+  if (picture) loadThumb();                  // the picture changed here or elsewhere (live)
 }
 
 /* ── header ─────────────────────────────────────────────────────────── */
@@ -128,12 +134,54 @@ function notice(kind, text) {
 async function loadThumb() {
   const box = el("pjThumb");
   const p = ctx.project;
+  const del = el("pjThumbDel");
+  if (del) del.hidden = !ctx.canWrite || !p || p.thumbnailFileId == null;
   if (!p || p.thumbnailFileId == null) { box.textContent = "no preview"; return; }
   try {
     const urls = await filesRepo.thumbnailUrls([p]);
     const u = urls[String(p.id)];
     box.innerHTML = u ? '<img src="' + esc(u) + '" alt="">' : "no preview";
   } catch (e) { box.textContent = "no preview"; }
+}
+
+/* The picture: made in the browser (thumb-prep.js, fetched when needed), straight to Storage with its files row,
+   then the project's pointer (one versioned column). A pointer that cannot be set takes its new file back (best
+   effort, as DCR Desktop 2 does). */
+let thumbBusy = false;
+function thumbState(on) {
+  thumbBusy = on;
+  el("pjThumb").classList.toggle("busy", on);
+  ["pjThumbEdit", "pjThumbDel"].forEach(function (id) { const b = el(id); if (b) b.disabled = on; });
+}
+async function changeThumb(file) {
+  if (!file || thumbBusy || !ctx.project) return;
+  thumbState(true);
+  notice("", "Making the picture…");
+  let row = null;
+  try {
+    const pic = await (await import("../thumb-prep.js")).prepare(file);
+    row = await filesRepo.addThumbnail(ctx.project.id, pic);
+    const moved = await projectsRepo.setThumbnail(ctx.project, row.id);
+    filesRepo.forgetThumbnails();
+    setProject(moved);                            // draws the new picture
+    notice("ok", "✓ Picture changed");
+  } catch (e) {
+    if (row) { try { await filesRepo.removeFile(row); } catch (x) { /* it stays an unused older picture */ } }
+    notice("err", e && e.code === "23514" ? "That file is not a live picture of this project." : errorText(e));
+  }
+  thumbState(false);
+}
+async function dropThumb() {
+  if (thumbBusy || !ctx.project || ctx.project.thumbnailFileId == null) return;
+  if (!(await confirmBox("Take this project's picture off? The picture file stays in the project's history.", { title: "Take the picture off", okText: "Take it off" }))) return;
+  thumbState(true);
+  try {
+    const moved = await projectsRepo.setThumbnail(ctx.project, null);
+    filesRepo.forgetThumbnails();
+    setProject(moved);
+    notice("ok", "✓ Picture taken off");
+  } catch (e) { notice("err", errorText(e)); }
+  thumbState(false);
 }
 
 /* ── switcher ───────────────────────────────────────────────────────── */
@@ -427,6 +475,16 @@ async function init() {
   });
   el("pjSave").hidden = !ctx.canWrite;            // only the office edits project details
   el("pjSave").addEventListener("click", function () { overview.flush(ctx); });
+  el("pjNew").hidden = !ctx.canWrite;             // create_project: admin, manager (the database decides)
+  el("pjNew").addEventListener("click", function () { openNewProject(ctx.me); });
+  el("pjThumbEdit").hidden = !ctx.canWrite;       // the picture: can_edit('projects') (rows, Storage, the pointer)
+  el("pjThumbEdit").addEventListener("click", function () { el("pjThumbIn").click(); });
+  el("pjThumbIn").addEventListener("change", function () {
+    const f = this.files && this.files[0];
+    this.value = "";
+    changeThumb(f);
+  });
+  el("pjThumbDel").addEventListener("click", dropThumb);
   try {
     ctx.project = await projectsRepo.getProject(ctx.pid);
   } catch (e) {
@@ -436,6 +494,8 @@ async function init() {
   }
   renderHead();
   loadThumb();
+  const left = takeNotice(ctx.pid);               // said by the New Project dialog before it opened this page
+  if (left) toast(left, "info");
   startSweeper(ctx.me, { skip: ctx.pid });        // other projects' journal entries written with no signal
   const want = ALIASES[qs("tab")] || qs("tab");
   switchTab(TABS.indexOf(want) !== -1 ? want : "overview");

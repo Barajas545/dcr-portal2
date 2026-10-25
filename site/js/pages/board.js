@@ -6,7 +6,7 @@
    replaces the old 5-minute poll; after every (re)join the board is read again.
 
    Who may do what is the database's rule; the page only hides controls:
-     move / create  admin, manager (can_edit projects)
+     move / create  admin, manager (can_edit projects); New Project is the shared dialog of new-project.js
      log entries    admin, manager, accountant, lead (can_edit activity)
 
    The old portal's ~300 imported projects nobody has changed since the import come after the own
@@ -27,6 +27,7 @@ import { STATUS_ORDER, statusLabel } from "../map/status.js";
 import { projectTitle, addressLine } from "../map/projects.js";
 import { ymd, fmtShort, fmtDay, fmtWhen } from "../map/pacific.js";
 import { foldText } from "../map/activity.js";
+import { openNewProject, isOpen as isNewOpen } from "./new-project.js";
 
 const SHOW_OLD_KEY = "dcr2:board.showOld";
 
@@ -252,31 +253,10 @@ async function addLogEntry() {
   el("bdAddLogGo").disabled = false;
 }
 
+/* New Project: the shared dialog (new-project.js) creates it, makes its OneDrive folder and opens its page */
 function openNew() {
-  ["npName", "npAddr", "npCity"].forEach(function (i) { el(i).value = ""; });
-  el("npMsg").textContent = "";
-  el("bdNewModal").classList.add("open");
-  el("npName").focus();
-}
-
-async function createProject() {
-  const m = el("npMsg");
-  m.textContent = "";
-  const f = { projectName: el("npName").value.trim(), projectAddress: el("npAddr").value.trim(), projectCity: el("npCity").value.trim() };
-  if (!f.projectName) { m.textContent = "The project needs a name."; return; }
-  el("npCreate").disabled = true;
-  try {
-    const p = await projectsRepo.createProject(f);
-    el("bdNewModal").classList.remove("open");
-    state.projects = mergeRow(state.projects, p);
-    if (state.view !== "main" && !VIEWS[state.view].cols.some(function (c) { return c.status === p.status; })) setView("main");
-    render();
-    toast("Created " + projectTitle(p), "ok");
-    selectProject(p.id);
-  } catch (e) {
-    m.textContent = errorText(e);
-  }
-  el("npCreate").disabled = false;
+  if (!state.canWrite) return;
+  openNewProject(state.me);
 }
 
 function setView(v) {
@@ -344,7 +324,7 @@ async function startLive() {
     }
   } catch (e) {
     // no live updates: fall back to the old five-minute read
-    setInterval(function () { if (!state.dragging && !el("bdNewModal").classList.contains("open")) load(true); }, 300000);
+    setInterval(function () { if (!state.dragging && !isNewOpen()) load(true); }, 300000);
   }
 }
 
@@ -375,14 +355,9 @@ function wire() {
   });
   el("bdAddLogGo").addEventListener("click", addLogEntry);
   el("bdNewBtn").addEventListener("click", openNew);
-  el("npCancel").addEventListener("click", function () { el("bdNewModal").classList.remove("open"); });
-  el("npCreate").addEventListener("click", createProject);
-  el("bdNewModal").addEventListener("click", function (e) { if (e.target === this) this.classList.remove("open"); });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") {
-      if (el("bdNewModal").classList.contains("open")) el("bdNewModal").classList.remove("open");
-      else if (el("bdPanel").classList.contains("open")) closePanel();
-    }
+    // the New Project dialog takes its own Escape; this one closes the side panel
+    if (e.key === "Escape" && !isNewOpen() && el("bdPanel").classList.contains("open")) closePanel();
   });
   el("bdThumb").addEventListener("dblclick", function () {
     if (state.selectedId) location.href = "project.html?id=" + encodeURIComponent(state.selectedId);
@@ -460,6 +435,7 @@ async function init() {
   startLive();
   const open = qs("open");
   if (open && findProject(open)) selectProject(open);
+  if (qs("new") === "1") { setQs("new", ""); openNew(); }          // board.html?new=1: straight to New Project
 }
 
 init().catch(function (e) {

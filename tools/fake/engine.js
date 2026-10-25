@@ -44,7 +44,12 @@
      canUpdate / canDelete (its policies) and beforeInsert / guardUpdate / afterInsert / afterUpdate /
      afterDelete (its triggers); NS.extSeed adds their made-up rows to the seed;
    - Storage: simple uploads, TUS resumable uploads (6 MiB chunks), signed URLs, with the
-     project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read).
+     project-files rules (p/{project}/{folder}/{uuid}/{name}, no overwrite, who may read);
+   - Part 3 (owner 2026-10-24, migration 20261028000100): app.can_edit('estimates') is an admin or a manager with
+     the Estimator switch (profiles.can_estimate, added by tools/fake/p7-web.js with admin_set_profile and the
+     cost writes); create_project's labor-rate zone alone from anyone who creates projects (a rate or "custom"
+     needs prices); the project picture's checks (a live JPEG / PNG of the same project, in the thumbnail folder
+     itself); a receipt's cost (files.cost_id: a money editor's, the same project's, receipts or a bill's only).
    Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
 (function (root) {
   "use strict";
@@ -425,7 +430,9 @@
       if (!w.active) return false;
       const r = w.role;
       switch (area) {
-        case "projects": case "estimates": case "catalog": case "all_files": return r === "admin" || r === "manager";
+        case "projects": case "catalog": case "all_files": return r === "admin" || r === "manager";
+        // 20261028000100 (D4): an admin, or a manager with the Estimator switch
+        case "estimates": return r === "admin" || (r === "manager" && !!(w.p && w.p.can_estimate));
         case "contacts": return ["admin", "manager", "accountant"].includes(r);
         case "takeoffs": case "tasks": case "all_journal": return ["admin", "manager", "lead"].includes(r);
         case "activity": return ["admin", "manager", "accountant", "lead"].includes(r);
@@ -978,12 +985,30 @@
       if (r.subpath && (/^\/|\/$|\/\//.test(r.subpath) || /[\u0001-\u001f\u007f\\<>:"|?*]/.test(r.subpath))) {
         throw rule("23514", 'new row for relation "files" violates check constraint "files_subpath_shape"');
       }
+      if (r.folder === "thumbnail") {
+        // files_thumbnail_picture, files_thumbnail_no_subpath (rates_thumbnails.sql, file_subpaths.sql)
+        if (!["image/jpeg", "image/png"].includes(r.mime) || (r.estimate_item_id ?? null) !== null || (r.journal_entry_id ?? null) !== null ||
+            (r.bill_id ?? null) !== null) {
+          throw rule("23514", 'new row for relation "files" violates check constraint "files_thumbnail_picture"');
+        }
+        if (r.subpath) throw rule("23514", 'new row for relation "files" violates check constraint "files_thumbnail_no_subpath"');
+      }
+      if (r.cost_id !== null && r.cost_id !== undefined) {
+        // files_cost_receipt; t13_files_cost (M5b): a money editor links it, to a cost of the same project
+        if (r.folder !== "receipts" && (r.bill_id === null || r.bill_id === undefined)) {
+          throw rule("23514", 'new row for relation "files" violates check constraint "files_cost_receipt"');
+        }
+        if (!quiet && !canEdit(w, "money")) throw deny("only an admin, or a manager or accountant who sees financials, links a receipt to a cost");
+        const cost = (rows.costs || []).find((x) => x.id === Number(r.cost_id));
+        if (!cost || cost.project_id !== Number(r.project_id)) throw rule("23514", "the cost belongs to another project");
+        r.cost_id = Number(r.cost_id);
+      }
       if (r.journal_entry_id !== null && r.journal_entry_id !== undefined) {
         const j = rows.journal_entries.find((x) => x.id === Number(r.journal_entry_id));
         if (!j || j.project_id !== Number(r.project_id) || j.deleted_at) throw rule("23514", "the journal entry belongs to another project");
       }
       if (r.source === undefined || r.source === null) r.source = "desktop";        // the column default (M1)
-      if (!["desktop", "portal2", "agents", "import"].includes(r.source)) {
+      if (!["desktop", "portal2", "agents", "import", "subform"].includes(r.source)) {
         throw rule("23514", 'new row for relation "files" violates check constraint "files_source_check"');
       }
       if (r.description !== null && r.description !== undefined && String(r.description).length > 2000) {
@@ -1009,7 +1034,8 @@
       const same = rows.files.filter((f) => !f.deleted_at && f.project_id === Number(r.project_id) && f.folder === r.folder &&
         String(f.subpath || "").toLowerCase() === String(r.subpath || "").toLowerCase() &&
         (f.journal_entry_id ?? null) === (r.journal_entry_id ?? null) && (f.estimate_item_id ?? null) === (r.estimate_item_id ?? null) &&
-        (f.bill_id ?? null) === (r.bill_id ?? null) && String(f.name).toLowerCase() === String(r.name).toLowerCase() && isCurrent(f));
+        (f.bill_id ?? null) === (r.bill_id ?? null) && (f.cost_id ?? null) === (r.cost_id ?? null) &&
+        String(f.name).toLowerCase() === String(r.name).toLowerCase() && isCurrent(f));
       if (same.length) {
         const prev = same.sort((a, b) => b.version_no - a.version_no)[0];
         r.previous_id = prev.id;
@@ -1029,9 +1055,11 @@
         const city = String(r.city || "");
         const local = LOCAL_CITIES.some((c) => c.toLowerCase() === city.toLowerCase());
         const sp = rows.settings_prices[0] || COLS.settings_prices;
+        const zone = x.rate_source === "local" || x.rate_source === "out_of_area" ? x.rate_source : (local ? "local" : "out_of_area");
+        const given = x.labor_rate !== undefined && x.labor_rate !== null;
         const pr = Object.assign(clone(COLS.project_prices), { project_id: r.id,
-          labor_rate: x.labor_rate !== undefined ? x.labor_rate : (local ? sp.local_labor_rate : sp.out_of_area_labor_rate),
-          rate_source: x.labor_rate !== undefined ? x.rate_source || "custom" : (local ? "local" : "out_of_area") });
+          labor_rate: given ? Number(x.labor_rate) : (zone === "local" ? sp.local_labor_rate : sp.out_of_area_labor_rate),
+          rate_source: given ? x.rate_source || "custom" : zone });
         auditInsert(w, "project_prices", pr);
         commitInsert("project_prices", pr);
         logActivity(w, r.id, "system", "Project " + r.number + " created");
@@ -1131,6 +1159,13 @@
         if (!STATUSES.includes(r.status)) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_status_check"');
         if (r.lat !== null && (r.lat < -90 || r.lat > 90)) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_lat_check"');
         if (r.lng !== null && (r.lng < -180 || r.lng > 180)) throw rule("23514", 'new row for relation "projects" violates check constraint "projects_lng_check"');
+        if (r.thumbnail_file_id !== null && r.thumbnail_file_id !== undefined && r.thumbnail_file_id !== old.thumbnail_file_id) {
+          const pic = rows.files.find((f) => f.id === Number(r.thumbnail_file_id));
+          if (!pic || pic.project_id !== r.id || pic.folder !== "thumbnail" || pic.deleted_at) {
+            throw rule("23514", "the project picture must be a live picture of the same project (folder thumbnail)");
+          }
+          r.thumbnail_file_id = Number(r.thumbnail_file_id);
+        }
         if (r.status === "completed" && old.status !== "completed" && r.completed_date === old.completed_date) r.completed_date = today();
         if (r.lat === null || r.lng === null || r.lat === undefined || r.lng === undefined) r.location_source = null;
         else if ((r.lat !== old.lat || r.lng !== old.lng) && r.location_source === old.location_source) r.location_source = "manual";
@@ -1344,9 +1379,16 @@
           if (!canEdit(w, "projects")) throw deny("not allowed to create projects");
           const fields = (args && args.fields) || {};
           for (const k of Object.keys(fields)) if (!CREATE_KEYS.includes(k)) throw rule("22023", "unknown field: " + k);
-          if (("labor_rate" in fields || "rate_source" in fields) && !w.prices) throw deny("the labor rate needs the prices switch");
+          // rates_thumbnails.sql: a zone alone from anyone who creates projects; an amount (or 'custom') needs prices
+          const rateGiven = fields.labor_rate !== undefined && fields.labor_rate !== null;
+          const sourceGiven = fields.rate_source !== undefined && fields.rate_source !== null;
+          if (sourceGiven && !["local", "out_of_area", "custom"].includes(fields.rate_source)) {
+            throw rule("22023", "rate_source must be local, out_of_area or custom");
+          }
+          if ((rateGiven || fields.rate_source === "custom") && !w.prices) throw deny("not allowed to set prices");
+          if (fields.rate_source === "custom" && !rateGiven) throw rule("22023", "a custom rate needs labor_rate");
           const f = clone(fields);
-          const extra = { labor_rate: f.labor_rate, rate_source: f.rate_source };
+          const extra = { labor_rate: rateGiven ? f.labor_rate : undefined, rate_source: sourceGiven ? f.rate_source : (rateGiven ? "custom" : undefined) };
           delete f.labor_rate; delete f.rate_source;
           if (f.status === undefined || f.status === null) delete f.status;
           const r = Object.assign(clone(COLS.projects), f);

@@ -153,6 +153,16 @@ test("create_project: the database numbers it, with its prices row and its first
   assert.throws(() => e.rpc(P.manager, "create_project", { fields: { name: "Y", colour: "red" } }), (x) => x.code === "22023");
   assert.throws(() => e.rpc(P.manager, "create_project", { fields: { name: "Y", labor_rate: 100 } }), (x) => x.code === "42501", "the rate needs prices");
   assert.throws(() => e.rpc(P.manager, "create_project", { fields: { name: " " } }), (x) => x.code === "23514");
+  // a zone alone is fine without prices (the database prices it from the settings); "custom" is an amount
+  const z = e.rpc(P.manager, "create_project", { fields: { name: "Zone only", city: "Oak Vista", rate_source: "out_of_area" } });
+  const zp = e.rows.project_prices.find((r) => r.project_id === z.id);
+  assert.deepEqual([zp.labor_rate, zp.rate_source], [110, "out_of_area"], "the zone named wins over the city's");
+  assert.throws(() => e.rpc(P.manager, "create_project", { fields: { name: "Y", rate_source: "custom", labor_rate: 95 } }), (x) => x.code === "42501");
+  assert.throws(() => e.rpc(P.manager_prices, "create_project", { fields: { name: "Y", rate_source: "custom" } }), (x) => x.code === "22023", "custom needs a rate");
+  assert.throws(() => e.rpc(P.manager_prices, "create_project", { fields: { name: "Y", rate_source: "nearby" } }), (x) => x.code === "22023");
+  const c = e.rpc(P.manager_prices, "create_project", { fields: { name: "Custom", rate_source: "custom", labor_rate: 95.5 } });
+  const cp = e.rows.project_prices.find((r) => r.project_id === c.id);
+  assert.deepEqual([cp.labor_rate, cp.rate_source], [95.5, "custom"]);
 });
 
 test("soft_delete: version checked, a tombstone written, gone for everyone but admins", () => {

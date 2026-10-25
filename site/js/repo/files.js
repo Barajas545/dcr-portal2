@@ -10,7 +10,14 @@
    * signedUrls(paths, s)         many at once ({path: url}); up to an hour for a gallery;
    * thumbnailUrls(projects)      {projectId: url} of the project pictures (projects.thumbnail_file_id),
                                   remembered for the page;
-   * setCaption(item, text)       files.description, versioned (the uploader, managers, admins). */
+   * setCaption(item, text)       files.description, versioned (the uploader, managers, admins);
+   * addThumbnail(pid, pic)       a project picture (thumb-prep.js prepare: at most 800 px, JPEG or PNG) straight to
+                                  Storage at p/{project}/thumbnail/{uuid}/thumbnail.jpg (never overwriting:
+                                  upsert false), then its files row (folder thumbnail, no sub-folder, source
+                                  portal2; the same name in the same place makes it a new version of the old
+                                  picture) -> the row. Storage and the row need app.can_edit('projects');
+   * removeFile(row)              rpc soft_delete of one files row at its version (the picture whose pointer could
+                                  not be set is taken back, best effort). */
 
 import { db, must, versioned, pageAll, idOf } from "./_db.js";
 import { toFileItem, SIGNED_DOC_S, SIGNED_GALLERY_S } from "../map/files.js";
@@ -87,6 +94,41 @@ export async function thumbnailUrls(projects) {
 }
 
 export function forgetThumbnails() { thumbByFile.clear(); }
+
+export const THUMB_FOLDER = "thumbnail";
+
+/** pic: {blob, mime: image/jpeg | image/png, ext: .jpg | .png}. -> the new files row. */
+export async function addThumbnail(projectId, pic) {
+  const pid = idOf(String(projectId));
+  const mime = pic && pic.mime === "image/png" ? "image/png" : "image/jpeg";
+  const name = "thumbnail" + (mime === "image/png" ? ".png" : ".jpg");
+  if (!pic || !pic.blob || !pic.blob.size) throw Object.assign(new Error("The picture is empty."), { code: "22023", status: 400 });
+  // the queue's own key rule (Desktop 2's object_key), loaded only when a picture is changed
+  const { objectKey, FILE_SOURCE } = await import("../upload-queue2.js");
+  const key = objectKey(pid, THUMB_FOLDER, name);
+  const c = await db();
+  const up = await c.storage.from(BUCKET).upload(key, pic.blob, { upsert: false, contentType: mime, cacheControl: "3600" });
+  if (up && up.error) {
+    const e = up.error;
+    const sc = Number(e.statusCode || e.status || 0);
+    const err = new Error(sc === 403 || /row-level security|unauthorized/i.test(String(e.message || ""))
+      ? "You don't have permission to change the project picture." : (e.message || "The picture could not be uploaded."));
+    err.code = sc === 403 || /row-level security|unauthorized/i.test(String(e.message || "")) ? "42501" : "storage";
+    err.status = sc || 0;
+    throw err;
+  }
+  const rows = must(await c.from("files").insert({ project_id: pid, folder: THUMB_FOLDER, subpath: "", name, storage_path: key,
+    size: pic.blob.size, mime, source: FILE_SOURCE }).select("*")) || [];
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row) throw Object.assign(new Error("You don't have permission to change the project picture."), { code: "42501", status: 403 });
+  return row;
+}
+
+/** rpc soft_delete(tbl files, id, version). */
+export async function removeFile(row) {
+  const c = await db();
+  return must(await c.rpc("soft_delete", { tbl: "files", id: idOf(row.id), version: row.version }));
+}
 
 export async function setCaption(item, text) {
   const t = String(text == null ? "" : text).trim().slice(0, 2000);     // files_description_check

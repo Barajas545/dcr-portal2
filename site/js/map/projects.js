@@ -13,7 +13,7 @@
 
    Writes are reverse-mapped through PROJECT_FIELDS (old key -> column). Pure module. */
 
-import { toOldStatus, toNewStatus, statusLabel } from "./status.js";
+import { toOldStatus, toNewStatus, statusLabel, isStatus } from "./status.js";
 import { dormant, legacyId } from "./legacy.js";
 
 // Overview fields: Desktop 2's own (dcrdesk/ui/pages/project/overview.py DETAIL_FIELDS), under the
@@ -199,6 +199,76 @@ export function addressLine(p, sep) {
 export function switcherLabel(p) {
   return [projectTitle(p), p.projectClientName, addressLine(p, ", "), p.projectPhoneNumber,
     p.projectEmailAddress].filter(Boolean).join(" · ");
+}
+
+/* ── the New Project dialog (pages/new-project.js) ─────────────────────── */
+
+// rpc create_project takes these and more (rates_thumbnails.sql assert_keys); the dialog sends only these, never
+// tags, plans_url, lat or lng (a point is placed later, from the address or a phone at the site)
+export const NEW_PROJECT_KEYS = Object.freeze(["name", "address", "city", "state", "zip", "client_name", "client_phone",
+  "client_email", "status", "scope", "start_date", "rate_source", "labor_rate"]);
+// the labor rate's zone: "auto" sends nothing (the database decides from the city), a zone alone needs no prices
+// switch (the database prices it), "custom" with a rate needs prices (create_project refuses it otherwise)
+export const RATE_ZONES = Object.freeze([
+  { id: "auto", label: "Automatic from the city" },
+  { id: "local", label: "Local" },
+  { id: "out_of_area", label: "Out of area" },
+  { id: "custom", label: "Custom rate", prices: true },
+]);
+
+/** The dialog's values -> {fields} for create_project, or {problem} (a sentence). form: {name, address, city, state,
+    zip, client_name, client_phone, client_email, start_date, status, scope, zone, rate}; prices: the person sees
+    prices (only then a custom rate). Values are trimmed and blanks left out. */
+export function newProjectFields(form, prices) {
+  const f = form || {};
+  const t = (k) => String(f[k] == null ? "" : f[k]).replace(/\s+/g, " ").trim();
+  const out = {};
+  const name = t("name");
+  if (!name) return { problem: "The project needs a name." };
+  out.name = name;
+  ["address", "city", "client_name", "client_phone"].forEach((k) => { const v = t(k); if (v) out[k] = v; });
+  const state = t("state").toUpperCase();
+  if (state) {
+    if (!/^[A-Z]{2}$/.test(state)) return { problem: "The state is two letters (CA)." };
+    out.state = state;
+  }
+  const zip = t("zip");
+  if (zip) {
+    if (!/^\d{5}(-\d{4})?$/.test(zip)) return { problem: "The ZIP is five digits (or ZIP+4: 93446-1234)." };
+    out.zip = zip;
+  }
+  const email = t("client_email");
+  if (email) {
+    if (email.indexOf("@") < 1 || /\s/.test(email)) return { problem: "The client's e-mail does not look like an e-mail address." };
+    out.client_email = email;
+  }
+  const day = t("start_date");
+  if (day) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || isNaN(Date.parse(day + "T12:00:00Z"))) return { problem: "Pick the start date from the calendar." };
+    out.start_date = day;
+  }
+  const status = t("status") || "new_request";
+  if (!isStatus(status)) return { problem: "Pick how the project starts." };
+  out.status = status;
+  const scope = String(f.scope == null ? "" : f.scope).trim();
+  if (scope) out.scope = scope;
+  const zone = t("zone") || "auto";
+  const rateText = t("rate").replace(/[$,]/g, "");
+  if (zone === "local" || zone === "out_of_area") {
+    if (rateText) return { problem: "A typed rate needs “Custom rate”." };
+    out.rate_source = zone;
+  } else if (zone === "custom") {
+    if (!prices) return { problem: "A custom labor rate needs the prices switch." };
+    const n = Number(rateText);
+    if (!rateText || !Number.isFinite(n) || n <= 0 || n > 1000) return { problem: "Type the labor rate per hour (more than $0, at most $1,000)." };
+    out.rate_source = "custom";
+    out.labor_rate = Math.round(n * 100) / 100;
+  } else if (zone === "auto") {
+    if (rateText) return { problem: "A typed rate needs “Custom rate”." };
+  } else {
+    return { problem: "Pick the labor rate's zone." };
+  }
+  return { fields: out };
 }
 
 /** Status for writes: accepts a database word or an old spelling. */
