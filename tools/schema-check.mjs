@@ -2056,6 +2056,11 @@ section = "P5c: the public subcontractor form (DCR Desktop 2's subform function)
 // ===========================================================================================
 await (await import("./schema-check-p5c-sub.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "Part 4: the Files tab's OneDrive part through DCR Desktop 2's own onedrive broker (migration 20261028000200)";
+// ===========================================================================================
+await (await import("./schema-check-p7-onedrive.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";
