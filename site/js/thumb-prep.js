@@ -5,7 +5,11 @@
 
    * imageSize(bytes)         the width and height a JPEG, PNG, GIF, WebP or HEIC/HEIF file's header says, read
                               BEFORE anything is decoded (a 200-megapixel picture would take the tab down while it
-                              is decoded), or null;
+                              is decoded), or null — from the bytes given (the file's first HEAD_BYTES);
+   * sizeOf(file, head)       the same for a whole file: a JPEG whose metadata before its frame header runs past the
+                              first HEAD_BYTES (a large XMP, ICC or Photoshop block) is walked on segment by segment,
+                              and a HEIC whose meta box lies further on (after its image data) box by box, with small
+                              reads at most SCAN_BYTES into the file;
    * fitSize(w, h)            the size it is drawn at (never larger than it was);
    * looksLikeSvg(head)       an SVG or XML text, whatever its name and type say;
    * outputFor(mime, alpha)   {mime, ext}: image/png + .png only for a PNG, WebP or GIF with transparency;
@@ -17,6 +21,8 @@ export const MAX_BYTES = 40 * 1024 * 1024;
 export const MAX_PIXELS = 60e6;
 export const JPEG_QUALITY = 0.85;
 export const HEAD_BYTES = 256 * 1024;
+export const SCAN_BYTES = 8 * 1024 * 1024;            // how far into a file the header walk may read
+const MAX_READS = 2048;                               // small reads of one walk (a JPEG segment is at most 64 KiB)
 export const ACCEPT = Object.freeze(["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"]);
 
 function bad(message) { const e = new Error(message); e.code = "local_rule"; return e; }
@@ -46,34 +52,89 @@ export function imageSize(bytes) {
     if (c === "VP8X") return { width: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), height: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)), type: "image/webp" };
     return null;
   }
-  // JPEG: walk the segments to the first frame header (SOF0..SOF15 but DHT, JPG, DAC)
+  // JPEG: walk the segments to the first frame header
   if (b[0] === 0xff && b[1] === 0xd8) {
-    let i = 2;
-    while (i + 9 < b.length) {
-      if (b[i] !== 0xff) return null;
-      let m = b[i + 1];
-      while (m === 0xff && i + 2 < b.length) { i++; m = b[i + 1]; }       // fill bytes
-      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
-      if (m === 0xd9 || m === 0xda) return null;                         // the image data before any frame header
-      const len = u16be(b, i + 2);
-      if (len < 2) return null;
-      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
-        return { width: u16be(b, i + 7), height: u16be(b, i + 5), type: "image/jpeg" };
-      }
-      i += 2 + len;
-    }
-    return null;
+    const r = jpegWalk(b, 2);
+    return r && r.size ? r.size : null;
   }
   // HEIC / HEIF (an iPhone's): ftyp, then the largest image spatial extent ("ispe") in the first bytes
-  if (ascii(b, 4, 4) === "ftyp" && /^(heic|heix|hevc|hevx|heim|heis|mif1|msf1|avif)$/.test(ascii(b, 8, 4))) {
-    let best = null;
-    for (let i = 8; i + 16 <= b.length; i++) {
-      if (b[i] === 0x69 && b[i + 1] === 0x73 && b[i + 2] === 0x70 && b[i + 3] === 0x65) {     // "ispe"
-        const w = u32be(b, i + 8), h = u32be(b, i + 12);
-        if (w > 0 && h > 0 && (!best || w * h > best.width * best.height)) best = { width: w, height: h, type: "image/heic" };
-      }
+  if (isHeif(b)) return largestIspe(b, 8);
+  return null;
+}
+
+/* The JPEG segments of `b` from `i` (a segment's start) to the first frame header (SOF0..SOF15 but DHT, JPG, DAC):
+   {size}; {more: offset} when `b` ends first (the walk goes on there); null when there is none (the image data
+   before any frame header, or not a segment). */
+function jpegWalk(b, i) {
+  while (i + 9 < b.length) {
+    if (b[i] !== 0xff) return null;
+    let m = b[i + 1];
+    while (m === 0xff && i + 2 < b.length) { i++; m = b[i + 1]; }         // fill bytes
+    if (i + 9 >= b.length) break;
+    if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+    if (m === 0xd9 || m === 0xda) return null;                           // the image data before any frame header
+    const len = u16be(b, i + 2);
+    if (len < 2) return null;
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      return { size: { width: u16be(b, i + 7), height: u16be(b, i + 5), type: "image/jpeg" } };
     }
-    return best;
+    i += 2 + len;
+  }
+  return { more: i };
+}
+
+function isHeif(b) {
+  return ascii(b, 4, 4) === "ftyp" && /^(heic|heix|hevc|hevx|heim|heis|mif1|msf1|avif)$/.test(ascii(b, 8, 4));
+}
+
+/** The largest "ispe" (image spatial extent) in `b` from `from`, or null. */
+function largestIspe(b, from) {
+  let best = null;
+  for (let i = from; i + 16 <= b.length; i++) {
+    if (b[i] === 0x69 && b[i + 1] === 0x73 && b[i + 2] === 0x70 && b[i + 3] === 0x65) {     // "ispe"
+      const w = u32be(b, i + 8), h = u32be(b, i + 12);
+      if (w > 0 && h > 0 && (!best || w * h > best.width * best.height)) best = { width: w, height: h, type: "image/heic" };
+    }
+  }
+  return best;
+}
+
+async function bytesOf(part) {
+  if (part && typeof part.arrayBuffer === "function") return new Uint8Array(await part.arrayBuffer());
+  return new Uint8Array(await new Response(part).arrayBuffer());
+}
+function bytesAt(file, at, n) { return bytesOf(file.slice(at, at + n)); }
+
+/** {width, height, type} for a picture file (see the header): its first bytes `head` (read here when not given),
+    then — a JPEG or HEIC that does not say within them — the walk further in. null when the file does not say. */
+export async function sizeOf(file, head) {
+  const h = head || await headOf(file);
+  const quick = imageSize(h);
+  if (quick || !file || typeof file.slice !== "function" || h.length >= file.size) return quick;   // all of it was read
+  if (h[0] === 0xff && h[1] === 0xd8) {
+    let r = jpegWalk(h, 2);
+    const end = Math.min(file.size, SCAN_BYTES);
+    for (let reads = 0; r && r.more !== undefined; reads++) {
+      const at = r.more;
+      if (at + 10 > end || reads >= MAX_READS) return null;
+      const s = jpegWalk(await bytesAt(file, at, 64), 0);                  // a marker, its length, a frame's size
+      r = s && s.more !== undefined ? { more: at + s.more } : s;
+    }
+    return r && r.size ? r.size : null;
+  }
+  if (isHeif(h)) {
+    // the top-level boxes (ftyp, mdat, meta …): only their headers are read, then the meta box itself
+    let at = 0;
+    for (let n = 0; n < 64 && at + 8 <= file.size; n++) {
+      const box = await bytesAt(file, at, 16);
+      if (box.length < 8) return null;
+      let len = u32be(box, 0);
+      if (len === 1) { if (box.length < 16) return null; len = u32be(box, 8) * 4294967296 + u32be(box, 12); }
+      else if (len === 0) len = file.size - at;
+      if (len < 8) return null;
+      if (ascii(box, 4, 4) === "meta") return len > SCAN_BYTES ? null : largestIspe(await bytesAt(file, at, len), 8);
+      at += len;
+    }
   }
   return null;
 }
@@ -100,10 +161,8 @@ export function outputFor(srcMime, hasAlpha) {
 
 function nameOf(file) { return String((file && file.name) || ""); }
 
-async function headOf(file) {
-  const part = file.slice ? file.slice(0, HEAD_BYTES) : file;
-  if (part && typeof part.arrayBuffer === "function") return new Uint8Array(await part.arrayBuffer());
-  return new Uint8Array(await new Response(part).arrayBuffer());
+function headOf(file) {
+  return bytesOf(file.slice ? file.slice(0, HEAD_BYTES) : file);
 }
 
 async function decode(file) {
@@ -144,7 +203,7 @@ export async function prepare(file) {
   if (type === "image/svg+xml" || /\.svgz?$/i.test(nameOf(file))) throw bad("SVG drawings can't be the project picture: use a photo (JPEG, PNG, WebP or HEIC).");
   const head = await headOf(file);
   if (looksLikeSvg(new TextDecoder().decode(head.slice(0, 2048)))) throw bad("SVG drawings can't be the project picture: use a photo (JPEG, PNG, WebP or HEIC).");
-  const size = imageSize(head);
+  const size = await sizeOf(file, head);
   if (!size) throw bad("That file is not a picture DCR can use: pick a JPEG, PNG, WebP, GIF or HEIC photo.");
   if (size.width * size.height > MAX_PIXELS) throw bad("That picture is too large (more than 60 megapixels): pick a smaller one.");
   const src = await decode(file);

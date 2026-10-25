@@ -228,6 +228,49 @@ test("thumb-prep: the size a picture's header says, read before anything is deco
   assert.equal(T.imageSize(new Uint8Array(4)), null);
 });
 
+test("thumb-prep: a JPEG with more than 256 KiB of metadata before its frame header, and a HEIC whose meta box comes after its image data, still say their size", async () => {
+  const fileOf = (u8, name, type) => { const b = new Blob([u8], { type }); return { name, type, size: b.size, slice: (x, y) => b.slice(x, y) }; };
+  const jpeg = (w, h) => {
+    // SOI, five APP2 segments of 65,535 bytes (a large ICC profile / extended XMP: 320 KiB), then SOF0
+    const app = 65535 + 2, n = 5;
+    const u8 = new Uint8Array(2 + n * app + 10 + 16);
+    u8.set([0xff, 0xd8]);
+    for (let k = 0; k < n; k++) u8.set([0xff, 0xe2, 0xff, 0xff], 2 + k * app);
+    u8.set([0xff, 0xc0, 0x00, 0x11, 0x08, (h >> 8) & 255, h & 255, (w >> 8) & 255, w & 255, 0x03], 2 + n * app);
+    return u8;
+  };
+  const deep = jpeg(4032, 3024);
+  assert.ok(deep.length - 26 > T.HEAD_BYTES, "the frame header lies past the first 256 KiB");
+  assert.equal(T.imageSize(deep.subarray(0, T.HEAD_BYTES)), null, "the first bytes alone do not say");
+  assert.deepEqual(await T.sizeOf(fileOf(deep, "IMG_1.jpg", "image/jpeg")), { width: 4032, height: 3024, type: "image/jpeg" });
+  // prepare goes on to decoding (node cannot decode: "could not be opened"), never "not a picture"
+  await assert.rejects(T.prepare(fileOf(deep, "IMG_1.jpg", "image/jpeg")), /could not be opened/);
+  await assert.rejects(T.prepare(fileOf(jpeg(10000, 7000), "big.jpg", "image/jpeg")), /60 megapixels/, "refused before decoding, however deep");
+  // fill bytes before a marker, past the first bytes
+  const fills = new Uint8Array(deep.length + 3);
+  fills.set(deep.subarray(0, deep.length - 26));
+  fills.set([0xff, 0xff, 0xff], deep.length - 26);
+  fills.set(deep.subarray(deep.length - 26), deep.length - 23);
+  assert.deepEqual(await T.sizeOf(fileOf(fills, "f.jpg", "image/jpeg")), { width: 4032, height: 3024, type: "image/jpeg" });
+  // the image data before any frame header: no size, however far it is walked
+  const sos = deep.slice();
+  sos.set([0xff, 0xda], deep.length - 26);
+  assert.equal(await T.sizeOf(fileOf(sos, "s.jpg", "image/jpeg")), null);
+  // HEIC: ftyp, a 300 KiB mdat (the image data first), then the meta box with its ispe
+  const ftyp = [0, 0, 0, 24, ...ascii("ftyp"), ...ascii("heic"), 0, 0, 0, 0, ...ascii("mif1heic")];
+  const mdatLen = 300 * 1024;
+  const ispe = [0, 0, 0, 20, ...ascii("ispe"), 0, 0, 0, 0, ...be32(8064), ...be32(6048)];
+  const meta = [...be32(12 + ispe.length), ...ascii("meta"), 0, 0, 0, 0, ...ispe];
+  const heic = new Uint8Array(ftyp.length + mdatLen + meta.length);
+  heic.set(ftyp);
+  heic.set([...be32(mdatLen), ...ascii("mdat")], ftyp.length);
+  heic.set(meta, ftyp.length + mdatLen);
+  assert.equal(T.imageSize(heic.subarray(0, T.HEAD_BYTES)), null);
+  assert.deepEqual(await T.sizeOf(fileOf(heic, "IMG_2.heic", "image/heic")), { width: 8064, height: 6048, type: "image/heic" });
+  // a small file read whole: nothing further to walk
+  assert.equal(await T.sizeOf(fileOf(new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x40, ...new Array(20).fill(0)]), "t.jpg", "image/jpeg")), null);
+});
+
 test("thumb-prep: at most 800 px, never enlarged; never SVG; PNG only for transparency", () => {
   assert.deepEqual(T.fitSize(4032, 3024), { width: 800, height: 600 });
   assert.deepEqual(T.fitSize(3024, 4032), { width: 600, height: 800 });

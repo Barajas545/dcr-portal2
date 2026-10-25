@@ -86,8 +86,8 @@ test("the picture is always drawn again: prepare() has no path that hands the or
   assert.ok(body.length > 100);
   assert.ok(!/return\s+file\b|blob:\s*file\b|return\s*\{\s*blob:\s*file/.test(body), "never the original bytes");
   assert.match(body, /const blob = await encode\(target, out\.mime\)/);
-  assert.match(body, /imageSize\(head\)/, "the size is read from the header first");
-  assert.ok(body.indexOf("imageSize(head)") < body.indexOf("await decode(file)"), "before decoding");
+  assert.match(body, /await sizeOf\(file, head\)/, "the size is read from the header first (walked on past the first bytes when needed)");
+  assert.ok(body.indexOf("sizeOf(file, head)") < body.indexOf("await decode(file)"), "before decoding");
 });
 
 test("the cost dialog: fetched on demand from the Expenses tab only (never statically, never on project.js), no delete anywhere, out of the offline list", () => {
