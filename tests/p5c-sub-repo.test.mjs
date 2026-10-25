@@ -65,7 +65,10 @@ function png(pixels = 400) {
 }
 const SIG = "data:image/png;base64," + png().toString("base64");
 const openJob = () => E.rows.projects.find((p) => !p.deleted_at && !p.completed_date && p.status === "in_progress" && p.number !== "A267");
-const closedJob = () => E.rows.projects.find((p) => !p.deleted_at && (p.status === "closed" || p.status === "completed"));
+// a closed job whose number is in no other live job's number: "A000" would also find the open A000T2 (the OneDrive demo's
+// test project), and the search is right to offer that one
+const closedJob = () => E.rows.projects.find((p) => !p.deleted_at && (p.status === "closed" || p.status === "completed")
+  && !E.rows.projects.some((o) => o !== p && !o.deleted_at && String(o.number).toLowerCase().includes(String(p.number).toLowerCase())));
 const payload = (project, extra) => Object.assign({ kind: "Invoice", projectId: String(project.id), vendorCompany: "Juniper Glass", contactName: "Jun Iper",
   email: "jun@juniper-glass.example", phone: "", invoiceNumber: "G-12", amount: "1,375.50", description: "Shower glass, first fitting.",
   invoiceDate: "", dueDate: "", signatureName: "Jun Iper", signature: SIG, agree: true, website: "", document: { type: "application/pdf", size: 4096 } }, extra || {});
