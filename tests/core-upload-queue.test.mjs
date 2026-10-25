@@ -314,4 +314,29 @@ test("custody refuses what can never go up", async () => {
   await assert.rejects(q.enqueue({ projectId: w.sandbox.id, file: blob(0), kind: "photo" }), /empty/);
   await assert.rejects(q.enqueue({ file: blob(10), kind: "photo" }), /belongs to a project/);
   await assert.rejects(q.enqueue({ projectId: w.sandbox.id, file: blob(10), kind: "journal" }), /journal entry/);
+  await assert.rejects(q.enqueue({ projectId: w.sandbox.id, file: blob(10), kind: "receipt" }), /A receipt belongs to a cost/);
+});
+
+test("Part 3 options: keepName keeps the name in its place (the database makes it a new version), preview:false sends no small copy, costId rides on the item", async () => {
+  const w = world({ preview: true });
+  const q = w.queue();
+  const doc = { projectId: w.sandbox.id, kind: "document", folder: "documents", subpath: "Permits", name: "Permit.pdf", keepName: true, preview: false, takenAt: WHEN };
+  await q.enqueue(Object.assign({ file: blob(1000, "application/pdf") }, doc));
+  await q.drain();
+  await q.enqueue(Object.assign({ file: blob(1200, "application/pdf") }, doc));
+  await q.drain();
+  const rows = w.files().filter((f) => f.subpath === "Permits").sort((a, b) => a.id - b.id);
+  assert.deepEqual(rows.map((f) => [f.name, f.version_no]), [["Permit.pdf", 1], ["Permit.pdf", 2]], "never bumped to Permit-2.pdf");
+  assert.equal(rows[1].previous_id, rows[0].id);
+  assert.equal(rows[0].preview_path, null);
+  // without keepName the second one takes the next free name
+  await q.enqueue(Object.assign({ file: blob(900, "application/pdf") }, doc, { keepName: false }));
+  await q.drain();
+  assert.ok(w.files().some((f) => f.subpath === "Permits" && f.name === "Permit-2.pdf"));
+  w.net.down = true;
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(100, "image/jpeg"), kind: "receipt", costId: "41", takenAt: WHEN });
+  assert.ok((await q.list()).some((i) => i.costId === 41 && i.folder === "receipts"), "the item names its cost");
+  const kept = Array.from(w.store.values()).find((r) => r.kind === "receipt");
+  assert.deepEqual([kept.folder, kept.subpath, kept.costId], ["receipts", "", 41]);
+  assert.match(kept.key, new RegExp("^f/" + w.sandbox.id + "/receipts/[0-9a-f]{32}/Receipt 2026-10-19 10\\.30\\.12\\.jpg$"));
 });

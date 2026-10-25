@@ -13,7 +13,13 @@
      document_url, notes - the quote's notes name its price) - the prices switch; rpc quote_follow_up(p_id): quote editors (admin; a manager or accountant with prices),
      one more follow-up stamped with the company's day, the quote back (PT404 for one not readable);
    * bills, payments, invoices, invoice_lines, client_payments, costs - the financials switch (Portal 2 writes
-     none of them in 5a);
+     none of them in 5a); since Part 3 (owner 2026-10-24 D13) the project's Expenses tab adds and corrects costs:
+     costs RLS + t01_money_writer (an admin, or a manager or accountant with financials; 42501 for anyone else,
+     before any other rule), t10_costs (the kind, hours and rate never negative, a labour amount = hours x rate,
+     the estimate line of the same project, never another project) and t12_costs_ledger (the "Paid with" stamp is
+     the database's, reconciled_* and employee_* never from a person - 42501, a reconciled cost whose amount or card
+     changes is not reconciled any more, a labour cost's crew member inferred: NS.costEmployeeGuess of
+     tools/fake/p5b-ledger.js); no delete from Portal 2;
    * quote_commitments - a security-invoker view: no row without financials; committed NULL without prices;
      billed, approved, paid, the waiting bills, pct_billed / pct_paid, over_billed / over_billed_by, over_paid and
      paid_unapproved reported, never clamped (old lib/commitments.js);
@@ -75,6 +81,10 @@
   });
 
   const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+  const COST_KINDS = ["labor", "material", "subcontractor", "equipment", "other"];
+  const CARD_IDS = ["untagged", "card-amex", "card-visa", "card-fuel", "check", "account", "employee", "cash"];
+  /* numeric's round(hours * rate, 2): hours to the thousandth, the rate to the cent, multiplied exactly */
+  const laborAmount = (h, rt) => Math.round((Math.round(Number(Math.abs(h) + "e3")) * Math.round(Number(Math.abs(rt) + "e2"))) / 1000) / 100;
 
   (NS.extInstall = NS.extInstall || []).push(function install(E) {
     const { rows, projectVisible, PgErr, deny, rule, today, nowIso, clone, commitUpdate, logActivity } = E;
@@ -86,6 +96,8 @@
     const flagger = (w) => w.active && ["admin", "manager", "lead"].includes(w.role);                     // app.can_edit('item_flags')
     const quoteEditor = (w) => w.active && (w.admin || ((w.role === "manager" || w.role === "accountant") && w.prices)); // 'quotes'
     const quoteOf = (id) => rows.quotes.find((q) => q.id === Number(id)) || null;
+    // app.can_edit('money'): an admin, or a manager or accountant with financials
+    const moneyEditor = (w) => w.active && (w.admin || ((w.role === "manager" || w.role === "accountant") && w.financials));
 
     function canRead(w, table, r) {
       if (!w.active) return false;
@@ -103,13 +115,21 @@
         default: return false;
       }
     }
-    // only the flags are written by people from Portal 2 (Q12); every other table here is Desktop 2's to write
+    // the flags and (Part 3) the costs are written by people from Portal 2; every other table here is Desktop 2's
     function canInsert(w, table, r) {
+      if (table === "costs") {
+        // t01_money_writer answers first (before the policy and any other trigger)
+        if (!moneyEditor(w)) throw deny("only an admin, or a manager or accountant who sees financials, adds or changes costs");
+        return projectVisible(w, r.project_id);
+      }
       if (table !== "estimate_item_flags") return false;
       const it = itemOf(r.item_id);
       return flagger(w) && !!it && !it.deleted_at && itemReadable(w, it);
     }
-    function canUpdate(w, table, r) { return canInsert(w, table, r); }
+    function canUpdate(w, table, r) {
+      if (table === "costs") return moneyEditor(w) && projectVisible(w, r.project_id);
+      return canInsert(w, table, r);
+    }
     function canDelete(w, table, r) {
       if (table !== "estimate_item_flags") return false;
       return flagger(w) && itemReadable(w, itemOf(r.item_id));
@@ -124,7 +144,61 @@
       }
       if (r.due_date === "") r.due_date = null;
     }
+    /* t10_costs + t12_costs_ledger (money.sql, books_ledger.sql), for a person's insert (old: null) or update */
+    function costRules(w, r, old) {
+      if (old && r.project_id !== old.project_id) throw rule("23514", "a cost cannot move to another project");
+      if (!old && !rows.projects.some((p) => p.id === Number(r.project_id))) {
+        throw rule("23503", 'insert or update on table "costs" violates foreign key constraint "costs_project_id_fkey"');
+      }
+      r.project_id = Number(r.project_id);
+      if (!COST_KINDS.includes(r.kind)) throw rule("23514", 'new row for relation "costs" violates check constraint "costs_kind_check"');
+      if (!r.cost_date) r.cost_date = today();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(r.cost_date))) throw rule("22007", 'invalid input syntax for type date: "' + r.cost_date + '"');
+      for (const k of ["hours", "rate"]) {
+        if (r[k] === "" || r[k] === undefined) r[k] = null;
+        if (r[k] !== null && (!Number.isFinite(Number(r[k])) || Number(r[k]) < 0)) {
+          throw rule("23514", 'new row for relation "costs" violates check constraint "costs_' + k + '_check"');
+        }
+        if (r[k] !== null) r[k] = Number(r[k]);
+      }
+      r.amount = r.amount === null || r.amount === undefined || r.amount === "" ? 0 : Number(r.amount);
+      if (!Number.isFinite(r.amount) || Math.abs(r.amount) >= 1e10) throw rule("22003", "numeric field overflow");
+      r.amount = r2(r.amount);
+      if ((!old || r.estimate_item_id !== old.estimate_item_id) && r.estimate_item_id !== null && r.estimate_item_id !== undefined) {
+        const it = itemOf(r.estimate_item_id);
+        if (!it || it.project_id !== r.project_id) throw rule("23514", "the estimate item belongs to another project");
+        r.estimate_item_id = it.id;
+      }
+      if (r.kind === "labor" && r.hours !== null && r.rate !== null) r.amount = laborAmount(r.hours, r.rate);
+      r.card = String(r.card == null ? "" : r.card).trim() || "untagged";
+      if (!CARD_IDS.includes(r.card)) throw rule("23514", 'new row for relation "costs" violates check constraint "costs_card_check"');
+      const was = old || { reconciled_by: null, reconciled_at: null, employee_id: null, employee_source: null, card: null, card_by: null, card_at: null };
+      if ((r.reconciled_by ?? null) !== (was.reconciled_by ?? null) || (r.reconciled_at ?? null) !== (was.reconciled_at ?? null)) {
+        throw deny("a cost is reconciled with reconcile_costs()");
+      }
+      if ((r.employee_id ?? null) !== (was.employee_id ?? null) || (r.employee_source ?? null) !== (was.employee_source ?? null)) {
+        throw deny("a cost's employee is confirmed with confirm_cost_employee()");
+      }
+      if (r.card === "untagged") { r.card_by = null; r.card_at = null; }
+      else if (!old || r.card !== old.card) { r.card_by = w.uid; r.card_at = nowIso(); }
+      else { r.card_by = old.card_by; r.card_at = old.card_at; }               // the stamp is the database's
+      if (old && old.reconciled_at && (r.amount !== Number(old.amount) || r.card !== old.card)) {
+        r.reconciled_at = null;                                                  // not what was reconciled
+        r.reconciled_by = null;
+      }
+      const guess = () => (NS.costEmployeeGuess ? NS.costEmployeeGuess(rows.employees, r.kind, r.vendor, r.description) : null);
+      if (!old) {
+        const g = guess();
+        r.employee_id = g;
+        r.employee_source = g === null ? null : "inferred";
+      } else if (r.employee_source !== "confirmed" && (r.kind !== old.kind || r.vendor !== old.vendor || r.description !== old.description)) {
+        const g = guess();
+        r.employee_id = g;
+        r.employee_source = g === null ? null : "inferred";
+      }
+    }
     function beforeInsert(w, table, r) {
+      if (table === "costs") { costRules(w, r, null); return; }
       if (table !== "estimate_item_flags") return;
       const it = itemOf(r.item_id);
       if (!it || it.deleted_at) throw rule("23503", "estimate item " + r.item_id + " not found");
@@ -134,6 +208,7 @@
       r.at = nowIso();
     }
     function guardUpdate(w, table, old, r) {
+      if (table === "costs") { costRules(w, r, old); return; }
       if (table !== "estimate_item_flags") return;
       if (r.item_id !== old.item_id) throw rule("23514", "a flag stays on its item");
       r.project_id = old.project_id;

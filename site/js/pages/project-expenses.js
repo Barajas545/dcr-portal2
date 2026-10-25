@@ -9,9 +9,13 @@
    — the printed sheet runs the very same code, so the paper cannot disagree with the screen.
 
    Cost = materials + subcontractor + labour; equipment and other rows have their own column and are not in
-   Cost; billed-out money is not on this tab (Payments). Costs are entered in DCR Desktop 2 (Q12): "Paid
-   with", reconciled and the employee are kept on Expenses & receipts (ledger.html). Receipts (files.cost_id)
-   open in a new tab.
+   Cost; billed-out money is not on this tab (Payments). Costs are added and corrected here or in DCR Desktop 2
+   (owner decision 2026-10-24 D13): "＋ Add expense", ✎ on a row and ＋📎 (another receipt) for money editors
+   (map/ledger.js canTag: an admin, or a manager or accountant with financials — the database refuses anyone
+   else), in expense-dialog.js, fetched when first used. There is no delete: a wrong cost is corrected, or a
+   negative credit added. A receipt goes through the upload queue (kept on this device until it is up; its
+   progress shows in the row). Reconciled and the employee are kept on Expenses & receipts (ledger.html).
+   Receipts (files.cost_id) open in a new tab.
 
    Loaded only for people with the financials switch (project.js imports it on demand). */
 
@@ -19,9 +23,13 @@ import * as EF from "../expense-filter.js";
 import * as repo from "../repo/ledger.js";
 import { ledgerCsvRows, csvText, canTag, cardLabel } from "../map/ledger.js";
 import { ymd } from "../map/pacific.js";
+import * as uploads from "./uploads.js";
+import { RECEIPT_ACCEPT } from "../map/cost-form.js";
 
 let host = null, seq = 0, timer = null, qTimer = null;
-const st = { ctx: null, rows: null, f: EF.defaults(), view: [] };
+const st = { ctx: null, rows: null, f: EF.defaults(), view: [], queue: [], attachFor: null, unqueue: null };
+/** the cost dialog and the receipt step (money code: fetched when first used) */
+const dialog = () => import("./expense-dialog.js");
 
 const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = EF.money;
@@ -40,6 +48,29 @@ export function render(ctx, el) {
   host.addEventListener("change", onChange);
   host.addEventListener("input", onInput);
   load();
+  if (canTag(ctx.me) && !st.unqueue) {
+    // receipts on their way (the upload queue, kind receipt): their progress in the row; one landed: read again
+    st.unqueue = true;
+    uploads.onProgress(function (items, evt) {
+      st.queue = items.filter((i) => i.costId !== null && String(i.projectId) === String(ctx.pid));
+      paintQueue();
+      if (evt && evt.type === "done" && evt.item && evt.item.costId !== null && evt.item.costId !== undefined) reload();
+    }).then(function (off) { st.unqueue = off; }, function () {});
+  }
+}
+
+/* the receipts still on their way, in each row's receipt cell (only those spans change: typing in the search box
+   is not disturbed) */
+function paintQueue() {
+  if (!host) return;
+  host.querySelectorAll("[data-rq]").forEach(function (n) {
+    const mine = st.queue.filter((i) => String(i.costId) === n.getAttribute("data-rq"));
+    if (!mine.length) { n.textContent = ""; n.title = ""; n.classList.remove("bad"); return; }
+    const failed = mine.filter((i) => i.state === "failed");
+    n.textContent = failed.length ? "⚠" : "⏳" + (mine.length === 1 ? " " + uploads.itemLabel(mine[0], navigator.onLine !== false) : " " + mine.length);
+    n.title = failed.length ? (failed[0].error || "The receipt did not go up") + " — click to try again" : "A receipt is on its way";
+    n.classList.toggle("bad", failed.length > 0);
+  });
 }
 
 async function load() {
@@ -108,13 +139,17 @@ function paint() {
     '<a class="pj-btn pj-btn-sm" id="exPrint" href="' + esc(EF.hrefWith("report-expenses.html", { id: ctx.pid }, f, true, today)) + '" title="Print what you see">🖨 Print</a>' +
     '<button class="pj-btn pj-btn-sm" id="exCsv" type="button" title="Download what you see as a spreadsheet">⤓ CSV</button>' +
     '<a class="pj-btn pj-btn-sm" href="' + esc(ledgerHref) + '" title="Paid with, reconciled, employees and receipts across every job">Expenses &amp; receipts →</a>' +
+    (canTag(ctx.me) ? '<button class="pj-btn pj-btn-sm pj-btn-primary" id="exAdd" type="button">＋ Add expense</button>' +
+      '<input type="file" id="exAttachIn" accept="' + RECEIPT_ACCEPT + '" hidden>' : "") +
     "</div>";
-  const note = '<p class="pjm-note">Costs are entered in DCR Desktop 2 (the project\'s Money tab). Cost is materials, subcontractors and labour; ' +
+  const note = '<p class="pjm-note">Costs can be added here or in DCR Desktop 2 (the project\'s Money tab). Costs have no delete: correct one, ' +
+    "or add a negative credit. Cost is materials, subcontractors and labour; " +
     "equipment and other rows are listed on their own. Vendor bills and client invoices are on the Payments tab." +
-    (canTag(ctx.me) ? " “Paid with”, reconciled and the employee are kept on Expenses &amp; receipts." : "") + "</p>";
+    (canTag(ctx.me) ? " Reconciled and the employee are kept on Expenses &amp; receipts." : "") + "</p>";
 
   if (!all.length) {
-    host.innerHTML = bar + note + '<div class="pj-empty">No expense records for this project.</div>';
+    host.innerHTML = bar + note + '<div class="pj-empty">No expense records for this project.' +
+      (canTag(ctx.me) ? " “＋ Add expense” adds the first." : "") + "</div>";
     st.view = [];
     return;
   }
@@ -137,6 +172,7 @@ function paint() {
   }
 
   const COLS = 8;
+  const editor = canTag(ctx.me);
   let body = "";
   EF.group(rows).forEach((grp) => {
     const gt = EF.totals(grp.rows);
@@ -158,7 +194,10 @@ function paint() {
         '<td class="num"><b>' + (num(r.cost) ? esc(money(r.cost)) : "—") + "</b></td>" +
         '<td style="white-space:nowrap">' + (r.receipts || []).map((fl, i) =>
           '<button type="button" class="lg-r on" data-receipt="' + esc(r.id) + ":" + i + '" title="' + esc(fl.name + " — open") + '" aria-label="' +
-            esc("Open the receipt " + fl.name) + '">📎' + ((r.receipts.length > 1) ? '<sup class="lg-rn">' + (i + 1) + "</sup>" : "") + "</button>").join("") + "</td>" +
+            esc("Open the receipt " + fl.name) + '">📎' + ((r.receipts.length > 1) ? '<sup class="lg-rn">' + (i + 1) + "</sup>" : "") + "</button>").join("") +
+          (editor ? '<button type="button" class="lg-rq" data-rq="' + esc(r.id) + '" title=""></button>' +
+            '<button type="button" class="lg-r on" data-attach="' + esc(r.id) + '" title="Add a receipt" aria-label="Add a receipt to this cost">＋📎</button>' +
+            '<button type="button" class="lg-r on" data-edit="' + esc(r.id) + '" title="Correct this cost" aria-label="Correct this cost">✎</button>' : "") + "</td>" +
         "</tr>";
     });
     body += '<tr class="sub"><td colspan="2">Subtotal — ' + esc(grp.name) + '</td><td class="num">' + esc(money(gt.mat)) + '</td><td class="num">' +
@@ -176,12 +215,14 @@ function paint() {
   host.innerHTML = bar + note + summary + '<div class="pj-tblwrap"><table class="pj-tbl pjm-tbl"><thead><tr>' +
     th("date", "Date") + th("desc", "Description") + th("mat", "Materials", "num") + th("con", "Subs", "num") + th("lab", "Labour", "num") +
     th("oth", "Equip. / other", "num") + th("cost", "Cost", "num") + "<th>Receipt</th></tr></thead><tbody>" + body + "</tbody></table></div>";
+  paintQueue();
 }
 
 /* ── events (delegated on the pane: the table is redrawn often) ── */
 function onChange(e) {
   const t = e.target, f = st.f;
   if (!t || !t.id) return;
+  if (t.id === "exAttachIn") { const file = t.files && t.files[0]; t.value = ""; attachPicked(file); return; }
   if (t.id === "exGroup") { f.group = t.value; paint(); }
   else if (t.id === "exRange") {
     f.range = t.value;
@@ -233,7 +274,35 @@ function onClick(e) {
     const [rid, i] = t.getAttribute("data-receipt").split(":");
     const r = (st.rows || []).find((x) => String(x.id) === rid);
     openReceipt(r && r.receipts[Number(i)]);
+  } else if (t.id === "exAdd") {
+    openDialog(null);
+  } else if (t.hasAttribute("data-edit")) {
+    openDialog(t.getAttribute("data-edit"));
+  } else if (t.hasAttribute("data-attach")) {
+    st.attachFor = t.getAttribute("data-attach");
+    const inp = document.getElementById("exAttachIn");
+    if (inp) inp.click();
+  } else if (t.hasAttribute("data-rq") && t.classList.contains("bad")) {
+    uploads.retryAll();                           // a receipt that did not go up: try again
   }
+}
+
+/* Add / edit (expense-dialog.js, fetched now): this project's vendors are offered; after a save the list reads again
+   (the costs watch does too) */
+async function openDialog(costId) {
+  const ctx = st.ctx;
+  try {
+    const m = await dialog();
+    const vendors = (st.rows || []).map((r) => r.vendor).filter(Boolean);
+    await m.openCostDialog(ctx, { costId: costId === null ? undefined : costId, vendors, onSaved: function () { reload(); } });
+  } catch (e) { ctx.toast(ctx.errorText(e), "error"); }
+}
+
+async function attachPicked(file) {
+  const id = st.attachFor;
+  st.attachFor = null;
+  if (!file || !id) return;
+  try { const m = await dialog(); await m.attachReceipt(st.ctx, id, file); } catch (e) { st.ctx.toast(st.ctx.errorText(e), "error"); }
 }
 
 /* A new tab opened on the click itself (a pop-up blocker allows it), then sent to the signed URL (120 s). */

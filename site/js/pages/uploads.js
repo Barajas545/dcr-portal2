@@ -6,7 +6,7 @@
    capture image.jpg, and the same name in the same place would become a new VERSION of one photo)
    and puts it in its place by kind:
      photo / video -> photos/<the day>        journal -> journal/<the entry's day> (+ its entry)
-     voice / note  -> documents/Site Notes
+     voice / note  -> documents/Site Notes   receipt -> receipts (+ its cost; f/…: a money editor's)
    A journal picture taken before its entry exists (offline) is queued with pendingEntry = a local
    key and released by bindEntry(key, entryId) once the entry is saved.
 
@@ -35,6 +35,7 @@ export function progressItems(x) {
       projectId: it.projectId == null ? null : String(it.projectId),
       journalEntryId: it.journalEntryId == null ? null : it.journalEntryId,
       pendingEntry: it.pendingEntry || null, size: it.size || 0, kind: it.kind || "",
+      costId: it.costId == null ? null : it.costId,
     };
   });
 }
@@ -74,16 +75,28 @@ async function need() {
 }
 
 /** Hand one file to the queue -> its queue id once the bytes are safe on this device.
-    job: {projectId, file, kind, caption, takenAt, gps, journalEntryId, entryDate, pendingEntry, name} */
+    job: {projectId, file, kind, caption, takenAt, gps, journalEntryId, entryDate, pendingEntry, name, costId,
+    keepName, preview, folder, subpath} (costId: a receipt's cost; keepName: the name as given; preview: false for
+    no small copy; folder / subpath: another place than the kind's) */
 export async function enqueue(job) {
   const q = await need();
+  return q.enqueue(queueOptions(job));
+}
+
+/** The job as the queue takes it (only what was given; node tests check it). */
+export function queueOptions(job) {
   const o = { projectId: job.projectId, file: job.file, kind: job.kind, caption: job.caption || "",
     takenAt: job.takenAt || new Date(), gps: job.gps || null };
   if (job.name) o.name = job.name;
   if (job.journalEntryId != null) o.journalEntryId = job.journalEntryId;
   if (job.entryDate) o.entryDate = job.entryDate;
   if (job.pendingEntry) o.pendingEntry = job.pendingEntry;
-  return q.enqueue(o);
+  if (job.costId != null) o.costId = job.costId;
+  if (job.keepName) o.keepName = true;
+  if (job.preview === false) o.preview = false;
+  if (job.folder) o.folder = job.folder;
+  if (job.subpath !== undefined && job.subpath !== null) o.subpath = String(job.subpath);
+  return o;
 }
 
 /** cb(items, event) -> Promise<unsubscribe>; event {type: "done", item, row} when a file landed. */
