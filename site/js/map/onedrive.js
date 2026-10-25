@@ -12,10 +12,12 @@
      added from the item in DCR Desktop 2): photos and voice notes keep the capture bar (cloud, kept on the device);
    * only the allowed types (PDFs, pictures, videos, Office files without macros, text, CAD; .takeoff with prices),
      never a lock or system name (~$..., desktop.ini ...); without prices no name about estimates, quotes, bids,
-     contracts or money and none that quotes an amount (it would be hidden from its own uploader at once);
+     contracts or money and none that quotes an amount, without financials no money name (it would be hidden from its
+     own uploader at once);
    * the row the upload becomes must fit the project's file list (app.rel_path_ok and files_subpath_shape);
    * hidden from everyone: lock, temporary and system files; without prices: .takeoff / .pdfnotes (D8), names about
-     prices or money, names that quote an amount; without financials: the money names;
+     prices or money, names that quote an amount; without financials: every name with a money stem (one about prices
+     too: "Subcontractor Invoices");
    * downloads: any visible file but programs and shortcuts.
 
    Pure module (no look-behind: older iPhones refuse a module that has one). */
@@ -52,6 +54,7 @@ export const MESSAGES = Object.freeze({
   fileType: "That kind of file cannot be uploaded here (PDFs, pictures, videos, Office files, text and CAD files can).",
   takeoff: "Takeoff files are added by someone who sees prices (they stay in the Plans Archive and takeoff-web).",
   priced: "Files named for estimates, quotes, bids, contracts or money, or with an amount in the name, are uploaded by someone who sees prices.",
+  money: "Files named for invoices, receipts, bills, payments or other money records are uploaded by someone who sees financials.",
   system: "Lock, temporary and system files are not uploaded.",
   tooLong: "That path is too long for OneDrive and the project's file list: use a shorter name or fewer folders.",
   tooLarge: "That file is too large to upload here.",
@@ -115,16 +118,22 @@ export function alwaysHidden(name) {
     /\.(tmp|part)$/.test(k) || k.charAt(0) === "." || k.indexOf("_vti_") !== -1;
 }
 
-// app.onedrive_stem: word stems where a word starts, on the NFKC form in lower case
-const PRICED_STEM = /(^|[^a-z0-9])(estimat|change[ _-]*order|quote|quotation|proposal|bid|contract|subcontract)/;
-const MONEY_STEM = /(^|[^a-z0-9])(invoice|receipt|bill|payment|purchase[ _-]*order|money[ _-]*record|old[ _-]*portal[ _-]*record)/;
+// app.onedrive_stem: word stems where a word starts (the start, or after anything but a letter - a digit too:
+// "A253Estimate.pdf"), on the NFKC form in lower case
+const PRICED_STEM = /(^|[^a-z])(estimat|change[ _-]*order|quote|quotation|proposal|bid|contract|subcontract)/;
+const MONEY_STEM = /(^|[^a-z])(invoice|receipt|bill|payment|purchase[ _-]*order|money[ _-]*record|old[ _-]*portal[ _-]*record)/;
 
-/** "priced" | "money" | null: a name about prices or about money (D9). */
-export function stemOf(name) {
+/** Which of D9's two groups of word stems a name has, both at once too ("Subcontractor Invoices") (paths.ts stems): a
+    name with a money stem is a money name whatever else it is about. */
+export function stems(name) {
   const k = folded(name);
-  if (PRICED_STEM.test(k)) return "priced";
-  if (MONEY_STEM.test(k)) return "money";
-  return null;
+  return { priced: PRICED_STEM.test(k), money: MONEY_STEM.test(k) };
+}
+
+/** "priced" | "money" | null: app.onedrive_stem's one answer (priced first). Who sees a name is stems()'s question. */
+export function stemOf(name) {
+  const s = stems(name);
+  return s.priced ? "priced" : s.money ? "money" : null;
 }
 
 /** The name quotes an amount: the screens' mask or the database's scrubber changes it (as typed or NFKC). */
@@ -143,13 +152,14 @@ export function viewerOf(me) {
   return { prices: admin || !!(me && me.can_see_prices), financials: admin || !!(me && me.can_see_financials) };
 }
 
-/** Hidden from this person (paths.ts nameHidden): the broker leaves such items out; the page never draws one either. */
+/** Hidden from this person (paths.ts nameHidden): the broker leaves such items out; the page never draws one either.
+    Without financials every name with a money stem ("Contract payments.xlsx" too). */
 export function nameHidden(name, viewer) {
   const v = viewer || { prices: false, financials: false };
   if (alwaysHidden(name)) return true;
-  const stem = stemOf(name);
-  if (!v.prices && (stem !== null || quotesAmount(name) || isTakeoff(name))) return true;
-  return !v.financials && stem === "money";
+  const s = stems(name);
+  if (!v.prices && (s.priced || s.money || quotesAmount(name) || isTakeoff(name))) return true;
+  return !v.financials && s.money;
 }
 
 /** "plan.PDF" -> "pdf"; "" without one ("README", ".env"). */
@@ -179,18 +189,22 @@ export function uploadProblem(raw, viewer) {
   const ext = extOf(name);
   if (UPLOAD_EXTS.indexOf(ext) === -1) return { code: "file_type", message: MESSAGES.fileType };
   if (PRICED_UPLOAD_EXTS.indexOf(ext) !== -1 && !v.prices) return { code: "file_type", message: MESSAGES.takeoff };
-  if (!v.prices && (stemOf(name) !== null || quotesAmount(name))) return { code: "invalid", message: MESSAGES.priced };
+  const s = stems(name);
+  if (!v.prices && (s.priced || s.money || quotesAmount(name))) return { code: "invalid", message: MESSAGES.priced };
+  if (!v.financials && s.money) return { code: "invalid", message: MESSAGES.money };
   return null;
 }
 
-/** A folder an upload goes through (below Documents or Floor Plans), or why not (paths.ts folderSegmentProblem). */
+/** A folder an upload goes through (below Documents or Floor Plans), or why not (paths.ts folderSegmentProblem): never
+    one nameHidden hides from this person. */
 export function folderProblem(seg, viewer) {
   const v = viewer || { prices: false, financials: false };
   const p = segmentProblem(seg, MAX_FOLDER_NAME);
   if (p) return "a folder with " + p;
   if (alwaysHidden(seg)) return "a hidden or system folder";
-  if (!v.prices && (stemOf(seg) !== null || quotesAmount(seg))) return "a folder named for prices or money (someone who sees prices uploads there)";
-  if (!v.financials && stemOf(seg) === "money") return "a folder named for money (someone who sees financials uploads there)";
+  const s = stems(seg);
+  if (!v.prices && (s.priced || s.money || quotesAmount(seg) || isTakeoff(seg))) return "a folder named for prices or money (someone who sees prices uploads there)";
+  if (!v.financials && s.money) return "a folder named for money (someone who sees financials uploads there)";
   return null;
 }
 

@@ -16,7 +16,8 @@
      "Show more" is seen: 25), a sealed cursor bound to the person, project and folder (15 minutes);
    * hidden (as missing): lock, temporary and system names; without prices .takeoff / .pdfnotes, names about
      estimates, change orders, quotes, proposals, bids, contracts or money, names quoting an amount; without
-     financials the money names - at every depth; children (a folder's count) only with prices;
+     financials every name with a money stem (one about prices too) - at every depth; a stem counts after a digit
+     too ("A253Estimate.pdf"); children (a folder's count) only with prices;
    * download {project_id, item_id} -> {url, name, size}; programs and shortcuts 403 not_downloadable;
    * upload_session {project_id, folder, rel_dir?, name, size, modified?} -> {upload_url (https://<host>/__demo/up/<n>),
      expires_at, chunk_bytes, chunk_multiple, max_chunk_bytes, max_bytes, ticket, name}: the switch (403), Documents or
@@ -103,19 +104,19 @@
     return ["thumbs.db", "desktop.ini", ".ds_store", "ehthumbs.db", "ehthumbs_vista.db"].includes(k) || k.startsWith("~$") ||
       (k.startsWith(".~lock.") && k.endsWith("#")) || /\.(tmp|part)$/.test(k) || k.startsWith(".") || k.includes("_vti_");
   }
-  function stemOf(n) {
+  // the stems where a word starts (after anything but a letter: a digit too); both groups read apart (paths.ts stems)
+  function stems(n) {
     const k = folded(n);
-    if (/(^|[^a-z0-9])(estimat|change[ _-]*order|quote|quotation|proposal|bid|contract|subcontract)/.test(k)) return "priced";
-    if (/(^|[^a-z0-9])(invoice|receipt|bill|payment|purchase[ _-]*order|money[ _-]*record|old[ _-]*portal[ _-]*record)/.test(k)) return "money";
-    return null;
+    return { priced: /(^|[^a-z])(estimat|change[ _-]*order|quote|quotation|proposal|bid|contract|subcontract)/.test(k),
+             money: /(^|[^a-z])(invoice|receipt|bill|payment|purchase[ _-]*order|money[ _-]*record|old[ _-]*portal[ _-]*record)/.test(k) };
   }
+  const anyStem = (n) => { const s = stems(n); return s.priced || s.money; };
   const quotesAmount = (n) => /(?:US)?\$\s?\d|\b\d[\d,]*(?:\.\d+)?\s?(?:dollars|usd|bucks)\b|\b(?:usd|dollars)\s?\d/i.test(folded(n));
   const isTakeoff = (n) => /\.(takeoff|pdfnotes)$/.test(folded(n));
   function hidden(n, v) {
     if (alwaysHidden(n)) return true;
-    const s = stemOf(n);
-    if (!v.prices && (s !== null || quotesAmount(n) || isTakeoff(n))) return true;
-    return !v.financials && s === "money";
+    if (!v.prices && (anyStem(n) || quotesAmount(n) || isTakeoff(n))) return true;
+    return !v.financials && stems(n).money;
   }
   function renamedFrom(actual, requested) {
     const a = nfc(actual).toLowerCase(), r = nfc(requested).toLowerCase();
@@ -416,7 +417,7 @@
       const dir = parsePath(b.rel_dir, "rel_dir", 120);
       if (dir.refuse) return dir.refuse;
       for (const s of dir.segs) {
-        if (alwaysHidden(s) || (!c.v.prices && (stemOf(s) !== null || quotesAmount(s))) || (!c.v.financials && stemOf(s) === "money")) {
+        if (alwaysHidden(s) || hidden(s, c.v)) {
           return bad("rel_dir", "rel_dir has a folder named for prices or money (someone who sees prices uploads there)");
         }
       }
@@ -429,8 +430,11 @@
       if (alwaysHidden(name)) return bad("name", "Lock, temporary and system files are not uploaded.");
       const ext = extOf(name);
       if (!UPLOAD_EXTS.includes(ext) || (ext === "takeoff" && !c.v.prices)) return fail("file_type", { field: "name" });
-      if (!c.v.prices && (stemOf(name) !== null || quotesAmount(name))) {
+      if (!c.v.prices && (anyStem(name) || quotesAmount(name))) {
         return bad("name", "Files named for estimates, quotes, bids, contracts or money, or with an amount in the name, are uploaded by someone who sees prices.");
+      }
+      if (!c.v.financials && stems(name).money) {
+        return bad("name", "Files named for invoices, receipts, bills, payments or other money records are uploaded by someone who sees financials.");
       }
       if (typeof b.size !== "number" || !Number.isSafeInteger(b.size) || b.size < 1) return bad("size", "size must be the file's size in bytes");
       if (b.size > MAX_BYTES) return fail("too_large", { max_bytes: MAX_BYTES });
@@ -477,7 +481,7 @@
       const notRecorded = (reason) => answer(200, Object.assign(out, { reason, message: NOT_RECORDED[reason] }));
       if (names.length > 13 || names.slice(0, -1).some((n) => Array.from(n).length > 120)) return notRecorded("path_shape");
       if (kind === "documents" && names.length >= 3 && same(names[1], "Items")) return notRecorded("item_folder");
-      if (names.some((n) => stemOf(n) !== null)) return notRecorded("priced_name");
+      if (names.some(anyStem)) return notRecorded("priced_name");
       if (names.some((n) => quotesAmount(n))) return notRecorded("amount_name");
       if (isTakeoff(it.name) && !w.prices) return fail("forbidden");
       const relPath = c.p.folder_name + "/" + names.join("/");

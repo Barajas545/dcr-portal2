@@ -136,15 +136,17 @@ export async function run(h) {
       same([P.MAX_NEW_FILE_NAME, P.MAX_FOLDER_NAME, P.MAX_SUBPATH, P.MAX_SUBPATH_PARTS, P.MAX_PROJECT_PATH, P.MAX_PATH_TEXT],
         [OD.MAX_NEW_FILE_NAME, OD.MAX_FOLDER_NAME, OD.MAX_SUBPATH, OD.MAX_SUBPATH_PARTS, OD.MAX_PROJECT_PATH, OD.MAX_PATH_TEXT], "the limits");
       const cors = fn.corsHeaders("https://portal.dcrframing.com");
-      ok(cors["Access-Control-Allow-Origin"] === "https://portal.dcrframing.com" && !fn.corsHeaders("https://evil.example")["Access-Control-Allow-Origin"], "CORS");
-    });
+      ok(cors["Access-Control-Allow-Origin"] === "https://portal.dcrframing.com" && !fn.corsHeaders("https://evil.example")["Access-Control-Allow-Origin"], "CORS");    });
     await check("Part 4 OneDrive: drift - the page's rules answer as the broker's paths.ts (stems, amounts, hiding, segments, upload names, the table's shape)", async () => {
       const names = ["Estimates", "Change_Orders", "Ｅｓｔｉｍａｔｅｓ", "Morbid", "2026 bids", "Invoices", "Old portal records", "Old portal documents", "Deck $4,500.pdf",
         "paid 4500 cash.txt", "L1.takeoff", "notes.PDFNOTES", "~$x.docx", "desktop.ini", ".hidden", "x.tmp", "_vti_cnf", "Floor Plans", "Permit.pdf", "a∕b",
-        "con", "COM¹.txt", "x.", " x", "..", "a:b", "a‮b", "．．", "Macro.xlsm", "tool.exe", "Plan.PDF", "x".repeat(201) + ".pdf", "Quote 3.pdf", "README"];
+        "con", "COM¹.txt", "x.", " x", "..", "a:b", "a‮b", "．．", "Macro.xlsm", "tool.exe", "Plan.PDF", "x".repeat(201) + ".pdf", "Quote 3.pdf", "README",
+        "Subcontractor Invoices", "Contract payments.xlsx", "Change order invoice 3.pdf", "Invoice 12.pdf", "A253Estimate.pdf", "2026Invoice.pdf",
+        "A305Quote.pdf", "Old.takeoff", "Tabidze survey.pdf"];
       const viewers = [{ prices: false, financials: false }, { prices: true, financials: false }, { prices: true, financials: true }];
       for (const n of names) {
         same(OD.stemOf(n), P.stemOf(n), "stem " + n);
+        same(OD.stems(n), P.stems(n), "stems " + n);
         same(OD.quotesAmount(n), P.quotesAmount(n), "amount " + n);
         same(OD.segmentProblem(n), P.segmentProblem(n), "segment " + n);
         same(OD.downloadable(n), P.downloadable(n), "download " + n);

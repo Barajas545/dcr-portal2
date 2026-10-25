@@ -15,6 +15,16 @@ test("stems: the shared answers of app.onedrive_stem / paths.ts stemOf (D9's wor
   for (const c of STEMS) assert.equal(OD.stemOf(c.in), c.stem, JSON.stringify(c.in) + (c.why ? " (" + c.why + ")" : ""));
 });
 
+test("stems: both groups read apart (paths.ts stems) - a name about prices AND money is a money name too", () => {
+  for (const c of STEMS) {
+    const s = OD.stems(c.in);
+    assert.equal(s.priced, c.stem === "priced", "priced " + JSON.stringify(c.in));
+    assert.equal(s.money, c.stem === "money" || c.money === true, "money " + JSON.stringify(c.in));
+  }
+  assert.ok(STEMS.filter((c) => c.money === true).length >= 4, "the mixed names are in the shared cases");
+  assert.ok(STEMS.some((c) => c.in === "A253Estimate.pdf" && c.stem === "priced"), "a stem right after a number");
+});
+
 test("segments: what Windows, OneDrive or a look-alike could read as something else is refused", () => {
   for (const ok of ["Floor Plans", "Level 1", "A1 - Floor plan.pdf", "Planos ñ.pdf", "x"]) assert.equal(OD.segmentProblem(ok), null, ok);
   const bad = {
@@ -41,6 +51,11 @@ test("hidden: lock and system files from everyone; priced, money, amounts and ta
   assert.ok(OD.nameHidden("Deck $4,500 option.pdf", NONE) && !OD.nameHidden("Deck $4,500 option.pdf", PRICES), "an amount");
   assert.ok(OD.nameHidden("Invoices", PRICES), "money names need financials too");
   assert.ok(!OD.nameHidden("Invoices", ALL));
+  for (const n of ["Subcontractor Invoices", "Contract payments.xlsx", "Change order invoice 3.pdf", "Invoice for the estimate.pdf"]) {
+    assert.ok(OD.nameHidden(n, NONE) && OD.nameHidden(n, PRICES) && !OD.nameHidden(n, ALL), "about prices and money: financials too - " + n);
+  }
+  for (const n of ["A253Estimate.pdf", "A305Quote.pdf", "2026Invoice.pdf"]) assert.ok(OD.nameHidden(n, NONE), "a stem after a digit - " + n);
+  assert.ok(!OD.nameHidden("A253Estimate.pdf", PRICES) && OD.nameHidden("2026Invoice.pdf", PRICES));
   assert.ok(!OD.nameHidden("Old portal documents", NONE) && !OD.nameHidden("Floor Plans", NONE) && !OD.nameHidden("Permit.pdf", NONE));
   assert.ok(OD.quotesAmount("paid 4500") && OD.quotesAmount("$1,200") && !OD.quotesAmount("Level 2 framing.pdf"));
   assert.deepEqual(OD.viewerOf({ role: "admin" }), ALL);
@@ -62,6 +77,20 @@ test("uploads: the allowlist (no macros, no programs), .takeoff with prices, loc
   assert.equal(OD.uploadProblem("Quote 3.pdf", NONE).message, OD.MESSAGES.priced);
   assert.equal(OD.uploadProblem("Deck $4,500.pdf", NONE).message, OD.MESSAGES.priced);
   assert.equal(OD.uploadProblem("Quote 3.pdf", PRICES), null);
+  // a money name needs financials too: never an upload hidden from its own uploader (upload_done would answer not_found)
+  for (const n of ["Invoice 12.pdf", "Contract payments.xlsx", "A253Receipt.jpg"]) {
+    assert.equal(OD.uploadProblem(n, NONE).message, OD.MESSAGES.priced, n);
+    assert.deepEqual(OD.uploadProblem(n, PRICES), { code: "invalid", message: OD.MESSAGES.money }, n);
+    assert.equal(OD.uploadProblem(n, ALL), null, n);
+  }
+  assert.equal(OD.uploadProblem("A305Quote.pdf", NONE).message, OD.MESSAGES.priced, "a stem right after the project number");
+  for (const v of [NONE, PRICES, ALL]) {
+    for (const n of ["Invoice 12.pdf", "Estimate.pdf", "Subcontractor Invoices.pdf", "L1.takeoff", "A253Quote.pdf", "Plan.pdf", "Deck $4,500.pdf"]) {
+      if (OD.uploadProblem(n, v) === null) assert.ok(!OD.nameHidden(n, v), n + " " + JSON.stringify(v));
+      const folder = n.replace(/\.[a-z]+$/, "");
+      if (OD.folderProblem(folder, v) === null) assert.ok(!OD.nameHidden(folder, v), folder + " " + JSON.stringify(v));
+    }
+  }
   assert.match(OD.uploadProblem("x".repeat(197) + ".pdf", ALL).message, /longer than 200/);
   assert.equal(OD.acceptFor(NONE).split(",").includes(".takeoff"), false);
   assert.equal(OD.acceptFor(PRICES).split(",").includes(".takeoff"), true);
@@ -96,6 +125,10 @@ test("sessionProblem: every check the broker makes before it opens an upload ses
   assert.match(p({ relDir: "Change Orders" }), /named for prices or money/);
   assert.equal(p({ relDir: "Change Orders", viewer: PRICES }), null);
   assert.match(p({ relDir: "Invoices", viewer: PRICES }), /named for money/);
+  assert.match(p({ relDir: "Subcontractor Invoices", viewer: PRICES }), /named for money/, "about prices and money");
+  assert.equal(p({ relDir: "Subcontractor Invoices", viewer: ALL }), null);
+  assert.match(p({ relDir: "Old.takeoff" }), /named for prices or money/, "a folder hidden from its uploader");
+  assert.equal(p({ name: "Change order invoice 3.pdf", viewer: PRICES }), OD.MESSAGES.money);
   assert.match(p({ relDir: "a/../b" }), /means another folder/);
   assert.match(p({ relDir: Array.from({ length: 12 }, (_, i) => "L" + i).join("/") }), /At most 11 folders/);
   assert.equal(p({ name: "x.exe" }), OD.MESSAGES.fileType);

@@ -1,5 +1,5 @@
 {
- "about": "Copied from DCR Desktop 2 tools/pglite_check/onedrive_cases.json (the shared answers of migration 20261028000200_onedrive.sql app.onedrive_stem and the OneDrive broker's paths.ts stemOf): a OneDrive name about prices ('priced') or money ('money'), or neither (null) - the owner's word stems (D9, 2026-10-24) where a word starts, on the NFKC form in any case. Portal 2's site/js/map/onedrive.js stemOf answers the same (tests/p7-onedrive-map.test.mjs). Made-up names only.",
+ "about": "Copied from DCR Desktop 2 tools/pglite_check/onedrive_cases.json (the shared answers of migration 20261028000200_onedrive.sql app.onedrive_stem and the OneDrive broker's paths.ts stemOf): a OneDrive name about prices ('priced') or money ('money'), or neither (null) - the owner's word stems (D9, 2026-10-24) where a word starts (the start, or after anything but a letter: a digit too), on the NFKC form in any case. A name with both groups answers 'priced' and has \"money\": true (paths.ts and this site's stems() read the money stem apart: hidden from people with prices but without financials too). Portal 2's site/js/map/onedrive.js stemOf and stems answer the same (tests/p7-onedrive-map.test.mjs). Made-up names only.",
  "stems": [
   {
    "in": "Estimates",
@@ -63,6 +63,23 @@
    "stem": "priced"
   },
   {
+   "in": "A253_Estimate.pdf",
+   "stem": "priced"
+  },
+  {
+   "in": "A253Estimate.pdf",
+   "stem": "priced",
+   "why": "after the project's number: a digit is not a letter"
+  },
+  {
+   "in": "A305Quote.pdf",
+   "stem": "priced"
+  },
+  {
+   "in": "3bids.pdf",
+   "stem": "priced"
+  },
+  {
    "in": "Contracts",
    "stem": "priced"
   },
@@ -98,6 +115,15 @@
   },
   {
    "in": "Invoice 12.pdf",
+   "stem": "money"
+  },
+  {
+   "in": "2026Invoice.pdf",
+   "stem": "money",
+   "why": "after a digit"
+  },
+  {
+   "in": "A253Receipt.jpg",
    "stem": "money"
   },
   {
@@ -139,7 +165,28 @@
   {
    "in": "Invoice for the estimate.pdf",
    "stem": "priced",
-   "why": "both: priced wins (hidden from more people)"
+   "money": true,
+   "why": "both: the one answer is priced (either keeps it out of the file list); its money stem still hides it from people without financials"
+  },
+  {
+   "in": "Subcontractor Invoices",
+   "stem": "priced",
+   "money": true
+  },
+  {
+   "in": "Contract payments.xlsx",
+   "stem": "priced",
+   "money": true
+  },
+  {
+   "in": "Change order invoice 3.pdf",
+   "stem": "priced",
+   "money": true
+  },
+  {
+   "in": "A253Bid bills.pdf",
+   "stem": "priced",
+   "money": true
   },
   {
    "in": "Floor Plans",
@@ -184,6 +231,15 @@
   },
   {
    "in": "Level 1.pdf",
+   "stem": null
+  },
+  {
+   "in": "IMG_20261024_101500.jpg",
+   "stem": null,
+   "why": "digits alone are no stem"
+  },
+  {
+   "in": "A900 - 12 Made Up Lane - Testville - Deck",
    "stem": null
   },
   {

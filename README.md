@@ -508,10 +508,12 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   broker then records the file's row (storage local, source portal2: DCR Desktop 2 lists it as a file a PC copied there).
   A download is a link made per click and opened at once (a file download: the page stays).
 - **Never shown, never sent.** For people without prices the broker leaves out `.takeoff` / `.pdfnotes`, names about
-  estimates, change orders, quotes, proposals, bids, contracts or money, and names that quote an amount (money names
-  also without financials) - at every depth, as if missing; the page checks the same rules (`js/map/onedrive.js`) before
-  anything is sent and masks amounts on screen anyway. Uploads take PDFs, pictures, videos, Office files without
-  macros, text and CAD files (a takeoff with prices); never a lock or system file; never into Documents/Items. Programs
+  estimates, change orders, quotes, proposals, bids, contracts or money, and names that quote an amount (every name
+  with a money stem also without financials, one about prices too: "Subcontractor Invoices"; a word counts right after
+  a number too: "A253Estimate.pdf") - at every depth, as if missing; the page checks the same rules (`js/map/onedrive.js`)
+  before anything is sent and masks amounts on screen anyway. Uploads take PDFs, pictures, videos, Office files without
+  macros, text and CAD files (a takeoff with prices); never a lock or system file; never into Documents/Items; never a
+  name or folder hidden from the person uploading it. Programs
   and shortcuts are listed but never opened. A file the database will not list (a priced name a price person uploads)
   stays in OneDrive and the page says so.
 - **The security policy.** `project.html` alone adds `https://netorgft10120038-my.sharepoint.com` (the OneDrive host,
