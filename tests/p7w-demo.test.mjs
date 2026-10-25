@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { available, freshEngine, person, clientAs } from "./pages-engine.mjs";
+import { available, freshEngine, person, clientAs, loadFake } from "./pages-engine.mjs";
 import { useClient } from "../site/js/repo/_db.js";
 import * as ledger from "../site/js/repo/ledger.js";
 import * as projects from "../site/js/repo/projects.js";
@@ -53,6 +53,31 @@ test("the demo people: Robin Estimator (a manager with the Estimator switch, no 
   const { me } = await as("estimator", e);
   assert.equal(can(me, "estimates"), true);
   assert.equal(can((await as("manager", e)).me, "estimates"), false);
+});
+
+test("the demo seed: Part 3 never resets a switch an earlier extension set (p5a-est.js may add Robin Estimator first, D11); an admin's and the agents account's are forced", { skip }, async () => {
+  const F = await loadFake();
+  const seedP7 = F.extSeed.find((f) => f.name === "seedP7");
+  assert.equal(typeof seedP7, "function");
+  const ROBIN = "00000000-0000-4000-8000-000000000013";
+  const out = { profiles: [
+    { id: "a", role: "admin", can_estimate: false },
+    { id: "m", role: "manager", can_estimate: true },
+    { id: "q", role: "manager" }, { id: "l", role: "lead" }, { id: "f", role: "field" },
+    { id: ROBIN, role: "manager", full_name: "Robin Estimator", can_see_prices: false, can_estimate: true },
+    { id: "g", role: "agents", can_estimate: true, can_upload_onedrive: true },
+  ] };
+  seedP7(out, { P: { admin: "a", manager_prices: "q", lead: "l" }, now: new Date("2026-10-24T16:00:00Z") });
+  const by = (id) => out.profiles.find((p) => p.id === id);
+  const sw = (id) => [by(id).can_estimate, by(id).can_upload_onedrive];
+  assert.deepEqual(sw(ROBIN), [true, false], "set first by p5a-est: kept; the missing switch takes the role's default");
+  assert.equal(out.profiles.filter((p) => p.id === ROBIN).length, 1, "never added twice");
+  assert.deepEqual(sw("m"), [true, false], "a switch set earlier is kept");
+  assert.deepEqual(sw("a"), [true, true], "an admin: forced on");
+  assert.deepEqual(sw("g"), [false, false], "the agents account: forced off");
+  assert.deepEqual(sw("q"), [true, true], "Quinn Manager");
+  assert.deepEqual(sw("l"), [false, true], "Riley Lead uploads");
+  assert.deepEqual(sw("f"), [false, false], "the role's default");
 });
 
 test("costs: the accountant and the admin add and correct them; a manager without financials, a lead and field are refused (42501) before anything", { skip }, async () => {

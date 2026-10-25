@@ -18,7 +18,9 @@
      asked for; -> the profiles row.
    Made-up people only: Robin Estimator (…000000000013, a manager with the Estimator switch and no prices — the
    quantities-only estimator), Quinn Manager (prices) also an estimator and an OneDrive uploader, Riley Lead an
-   OneDrive uploader. */
+   OneDrive uploader. Robin is added here only when no earlier extension added him (D11 puts him in p5a-est.js on
+   the estimate-editor branch, which loads first): the same id, name and switches either way, and a switch an
+   earlier extension set is never reset here. */
 (function (root) {
   "use strict";
   const NS = (root.DCR2Fake = root.DCR2Fake || {});
@@ -121,9 +123,15 @@
   (NS.extSeed = NS.extSeed || []).push(function seedP7(out, h) {
     const P = h.P;
     const now = h.now instanceof Date ? h.now : new Date(h.now || Date.now());
+    // what tg_profiles_before forces (an admin on, the agents account off); anyone else keeps a switch an earlier
+    // extension set (p5a-est.js, loaded first, may seed the Estimator switch and Robin Estimator himself) and gets
+    // the role's default (off) only where nothing set it
     (out.profiles || []).forEach((p) => {
-      p.can_estimate = p.role === "admin";
-      p.can_upload_onedrive = p.role === "admin";
+      Object.keys(NEW_SWITCHES).forEach((k) => {
+        if (p.role === "admin") p[k] = true;
+        else if (p.role === "agents") p[k] = false;
+        else if (typeof p[k] !== "boolean") p[k] = NEW_SWITCHES[k];
+      });
     });
     const row = (id) => (out.profiles || []).find((p) => p.id === id);
     if (row(P.manager_prices)) { row(P.manager_prices).can_estimate = true; row(P.manager_prices).can_upload_onedrive = true; }
