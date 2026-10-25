@@ -37,8 +37,10 @@
    * addCost(fields)                 one INSERT (once: no retry) -> the row;
    * updateCost(row, patch)          a versioned PATCH of the changed columns (not project_id) -> the row; PT409 with
                                      err.current = the row now;
-   * lineChoices(projectId)          [{id, label}] the live estimate lines a cost can be booked to (map/ledger.js
-                                     lineLabel: "CO #2 · Walls — Exterior walls"), archived estimates left out.
+   * lineChoices(projectId, keepId)  [{id, label}] the live estimate lines a cost can be booked to (map/ledger.js
+                                     lineLabel: "CO #2 · Walls — Exterior walls"), archived estimates left out —
+                                     but the line keepId (the cost being corrected is booked to it) is always kept,
+                                     marked "(archived estimate)" or "(removed)", so an edit shows the line it has.
 
    The RPC names and arguments live in RPC below and nowhere else. */
 
@@ -254,20 +256,27 @@ export async function updateCost(row, patch) {
   return versioned("costs", idOf(row.id), row.version, body, COST_COLS);
 }
 
-/** The project's live estimate lines (not an archived estimate's), in estimate and line order. */
-export async function lineChoices(projectId) {
+/** The project's live estimate lines (not an archived estimate's), in estimate and line order; plus the line
+    `keepId` whatever its estimate (a cost's present line). */
+export async function lineChoices(projectId, keepId) {
   const pid = idOf(projectId);
+  const keep = keepId === null || keepId === undefined || keepId === "" ? null : String(keepId);
   const [items, estimates] = await Promise.all([
     pageAll((cl) => cl.from("estimate_items").select("id, estimate_id, name, description, group_name, sort, deleted_at").eq("project_id", pid)
       .order("id", { ascending: true })),
     pageAll((cl) => cl.from("estimates").select("id, kind, number, co_number, name, archived_at, deleted_at").eq("project_id", pid)
       .order("id", { ascending: true })),
   ]);
-  const est = {};
-  estimates.forEach((e) => { if (!e.deleted_at && !e.archived_at) est[String(e.id)] = e; });
-  const order = (e) => (e.kind === "change_order" ? 1e6 + Number(e.co_number || 0) : Number(e.number || 0));
-  return items.filter((i) => !i.deleted_at && est[String(i.estimate_id)])
-    .sort((a, b) => order(est[String(a.estimate_id)]) - order(est[String(b.estimate_id)]) || a.estimate_id - b.estimate_id ||
+  const est = {}, all = {};
+  estimates.forEach((e) => { all[String(e.id)] = e; if (!e.deleted_at && !e.archived_at) est[String(e.id)] = e; });
+  const live = (i) => !i.deleted_at && !!est[String(i.estimate_id)];
+  const order = (e) => (!e ? 2e6 : e.kind === "change_order" ? 1e6 + Number(e.co_number || 0) : Number(e.number || 0));
+  const why = (i) => {
+    const e = all[String(i.estimate_id)];
+    return e && !e.deleted_at && !i.deleted_at ? " (archived estimate)" : " (removed)";
+  };
+  return items.filter((i) => live(i) || (keep !== null && String(i.id) === keep))
+    .sort((a, b) => order(all[String(a.estimate_id)]) - order(all[String(b.estimate_id)]) || a.estimate_id - b.estimate_id ||
       Number(a.sort || 0) - Number(b.sort || 0) || a.id - b.id)
-    .map((i) => ({ id: i.id, label: lineLabel(i, est[String(i.estimate_id)]) }));
+    .map((i) => ({ id: i.id, label: lineLabel(i, all[String(i.estimate_id)] || null) + (live(i) ? "" : why(i)) }));
 }

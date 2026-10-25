@@ -102,6 +102,16 @@ test("costs: the estimate line must be the same project's; a labour cost's crew 
   assert.equal(ok.estimate_item_id, lines[0].id);
   const elsewhere = (engine.rows.estimate_items || []).find((i) => i.project_id !== pid && !i.deleted_at);
   if (elsewhere) await assert.rejects(ledger.addCost(COST(pid, { estimate_item_id: String(elsewhere.id) })), (x) => x.code === "23514");
+  // its estimate archived later: the line is no longer offered for a new cost, but correcting this cost keeps it
+  const est = engine.rows.estimates.find((x) => x.id === engine.rows.estimate_items.find((i) => i.id === lines[0].id).estimate_id);
+  est.archived_at = "2026-10-22T16:00:00Z";
+  assert.ok(!(await ledger.lineChoices(pid)).some((l) => l.id === lines[0].id));
+  assert.match((await ledger.lineChoices(pid, ok.estimate_item_id)).find((l) => l.id === lines[0].id).label, /\(archived estimate\)$/);
+  const before = await ledger.getCost(ok.id);
+  const patch = payload({ kind: before.kind, cost_date: before.cost_date, description: "Made-up lumber (typo fixed)", vendor: before.vendor || "", hours: "", rate: "",
+    amount: String(before.amount), estimate_item_id: undefined, card: before.card }, { editing: true, before });
+  assert.deepEqual(patch, { description: "Made-up lumber (typo fixed)" }, "no line select: the line is not sent");
+  assert.equal((await ledger.updateCost(before, patch)).estimate_item_id, lines[0].id, "still booked to its line");
   const emp = engine.rows.employees.find((x) => x.active !== false);
   const first = String(emp.full_name).split(" ")[0];
   const guess = engine.rows.employees.filter((x) => x.active !== false && String(x.full_name).split(" ")[0].toLowerCase() === first.toLowerCase()).length === 1;

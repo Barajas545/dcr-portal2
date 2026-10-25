@@ -7,8 +7,10 @@
      filled and locked when hours × rate decide it), Estimate line, Paid with, the COST total, and a receipt (a photo,
      a scan or a PDF, at most 25 MB). The rules and the words are map/cost-form.js (Desktop 2's). A new cost is ONE
      insert (an answer that never arrived: "may have been saved", and this dialog sends nothing more); an edit sends
-     only what changed, at the version read (someone else's change meanwhile: theirs is shown). There is no delete:
-     a wrong cost is corrected, or a negative credit added.
+     only what changed, at the version read (someone else's change meanwhile: theirs is shown). The estimate line
+     of an edit is sent only when the person changed the select (map/cost-form.js payload, lineShown): the cost's
+     own line is always offered, even an archived estimate's, and no select (no lines, a read that failed) sends
+     none. There is no delete: a wrong cost is corrected, or a negative credit added.
    * attachReceipt(ctx, costId, file) — the upload queue (custody on this device first): kind receipt, the cost's
      id, f/{project}/receipts/… (a money editor's), the camera's own name ("IMG_4412.jpg") replaced by the queue's
      "Receipt <time>".
@@ -24,7 +26,7 @@ import { ymd } from "../map/pacific.js";
 const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LOST = "The answer didn't arrive: the cost may have been saved. Close this and check the list before adding it again.";
 
-const st = { ctx: null, before: null, busy: false, lost: false, lines: [], onSaved: null, host: null };
+const st = { ctx: null, before: null, busy: false, lost: false, lines: [], lineShown: undefined, onSaved: null, host: null };
 
 function $(id) { return document.getElementById(id); }
 
@@ -52,8 +54,9 @@ function close() {
 
 function form() {
   const v = (id) => { const n = $(id); return n ? n.value : ""; };
+  // no line select drawn: undefined, so an edit leaves the cost's line as it is (never "": that would untie it)
   return { kind: v("cfKind"), cost_date: v("cfDate"), description: v("cfDesc"), vendor: v("cfVendor"), hours: v("cfHours"),
-    rate: v("cfRate"), amount: v("cfAmount"), estimate_item_id: v("cfLine"), card: v("cfCard") };
+    rate: v("cfRate"), amount: v("cfAmount"), estimate_item_id: $("cfLine") ? $("cfLine").value : undefined, card: v("cfCard") };
 }
 
 /** The labour boxes, the locked amount and the COST line follow what is typed (Desktop 2's _update_total). */
@@ -81,13 +84,24 @@ function fill(row) {
   $("cfHours").value = r.hours === null || r.hours === undefined ? "" : String(Number(r.hours));
   $("cfRate").value = r.rate === null || r.rate === undefined ? "" : Number(r.rate).toFixed(2);
   $("cfAmount").value = row && r.amount !== null && r.amount !== undefined ? Number(r.amount).toFixed(2) : "";
-  if ($("cfLine")) $("cfLine").value = r.estimate_item_id === null || r.estimate_item_id === undefined ? "" : String(r.estimate_item_id);
+  const sel = $("cfLine");
+  if (sel) {
+    const line = r.estimate_item_id === null || r.estimate_item_id === undefined ? "" : String(r.estimate_item_id);
+    if (line && !Array.from(sel.options).some((o) => o.value === line)) {     // a line not offered: still the one shown
+      const o = document.createElement("option");
+      o.value = line;
+      o.textContent = "Its present line (not on a live estimate)";
+      sel.appendChild(o);
+    }
+    sel.value = line;
+  }
+  st.lineShown = sel ? sel.value : undefined;
   $("cfCard").value = r.card || "untagged";
   $("cfWarn").hidden = !(row && row.reconciled_at);
   update();
 }
 
-function draw(editing, vendors) {
+function draw(editing, vendors, hasLine) {
   const h = host();
   const lines = st.lines;
   h.innerHTML = '<div class="pj-modal" style="max-width:600px">' +
@@ -103,7 +117,7 @@ function draw(editing, vendors) {
     '<div class="pj-f" id="cfRateBox"><label for="cfRate">Rate per hour ($)</label><input id="cfRate" inputmode="decimal"></div>' +
     '<div class="pj-f"><label for="cfAmount">Amount ($)</label><input id="cfAmount" inputmode="decimal">' +
       '<div class="pj-sub">Negative for a return or a credit</div></div>' +
-    (lines.length ? '<div class="pj-f full"><label for="cfLine">Estimate line (optional)</label><select id="cfLine"><option value="">Not tied to a line</option>' +
+    (lines.length || hasLine ? '<div class="pj-f full"><label for="cfLine">Estimate line (optional)</label><select id="cfLine"><option value="">Not tied to a line</option>' +
       lines.map((l) => '<option value="' + esc(l.id) + '">' + esc(l.label) + "</option>").join("") + "</select></div>" : "") +
     '<div class="pj-f full"><label for="cfCard">Paid with</label><select id="cfCard">' + CARDS.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.label) + "</option>").join("") +
       "</select></div>" +
@@ -143,7 +157,7 @@ async function save() {
   let saved = null;
   try {
     if (editing) {
-      const patch = payload(f, { editing: true, before: st.before });
+      const patch = payload(f, { editing: true, before: st.before, lineShown: st.lineShown });
       saved = Object.keys(patch).length ? await repo.updateCost(st.before, patch) : st.before;
     } else {
       saved = await repo.addCost(payload(f, { projectId: ctx.pid }));
@@ -190,15 +204,17 @@ export async function openCostDialog(ctx, opts) {
   st.lost = false;
   st.busy = false;
   st.before = null;
-  try { st.lines = await repo.lineChoices(ctx.pid); } catch (e) { st.lines = []; }
+  st.lineShown = undefined;
   let row = null;
   if (o.costId !== undefined && o.costId !== null) {
     try { row = await repo.getCost(o.costId); } catch (e) { ctx.toast(ctx.errorText(e), "error"); return; }
     if (!row) { ctx.toast("That cost was not found — it may have been removed in DCR Desktop 2.", "error"); return; }
   }
+  const line = row && row.estimate_item_id !== null && row.estimate_item_id !== undefined ? row.estimate_item_id : null;
+  try { st.lines = await repo.lineChoices(ctx.pid, line); } catch (e) { st.lines = []; }
   const vendors = Array.from(new Set((o.vendors || []).map((v) => String(v || "").trim()).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  draw(!!row, vendors);
+  draw(!!row, vendors, line !== null);
   st.before = row;
   fill(row);
   setTimeout(() => { const n = $(row ? "cfDesc" : "cfKind"); if (n) n.focus(); }, 0);

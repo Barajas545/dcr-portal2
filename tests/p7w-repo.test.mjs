@@ -196,6 +196,13 @@ test("lineChoices: the project's live lines of live, unarchived estimates, estim
   });
   const got = await ledger.lineChoices(268);
   assert.deepEqual(got, [{ id: 10, label: "Framing — Layout" }, { id: 11, label: "Framing — Walls" }, { id: 12, label: "CO #1 · Framing — Extra beam" }]);
+  // the line the cost being corrected is booked to is always kept, whatever its estimate
+  assert.deepEqual((await ledger.lineChoices(268, 13)).map((l) => [l.id, l.label]),
+    [[10, "Framing — Layout"], [11, "Framing — Walls"], [13, "Old (archived estimate)"], [12, "CO #1 · Framing — Extra beam"]]);
+  assert.deepEqual((await ledger.lineChoices(268, "15")).find((l) => l.id === 15), { id: 15, label: "Dropped (removed)" });
+  assert.equal((await ledger.lineChoices(268, 14)).find((l) => l.id === 14).label, "Gone (removed)", "a deleted estimate's line");
+  assert.deepEqual(await ledger.lineChoices(268, 16), got, "never another project's line");
+  assert.deepEqual(await ledger.lineChoices(268, 11), got, "a live line: nothing added");
 });
 
 /* ── OneDrive (the folder step) ── */

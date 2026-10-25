@@ -159,6 +159,28 @@ test("cost form: what a new cost sends (Desktop 2's submit_new) and what an edit
     { vendor: null }, "a blanked vendor is NULL");
 });
 
+test("cost form: correcting a cost tied to an estimate line never unties it — no select drawn, or a select not changed, sends no estimate_item_id", () => {
+  const before = { id: 9, kind: "material", cost_date: "2026-10-20", description: "Lumber", vendor: "Yard", amount: 120, hours: null, rate: null,
+    estimate_item_id: 4411, card: "card-amex", version: 3 };
+  const typo = (o) => CF0(Object.assign({ description: "Lumber (fixed typo)", vendor: "Yard", amount: "120.00", card: "card-amex" }, o));
+  // no line choices (none live, the read failed): the dialog draws no select and the form says undefined
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: undefined }), { editing: true, before }), { description: "Lumber (fixed typo)" });
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: undefined }), { editing: true, before, lineShown: undefined }), { description: "Lumber (fixed typo)" });
+  // a select that could not show the line (it fell back to "Not tied to a line") and was left alone
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: "" }), { editing: true, before, lineShown: "" }), { description: "Lumber (fixed typo)" });
+  // the select showed the line and the person left it, or picked it again
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: "4411" }), { editing: true, before, lineShown: "4411" }), { description: "Lumber (fixed typo)" });
+  // the person changed it: untied, or another line
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: "" }), { editing: true, before, lineShown: "4411" }), { description: "Lumber (fixed typo)", estimate_item_id: null });
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: "4412" }), { editing: true, before, lineShown: "4411" }), { description: "Lumber (fixed typo)", estimate_item_id: 4412 });
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: "4412" }), { editing: true, before, lineShown: "" }), { description: "Lumber (fixed typo)", estimate_item_id: 4412 });
+  // a cost with no line: picking one sends it
+  assert.deepEqual(CF.payload(typo({ estimate_item_id: "77" }), { editing: true, before: Object.assign({}, before, { estimate_item_id: null }), lineShown: "" }),
+    { description: "Lumber (fixed typo)", estimate_item_id: 77 });
+  // a new cost without a select: no line
+  assert.ok(!("estimate_item_id" in CF.payload(CF0({ estimate_item_id: undefined }), { projectId: 268 })));
+});
+
 test("cost form: receipts — a camera's own name is replaced, a picture or a PDF of at most 25 MB", () => {
   for (const n of ["image.jpg", "IMG_4412.JPG", "photo.png", "IMG4412.heic"]) assert.ok(CF.genericName(n), n);
   for (const n of ["Home Depot 10-20.pdf", "receipt lumber.jpg"]) assert.ok(!CF.genericName(n), n);

@@ -101,6 +101,14 @@ test("the cost dialog: fetched on demand from the Expenses tab only (never stati
   assert.match(tab, /Costs can be added here or in DCR Desktop 2/);
   assert.match(tab, /Costs have no delete: correct one, /);
   assert.match(code(tab), /canTag\(ctx\.me\) \? '<button class="pj-btn pj-btn-sm pj-btn-primary" id="exAdd"/, "the button for money editors only");
+  // an edit never unties a cost from its line by accident: no select -> undefined, the select's first value compared,
+  // the cost's own line asked for (kept even when its estimate is archived)
+  const dc = code(dlg);
+  assert.match(dc, /estimate_item_id: \$\("cfLine"\) \? \$\("cfLine"\)\.value : undefined/);
+  assert.match(dc, /payload\(f, \{ editing: true, before: st\.before, lineShown: st\.lineShown \}\)/);
+  assert.match(dc, /st\.lineShown = sel \? sel\.value : undefined/);
+  assert.match(dc, /repo\.lineChoices\(ctx\.pid, line\)/);
+  assert.ok(dc.indexOf("repo.getCost(o.costId)") < dc.indexOf("repo.lineChoices("), "the cost is read first, for its line");
   const sw = read("sw.js");
   for (const f of ["js/pages/expense-dialog.js", "js/map/cost-form.js", "js/pages/project-expenses.js"]) assert.ok(!sw.includes('"' + f + '"'), f + " is not kept on phones");
   for (const f of ["js/pages/new-project.js", "js/repo/onedrive.js", "js/map/access.js", "js/thumb-prep.js"]) assert.ok(sw.includes('"' + f + '"'), f + " is in SHELL");

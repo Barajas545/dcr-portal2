@@ -10,7 +10,10 @@
    * What is sent (payload): a new cost — project, kind, date and amount, the words only when typed, hours and rate
      only when both are, the estimate line only when one is picked, "Paid with" only when it is not "Not tagged
      yet"; an edit — only the columns that changed (hours and rate cleared are sent as NULL, or the database would
-     go on working the amount out from them).
+     go on working the amount out from them). The estimate line of an edit is sent only when the dialog offered it
+     (the form's estimate_item_id undefined: no select was drawn) and the person changed it from what the select
+     first showed (opts.lineShown): correcting a description never unties a cost from its line, so job costing per
+     line (pm.html, the ledger's group column) keeps it.
    Pure module: no DOM, no network (node tests import it). */
 
 import { KINDS, CARDS } from "./ledger.js";
@@ -104,8 +107,8 @@ const same = (a, b) => (a === null || a === undefined || a === "" ? null : a) ==
 const numSame = (a, b) => (a === null || a === undefined || a === "") ? (b === null || b === undefined || b === "")
   : (b !== null && b !== undefined && b !== "" && Number(a) === Number(b));
 
-/** What to send. opts: {projectId} for a new cost; {editing: true, before: the raw costs row} for an edit (only
-    the changed columns; {} when nothing changed). */
+/** What to send. opts: {projectId} for a new cost; {editing: true, before: the raw costs row, lineShown: the
+    estimate line select's value as first shown} for an edit (only the changed columns; {} when nothing changed). */
 export function payload(form, opts) {
   const o = opts || {};
   const c = columns(form);
@@ -127,8 +130,11 @@ export function payload(form, opts) {
   if (!numSame(c.amount, b.amount)) out.amount = c.amount;
   if (!numSame(c.hours, b.hours)) out.hours = c.hours;
   if (!numSame(c.rate, b.rate)) out.rate = c.rate;
-  if (!same(c.estimate_item_id === null ? null : String(c.estimate_item_id), b.estimate_item_id == null ? null : String(b.estimate_item_id))) {
-    out.estimate_item_id = c.estimate_item_id;
+  if (form && form.estimate_item_id !== undefined) {                // the select was drawn
+    const stored = b.estimate_item_id == null ? "" : String(b.estimate_item_id);
+    const shown = o.lineShown === undefined || o.lineShown === null ? stored : text(o.lineShown);
+    const now = c.estimate_item_id === null ? "" : String(c.estimate_item_id);
+    if (now !== shown && now !== stored) out.estimate_item_id = c.estimate_item_id;
   }
   if (c.card !== (text(b.card) || "untagged")) out.card = c.card;
   return out;
