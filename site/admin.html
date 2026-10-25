@@ -67,6 +67,13 @@
       .ad-sched label { margin: 0 0 3px; }
       .ad-msg { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 10px; }
       .ad-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+      /* the Access tab: one card per sign-in, its switches as checkboxes (the read-only ones greyed with where to change them) */
+      .ad-sw { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 4px 0; font-size: 13.5px; font-weight: 600; color: var(--text); cursor: pointer; }
+      .ad-sw input { width: 18px; height: 18px; margin: 1px 0 0; flex: none; }
+      .ad-sw.ro { color: var(--text-muted); cursor: default; }
+      .ad-sw small { display: block; font-weight: 400; font-size: 11.5px; color: var(--text-muted); }
+      .ad-hint { font-size: 12px; color: var(--gold); min-height: 0; }
+      .ad-accmsg { font-size: 12.5px; color: var(--err); }
       @media (max-width: 560px) {
         .ad-fg { grid-template-columns: 1fr; }
         .ad-sched { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "s1 e1" "s2 e2" "l ."; }
@@ -83,11 +90,12 @@
         <button type="button" class="btn btn-sm" id="adNew">+ New employee</button>
       </div>
       <p class="ad-lead">Everyone who logs time or gets timesheet reminders, with or without a sign-in. Link an employee to their
-        account so they can log their own hours, and give each lead their crew. Sign-in accounts, roles and passwords are managed in
-        <b>DCR Desktop 2 → Users</b>.</p>
+        account so they can log their own hours, and give each lead their crew. Roles, new accounts and passwords:
+        <b>DCR Desktop 2 → Users</b>. Admins set prices, Estimator and OneDrive upload on <b>Access</b>.</p>
       <div class="ad-tabs" role="tablist">
         <button type="button" class="ad-tab" role="tab" id="tabEmp" aria-selected="true" aria-controls="paneEmp">Employees</button>
         <button type="button" class="ad-tab" role="tab" id="tabCrew" aria-selected="false" aria-controls="paneCrew">Crews</button>
+        <button type="button" class="ad-tab" role="tab" id="tabAcc" aria-selected="false" aria-controls="paneAcc" hidden>Access</button>
       </div>
       <section id="paneEmp" role="tabpanel" aria-labelledby="tabEmp">
         <div class="ad-bar">
@@ -102,6 +110,14 @@
           An employee needs an account linked to log their own hours; crew without an account are entered by their lead or the office,
           or text their hours to DCR Agents.</div>
         <div id="adCrews"><div class="ad-empty">Loading…</div></div>
+      </section>
+      <section id="paneAcc" role="tabpanel" aria-labelledby="tabAcc" hidden>
+        <div class="ad-note">What each sign-in may do beyond its role. <b>Estimator</b> (managers): edits project estimates and change
+          orders on the web and in DCR Desktop 2; ticking it ticks <b>Sees prices</b> too — untick prices for an estimator who works
+          in quantities only. <b>Can upload to OneDrive</b>: adds files to the project's OneDrive folder from Portal 2 (DCR Desktop 2
+          writes through each office computer's OneDrive and does not ask). A change reaches the person's open pages the next time
+          they load one. The database checks every change; financials, approving payments and sales estimates stay in DCR Desktop 2 → Users.</div>
+        <div id="adAccess"><div class="ad-empty">Loading…</div></div>
       </section>
       <div id="adModal"></div>
     </main>

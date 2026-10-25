@@ -16,7 +16,15 @@
        listEmployees(), createEmployee(f), updateEmployee(emp, patch) (versioned), setActive(),
        linkAccount(emp, profileId), listCrews(), addToCrew(lead, emp), removeFromCrew(lead, emp),
        listAccounts() (profiles: names, roles, active — Q29 lets everyone read them; only names
-       and roles are used here). */
+       and roles are used here).
+   * the Access tab (an admin only — admin_set_profile checks app.is_admin() itself):
+       listAccess()               every account but the agents one with its switches and version
+                                  (ACCESS_COLS); before migration 20261028000100 the Estimator and OneDrive
+                                  columns are not there: the rows come back without them and ready: false;
+       setAccess(acc, changes)    rpc admin_set_profile(p_id, p_switches, p_version): only can_see_prices,
+                                  can_estimate and can_upload_onedrive (the other switches stay in DCR
+                                  Desktop 2 → Users); a stale version is PT409, a role the switch is not for
+                                  23514 (the database's checks). */
 
 import { db, must, versioned, pageAll, idOf } from "./_db.js";
 
@@ -147,6 +155,50 @@ export async function removeFromCrew(leadProfileId, employeeId) {
   const c = await db();
   const res = must(await c.from("crew_members").delete().eq("lead_profile_id", leadProfileId).eq("employee_id", idOf(employeeId)).select("*")) || [];
   return res.length > 0;
+}
+
+/* ── the Access tab (admin) ────────────────────────────────────────────── */
+
+export const ACCESS_SWITCHES = Object.freeze(["can_see_prices", "can_estimate", "can_upload_onedrive"]);
+const BASE_ACCESS = "id, full_name, role, active, can_see_prices, can_see_financials, can_approve_payments, can_sales_estimates, version";
+export const ACCESS_COLS = BASE_ACCESS.replace(", version", ", can_estimate, can_upload_onedrive, version");
+
+function missingColumn(error) {
+  const code = String((error && error.code) || "");
+  return code === "42703" || code === "PGRST204" || /can_estimate|can_upload_onedrive|can_sales_estimates/.test(String((error && error.message) || ""));
+}
+
+/** {ready, rows: [{id, full_name, role, active, can_*, version}]} by name, without the agents account. ready:
+    false — the database has no Estimator / OneDrive columns yet (those switches are shown as "after the update"). */
+export async function listAccess() {
+  const c = await db();
+  let ready = true;
+  let res = await c.from("profiles").select(ACCESS_COLS);
+  if (res && res.error && missingColumn(res.error)) {
+    ready = false;
+    res = await c.from("profiles").select(BASE_ACCESS);
+    if (res && res.error && missingColumn(res.error)) res = await c.from("profiles").select(BASE_ACCESS.replace(", can_sales_estimates", ""));
+  }
+  const rows = must(res) || [];
+  return {
+    ready,
+    rows: rows.filter(function (r) { return r.role !== "agents"; })
+      .sort(function (a, b) { return String(a.full_name || "").localeCompare(String(b.full_name || "")); }),
+  };
+}
+
+/** changes: {can_see_prices?, can_estimate?, can_upload_onedrive?: boolean} -> the profiles row as saved. */
+export async function setAccess(acc, changes) {
+  const sw = {};
+  Object.keys(changes || {}).forEach(function (k) {
+    if (ACCESS_SWITCHES.indexOf(k) === -1) throw new Error("not a switch the Access tab sets: " + k);
+    sw[k] = changes[k] === true;
+  });
+  if (!acc || !acc.id) throw Object.assign(new Error("Which person?"), { code: "22023", status: 400 });
+  if (!Object.keys(sw).length) return acc;
+  const c = await db();
+  const res = must(await c.rpc("admin_set_profile", { p_id: acc.id, p_switches: sw, p_version: acc.version }));
+  return Array.isArray(res) ? res[0] || null : res;
 }
 
 /** Accounts for the "linked account" and crew-lead pickers: names and roles only. */

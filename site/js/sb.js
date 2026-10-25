@@ -25,6 +25,9 @@ const MODE_KEY = "dcr2-auth-mode";        // sessionStorage: "session" = not kep
 const PROFILE_KEY = "dcr2-auth-profile";  // the last profile read, kept next to the session (offline)
 const PROFILE_COLUMNS =
   "id,full_name,email,phone,role,color,can_see_prices,can_see_financials,can_approve_payments,active,version";
+// The Estimator and OneDrive upload switches (migration 20261028000100_estimator.sql): read when the database has
+// them; before that update the sign-in reads the columns above and both switches count as off (an admin's are on).
+const SWITCH_COLUMNS = ",can_estimate,can_upload_onedrive";
 
 /* ── the sign-in storage ───────────────────────────────────────────────── */
 
@@ -227,7 +230,7 @@ export function onAuth(cb) {
 
 /* ── the signed-in person ──────────────────────────────────────────────── */
 
-/** profiles row -> the shape every page uses. Admins always hold all three switches. */
+/** profiles row -> the shape every page uses. Admins always hold every switch (the database forces them on). */
 export function shapeProfile(row) {
   if (!row) return null;
   const admin = row.role === "admin";
@@ -242,22 +245,32 @@ export function shapeProfile(row) {
     can_see_prices: admin || !!row.can_see_prices,
     can_see_financials: admin || !!row.can_see_financials,
     can_approve_payments: admin || !!row.can_approve_payments,
+    can_estimate: admin || !!row.can_estimate,
+    can_upload_onedrive: admin || !!row.can_upload_onedrive,
     must_change_password: !!row.must_change_password,
     active: row.active !== false,
     version: row.version,
   };
 }
 
-function isMissingColumn(error) {
+export function isMissingColumn(error) {
   const code = String((error && error.code) || "");
   return code === "42703" || code === "PGRST204" ||
-    /must_change_password/.test(String((error && error.message) || ""));
+    /must_change_password|can_estimate|can_upload_onedrive/.test(String((error && error.message) || ""));
 }
+
+/** The column lists the sign-in tries, newest database first: a database without the newer columns is asked
+    again with fewer (a missing column must never stop anybody signing in). */
+export const PROFILE_SELECTS = Object.freeze([
+  PROFILE_COLUMNS + SWITCH_COLUMNS + ",must_change_password",
+  PROFILE_COLUMNS + ",must_change_password",            // before 20261028000100 (Estimator, OneDrive upload)
+  PROFILE_COLUMNS,                                       // before migration M1
+]);
 
 let _me = null;
 
 /** The signed-in person ({id, name, email, role, color, can_see_prices, can_see_financials,
-    can_approve_payments, must_change_password, active, …}), or null when signed out or when the
+    can_approve_payments, can_estimate, can_upload_onedrive, must_change_password, active, …}), or null when signed out or when the
     profiles row is missing. Network errors throw. Cached for the page; { fresh: true } re-reads. */
 export function me({ fresh = false } = {}) {
   if (_me && !fresh) return _me;
@@ -271,8 +284,8 @@ async function loadMe() {
   const s = await session();
   if (!s || !s.user) return null;
   const q = (cols) => sb().from("profiles").select(cols).eq("id", s.user.id).maybeSingle();
-  let res = await q(PROFILE_COLUMNS + ",must_change_password");
-  if (res.error && isMissingColumn(res.error)) res = await q(PROFILE_COLUMNS);   // before migration M1
+  let res = await q(PROFILE_SELECTS[0]);
+  for (let i = 1; i < PROFILE_SELECTS.length && res.error && isMissingColumn(res.error); i++) res = await q(PROFILE_SELECTS[i]);
   if (res.error) {
     res.error.status = res.status;
     throw isNetworkError(res.error) || res.status === 0 ? offline(res.error) : res.error;
