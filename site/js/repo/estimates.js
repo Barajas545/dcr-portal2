@@ -1,5 +1,10 @@
-/* Estimates, change orders and takeoffs, read only (BLUEPRINT 3.3.11, Appendix A "project money and estimate
-   parts"; owner answer Q12: view and print only — every edit stays in DCR Desktop 2).
+/* Estimates, change orders and takeoffs as everyone reads them (BLUEPRINT 3.3.11, Appendix A "project money and
+   estimate parts"). Owner answer Q12 (view and print only) is REVERSED 2026-10-24: an Estimator edits estimates and
+   change orders on the web — the editor's reads and writes are repo/estimate-edit.js (rpc estimate_edit_read and the
+   write RPCs of migration 20261028000100), loaded only for an Estimator; this module keeps the read-only tab's and the
+   printed pages' reads, and says who gets the editor:
+   * estimateAccess(me) -> {can_estimate, missing}: the person's Estimator switch as the database has it
+     (profiles.can_estimate; an admin always; missing: the column is not there yet - the tab stays read only).
 
    Price gating is in the DATA, not only on screen (2.1 principle 8, P5 acceptance check 1). Everything an
    estimate or a takeoff says comes through migration M5a's read functions, which run as the caller (row
@@ -26,6 +31,27 @@ import { fromTakeoffPrint } from "../map/takeoffs.js";
 // which estimates exist: no words, no money
 export const LIST_COLS = "id, project_id, number, kind, co_number, status, archived_at, deleted_at, version";
 const IDS_PER_READ = 150;
+
+function isMissingColumn(error) {
+  const code = String((error && error.code) || "");
+  return code === "42703" || code === "PGRST204" || /can_estimate/.test(String((error && error.message) || ""));
+}
+
+/** The Estimator switch (migration 20261028000100), read fresh: only a manager's can be on or off; an admin always
+    edits, nobody else ever does (the CHECK profiles_estimate_needs_manager). */
+export async function estimateAccess(me) {
+  if (!me || !me.id || me.active === false || me.role === "agents") return { can_estimate: false, missing: false };
+  if (me.role === "admin") return { can_estimate: true, missing: false };
+  if (me.role !== "manager") return { can_estimate: false, missing: false };
+  const c = await db();
+  const res = await c.from("profiles").select("role, can_estimate").eq("id", me.id);
+  if (res && res.error) {
+    if (isMissingColumn(res.error)) return { can_estimate: false, missing: true };
+    must(res);
+  }
+  const row = Array.isArray(res && res.data) ? res.data[0] : (res && res.data);
+  return { can_estimate: !!(row && row.role === "manager" && row.can_estimate === true), missing: false };
+}
 
 /** The flags of these estimate items (estimate_item_flags). */
 export async function itemFlags(itemIds) {
