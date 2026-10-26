@@ -22,8 +22,12 @@
    P5c sales (Q10): Sales Estimates in Sales & Marketing for whoever holds the Sales estimates switch (an admin always;
    anyone else once repo/sales.js salesAccess, a dynamic import, says so).
    P5c sub form: Sub submissions in Office for the money editors (an admin, or a manager or accountant with financials -
-   the readers of sub_submissions), with "N waiting" (repo/submissions.js pendingCount, a dynamic import). */
+   the readers of sub_submissions), with "N waiting" (repo/submissions.js pendingCount, a dynamic import).
+   Owner decision 2026-10-26 (4): Floor Plans in Projects for the people who see prices (an admin, or Sees prices:
+   map/plans.js plansCardFor), opening the takeoff app's plans (takeoff-web #plans: the Plans Archive and the plans kept
+   on that device) in a new tab - a link only, nothing is asked of the database or the broker for it. */
 import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday } from "../common2.js";
+import { PLANS_HOME, plansCardFor } from "../map/plans.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
 import { summaryOf, badgeOf } from "../map/tasks.js";
@@ -54,6 +58,9 @@ export function cardsFor(p, opts) {
         ? "Every stage, item and dollar — bids to paid — on one chart."
         : "Every stage, estimate item and quote of a project on one chart." },
     { href: "search.html", ic: "🔎", tt: "Search", ds: "Projects, contacts, tasks and files, by name, number, address or phone." },
+    /* 2026-10-26 (4): the takeoff app's plans, in a new tab (another site: ext) */
+    { href: PLANS_HOME, ic: "📐", tt: "Floor Plans", ext: true, show: plansCardFor(p),
+      ds: "Open plans in the takeoff app — the Plans Archive and the plans kept on this device." },
     { href: "logs.html", ic: "📜", tt: "Log History", ds: "Today's project logs, grouped by project, or any period." },
   ] });
   /* P5c: the office lists the database lets this person read (leads and marketing tasks: admin, manager, accountant,
@@ -135,7 +142,8 @@ function render(p, opts) {
       const body = [el("span", { class: "ic", "aria-hidden": "true" }, c.ic), el("span", { class: "tt" }, c.tt), el("span", { class: "ds" }, c.ds)];
       const card = c.info
         ? el("div", { class: "hm-card info" }, el("div", { class: "hm-card-go" }, body))
-        : el("div", { class: "hm-card", id: c.id || null }, el("a", { class: "hm-card-go", href: c.href }, body),
+        : el("div", { class: "hm-card", id: c.id || null }, el("a", { class: "hm-card-go", href: c.href,
+          target: c.ext ? "_blank" : null, rel: c.ext ? "noopener" : null, title: c.ext ? "Opens in a new tab" : null }, body),
           c.links ? el("div", { class: "links" }, c.links.map((l) => el("a", { href: l[1] }, l[0]))) : null);
       grid.appendChild(card);
     }

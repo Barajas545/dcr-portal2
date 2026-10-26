@@ -28,7 +28,9 @@
    Part 4 (the Files tab's OneDrive part, owner 2026-10-24) keeps "dcr-portal2-v3" the same way: its broker module,
    its rules and the uploader join the list (project.html loads them); the admin's self-test (js/pages/
    onedrive-selftest.js, loaded only when an admin clicks it on the test project) stays out of it, as the admins'
-   pages do. Nothing of OneDrive is kept for offline use but the code: no listing, link or upload address. */
+   pages do. Nothing of OneDrive is kept for offline use but the code: no listing, link or upload address.
+   The plan buttons (owner 2026-10-26) keep "dcr-portal2-v3" the same way: their rules and the slot filler join the
+   list (Search, the project page and the home page load them); no plans_for answer is ever kept. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
@@ -60,6 +62,8 @@ const SHELL = [
   "js/pages/new-project.js", "js/repo/onedrive.js", "js/map/access.js", "js/thumb-prep.js",
   // Part 4: the Files tab's OneDrive part (its rules and the uploader; the broker module is listed above)
   "js/map/onedrive.js", "js/onedrive-upload.js", "js/scrub-money.js",
+  // the plan buttons and the Floor Plans card (owner 2026-10-26)
+  "js/map/plans.js", "js/pages/plan-buttons.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

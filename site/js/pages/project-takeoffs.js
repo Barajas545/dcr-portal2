@@ -13,16 +13,13 @@
 import * as estRepo from "../repo/estimates.js";
 import { LIVE as ONEDRIVE_LIVE } from "../repo/onedrive.js";
 import { takeoffCardsHtml, esc } from "./est-render.js";
+// the link is built in one place (map/plans.js: the plan buttons of Search and the project header use it too)
+import { TAKEOFF_WEB, plansLink } from "../map/plans.js";
+
+export { TAKEOFF_WEB, plansLink };
 
 let host = null, seq = 0, timer = null;
 const state = { list: [], open: undefined, prices: false };
-
-export const TAKEOFF_WEB = "https://barajas545.github.io/takeoff-web/index.html";
-/** takeoff-web's Plans Archive at this project's plans ("#plans=A249"), or the archive itself without a number. */
-export function plansLink(number) {
-  const n = String(number == null ? "" : number).trim();
-  return TAKEOFF_WEB + (n ? "#plans=" + encodeURIComponent(n) : "#plans");
-}
 
 export function render(ctx, el) {
   host = el;

@@ -8,7 +8,10 @@
    round: view "project:<id>", project "<id>"). For admin and manager (D13, owner 2026-10-24): 📷 changes the
    picture (thumb-prep.js makes it in the browser: at most 800 px, re-drawn so no EXIF / GPS goes up, JPEG or PNG;
    repo/files addThumbnail, then the versioned pointer; ✕ takes it off) and "＋ New project" opens the Board's
-   dialog (new-project.js).
+   dialog (new-project.js). Owner decisions 2026-10-26: when the project's takeoff folder holds a .takeoff file, the
+   header shows "📐 Plans ↗" (beside the progress chart, so it is there on every tab; js/pages/plan-buttons.js, one
+   plans_for call) opening takeoff-web at its number - for everyone who sees the project; nothing when the broker does
+   not answer. The Takeoffs tab keeps its own Plans Archive link either way.
 
    Tabs (P1): Overview (Desktop 2's fields, autosaved with versions; the labor rate only with the
    prices switch), Log, Journal, Mailing, Files (with the capture bar; Part 4: the project's OneDrive folder through
@@ -43,6 +46,7 @@ import * as estimateTab from "./project-estimate.js";
 import * as takeoffsTab from "./project-takeoffs.js";
 import { startSweeper } from "./journal-sync.js";
 import { openNewProject, takeNotice } from "./new-project.js";
+import { paintPlans } from "./plan-buttons.js";
 
 const TABS = ["overview", "estimate", "takeoffs", "log", "journal", "mailing", "files", "tasks", "expenses", "payments"];
 const MONEY_TABS = ["expenses", "payments"];
@@ -495,6 +499,8 @@ async function init() {
   }
   renderHead();
   loadThumb();
+  el("pjPlans").setAttribute("data-plans", String(ctx.project.id));
+  paintPlans(document.querySelector(".pj-head"), ctx.me);
   const left = takeNotice(ctx.pid);               // said by the New Project dialog before it opened this page
   if (left) toast(left, "info");
   startSweeper(ctx.me, { skip: ctx.pid });        // other projects' journal entries written with no signal

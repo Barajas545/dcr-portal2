@@ -122,8 +122,12 @@ test("the cost dialog: fetched on demand from the Expenses tab only (never stati
 
 test("the Takeoffs tab: the Plans Archive link is built with encodeURIComponent, and the old 'stay on the old portal' text is gone", () => {
   const js = read("js/pages/project-takeoffs.js");
-  assert.match(js, /"#plans=" \+ encodeURIComponent\(n\)/);
-  assert.match(js, /https:\/\/barajas545\.github\.io\/takeoff-web\/index\.html/);
+  // the link is built in map/plans.js since the plan buttons (2026-10-26): the tab imports it from there
+  const plans = read("js/map/plans.js");
+  assert.match(plans, /"#plans=" \+ encodeURIComponent\(n\)/);
+  assert.match(plans, /https:\/\/barajas545\.github\.io\/takeoff-web\/index\.html/);
+  assert.ok(statics(js).includes("../map/plans.js"));
+  assert.match(code(js), /href="' \+ esc\(plansLink\(number\)\)/);
   assert.match(js, /target="_blank" rel="noopener"/);
   assert.ok(!/stay on the old portal/.test(js));
   // D13's sentence, said only once the Files tab's OneDrive part is out (repo/onedrive.js LIVE)

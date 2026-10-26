@@ -11,6 +11,10 @@
      chunk unit and its 191 x 320 KiB cap, the upload allowlist and the download blocklist - and the page's rules
      (map/onedrive.js) answering as the broker's paths.ts on made-up names: stems, amounts, what is hidden from whom,
      segments, the upload names, the files table's shape;
+   * the plan buttons (owner 2026-10-26), once the broker has op plans_for (until then a line says the checks wait): the
+     op and takeoff_not_configured in the drift; the takeoff folder not set up (no ONEDRIVE_TAKEOFF_ITEM_ID) is a quiet {}
+     for repo/onedrive.js plansFor; set up (when test_world.ts's settings have it), a field person's answer carries the
+     project's number and a count only, a deleted project left out; signed out 401, the agents account 403;
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -67,14 +71,26 @@ export async function run(h) {
   const asCaller = (jwt, text, params) => client.run(async () => {
     try { return (await sql(text, params))[0].v; } catch (e) { throw Object.assign(new Error("database"), { code: e.code, hint: e.hint ?? null }); }
   }, subOf(jwt));
+  // the plan buttons' op is in the broker (DCR Desktop 2) - before that its checks wait, and the drift is the older one
+  const HAS_PLANS = Array.isArray(fn.OPS) && fn.OPS.includes("plans_for");
+  let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   const deps = {
-    settings: () => Object.assign({}, TW.SETTINGS_OK, { ONEDRIVE_HOST: od.ONEDRIVE_HOST }),
+    settings: () => {
+      const s = Object.assign({}, TW.SETTINGS_OK, { ONEDRIVE_HOST: od.ONEDRIVE_HOST });
+      if (!takeoffSet) delete s.ONEDRIVE_TAKEOFF_ITEM_ID;
+      return s;
+    },
     caller: async (jwt) => { const s = subOf(jwt); return Object.values(PEOPLE).some((p) => p.id === s) ? { id: s } : null; },
     context: (jwt, p) => asCaller(jwt, "select public.onedrive_context(p_project_id => $1) as v", [p]),
     record: (jwt, a) => {
       const keys = Object.keys(a);
       return asCaller(jwt, "select public.record_onedrive_file(" + keys.map((k, i) => k + " => $" + (i + 1)).join(", ") + ") as v", keys.map((k) => a[k]));
     },
+    // plans_for's select of the projects' id and number with the caller's token (projects RLS), as index.ts does it
+    numbers: (jwt, ids) => client.run(async () => {
+      try { return await sql("select id, number from public.projects where id = any($1::bigint[]) and deleted_at is null", [ids]); }
+      catch (e) { throw Object.assign(new Error("database"), { code: e.code, hint: e.hint ?? null }); }
+    }, subOf(jwt)),
     fetch: (url, init) => g.fetch(url, init),
     now: () => clock.t,
     sleep: async (ms) => { clock.t += ms; },
@@ -125,8 +141,9 @@ export async function run(h) {
 
   try {
     await check("Part 4 OneDrive: drift - the broker's ops, error codes, CORS origin, chunk unit and cap, allowlist and blocklist are the ones Portal 2 knows", async () => {
-      same(fn.OPS.slice().sort(), ["download", "ensure_folder", "list", "status", "upload_done", "upload_session"], "the ops");
-      same(Object.keys(fn.ERRORS).sort(), od.CONTRACT.slice().sort(), "every error code the broker answers is one repo/onedrive.js reads");
+      same(fn.OPS.slice().sort(), ["download", "ensure_folder", "list", "status", "upload_done", "upload_session"].concat(HAS_PLANS ? ["plans_for"] : []).sort(), "the ops");
+      same(Object.keys(fn.ERRORS).sort(), od.CONTRACT.filter((c) => HAS_PLANS || !/^takeoff_/.test(c)).sort(),
+        "every error code the broker answers is one repo/onedrive.js reads");
       ok(fn.ALLOWED_ORIGINS.includes("https://portal.dcrframing.com"), "the site's origin is allowed in CORS");
       same(fn.CHUNK_MULTIPLE, OD.CHUNK_UNIT, "320 KiB");
       same(fn.MAX_CHUNK_BYTES, OD.MAX_CHUNK, "191 x 320 KiB");
@@ -261,7 +278,48 @@ export async function run(h) {
       same((await refused(() => od.download(pid, exe.id), "not_downloadable", "a program")).status, 403, "exe");
       ok(docs.length >= 1, "Documents listed");
     });
+
+    if (!HAS_PLANS) {
+      results.push({ section, name: "the plan buttons: op plans_for is not in DCR Desktop 2's broker yet - its checks wait for it", ok: true });
+    } else {
+      await check("the plan buttons: op plans_for - the takeoff folder not set up is a quiet {}; set up, a number and a count only", async () => {
+        client.as(id("field"));
+        takeoffSet = false;
+        od.forgetPlans();
+        same(await od.plansFor([pid]), {}, "not set up: nothing said");
+        same((await refused(() => od.call({ op: "plans_for", project_ids: [pid] }), "takeoff_not_configured", "the raw answer")).status, 503, "503");
+        takeoffSet = true;
+        if ("ONEDRIVE_TAKEOFF_ITEM_ID" in (TW.SETTINGS_OK || {})) {
+          // the made-up project's folder in the fake takeoff folder (when fake_graph.ts has one): two takeoff files at
+          // two depths, an autosave and a PDF that never count
+          let want = null;
+          if (g.takeoff && g.takeoff.id) {
+            const tf = g.mkdir(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+            const plansDir = g.mkdir(tf.id, "Plans");
+            g.file(tf.id, made.number + " Bid.takeoff", 10);
+            g.file(g.mkdir(plansDir.id, "Rev 2").id, made.number + " Rev 2.takeoff", 10);
+            g.file(plansDir.id, made.number + " Bid.takeoff.autosave", 10);
+            g.file(plansDir.id, "A1 - Floor plan.pdf", 10);
+            want = 2;
+          }
+          od.forgetPlans();
+          const got = await od.plansFor([pid, Number(gone.id)]);
+          same(Object.keys(got), [String(pid)], "the deleted project is left out");
+          same(got[String(pid)].number, String(made.number), "the number, read under the caller's rules");
+          ok(Number.isSafeInteger(got[String(pid)].plans) && got[String(pid)].plans >= 0, "a count");
+          if (want !== null) same(got[String(pid)].plans, want, "the takeoff files at any depth, nothing else");
+          const raw = await od.call({ op: "plans_for", project_ids: [pid] });
+          same(Object.keys(raw).sort(), ["checked_at", "projects"], "the answer's fields");
+          same(Object.keys(raw.projects[String(pid)]).sort(), ["number", "plans"], "no name, item id or link");
+        }
+        client.as(id("agents"));
+        same((await refused(() => od.call({ op: "plans_for", project_ids: [pid] }), "forbidden", "the agents account")).status, 403, "agents");
+        client.as(null);
+        same((await refused(() => od.call({ op: "plans_for", project_ids: [pid] }), "auth", "signed out")).status, 401, "signed out");
+      });
+    }
   } finally {
+    takeoffSet = true;
     client.functions = before;
     client.as(null);
   }

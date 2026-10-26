@@ -46,6 +46,9 @@
         border:1px solid var(--border); background:var(--surface); color:var(--text); text-decoration:none; display:inline-block;}
       .pj-btn:hover{background:var(--surface-2);}
       .pj-btn[hidden]{display:none;}
+      /* the 📐 plan button's slot (js/pages/plan-buttons.js): there once the takeoff folder answers */
+      .pj-plans{display:inline-flex;}
+      .pj-plans[hidden]{display:none;}
       .pj-btn-primary{background:var(--acc); border-color:var(--acc); color:#fff;}
       .pj-btn-primary:hover{background:var(--acc-2);}
       .pj-btn-primary:disabled{background:#7a8595; border-color:#7a8595; cursor:default;}
@@ -271,6 +274,7 @@
         </div>
         <a class="pj-btn" id="pjOldPortal" href="#" target="_blank" rel="noopener" hidden
           title="This project came from the old portal: its old estimates, money and documents are there">Old portal ↗</a>
+        <span class="pj-plans" id="pjPlans" data-plans-style="button" hidden></span>
         <a class="pj-btn" id="pjPm" href="pm.html" title="The progress chart: every stage, estimate item and quote of this project">📊 Progress chart</a>
         <button class="pj-btn" id="pjSave" type="button" title="This page saves by itself — use this only to save right now">💾 Save now</button>
         <button class="pj-btn" id="pjNew" type="button" hidden title="Create another project (the database gives its number)">＋ New project</button>

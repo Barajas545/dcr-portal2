@@ -29,6 +29,16 @@
                                      not_authorized | busy | projects_root_missing | forbidden | offline | failed,
                                      message, created, existed, blocked, count, folders};
    * status()                        op "status" (admins): {ok, grant, checks: [{name, ok, code}]};
+   * plansFor(projectIds)            op "plans_for" {project_ids: 1 to 50 a call} (owner decisions 2026-10-26; map/
+                                     plans.js): {"<id>": {number, plans}} - how many .takeoff files the project's
+                                     folder(s) in the owner's takeoff folder hold, read with a read-only grant; a
+                                     project the person may not see, or a deleted one, is left out. No name, item id
+                                     or link ever comes. The takeoff folder not set up (503 takeoff_not_configured)
+                                     or the function not deployed: {} (the buttons are simply not there); answers
+                                     are kept PLANS_KEEP_MS in this page (Search asks again as one types); a busy
+                                     answer with a short Retry-After (the broker's time ran out on a first walk: it
+                                     keeps what it counted) is asked once more after it, a longer one is waited out
+                                     (only what is kept answers meanwhile);
    * call(body)                      any op; errors are {code, status, message, field, info, retryAfter}: the
                                      broker's own codes (its messages are a fixed map), "not_deployed" (the gateway's
                                      own 404: no such function), the 503s by name, "offline" (no answer).
@@ -38,6 +48,7 @@
 
 import { db, idOf } from "./_db.js";
 import { sameName, renamedFrom } from "../map/onedrive.js";
+import { planEntry } from "../map/plans.js";
 
 export const FUNCTION = "onedrive";
 /** The pages call the function only when this is true (see the header): set by the Files tab's OneDrive go-live. */
@@ -52,13 +63,16 @@ export const ITEM_ID = /^[A-Za-z0-9!_.-]{8,128}$/;
 // the broker's own error codes (handler.ts ERRORS): a 404 whose body carries one is the broker's answer, not the gateway's
 export const CONTRACT = Object.freeze(["invalid", "unauthorized", "forbidden", "not_downloadable", "not_found", "method_not_allowed",
   "other_folder", "not_a_folder", "not_this_upload", "too_large", "file_type", "server_error", "onedrive_failed",
-  "onedrive_not_configured", "onedrive_not_authorized", "busy", "projects_root_missing", "onedrive_full"]);
+  "onedrive_not_configured", "onedrive_not_authorized", "busy", "projects_root_missing", "onedrive_full",
+  "takeoff_not_configured", "takeoff_root_missing"]);
 // the broker's 503s: [code here, the sentence] (its own message may name settings: never shown)
 const UNAVAILABLE = {
   onedrive_not_configured: ["not_configured", "The OneDrive connection is not set up yet."],
+  takeoff_not_configured: ["takeoff_not_configured", "The takeoff folder is not set up yet."],
   onedrive_not_authorized: ["not_authorized", "The OneDrive connection is not allowed in just now: an admin checks it."],
   busy: ["busy", "OneDrive is busy just now: try again in a minute."],
   projects_root_missing: ["projects_root_missing", "OneDrive's Projects folder is not where it was set up: an admin checks the OneDrive settings."],
+  takeoff_root_missing: ["takeoff_root_missing", "OneDrive's takeoff folder is not where it was set up: an admin checks the OneDrive settings."],
 };
 const OFFLINE = "No connection to DCR just now.";
 const FALLBACK = {
@@ -267,6 +281,76 @@ export async function status() {
     checks: (Array.isArray(d.checks) ? d.checks : []).filter(function (c) { return c && typeof c.name === "string"; })
       .map(function (c) { return { name: c.name, ok: c.ok === true, code: typeof c.code === "string" ? c.code : "" }; }),
   };
+}
+
+/* ── the plan buttons (op plans_for) ── */
+/** At most this many projects in one plans_for call (the broker's limit). */
+export const PLANS_BATCH = 50;
+/** How long an answer is kept in this page. */
+export const PLANS_KEEP_MS = 5 * 60 * 1000;
+/** A busy answer with a Retry-After of at most this many seconds is asked once more (the broker kept its counts). */
+export const PLANS_RETRY_S = 5;
+const plansKept = new Map();           // project id -> {at, v: {number, plans} | null (not in the answer)}
+let plansHold = 0;                     // a busy broker's Retry-After: nothing is asked before then
+
+/** The plan buttons are for every active person but the agents account (decision 2), once LIVE. */
+export function plansShownFor(me) {
+  return LIVE && !!me && me.active !== false && me.role !== "agents";
+}
+
+/** {"<id>": {number, plans}} for the projects asked (see the header); other errors are thrown (the pages say nothing). */
+export async function plansFor(projectIds) {
+  const ids = [];
+  (Array.isArray(projectIds) ? projectIds : [projectIds]).forEach(function (x) {
+    const n = idOf(String(x == null ? "" : x).trim());
+    if (typeof n === "number" && Number.isSafeInteger(n) && n > 0 && ids.indexOf(n) === -1) ids.push(n);
+  });
+  const out = {};
+  if (!LIVE || !ids.length) return out;
+  const now = Date.now();
+  const ask = ids.filter(function (id) {
+    const k = plansKept.get(id);
+    if (!k || now - k.at >= PLANS_KEEP_MS) return true;
+    if (k.v) out[String(id)] = k.v;
+    return false;
+  });
+  if (!ask.length || now < plansHold) return out;
+  for (let i = 0; i < ask.length; i += PLANS_BATCH) {
+    const part = ask.slice(i, i + PLANS_BATCH);
+    let d, again = true;
+    for (;;) {
+      try {
+        d = (await call({ op: "plans_for", project_ids: part })) || {};
+        break;
+      } catch (e) {
+        const code = e && e.code;
+        if (code === "takeoff_not_configured" || code === "not_deployed") return {};
+        // a first, long walk of the takeoff folder ran out of the broker's time: it keeps what it counted, so one more
+        // ask after its short Retry-After answers
+        if (code === "busy" && again && e.retryAfter && e.retryAfter <= PLANS_RETRY_S) {
+          again = false;
+          await new Promise(function (done) { setTimeout(done, e.retryAfter * 1000); });
+          continue;
+        }
+        if (code === "busy") plansHold = Date.now() + 1000 * (e.retryAfter || 60);
+        throw e;
+      }
+    }
+    const got = d.projects && typeof d.projects === "object" && !Array.isArray(d.projects) ? d.projects : {};
+    const at = Date.now();
+    part.forEach(function (id) {
+      const v = Object.prototype.hasOwnProperty.call(got, String(id)) ? planEntry(got[String(id)]) : null;
+      plansKept.set(id, { at, v });
+      if (v) out[String(id)] = v;
+    });
+  }
+  return out;
+}
+
+/** Forget the kept plans_for answers (and a busy wait): tests, and a page that must ask again. */
+export function forgetPlans() {
+  plansKept.clear();
+  plansHold = 0;
 }
 
 /** Whether a page shows the OneDrive part to `me` on `project` (LIVE, or an admin on the self-test project). */

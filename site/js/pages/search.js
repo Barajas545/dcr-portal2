@@ -2,15 +2,19 @@
 
    rpc search (through the caller's own RLS: what a person may not read never comes back), grouped as
    the old page drew it — Projects (with their pictures through signed URLs), Contacts (e-mail and
-   phone links), Estimate items, Tasks, Files — each linking into the project. The old plan-files
-   (.takeoff) menu is not ported (Q20: the Plans Library stays on the old portal). */
+   phone links), Estimate items, Tasks, Files — each linking into the project. In place of the old
+   plan-files (.takeoff) menu (owner decisions 2026-10-26): a project whose takeoff folder holds a
+   .takeoff file gets 📐 beside it, opening takeoff-web at its number (js/pages/plan-buttons.js, one
+   plans_for call for the projects shown; everyone who sees the project sees it; nothing when the
+   broker does not answer). */
 
 import { boot, el, esc, errorText, qs, setQs, maskFor } from "./shell.js";
 import * as searchRepo from "../repo/search.js";
 import * as projectsRepo from "../repo/projects.js";
 import * as filesRepo from "../repo/files.js";
+import { paintPlans } from "./plan-buttons.js";
 
-let timer = null, seq = 0, numbers = {}, list = [], listReady = null, mask = function (t) { return t; };
+let timer = null, seq = 0, numbers = {}, list = [], listReady = null, me = null, mask = function (t) { return t; };
 
 async function loadNumbers() {
   try {
@@ -23,9 +27,12 @@ async function loadNumbers() {
 function itemHtml(it) {
   const sub = it.sub ? '<div class="se-sub">' + esc(it.sub) + "</div>" : "";
   if (it.href && it.thumbId != null) {
-    return '<a class="se-item thumbed" href="' + esc(it.href) + '">' +
+    const row = '<a class="se-item thumbed" href="' + esc(it.href) + '">' +
       '<span class="se-thumb" data-thumb="' + esc(it.thumbId) + '"><span class="ph">🏠</span></span>' +
       '<span class="se-txt"><div class="se-title">' + esc(it.title) + "</div>" + sub + "</span></a>";
+    // a project: its plan button's slot beside the link (never inside it), filled by paintPlans
+    return it.projectId == null ? row : '<div class="se-proj">' + row +
+      '<span class="se-plan" data-plans="' + esc(it.projectId) + '" data-plans-style="icon" hidden></span></div>';
   }
   if (it.href) return '<a class="se-item" href="' + esc(it.href) + '"><div class="se-title">' + esc(it.title) + "</div>" + sub + "</a>";
   const contact = [];
@@ -77,6 +84,7 @@ async function run(q) {
         (g.more ? '<div class="se-more">Showing the first ' + g.total + " — refine your search</div>" : "") + "</div>";
     }).join("");
     paintThumbs(my);
+    paintPlans(el("seResults"), me, function () { return my === seq; });
   } catch (e) {
     if (my !== seq) return;
     el("seNote").textContent = "";
@@ -85,7 +93,8 @@ async function run(q) {
 }
 
 async function init() {
-  mask = maskFor(await boot("search"));
+  me = await boot("search");
+  mask = maskFor(me);
   listReady = loadNumbers();
   const q0 = qs("q") || "";
   const box = el("seInput");

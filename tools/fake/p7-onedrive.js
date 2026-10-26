@@ -32,7 +32,18 @@
      chain, the activity line): storage local, source portal2, rel_path folder_name + path, folder plans | documents,
      subpath the folders between; the caller's own same-size live row answered again (already); recorded false + the
      reason for a priced / money / amount name, a path too deep, Documents/Items; a takeoff without prices 403;
-   * ensure_folder {project_id} -> {made_project_folder, created, existed, blocked}; status {} (admins) -> ok.
+   * ensure_folder {project_id} -> {made_project_folder, created, existed, blocked}; status {} (admins) -> ok;
+   * plans_for {project_ids: 1 to 50 different positive whole numbers} (the plan buttons, owner 2026-10-26) -> {projects:
+     {"<id>": {number, plans}}, checked_at}: every active person; each project the caller may read (a deleted one is
+     left out, an admin's too) with the count of .takeoff files at any depth in its folder(s) of the takeoff folder
+     ("Projects-Takeoff-Files": "<number> - <address> - <city>", DCR Desktop 2's folder_candidates - a suffix number's
+     folder is its own; "Materials Catalog" is nobody's) - never a name, an item id or a link; 503
+     takeoff_not_configured while the demo's takeoff folder is switched off (setTakeoff(false) in node; in a browser
+     localStorage "dcr2-demo-takeoff" = "off").
+   The takeoff folder (made up, the same every time): A267 three .takeoff files 1 to 3 folders down (and an autosave, a
+   PDF and plan notes, never counted); A024 one and A024-B two (apart); A120 one in its folder and one in an older second
+   folder; the other A### numbers by their last digit: ending in 0 or 5 one, in 2 or 7 two, in 3 or 8 a folder with
+   PDFs and an autosave only (0); the rest no folder.
    The drive: /Projects with a made-up folder for most projects (folder_name), seeded the same way every time and
    built when first asked (Floor Plans with sheets, a level, a takeoff and plan notes; Photos/<a day>; Documents with
    permits, a contract, an estimate quoting an amount, invoices, a program, a lock file; the old portal's copy);
@@ -71,6 +82,7 @@
     not_a_folder: [409, "Something that is not a folder is in the way in OneDrive. Rename it there first."],
     not_this_upload: [409, "That file is not the one this upload made."], too_large: [413, "That file is too large to upload here."],
     file_type: [415, "That kind of file cannot be uploaded here (PDFs, pictures, videos, Office files, text and CAD files can)."],
+    takeoff_not_configured: [503, "The takeoff folder is not set up yet."],
   };
   const NOT_RECORDED = {
     priced_name: "Saved in OneDrive. Its folder or name is about prices or money, so it is not added to the project's file list (people who see prices find it in OneDrive).",
@@ -282,6 +294,55 @@
         size: null, mime: null, created: nowIso(), modified: nowIso(), app: true, pid });
     }
 
+    /* ── the takeoff folder (plans_for): a folder per project, files as paths below it - only counted, never sent ── */
+    let takeoffSet = null;               // a node test's switch (setTakeoff); else the browser demo's localStorage one
+    function takeoffOn() {
+      if (takeoffSet !== null) return takeoffSet;
+      if (!browser) return true;
+      try { return root.localStorage.getItem("dcr2-demo-takeoff") !== "off"; } catch (e) { return true; }
+    }
+    let takeoffTree = null;
+    function takeoffFolders() {
+      if (takeoffTree) return takeoffTree;
+      const out = [{ name: "Materials Catalog", files: ["Lumber catalog.takeoff", "Catalog.pdf"] }];
+      for (const p of rows.projects) {
+        const n = String(p.number || ""), at = n + " - " + p.address + " - " + p.city;
+        const m = /^A(\d{3})$/.exec(n), last = m ? Number(m[1]) % 5 : -1;
+        if (n === "A267") {
+          out.push({ name: at, files: ["Plans/A267 Bid.takeoff", "Plans/A267 Bid.takeoff.autosave", "Plans/A1 - Floor plan.pdf",
+            "Plans/Rev 2/A267 Rev 2.takeoff", "Plans/Rev 2/Level 1/L1 walls.takeoff", "Plans/Rev 2/Level 1/L1 walls.pdfnotes"] });
+        } else if (n === "A024") out.push({ name: at, files: ["A024 Framing.takeoff", "A024 plans.pdf"] });
+        else if (n === "A024-B") out.push({ name: at, files: ["Plans/A024-B Framing.takeoff", "Plans/A024-B Roof.takeoff"] });
+        else if (last === 0) out.push({ name: at, files: ["Plans/" + n + " Bid.takeoff", "Plans/" + n + " plans.pdf"] });
+        else if (last === 2) out.push({ name: at, files: ["Plans/" + n + " Bid.takeoff", "Plans/Rev 1/" + n + " Rev 1.TAKEOFF"] });
+        else if (last === 3) out.push({ name: at, files: ["Plans/" + n + " plans.pdf", "Plans/" + n + " Bid.takeoff.autosave"] });
+        if (n === "A120") out.push({ name: "A120 - older plans", files: ["A120 First bid.takeoff"] });
+      }
+      return (takeoffTree = out);
+    }
+    function plansFor(b, w) {
+      const ids = b.project_ids;
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 50 || new Set(ids).size !== ids.length ||
+        ids.some((x) => typeof x !== "number" || !Number.isSafeInteger(x) || x <= 0)) {
+        return bad("project_ids", "project_ids must be 1 to 50 different positive whole numbers");
+      }
+      if (!w.active) return fail("forbidden");
+      if (!takeoffOn()) return fail("takeoff_not_configured");
+      // the projects' numbers under the caller's own rules (a deleted project is left out, an admin's too)
+      const mine = new Map(E.readable(w, "projects").filter((p) => !p.deleted_at).map((p) => [p.id, p]));
+      const folders = takeoffFolders();
+      const projects = {};
+      for (const id of ids) {
+        const p = mine.get(id);
+        if (!p) continue;
+        const names = candidates(folders.map((f) => f.name), p.number);
+        const plans = folders.filter((f) => names.includes(f.name))
+          .reduce((sum, f) => sum + f.files.filter((x) => /\.takeoff$/i.test(x)).length, 0);
+        projects[String(id)] = { number: p.number, plans };
+      }
+      return answer(200, { projects, checked_at: nowIso() });
+    }
+
     /* ── answers ── */
     const answer = (status, data) => ({ status, data });
     const fail = (code, extra, message) => answer(ERR[code][0], Object.assign({ error: code, message: message || ERR[code][1] }, extra || {}));
@@ -332,11 +393,12 @@
       const b = body && typeof body === "object" && !Array.isArray(body) ? body : null;
       if (!b) return bad("body", "the body must be a JSON object");
       const ops = { list: ["path", "cursor"], download: ["item_id"], upload_session: ["folder", "rel_dir", "name", "size", "modified"],
-        upload_done: ["item_id", "ticket"], ensure_folder: [], status: [] };
+        upload_done: ["item_id", "ticket"], ensure_folder: [], status: [], plans_for: ["project_ids"] };
       if (!Object.prototype.hasOwnProperty.call(ops, b.op)) return bad("op", "op must be one of " + Object.keys(ops).join(", "));
-      const allowed = ["op"].concat(b.op === "status" ? [] : ["project_id"], ops[b.op]);
+      const allowed = ["op"].concat(b.op === "status" || b.op === "plans_for" ? [] : ["project_id"], ops[b.op]);
       const extra = Object.keys(b).find((k) => !allowed.includes(k));
       if (extra) return bad(extra, "unknown field: " + extra);
+      if (b.op === "plans_for") return plansFor(b, w);
       if (b.op === "status") {
         if (!w.active) return fail("forbidden");
         if (!w.admin) return fail("forbidden", null, "The OneDrive status is for admins.");
@@ -558,7 +620,9 @@
     }
 
     return { name: "p7-onedrive", tables: new Set([TABLE]), canRead: () => false, functions: ["onedrive"], invoke, http, owns,
-      host: HOST, handles: () => false };
+      host: HOST, handles: () => false,
+      /** plans_for's takeoff folder: false = not set up (503 takeoff_not_configured), true = there, null = the default */
+      setTakeoff(on) { takeoffSet = on === null || on === undefined ? null : !!on; } };
   });
 
   /* ── made-up data: the switch for two people, the admin's test project ── */

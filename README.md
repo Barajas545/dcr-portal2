@@ -125,12 +125,15 @@ site/                       published as is
                             Documents / Floor Plans for people with "Can upload to OneDrive"), then "Stored in DCR" (the
                             cloud rows, the capture bar's photos, videos and notes) - see "The Files tab's OneDrive part"
   js/repo/onedrive.js       the broker's client (the Edge Function "onedrive" of DCR Desktop 2: list, download,
-                            upload_session, upload_done, ensure_folder, status); LIVE (off until the go-live);
+                            upload_session, upload_done, ensure_folder, status, plans_for); LIVE (on since 2026-10-25);
                             ONEDRIVE_HOST, the one OneDrive host the site names (with project.html's connect-src)
   js/map/onedrive.js        the broker's name and path rules repeated for the page (pure; the same answers as its paths.ts)
   js/onedrive-upload.js     chunks straight from the browser to the upload URL (no sign-in header), resumable within the
                             page, kept in memory only (never the upload queue)
   js/pages/onedrive-selftest.js  the admin's OneDrive self-test on the test project A000T2 (loaded only when clicked)
+  js/map/plans.js, js/pages/plan-buttons.js  the plan buttons (owner 2026-10-26): takeoff-web's link, the 📐 button, the
+                            Floor Plans card's rule (pure); the slots of Search and the project header filled from one
+                            plans_for call (see "The plan buttons and the Floor Plans card")
   js/timesheet-pdf.js       the timesheet PDF in the DCR paper form (jsPDF 2.5.2 + AutoTable 3.8.4 from
                             jsDelivr, exact versions with integrity hashes; only the two Time Sheet pages
                             name them in their script-src)
@@ -175,8 +178,11 @@ tools/fake/p7-onedrive.js   Part 4: the OneDrive broker's stand-in and a made-up
 tools/e2e-p7-onedrive.mjs   the Files tab's OneDrive part as every role (what is hidden, who may upload, a lead's upload
                             from a phone, opening a file, Make the folder, the admin's self-test; phone and desk, light
                             and dark)
+tools/e2e-p7-plans.mjs      the plan buttons and the Floor Plans card: Search and the project header as a field person
+                            and an admin, the card per role, the takeoff folder switched off (phone and desk, light and dark)
 tools/schema-check-p7-onedrive.mjs  the same modules through DCR Desktop 2's OWN broker (handler.ts with its fake Graph) and
-                            the REAL migrations (20261028000200_onedrive): drift, gates, the files row (schema-check runs it)
+                            the REAL migrations (20261028000200_onedrive): drift, gates, the files row, plans_for once the
+                            broker has it (schema-check runs it)
 tools/schema-check-p5c-sub.mjs  the same on the REAL rules: repo/subform.js through DCR Desktop 2's own subform handler
                             and SQL, repo/submissions.js as every role, on PGlite with every migration (schema-check runs it)
 tools/e2e-p5c-sales.mjs     the P5c sales walk: who (the Sales estimates switch, the prices switch, a sales editor or a
@@ -279,6 +285,7 @@ node tools/e2e-p5b-books.mjs --out <folder>       # the books walk alone + scree
 node tools/e2e-p5b-ledger.mjs --out <folder>      # the ledger walk alone + screenshots (ledger_*.png; --shots none)
 node tools/e2e-p5c-sales.mjs --out <folder>       # the sales walk alone + screenshots (sales_*.png; --shots none)
 node tools/e2e-p7-onedrive.mjs --out <folder>     # the Files tab's OneDrive part + screenshots (od_*.png; --shots none)
+node tools/e2e-p7-plans.mjs --out <folder>        # the plan buttons and the Floor Plans card (plans_*.png; --shots none)
 PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against Desktop 2's migrations
 PGLITE_DIR=<folder> node tools/pglite-serve.mjs    # the site over PGlite with the real migrations (127.0.0.1:8793)
 PGLITE_DIR=<folder> node tools/e2e-p5b-pglite.mjs --out <folder>   # the P5b pages on it + screenshots (p5b_final_*.png)
@@ -522,6 +529,7 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   picture); an old link is kept as a link.
 - **Not built here (Q20, updated by the owner 2026-10-24):** the plans library, takeoff-web and the `.takeoff` files stay
   in the Plans Archive; floor-plan PDFs go into the project's OneDrive Floor Plans folder from the Files tab (Part 4).
+  Since 2026-10-26 Search, the project page and the home page link into takeoff-web ("The plan buttons" below).
 
 ## Part 3 (owner 2026-10-24): switches, New Project, the project picture, expenses, Takeoffs link
 
@@ -602,6 +610,38 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   mapping, the uploader over a made-up upload session, the demo's broker as every role, the self-test end to end, the
   page sources); `tools/schema-check-p7-onedrive.mjs` (inside `schema-check`) runs the same modules through DCR Desktop
   2's own `handler.ts` on the real migrations; `tools/e2e-p7-onedrive.mjs` in a real browser.
+
+## The plan buttons and the Floor Plans card (owner 2026-10-26) in short
+
+- **What.** The owner keeps the `.takeoff` files in his OneDrive folder **Projects-Takeoff-Files** (a folder per project
+  whose name starts with the project's number, e.g. "A068 - …"; a suffix number such as A024-B has its own; "Materials
+  Catalog" is nobody's), and takeoff-web opens them from each person's own **Plans Archive** on their computer (or the
+  plans kept on that device). A project whose takeoff folder holds at least one `.takeoff` file (at any depth) shows
+  **📐** beside its Search result and **📐 Plans ↗** in its page's header (beside the progress chart, so on every tab),
+  opening `https://barajas545.github.io/takeoff-web/index.html#plans=<number>` in a new tab. **Everyone who can see the
+  project sees the button** (the owner's choice: what actually opens is up to the OneDrive sharing of the folder - the
+  bytes never pass through the portal or the broker). The Takeoffs tab keeps its own "📐 Plans Archive (takeoff-web) ↗".
+  The home page has a **Floor Plans** card (Projects, after Search) opening takeoff-web's `#plans` in a new tab, for the
+  people who see prices (an admin, or Sees prices).
+- **How.** One more op of the OneDrive broker (DCR Desktop 2's `onedrive`): `plans_for` `{project_ids: [1 to 50 ids]}` ->
+  `{projects: {"<id>": {number, plans}}, checked_at}` - the numbers read under the caller's own rules (a project they may
+  not see, or a deleted one, is left out) and the count of `.takeoff` files in the project's takeoff folder(s), read with
+  a folder-scoped **read-only** grant (setting `ONEDRIVE_TAKEOFF_ITEM_ID`). No file or folder name, item id or link comes
+  back. `js/repo/onedrive.js` `plansFor` asks in batches of 50 and keeps answers five minutes in the page (Search asks again
+  as one types); `js/pages/plan-buttons.js` fills the hidden slots a page draws (`data-plans="<id>"`) with one call for the
+  whole page; `js/map/plans.js` builds the link, the button and the card's rule (pure).
+- **Quiet when it cannot answer.** The takeoff folder not set up (503 `takeoff_not_configured`) or the function not
+  deployed: no button and nothing said. Any other error (busy - its `Retry-After` is waited out -, offline, refused): the
+  same - the page works as before. A broker without `plans_for` yet answers 400, so either side may go out first; the
+  buttons appear once the broker has the op and the owner's read grant and `ONEDRIVE_TAKEOFF_ITEM_ID` are in place.
+- **The security policy** does not change: the buttons and the card are links (navigations), and the broker is reached
+  as before.
+- **Tests.** `tests/p7-plans-*.test.mjs` (the client's body, batches, kept answers and error mapping, the button and the
+  card per role, the slots; the demo's `plans_for` as every role - `tools/fake/p7-onedrive.js` has a made-up takeoff
+  folder; the page sources); `tools/schema-check-p7-onedrive.mjs` checks `plans_for` against DCR Desktop 2's own
+  `handler.ts` once it has the op (a line says the checks wait before that); `tools/e2e-p7-plans.mjs` in a real browser
+  (Search and the project page as a field person and an admin, the card per role, the takeoff folder switched off in the
+  demo with `localStorage` `dcr2-demo-takeoff` = `off`, 375 px phones, light and dark).
 
 ## Rules for every page
 
