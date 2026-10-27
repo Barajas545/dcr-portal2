@@ -354,7 +354,7 @@ export function mapError(err) {
     const own = code !== "PGRST116" && ownSentence(raw) && low !== "record not found";
     return out(404, "notfound", own ? sentence(raw) : T.notfound, x);
   }
-  if (code === "PT409" || code === "40001") return out(409, "conflict", code === "PT409" && raw ? sentence(raw) : T.conflict, x);
+  if (code === "PT409" || code === "40001" || code === "40P01") return out(409, "conflict", code === "PT409" && raw ? sentence(raw) : T.conflict, x);
   if (OFFLINE_CODES.has(code)) return out(503, "offline", "The database is not answering right now. Try again in a moment.", x);
   if (code === "23505") return out(409, "validation", SQLSTATE_TEXT["23505"], x);
   if (RULE_CODES.has(code) && ownSentence(raw)) return out(400, "validation", sentence(raw), x);

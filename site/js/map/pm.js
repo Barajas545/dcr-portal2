@@ -112,10 +112,11 @@ function sortCmp(a, b) {
 
 /** An estimate's items in the estimate's own order. */
 export function orderItems(items, groupOrder) {
-  const listed = {};
+  // keys are group names: no inherited key ("constructor") may answer for one
+  const listed = Object.create(null);
   let n = 0;
   (groupOrder || []).forEach(function (g) { const k = groupKey(g); if (!(k in listed)) listed[k] = n++; });
-  const slots = {}, list = [];
+  const slots = Object.create(null), list = [];
   (items || []).slice().sort(sortCmp).forEach(function (it) {
     const k = groupKey(it.group_name);
     let s = slots[k];
@@ -348,7 +349,7 @@ export function toPayload(rows, ctx) {
   ests.forEach(function (e) {
     const ordered = orderItems(byEstimate[String(e.id)] || [], e.group_order);
     // a group's name is its first item's spelling (estimate_order.py), whatever case or spaces the others typed
-    const groupNameOf = {};
+    const groupNameOf = Object.create(null);
     ordered.forEach(function (it) { const k = groupKey(it.group_name); if (!(k in groupNameOf)) groupNameOf[k] = cleanName(it.group_name); });
     ordered.forEach(function (it) {
       const k = String(it.id);

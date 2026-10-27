@@ -28,8 +28,9 @@
    what was typed, takes their values into the untouched boxes and says so; a sheet finds its group again by the
    group's name (the gids are per read: a New item never lands in another group, nor in General when its group went).
    Closing a sheet with changes asks "Save changes?" (owner 2026-10-27, as DCR Desktop 2): Save (closes once the save
-   went through), Don't save, Cancel. A refusal (42501) reads the Estimator switch again: switched off, the tab turns
-   read only. */
+   went through), Don't save, Cancel; a New item whose add got no answer may be in the estimate already: its sheet never
+   sends it again (Add item off) and closing it only asks "Close this item?". A refusal (42501) reads the Estimator
+   switch again: switched off, the tab turns read only. */
 
 import * as repo from "../repo/estimate-edit.js";
 import { estimateAccess } from "../repo/estimates.js";
@@ -73,6 +74,11 @@ const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)
 const isConflict = (e) => !!e && (String(e.code) === "PT409" || e.status === 409);
 const isGone = (e) => !!e && String(e.code) === "PT404";
 const GROUP_GONE = "Its group was renamed or deleted by someone else: close this sheet and add the item again.";
+// an add whose answer was lost on the way (no database code - a SQLSTATE, PT404 / PT409 or PGRST: no connection, a
+// gateway's timeout) may have gone in (add_estimate_item has no client key): that sheet never sends it again, and
+// closing it only throws the typed values away (DCR Desktop 2's item editor)
+const maybeSent = (e) => !/^([0-9A-Z]{5}|PGRST\w+)$/.test(String((e && e.code) || ""));
+const MAYBE_ADDED = "The server did not answer, so this item may already have been added. Close this sheet, read again (↻) and check the estimate before adding it again.";
 
 /** The read-only tab again (the Estimator switch is off, or the database has no editor read yet). */
 function toReadOnly(why) {
@@ -261,7 +267,11 @@ async function closeSheet(force) {
   const s = state.sheet;
   if (!s) return;
   const modal = D().modal;
-  if (!force && s.dirty && SAVE_QUESTION[s.kind] && typeof modal === "function") {
+  if (!force && s.dirty && s.maybeAdded && cx.confirm) {
+    // no Save to offer: the item may be in the estimate already
+    const ok = await cx.confirm(MAYBE_ADDED + " What is typed here is not kept.", { title: "Close this item?", okText: "Close" });
+    if (!ok || state.sheet !== s) return;
+  } else if (!force && s.dirty && SAVE_QUESTION[s.kind] && typeof modal === "function") {
     // Save | Don't save | Cancel: Save closes the sheet only once the save went through (a refusal, the conflict panel
     // or a deleted row keeps it open, saying why); Cancel, Esc and the backdrop stay
     const r = await modal({ title: "Save changes?", message: SAVE_QUESTION[s.kind], okText: "Save", altText: "Don't save", cancelText: "Cancel", fields: [] });
@@ -661,6 +671,7 @@ function itemForm() {
 
 async function saveItemSheet() {
   const s = state.sheet;
+  if (s.isNew && s.maybeAdded) return;            // never the same add twice (the sheet's Add item, Enter, "Save changes?")
   const withPrices = prices();
   const form = itemForm();
   const why = M.validateItem(s.base, form, { prices: withPrices });
@@ -774,9 +785,18 @@ async function addNewItem(form) {
     await afterWrite("Item added.");
   } catch (e) {
     if (isGone(e)) { refused(e, "sheet"); return; }
+    if (maybeSent(e)) {
+      s.maybeAdded = true;
+      if (state.sheet === s) showErr(MAYBE_ADDED);
+      else toast("The server did not answer, so the item may already have been added: read again (↻) and check the estimate.", "info");
+      return;
+    }
     showErr(errorText(e));
     if (String(e && e.code) === "42501") recheckAccess();
-  } finally { setBusy(false); }
+  } finally {
+    setBusy(false);
+    if (s.maybeAdded && state.sheet === s) disableSave();   // after setBusy, which would turn it on again
+  }
 }
 
 /** Up / Down, Move to group: one reorder_estimate, then the sheet shows the item as it is now. */

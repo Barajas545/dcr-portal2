@@ -206,10 +206,11 @@ function sortCmp(a, b) {
     opts.includeEmpty (estimate_order.py include_empty): a listed name with no item (not "") is an empty group in its
     listed place, spelled as listed - as the database's estimate_edit_read sends it. */
 export function groupsInOrder(items, groupOrder, opts) {
-  const listed = {};
+  // keys are group names: no inherited key ("constructor") may answer for one
+  const listed = Object.create(null);
   const names = cleanGroupOrder(groupOrder);
   names.forEach(function (n, i) { listed[groupKey(n)] = i; });
-  const slots = {}, list = [];
+  const slots = Object.create(null), list = [];
   (items || []).slice().sort(sortCmp).forEach(function (it) {
     const k = groupKey(it.group_name);
     let s = slots[k];
