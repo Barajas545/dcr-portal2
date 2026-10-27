@@ -5,20 +5,29 @@
    project's plan files from 📐 so they open in the takeoff app with no internet - a site trailer, a house with no roof
    yet. Each saved copy is exactly one version of one OneDrive file in the owner's takeoff folder; when OneDrive holds a
    newer one, it downloads BY ITSELF while a portal page is open and online (maybeCheck: the Plans Library, Search, a
-   project, the home page), and the saved copy keeps opening until the new one is whole. The takeoff app never writes
-   into a saved copy: its Save goes to Save As or a download.
+   project; the home page only asks for new versions), and the saved copy keeps opening until the new one is whole and
+   checked. The takeoff app never writes into a saved copy: its Save goes to Save As or a download.
 
    Where things live (per browser profile, this site only):
-     · the files - the Origin Private File System, folder "plan-library", one file per saved version
-       (map/plan-library.js fileNameFor), written by js/plan-library-worker.js in byte ranges, resumable;
+     · the files - the Origin Private File System, folder "plan-library", one file per download (map/plan-library.js
+       fileNameFor: never the same name twice), written by js/plan-library-worker.js in byte ranges, resumable;
      · what is known about them - IndexedDB "dcr2-plan-library": plans (one record per person per file, key
-       "<owner>|<item id>") and meta (when updates were last checked; the copies handed to the takeoff app lately).
+       "<owner>|<item id>") and meta (when updates were last checked, the automatic downloads' hold after a OneDrive-wide
+       failure, the copies handed to the takeoff app lately);
+     · localStorage "dcr2-plan-owners": only the user ids that have plans saved here (no file, name or link), so a page
+       can tell, without opening the library, that a person whose Sees prices was taken away still has plans to remove.
    Records belong to the person who saved them (the sign-in's user id, read without the network: sb.js storedUserId). A
-   shared tablet shows each person only their own plans.
+   shared tablet shows each person only their own plans. Someone whose Sees prices is turned off loses theirs from the
+   device the next time an online portal page sees it (purgeOwner).
 
    Opening hands the copy to the takeoff app in a new tab, window to window (js/plan-handoff.js): the app is another
-   site and reads the File by slices as it draws. A copy handed over is kept a day after it is replaced or removed
-   (map/plan-library.js HANDED_GRACE_MS), so the app does not lose it under an open plan.
+   site and reads the File by slices as it draws, and nothing on its site can hold the copy open. So a copy handed over
+   is kept a week after it is replaced or removed (map/plan-library.js HANDED_GRACE_MS) and goes at a sweep after that.
+
+   The automatic downloads are polite: after a failure a record waits 5 min, then 10, 20, … up to 6 h before it is tried
+   again by itself (a person's own Save, Resume or Update now never waits), and a OneDrive-wide failure (busy, not
+   allowed in, the connection) stops them all for a while. Every download is checked against OneDrive's version once it
+   is whole: a file saved again in OneDrive during it is downloaded again, never kept as a mix of two versions.
 
    The bytes come straight from OneDrive (the broker's plan_link: a pre-authenticated link, kept in memory only);
    nothing goes through the broker. Nothing here is a page: the pages draw what list() and onChange() say. */
@@ -26,15 +35,19 @@
 import * as onedrive from "./repo/onedrive.js";
 import { storedUserId } from "./sb.js";
 import {
-  DIR, MAGIC, FILE_RE, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, keepSet, pruneHanded, projectBatches, fmtSize,
+  DIR, MAGIC, FILE_RE, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, brokerWide, keepSet,
+  pruneHanded, projectBatches, fmtSize, hashOf,
 } from "./map/plan-library.js";
 import { planFilesFor } from "./map/plans.js";
-import { openInTakeoff } from "./plan-handoff.js";
+import { openInTakeoff, READY_KEY } from "./plan-handoff.js";
 
 const DB_NAME = "dcr2-plan-library";
 const DB_VER = 1;
 const LOCK = "dcr2-plan-dl:";
+const OWNERS_KEY = "dcr2-plan-owners";
 const SPACE_MARGIN = 64 * 1024 * 1024;         // never fill the last bit of the quota
+const HOLD_MIN_MS = 5 * 60 * 1000;             // the automatic downloads' pause after a OneDrive-wide failure
+const CHECK_HOLD_MS = 5 * 60 * 1000;           // and the version check's, after it failed
 const HAS = typeof window !== "undefined";
 
 export const UNSUPPORTED = "This browser cannot keep plan files on the device. Use Chrome or Edge on a computer or Android phone, or Safari 16.4 or newer on an iPhone or iPad.";
@@ -94,6 +107,21 @@ export function canWrite() {
   return probe;
 }
 
+/** The user ids with plans saved on this device (localStorage OWNERS_KEY: ids only). */
+export function ownersHere() {
+  try {
+    const v = JSON.parse(localStorage.getItem(OWNERS_KEY) || "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string" && x) : [];
+  } catch (e) { return []; }
+}
+function noteOwner(who, has) {
+  try {
+    const set = ownersHere().filter((x) => x !== who);
+    if (has) set.push(who);
+    if (set.length) localStorage.setItem(OWNERS_KEY, JSON.stringify(set)); else localStorage.removeItem(OWNERS_KEY);
+  } catch (e) { /* a hint only */ }
+}
+
 /* ── the records ───────────────────────────────────────────────────────── */
 
 let dbp = null;
@@ -109,28 +137,46 @@ function db() {
     r.onsuccess = function () {
       const d = r.result;
       d.onversionchange = function () { try { d.close(); } catch (e) { /* closed */ } dbp = null; };
+      // Safari closes the connection under a page that slept in the background: the next ask opens a new one
+      d.onclose = function () { dbp = null; };
       resolve(d);
     };
     r.onerror = function () { dbp = null; reject(r.error || err("db", "This browser would not open its storage.")); };
   });
   return dbp;
 }
-function req(store, mode, fn) {
+/** One transaction on `store`; a connection that was closed under the page is opened again, once. */
+function req(store, mode, fn, again) {
   return db().then(function (d) {
     return new Promise(function (resolve, reject) {
-      const tx = d.transaction(store, mode);
-      const r = fn(tx.objectStore(store));
+      let tx;
+      try { tx = d.transaction(store, mode); } catch (e) {
+        if (!again && e && e.name === "InvalidStateError") { dbp = null; resolve(req(store, mode, fn, true)); return; }
+        reject(e);
+        return;
+      }
       let out;
-      if (r) r.onsuccess = function () { out = r.result; };
+      fn(tx.objectStore(store), function (v) { out = v; });
       tx.oncomplete = function () { resolve(out); };
       tx.onerror = tx.onabort = function () { reject(tx.error || err("db", "Saving to this device's storage failed.")); };
     });
   });
 }
-const getAll = (store) => req(store, "readonly", (s) => s.getAll()).then((v) => v || []);
-const get = (store, key) => req(store, "readonly", (s) => s.get(key));
-const put = (store, value) => req(store, "readwrite", (s) => s.put(value));
-const del = (store, key) => req(store, "readwrite", (s) => s.delete(key));
+const getAll = (store) => req(store, "readonly", (s, set) => { s.getAll().onsuccess = (e) => set(e.target.result || []); }).then((v) => v || []);
+const get = (store, key) => req(store, "readonly", (s, set) => { s.get(key).onsuccess = (e) => set(e.target.result); });
+const put = (store, value) => req(store, "readwrite", (s) => { s.put(value); });
+const del = (store, key) => req(store, "readwrite", (s) => { s.delete(key); });
+/** Read, change and write ONE record in one transaction (no other window's write lands in between): fn(current) ->
+    the new record, or undefined to leave it as it is. -> the record as written (or as it was). */
+function mutate(store, key, fn) {
+  return req(store, "readwrite", function (s, set) {
+    s.get(key).onsuccess = function (e) {
+      const cur = e.target.result;
+      const next = fn(cur);
+      if (next !== undefined && next !== null) { s.put(next); set(next); } else set(cur);
+    };
+  });
+}
 
 async function metaGet(key, fallback) {
   try { const m = await get("meta", key); return m ? m.value : fallback; } catch (e) { return fallback; }
@@ -144,7 +190,7 @@ function dir() {
 }
 async function removeFile(name) {
   if (!FILE_RE.test(String(name || ""))) return;
-  try { await (await dir()).removeEntry(name); } catch (e) { /* already gone */ }
+  try { await (await dir()).removeEntry(name); } catch (e) { /* already gone, or open in a writer: a sweep takes it */ }
 }
 async function fileOf(name) {
   if (!FILE_RE.test(String(name || ""))) return null;
@@ -159,12 +205,14 @@ async function handedLately(name) {
   const handed = await metaGet("handed", {});
   return Object.prototype.hasOwnProperty.call(pruneHanded(handed, Date.now()), name);
 }
-async function markHanded(name) {
-  const handed = pruneHanded(await metaGet("handed", {}), Date.now());
-  handed[name] = nowIso();
-  await metaPut("handed", handed);
+function markHanded(name) {
+  return mutate("meta", "handed", function (cur) {
+    const handed = pruneHanded(cur ? cur.value : {}, Date.now());
+    handed[name] = nowIso();
+    return { key: "handed", value: handed };
+  });
 }
-/** An old version or a removed copy: gone now, or - handed to the takeoff app lately - at a sweep after the grace. */
+/** An old version or a removed copy: gone now - or, handed to the takeoff app lately, at a sweep after the grace. */
 async function retire(name) {
   if (name && !(await handedLately(name))) await removeFile(name);
 }
@@ -218,7 +266,7 @@ async function heldLocks() {
 
 /* ── reading ───────────────────────────────────────────────────────────── */
 
-/** This person's saved plans, each with {status, job: {done, size, rate} | null}, newest project first. */
+/** This person's saved plans, each with {status, job: {done, size, rate} | null}, by project number. */
 export async function list() {
   const who = owner();
   if (!who || !supported()) return [];
@@ -228,8 +276,8 @@ export async function list() {
     const here = jobs[r.key];
     const there = remote[r.key] && Date.now() - remote[r.key].at < 30000 ? remote[r.key] : null;
     const running = !!(held ? held[r.key] : there);
-    const job = here ? { done: here.done, size: here.size, rate: here.rate } : running && there ? there : null;
-    return Object.assign({}, r, { status: statusOf(r, here && !here.finished ? here : null, running), job });
+    const job = here && here.worker ? { done: here.done, size: here.size, rate: here.rate } : running && there ? there : null;
+    return Object.assign({}, r, { status: statusOf(r, here && here.worker && !here.finished ? here : null, running), job });
   }).sort(function (a, b) {
     return String(a.number || "").localeCompare(String(b.number || ""), "en", { numeric: true }) ||
       String(a.folder || "").localeCompare(String(b.folder || "")) || String(a.name).localeCompare(String(b.name));
@@ -268,41 +316,52 @@ export async function save(info) {
   const f = info && info.file;
   if (!f || !f.id) throw err("bad", "No plan file to save.");
   const key = keyOf(f.id, who);
-  let r = await get("plans", key);
-  if (!r) {
-    r = { key, owner: who, itemId: f.id, projectId: String(info.projectId), number: String(info.number || ""),
-      projectTitle: String(info.projectTitle || ""), name: f.name, folder: f.folder || "", file: "", size: 0, modified: null,
-      version: "", savedAt: "", dl: null, latest: null };
-  } else {
-    r.projectTitle = String(info.projectTitle || r.projectTitle || "");
-    if (r.dl && r.dl.userPaused) r.dl.userPaused = false;     // saved again: carry on
-    if (r.dl && r.dl.state === "error") r.dl = null;           // tried again: from a fresh link
-  }
-  await put("plans", r);
+  await mutate("plans", key, function (r) {
+    if (!r) {
+      return { key, owner: who, itemId: f.id, projectId: String(info.projectId), number: String(info.number || ""),
+        projectTitle: String(info.projectTitle || ""), name: f.name, folder: f.folder || "", file: "", size: 0, modified: null,
+        version: "", savedAt: "", dl: null, latest: null, fails: 0, retryAt: null };
+    }
+    // saved again: the person's own act - carry on now, from a fresh link
+    const out = Object.assign({}, r, { projectTitle: String(info.projectTitle || r.projectTitle || ""), fails: 0, retryAt: null });
+    if (out.dl) out.dl = Object.assign({}, out.dl, { userPaused: false, state: out.dl.state === "error" ? "paused" : out.dl.state });
+    return out;
+  });
+  noteOwner(who, true);
   changed(key);
-  return download(key);
+  return download(key, { manual: true });
 }
 
-/** Download a saved plan again now (a newer version, a paused or stopped download). */
-export function resume(itemId) { return download(keyOf(itemId)); }
+/** Download a saved plan again now (a newer version, a paused or stopped download): the person's own act. */
+export async function resume(itemId) {
+  const key = keyOf(itemId);
+  await mutate("plans", key, function (r) {
+    if (!r) return undefined;
+    const out = Object.assign({}, r, { fails: 0, retryAt: null });
+    if (out.dl) out.dl = Object.assign({}, out.dl, { userPaused: false, state: out.dl.state === "error" ? "paused" : out.dl.state });
+    return out;
+  });
+  return download(key, { manual: true });
+}
 
-function download(key) {
+function download(key, opts) {
   if (jobs[key] && jobs[key].promise) return jobs[key].promise;
   const job = jobs[key] = jobs[key] || { done: 0, size: 0, rate: 0 };
   job.cancelRequested = false;
+  const auto = !(opts && opts.manual);
   const p = (async function () {
     try {
       if (HAS && navigator.onLine === false) throw err("offline", "You're offline. Downloads need the internet; your saved copies still open.");
       if (!(await canWrite())) throw err("unsupported", UNSUPPORTED);
       if (navigator.locks && navigator.locks.request) {
         return await navigator.locks.request(LOCK + key, { ifAvailable: true }, function (lock) {
-          if (!lock) throw err("busy", "This plan is already downloading in another portal window.");
-          return run(key);
+          if (!lock) throw err("busy_here", "This plan is already downloading in another portal window.");
+          return run(key, auto);
         });
       }
-      return await run(key);
+      return await run(key, auto);
     } catch (x) {
-      await noteFailure(key, x);
+      await noteFailure(key, x, auto);
       throw x;
     }
   })();
@@ -312,48 +371,84 @@ function download(key) {
   return p;
 }
 
-/* A download that fails before a single byte arrives (offline, no room, no access) must not leave a record that reads as
-   saved: it is marked as stopped or paused, with the reason. A copy already on the device keeps opening. */
-async function noteFailure(key, x) {
+/* A failed download: an automatic one waits longer each time before it is tried again by itself (withFailure), and a
+   record with nothing on the device yet says why. A copy already on the device keeps opening. */
+async function noteFailure(key, x, auto) {
   const code = x && x.code;
-  if (code === "busy" || code === "removed") return;
+  if (code === "busy_here" || code === "removed" || code === "skipped") return;
   try {
-    const r = await get("plans", key);
-    if (!r) return;
-    if (code === "forbidden") r.latest = { status: "denied", checkedAt: nowIso() };
-    if (!r.dl && !r.file) {
-      const retry = code === "offline" || code === "busy_onedrive" || code === "paused";
-      r.dl = { file: "", done: 0, size: 0, version: "", state: retry ? "paused" : "error", userPaused: false,
-        error: (x && x.message) || "The download did not start." };
-    }
-    await put("plans", r);
+    await mutate("plans", key, function (r) {
+      if (!r) return undefined;
+      let out = Object.assign({}, r);
+      if (code === "forbidden") out.latest = { status: "denied", checkedAt: nowIso() };
+      if (code !== "offline" && code !== "unsupported") out = withFailure(out, Date.now());
+      if (!out.dl && !out.file && code !== "gone") {
+        const final = code === "not_plan" || code === "no_size";
+        out.dl = { file: "", done: 0, size: 0, version: "", state: final ? "error" : "paused", userPaused: false,
+          error: (x && x.message) || "The download did not start." };
+      }
+      return out;
+    });
   } catch (e) { /* the message has already reached the person */ }
 }
 
-const linkError = (x) => (x && x.code === "busy" ? err("busy_onedrive", x.message || "OneDrive is busy just now.") : x);
+let persistAsked = false;
+/** Ask once a visit, never waiting on it (Firefox asks the person, who may never answer). */
+function askPersist() {
+  if (persistAsked || !(navigator.storage && navigator.storage.persist)) return;
+  persistAsked = true;
+  Promise.resolve(navigator.storage.persisted ? navigator.storage.persisted() : false)
+    .then(function (yes) { return yes ? true : navigator.storage.persist(); })
+    .catch(function () { /* the browser decides */ });
+}
 
-async function run(key) {
+async function roomFor(bytes) {
+  let est = null;
+  try { est = await navigator.storage.estimate(); } catch (e) { est = null; }
+  if (est && est.quota && bytes > est.quota - est.usage - SPACE_MARGIN) {
+    throw err("space", "Not enough room on this device: this file needs " + fmtSize(bytes) + " and about " +
+      fmtSize(Math.max(0, est.quota - est.usage - SPACE_MARGIN)) + " is free for the portal. Remove a saved plan or free up space, then try again.");
+  }
+}
+
+/** A link for this record's file, the version OneDrive holds now; the broker's "gone" and "not yours" in its words. */
+async function linkFor(r) {
+  try {
+    return await onedrive.planLink(r.projectId, r.itemId);
+  } catch (x) {
+    const code = x && x.code;
+    if (code === "not_found") throw err("gone", "This file is no longer in OneDrive.");
+    if (code === "forbidden") throw err("forbidden", x.message || "Your account cannot open this plan file.");
+    throw x;
+  }
+}
+
+/** The file is no longer in OneDrive: so marked; a part already downloaded stays (paused) in case it comes back. */
+function markGone(key) {
+  return mutate("plans", key, function (r) {
+    if (!r) return undefined;
+    const out = Object.assign({}, r, { latest: { status: "gone", checkedAt: nowIso() } });
+    if (out.dl) out.dl = Object.assign({}, out.dl, { state: "paused", error: "" });
+    return out;
+  });
+}
+
+async function run(key, auto) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const job = jobs[key] || {};
     let r = await get("plans", key);
     if (!r) throw err("removed", "That saved plan was removed.");
+    // an automatic download looks again under the lock: a person may have paused it, or it may be waiting
+    if (auto && !dueForWork(r, Date.now())) return { skipped: true };
+    // a device already full needs no walk of OneDrive to say so
+    const known = Number((r.latest && r.latest.size) || (r.dl && r.dl.size)) || 0;
+    if (known > 0) await roomFor(known - (r.dl && r.dl.version === (r.latest && r.latest.version) ? Number(r.dl.done) || 0 : 0));
     let link;
     try {
-      link = await onedrive.planLink(r.projectId, r.itemId);
+      link = await linkFor(r);
     } catch (x) {
-      const code = x && x.code;
-      if (code === "not_found") {
-        const g = await get("plans", key);
-        if (!g) throw err("removed", "That saved plan was removed.");
-        g.latest = { status: "gone", checkedAt: nowIso() };
-        if (g.dl && g.dl.file) await removeFile(g.dl.file);
-        g.dl = g.file ? null : { file: "", done: 0, size: 0, version: "", state: "error", error: "This file is no longer in OneDrive." };
-        await put("plans", g);
-        throw err("gone", "This file is no longer in OneDrive.");
-      }
-      if (code === "forbidden") throw err("forbidden", x.message || "Your account cannot open this plan file.");
-      if (code === "offline") throw err("offline", x.message);
-      throw linkError(x);
+      if (x && x.code === "gone") await markGone(key);
+      throw x;
     }
     // asking for the link took a moment: work on the record as it is now (another window may have removed it)
     r = await get("plans", key);
@@ -361,104 +456,110 @@ async function run(key) {
     const ver = { version: link.version, size: Number(link.size) || 0, modified: link.modified, name: link.name, folder: link.folder };
     if (r.file && r.version === ver.version && (await fileOk(r.file, r.size))) {
       // already the version OneDrive holds, and really on the device: nothing to fetch
-      r.latest = Object.assign({ status: "ok", checkedAt: nowIso() }, ver);
-      if (r.dl && r.dl.file && r.dl.file !== r.file) await removeFile(r.dl.file);
-      r.dl = null;
-      await put("plans", r);
+      const part = r.dl && r.dl.file && r.dl.file !== r.file ? r.dl.file : "";
+      await mutate("plans", key, (c) => (c ? Object.assign({}, c, { latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver),
+        dl: null, fails: 0, retryAt: null }) : undefined));
+      if (part) await removeFile(part);
       return { already: true };
     }
-    if (!(ver.size > 0)) throw err("failed", "OneDrive did not say how big this file is.");
-    let dl = r.dl && r.dl.file && r.dl.version === ver.version && r.dl.file !== r.file ? r.dl : null;
+    if (!(ver.size > 0)) throw err("no_size", "OneDrive did not say how big this file is.");
+    let dl = r.dl && r.dl.file && r.dl.version === ver.version && r.dl.file !== r.file ? Object.assign({}, r.dl) : null;
     if (!dl) {
       if (r.dl && r.dl.file && r.dl.file !== r.file) await removeFile(r.dl.file);   // part of an older version
-      // never the saved copy's own file: it keeps opening until the new one is whole
-      let name = fileNameFor(r.owner, r.itemId, ver.version);
-      if (name === r.file) name = name.replace(/\.takeoff$/, "-" + Date.now().toString(36) + ".takeoff");
-      dl = Object.assign({ file: name, done: 0, startedAt: nowIso() }, ver);
+      // a name never used before: never the saved copy's own file (it keeps opening until the new one is whole), never
+      // a copy kept for the takeoff app after a Remove
+      dl = Object.assign({ file: fileNameFor(r.owner, r.itemId, ver.version, Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
+        done: 0, fresh: true, startedAt: nowIso() }, ver);
     }
-    let est = null;
-    try { est = await navigator.storage.estimate(); } catch (e) { est = null; }
-    const need = ver.size - (Number(dl.done) || 0);
-    if (est && est.quota && need > est.quota - est.usage - SPACE_MARGIN) {
-      throw err("space", "Not enough room on this device: this file needs " + fmtSize(need) + " and about " +
-        fmtSize(Math.max(0, est.quota - est.usage - SPACE_MARGIN)) + " is free for the portal. Remove a saved plan or free up space, then try again.");
-    }
-    try { if (navigator.storage.persist) await navigator.storage.persist(); } catch (e) { /* the browser decides */ }
-    r = await get("plans", key);
-    if (!r) throw err("removed", "That saved plan was removed.");
+    await roomFor(ver.size - (Number(dl.done) || 0));
+    askPersist();
     if (job.cancelRequested) {
       // Pause pressed before the download really started: nothing is fetched
-      r.dl = Object.assign(dl, { state: "paused", error: "", userPaused: true });
-      await put("plans", r);
+      await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: Object.assign({}, dl, { state: "paused", error: "", userPaused: true }) }) : undefined));
       return { paused: true };
     }
-    r.dl = Object.assign(dl, { state: "running", error: "", userPaused: false });
-    await put("plans", r);
+    dl = Object.assign(dl, { state: "running", error: "", userPaused: false });
+    if (!(await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl }) : undefined)))) throw err("removed", "That saved plan was removed.");
     changed(key);
 
     let w;
     try {
       w = await runWorker(r, dl, link.url);
     } catch (x) {
-      const cur = await get("plans", key);
-      if (!cur) { await removeFile(dl.file); throw err("removed", "That saved plan was removed."); }
-      r = cur;
-      if (!r.dl) r.dl = dl;
-      r.dl.done = x.done != null ? x.done : r.dl.done;
       if (x.status === 404) {
-        await removeFile(r.dl.file);
-        r.latest = { status: "gone", checkedAt: nowIso() };
-        r.dl = r.file ? null : { file: "", done: 0, size: 0, version: "", state: "error", error: "This file is no longer in OneDrive." };
-        await put("plans", r);
+        await markGone(key);
         throw err("gone", "This file is no longer in OneDrive.");
       }
-      if ((x.status === 416 || x.changed) && attempt === 0) {
+      const restart = (x.status === 416 || x.changed) && attempt === 0;
+      if (restart) {
         // the file changed in OneDrive mid-download: start again, once
-        await removeFile(r.dl.file);
-        r.dl = null;
-        await put("plans", r);
+        await removeFile(dl.file);
+        await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: null }) : undefined));
         continue;
       }
-      // A dropped connection or a OneDrive hiccup is a pause that carries on by itself; running out of room, or
-      // anything else, is a stop with its reason.
+      // A dropped connection, a OneDrive hiccup, or the file changing again is a pause that carries on by itself (after
+      // its wait); running out of room or anything else is a stop with its reason.
       const retryable = x.status !== 507 && ((HAS && navigator.onLine === false) || !x.status || x.status >= 500 ||
-        /connection|stalled|stopped responding|link expired/i.test(x.message || ""));
-      r.dl.state = retryable ? "paused" : "error";
-      r.dl.error = x.message || "The download stopped.";
-      await put("plans", r);
-      throw err(retryable ? "paused" : "failed", r.dl.error);
+        x.status === 416 || x.changed || /connection|stalled|stopped responding|link expired/i.test(x.message || ""));
+      const message = x.status === 416 || x.changed ? "The file kept changing in OneDrive while it downloaded — it tries again later."
+        : x.message || "The download stopped.";
+      const cur = await mutate("plans", key, function (c) {
+        if (!c) return undefined;
+        const d2 = Object.assign({}, c.dl || dl, { state: retryable ? "paused" : "error", error: message });
+        if (typeof x.done === "number") d2.done = x.done;
+        return Object.assign({}, c, { dl: d2 });
+      });
+      if (!cur) { await removeFile(dl.file); throw err("removed", "That saved plan was removed."); }
+      throw err(retryable ? "paused" : "stopped", message);
     }
     // removed from another window while this one was downloading: what was written here goes too
-    const now1 = await get("plans", key);
-    if (!now1) { await removeFile(dl.file); return { removed: true }; }
-    r = now1;
+    if (!(await get("plans", key))) { await removeFile(dl.file); return { removed: true }; }
     if (w.paused) {
-      if (r.dl) {
-        r.dl.state = "paused"; r.dl.done = w.done; r.dl.error = ""; r.dl.userPaused = true;
-        await put("plans", r);
-      }
+      await mutate("plans", key, (c) => (c && c.dl ? Object.assign({}, c, { dl: Object.assign({}, c.dl, { state: "paused", done: w.done, error: "", userPaused: true }) }) : undefined));
       return { paused: true };
     }
     if (w.magic !== MAGIC) {
       await removeFile(dl.file);
-      r.dl = Object.assign({}, dl, { state: "error", done: 0, error: "What downloaded is not a takeoff project file." });
-      await put("plans", r);
-      throw err("failed", r.dl.error);
+      await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: Object.assign({}, dl, { state: "error", done: 0, error: "What downloaded is not a takeoff project file." }) }) : undefined));
+      throw err("not_plan", "What downloaded is not a takeoff project file.");
     }
-    const old = r.file;
-    r.file = dl.file;
-    r.name = ver.name || r.name;
-    r.folder = ver.folder || r.folder;
-    r.size = ver.size; r.modified = ver.modified; r.version = ver.version;
-    r.savedAt = nowIso();
-    r.dl = null;
-    r.latest = Object.assign({ status: "ok", checkedAt: nowIso() }, ver);
-    await put("plans", r);
-    if (old && old !== r.file) await retire(old);
+    // Whole: still the version OneDrive holds? The link serves the file as it is NOW, so a save in OneDrive during a
+    // long download would leave a mix of two versions. Not sure (no connection): it stays a finished part, checked on
+    // the next try (no bytes fetched again).
+    let after;
+    try {
+      after = await onedrive.planLink(r.projectId, r.itemId);
+    } catch (x) {
+      if (x && x.code === "not_found") {
+        await markGone(key);
+        throw err("gone", "This file is no longer in OneDrive.");
+      }
+      await mutate("plans", key, (c) => (c && c.dl ? Object.assign({}, c, { dl: Object.assign({}, c.dl, { state: "paused", done: w.size,
+        error: "Downloaded — checked against OneDrive when the portal is next online." }) }) : undefined));
+      throw err("paused", "Downloaded; it is checked against OneDrive when the portal is next online.");
+    }
+    if (after.version !== ver.version || Number(after.size) !== w.size) {
+      await removeFile(dl.file);
+      await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: null }) : undefined));
+      if (attempt === 0) continue;
+      await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: { file: "", done: 0, size: 0, version: "", state: "paused", userPaused: false,
+        error: "The file kept changing in OneDrive while it downloaded — it tries again later." } }) : undefined));
+      throw err("changed", "The file kept changing in OneDrive while it downloaded. It tries again later.");
+    }
+    let old = "";
+    const committed = await mutate("plans", key, function (c) {
+      if (!c) return undefined;
+      old = c.file;
+      return Object.assign({}, c, { file: dl.file, name: ver.name || c.name, folder: ver.folder || c.folder, size: ver.size,
+        modified: ver.modified, version: ver.version, savedAt: nowIso(), dl: null, fails: 0, retryAt: null,
+        latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver) });
+    });
+    if (!committed) { await removeFile(dl.file); return { removed: true }; }
+    if (old && old !== dl.file) await retire(old);
     changed(key);
     return { saved: true };
   }
-  throw err("changed", "The file kept changing in OneDrive while it was downloading. Try again in a minute.");
+  throw err("changed", "The file kept changing in OneDrive while it downloaded. Try again in a minute.");
 }
 
 function runWorker(r, dl, url) {
@@ -485,10 +586,10 @@ function runWorker(r, dl, url) {
         j.done = m.done;
         if (now - lastSave > 2000) {
           lastSave = now;
-          get("plans", key).then(function (cur) {
-            if (j.finished) return null;             // run() writes the final record then
-            if (cur && cur.dl && cur.dl.file === dl.file) { cur.dl.done = m.done; return put("plans", cur); }
-            return null;
+          // only this download's own count, in one transaction (never an older copy of the whole record)
+          mutate("plans", key, function (c) {
+            if (j.finished || !c || !c.dl || c.dl.file !== dl.file) return undefined;
+            return Object.assign({}, c, { dl: Object.assign({}, c.dl, { done: m.done }) });
           }).catch(function () {});
         }
         progress(key);
@@ -510,9 +611,12 @@ function runWorker(r, dl, url) {
     w.onerror = function (ev) {
       if (j.finished) return;
       end();
-      reject(Object.assign(new Error("The download stopped (" + ((ev && ev.message) || "the worker failed") + ")."), { done: j.done }));
+      reject(Object.assign(new Error("The download stopped (" + ((ev && ev.message) || "the worker failed") + ")."), { done: null }));
     };
-    w.postMessage({ op: "start", id: key, file: dl.file, url, size: dl.size, from: dl.done || 0 });
+    // `fresh`: a part named just now (start from the first byte); otherwise the part's own length says where to go on
+    w.postMessage({ op: "start", id: key, file: dl.file, url, size: dl.size, fresh: !!dl.fresh && !(dl.done > 0) });
+    // a Pause that came while the download was starting (here, or from another window) is passed on now
+    if (j.cancelRequested) w.postMessage({ op: "cancel", id: key });
   });
 }
 
@@ -538,8 +642,8 @@ function downloadReleased(key, ms) {
 }
 
 /** Remove a saved plan from this device (its copy goes now, or after the grace when it was handed to the app lately). */
-export async function remove(itemId) {
-  const key = keyOf(itemId);
+export async function remove(itemId, opts) {
+  const key = keyOf(itemId, opts && opts.owner);
   pause(key, true);
   if (jobs[key] && jobs[key].promise) {
     try { await jobs[key].promise; } catch (e) { /* it stopped; that is all that was wanted */ }
@@ -549,20 +653,46 @@ export async function remove(itemId) {
   if (!r) return;
   await del("plans", key);
   if (r.dl && r.dl.file && r.dl.file !== r.file) await removeFile(r.dl.file);
-  if (r.file) await retire(r.file);
+  if (r.file) {
+    if (opts && opts.now) await removeFile(r.file); else await retire(r.file);
+  }
+  noteOwner(r.owner, (await getAll("plans")).some((x) => x.owner === r.owner));
   changed(key);
+}
+
+/** Everything this person saved on this device goes, at once (Sees prices taken away: plan files carry prices). */
+export async function purgeOwner(who) {
+  if (!who || !supported()) return 0;
+  const mine = (await getAll("plans")).filter((r) => r.owner === who);
+  for (const r of mine) await remove(r.itemId, { owner: who, now: true });
+  // and the older copies of theirs still kept for the takeoff app (no record points at them): every name is theirs by
+  // its first part (map/plan-library.js fileNameFor)
+  const mark = "p" + hashOf(who) + "-";
+  const d = await dir();
+  const names = [];
+  for await (const name of d.keys()) names.push(name);
+  for (const n of names) if (n.indexOf(mark) === 0) await removeFile(n);
+  await mutate("meta", "handed", function (cur) {
+    const handed = Object.assign({}, cur ? cur.value : {});
+    Object.keys(handed).forEach(function (n) { if (n.indexOf(mark) === 0) delete handed[n]; });
+    return { key: "handed", value: handed };
+  });
+  noteOwner(who, false);
+  return mine.length;
 }
 
 /* ── housekeeping ──────────────────────────────────────────────────────── */
 
 /** Files nobody points at any more: an old version after an update, a part left by a closed window, a copy whose
-    record was removed elsewhere - except a copy handed to the takeoff app within the grace. */
+    record was removed elsewhere - except a copy handed to the takeoff app within the grace. Never while a download runs
+    (here or in another window): its new part may not be in a record yet. */
 export async function sweep() {
   if (!supported()) return;
+  const held = await heldLocks();
+  if ((held && Object.keys(held).length) || Object.keys(jobs).length) return;
   const all = await getAll("plans");
-  const handed = pruneHanded(await metaGet("handed", {}), Date.now());
-  await metaPut("handed", handed);
-  const keep = keepSet(all, handed, Date.now());
+  const handed = await mutate("meta", "handed", (cur) => ({ key: "handed", value: pruneHanded(cur ? cur.value : {}, Date.now()) }));
+  const keep = keepSet(all, handed ? handed.value : {}, Date.now());
   const d = await dir();
   const names = [];
   for await (const name of d.keys()) names.push(name);
@@ -577,39 +707,42 @@ export async function verifyFiles() {
   for (const r of (await getAll("plans")).filter((x) => x.owner === who && x.file)) {
     if (jobs[r.key]) continue;
     if (!(await fileOk(r.file, r.size))) {
-      const cur = await get("plans", r.key);
-      if (cur && cur.file === r.file) {
-        cur.file = ""; cur.version = ""; cur.savedAt = "";
-        await put("plans", cur);
-        changed(r.key);
-      }
+      const cur = await mutate("plans", r.key, (c) => (c && c.file === r.file ? Object.assign({}, c, { file: "", version: "", savedAt: "" }) : undefined));
+      if (cur && !cur.file) changed(r.key);
     }
   }
 }
 
 /* ── new versions ──────────────────────────────────────────────────────── */
 
-/** Ask OneDrive for the version of every saved plan of this person -> {checked, updates, gone, denied}. */
+/** Ask OneDrive for the version of every saved plan of this person -> {checked, updates, gone, denied, revoked}. A
+    refusal of plans_list itself (Sees prices taken away) removes this person's plans from the device. */
 export async function checkUpdates() {
   const who = owner();
   if (!who) throw err("signin", "Sign in first.");
   if (HAS && navigator.onLine === false) throw err("offline", "You're offline — new versions are checked when you're back online.");
   const mine = (await getAll("plans")).filter((r) => r.owner === who);
-  const sum = { checked: 0, updates: 0, gone: 0, denied: 0 };
+  const sum = { checked: 0, updates: 0, gone: 0, denied: 0, revoked: 0 };
   const at = nowIso();
   for (const ids of projectBatches(mine, onedrive.LIST_BATCH)) {
     let answer;
     try {
       answer = await onedrive.plansList(ids);
     } catch (x) {
-      if (x && x.code === "forbidden") answer = {};           // prices taken away: nothing is visible any more
-      else throw x;
+      if (x && x.code === "forbidden") {
+        sum.revoked = await purgeOwner(who);
+        return sum;
+      }
+      throw x;
     }
     for (const r of mine.filter((m) => ids.indexOf(Number(m.projectId)) !== -1)) {
-      const cur = await get("plans", r.key);
-      if (!cur) continue;
-      const next = applyCheck(cur, answer[String(cur.projectId)] || null, at);
-      await put("plans", next);
+      // only what a check knows (latest, and the waits of a new version): never an older copy of the whole record
+      const next = await mutate("plans", r.key, function (c) {
+        if (!c) return undefined;
+        const a = applyCheck(c, answer[String(c.projectId)] || null, at);
+        return Object.assign({}, c, { latest: a.latest, fails: a.fails !== undefined ? a.fails : c.fails, retryAt: a.retryAt !== undefined ? a.retryAt : c.retryAt });
+      });
+      if (!next) continue;
       sum.checked++;
       if (next.latest.status === "gone") sum.gone++;
       else if (next.latest.status === "denied") sum.denied++;
@@ -622,40 +755,67 @@ export async function checkUpdates() {
 }
 
 let working = null;
-/** The saved plans that need it download again, one at a time (a phone is not asked for three big files at once). */
+/** The saved plans that need it download again, one at a time (a phone is not asked for three big files at once); a
+    OneDrive-wide failure stops them all for a while (meta "autoHold:<owner>"). */
 export function autoWork() {
   if (working) return working;
   working = (async function () {
     const who = owner();
     if (!who) return;
+    if (Date.now() < (await metaGet("autoHold:" + who, 0))) return;
     const held = (await heldLocks()) || {};
-    const todo = (await getAll("plans")).filter((r) => r.owner === who && needsWork(r) && !jobs[r.key] && !held[r.key]);
+    const todo = (await getAll("plans")).filter((r) => r.owner === who && dueForWork(r, Date.now()) && !jobs[r.key] && !held[r.key]);
     for (const r of todo) {
       if (HAS && navigator.onLine === false) return;
+      const cur = await get("plans", r.key);                   // as it is now: paused or removed in another window?
+      if (!cur || !dueForWork(cur, Date.now())) continue;
       try { await download(r.key); } catch (x) {
-        if (x && (x.code === "offline" || x.code === "unsupported" || x.code === "space")) return;
+        const code = x && x.code;
+        if (brokerWide(code)) {
+          await metaPut("autoHold:" + who, Date.now() + Math.max(HOLD_MIN_MS, ((x && x.retryAfter) || 0) * 1000));
+          return;
+        }
+        // no room, no storage, or the connection dropped (most likely for the next file too): the next page goes on
+        if (code === "unsupported" || code === "space" || code === "paused") return;
       }
     }
   })().finally(function () { working = null; });
   return working;
 }
 
-/** On a portal page, for a person who sees prices, online, with plans saved: ask for new versions when the last
-    check is CHECK_EVERY_MS old, then download what needs it - quietly (a failure waits for the next page). */
+/** On a portal page, for a person who sees prices, online, with plans saved: ask for new versions when the last check
+    is CHECK_EVERY_MS old, then (opts.download !== false) download what needs it - quietly (a failure waits for the next
+    page). For a person who no longer sees prices, on a page that read their profile online (opts.fresh), the plans
+    they saved here go. */
 export async function maybeCheck(me, opts) {
+  const o = opts || {};
   try {
-    if (!planFilesFor(me) || !supported() || (HAS && navigator.onLine === false)) return;
+    if (!supported() || (HAS && navigator.onLine === false)) return;
     const who = owner();
     if (!who || (me && me.id && me.id !== who)) return;
+    if (!planFilesFor(me)) {
+      if (o.fresh && ownersHere().indexOf(who) !== -1) await purgeOwner(who);
+      return;
+    }
     const mine = (await getAll("plans")).filter((r) => r.owner === who);
     if (!mine.length) return;
     await verifyFiles();
-    if ((opts && opts.force) || dueForCheck(await lastChecked(), Date.now())) await checkUpdates();
-    await autoWork();
+    if (o.force || (dueForCheck(await lastChecked(), Date.now()) && Date.now() >= (await metaGet("checkHold:" + who, 0)))) {
+      try { await checkUpdates(); } catch (e) {
+        if (!(e && e.code === "offline")) await metaPut("checkHold:" + who, Date.now() + CHECK_HOLD_MS);
+      }
+    }
+    if (o.download !== false) await autoWork();
+    await sweep();
   } catch (e) { /* the next page asks again */ }
 }
 
 /* ── opening in the takeoff app ────────────────────────────────────────── */
+
+/** "The takeoff app opened on this device" - only once it said it keeps itself for offline use. */
+function noteReady() {
+  try { localStorage.setItem(READY_KEY, nowIso()); } catch (e) { /* a note only */ }
+}
 
 /** Open a saved copy in the takeoff app (new tab). Call IN the click. onDone({ok, why, error}). */
 export function open(itemId, onDone) {
@@ -668,18 +828,24 @@ export function open(itemId, onDone) {
     if (Number(r.size) > 0 && f.size !== Number(r.size)) throw err("missing", "This saved plan did not finish downloading. It carries on while the portal is open and online.");
     await markHanded(r.file);
     const t = Date.parse(r.modified || "");
-    return { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : 0, number: r.number,
+    return { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : f.lastModified, number: r.number,
       updateAvailable: statusOf(r, null, false) === "outdated" };
-  }, null, onDone);
+  }, null, onDone, noteReady);
 }
 
-/** Open a plan in OneDrive in the takeoff app over byte ranges (online; nothing saved). Call IN the click. */
+/** Open a plan in OneDrive in the takeoff app over byte ranges (online; nothing saved). Call IN the click. A fresh link
+    is handed only for the version first opened: a file saved again in OneDrive meanwhile is not read on as if it were
+    the same (the tab says to open it again). */
 export function openOnline(projectId, number, file, onDone) {
+  let version = null;
   openInTakeoff(async function () {
     const l = await onedrive.planLink(projectId, file.id);
+    if (!(Number(l.size) > 0)) throw err("no_size", "OneDrive did not say how big this file is.");
+    version = l.version;
     const t = Date.parse(l.modified || "");
-    return { kind: "link", url: l.url, name: l.name, size: Number(l.size) || 0, lastModified: isFinite(t) ? t : 0, number: String(number || "") };
+    return { kind: "link", url: l.url, name: l.name, size: Number(l.size), lastModified: isFinite(t) ? t : 0, number: String(number || "") };
   }, async function () {
-    return (await onedrive.planLink(projectId, file.id)).url;
-  }, onDone);
+    const l = await onedrive.planLink(projectId, file.id);
+    return version && l.version === version ? l.url : "";
+  }, onDone, noteReady);
 }

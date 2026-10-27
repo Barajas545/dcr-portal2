@@ -335,7 +335,9 @@ async function start() {
   // the photos waiting on this phone go up — both as soon as the home page is open
   startSweeper(p);
   drain();
-  keepPlansFresh(p);                                // the Plans Library's new versions (people who see prices)
+  // the Plans Library: new versions are asked for here; they download on Search, a project or the library page (the
+  // pages whose policy names OneDrive)
+  keepPlansFresh(p, { download: false });
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

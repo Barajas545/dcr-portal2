@@ -40,12 +40,50 @@ test("folders and order: below the project's folder, the top folder's files firs
   assert.deepEqual(lib.sortFiles([F2, F3, F1]).map((f) => f.name), ["A900 Bid.takeoff", "Annex.takeoff", "L1 walls.takeoff"]);
 });
 
-test("file names: plain characters, one per person, file and version; never the same for two versions", () => {
-  const a = lib.fileNameFor("00000000-0000-4000-8000-000000000003", "01FAKE!PLAN.0001", "qx:AAA");
+test("file names: plain characters; different for another person, file, version or download (a copy kept for the takeoff app is never written over)", () => {
+  const U = "00000000-0000-4000-8000-000000000003";
+  const a = lib.fileNameFor(U, "01FAKE!PLAN.0001", "qx:AAA", "lx3k9a1b");
   assert.match(a, lib.FILE_RE);
-  assert.notEqual(a, lib.fileNameFor("00000000-0000-4000-8000-000000000003", "01FAKE!PLAN.0001", "qx:AAB"));
-  assert.notEqual(a, lib.fileNameFor("00000000-0000-4000-8000-000000000004", "01FAKE!PLAN.0001", "qx:AAA"));
-  assert.equal(a, lib.fileNameFor("00000000-0000-4000-8000-000000000003", "01FAKE!PLAN.0001", "qx:AAA"));
+  assert.notEqual(a, lib.fileNameFor(U, "01FAKE!PLAN.0001", "qx:AAB", "lx3k9a1b"));
+  assert.notEqual(a, lib.fileNameFor("00000000-0000-4000-8000-000000000004", "01FAKE!PLAN.0001", "qx:AAA", "lx3k9a1b"));
+  assert.notEqual(a, lib.fileNameFor(U, "01FAKE!PLAN.0001", "qx:AAA", "lx3k9a1c"), "the same version saved again: a new name");
+  assert.equal(a, lib.fileNameFor(U, "01FAKE!PLAN.0001", "qx:AAA", "lx3k9a1b"));
+  assert.match(lib.fileNameFor(U, "x", "v", "../!$"), lib.FILE_RE);
+});
+
+test("the automatic downloads wait after a failure: 5 min, doubling, up to 6 h; a person's own Save never waits; a new version starts afresh", () => {
+  assert.deepEqual([1, 2, 3, 4, 7, 8, 30].map(lib.backoffMs), [5, 10, 20, 40, 320, 360, 360].map((m) => m * 60000));
+  const r = rec({ latest: { status: "ok", version: "qx:BBB" } });
+  assert.equal(lib.dueForWork(r, NOW), true);
+  const f1 = lib.withFailure(r, NOW);
+  assert.deepEqual([f1.fails, f1.retryAt], [1, new Date(NOW + 5 * 60000).toISOString()]);
+  assert.equal(lib.dueForWork(f1, NOW + 4 * 60000), false, "waits");
+  assert.equal(lib.dueForWork(f1, NOW + 5 * 60000), true, "then goes on");
+  assert.equal(lib.needsWork(f1), true, "a person's own Resume or Update now is never held back (needsWork ignores the wait)");
+  assert.equal(lib.withFailure(f1, NOW).fails, 2);
+  assert.equal(lib.dueForWork(lib.withFailure(rec({ dl: { state: "paused", userPaused: true } }), NOW), NOW + 9e9), false, "paused by the person");
+  // a check that finds a NEW version clears the old one's waits; the same version keeps them
+  const same = lib.applyCheck(Object.assign({}, f1), { files: [Object.assign({}, F1, { version: "qx:BBB" })] }, AT);
+  assert.deepEqual([same.fails, same.retryAt], [1, f1.retryAt]);
+  const fresh = lib.applyCheck(Object.assign({}, f1), { files: [Object.assign({}, F1, { version: "qx:CCC" })] }, AT);
+  assert.deepEqual([fresh.fails, fresh.retryAt, lib.dueForWork(fresh, NOW)], [0, null, true]);
+  // which failures stop every automatic download for a while: OneDrive's or the connection's, never one file's
+  for (const code of ["busy", "unavailable", "failed", "server_error", "onedrive_failed", "not_authorized", "takeoff_root_missing", "auth", "offline", "bad_link"]) {
+    assert.equal(lib.brokerWide(code), true, code);
+  }
+  for (const code of ["gone", "forbidden", "not_plan", "no_size", "space", "changed", "removed", "paused", "", undefined]) assert.equal(lib.brokerWide(code), false, String(code));
+});
+
+test("a copy handed to the takeoff app is kept a week; 'the takeoff app is kept on this device' is believed six days", () => {
+  assert.equal(lib.HANDED_GRACE_MS, 7 * 24 * 3600 * 1000);
+  const handed = { "p9-old-1.takeoff": new Date(NOW - 6 * 86400000).toISOString() };
+  assert.ok(lib.keepSet([], handed, NOW).has("p9-old-1.takeoff"), "six days after it was handed over: kept");
+  assert.ok(!lib.keepSet([], handed, NOW + 2 * 86400000).has("p9-old-1.takeoff"), "eight days: gone at the next sweep");
+  assert.equal(lib.readyFresh(new Date(NOW - 5 * 86400000).toISOString(), NOW), true);
+  assert.equal(lib.readyFresh(new Date(NOW - 7 * 86400000).toISOString(), NOW), false);
+  assert.equal(lib.readyFresh(null, NOW), false);
+  assert.equal(lib.statusText("gone", true), "No longer in OneDrive — this copy still opens");
+  assert.equal(lib.statusText("gone", false), "No longer in OneDrive");
 });
 
 const rec = (over) => Object.assign({ key: "u|" + F1.id, owner: "u", itemId: F1.id, projectId: "7", number: "A900", name: F1.name,

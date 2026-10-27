@@ -12,7 +12,8 @@
    fresh one ("need-url") and waits; it never sees a token. One download per worker.
 
    page -> worker  {op: "probe"}                 can this browser write here at all?
-                   {op: "start", id, file, url, size, from}
+                   {op: "start", id, file, url, size, fresh}   fresh: a part named just now, from the first byte;
+                                                 otherwise it goes on from the part's own length
                    {op: "url", url}              a fresh link, or "" when there is none
                    {op: "cancel", id}            pause: stop, keep what is written
    worker -> page  {type: "probe", ok}
@@ -23,7 +24,8 @@
                    {type: "error", id, message, status, done}
 
    status 507 on an error means the device ran out of room (final, not a connection to retry); status 0 or 5xx means
-   the connection (a pause). */
+   the connection (a pause). `done` is null on an error before the part was even opened: how far it had got is not
+   known then, and the page keeps the number it had. */
 "use strict";
 
 var DIR = "plan-library";
@@ -38,7 +40,7 @@ var job = null;
 // Every number posted is a real number: a Promise in a message cannot be cloned, and a failed post would leave the
 // page waiting forever.
 function post(m) {
-  if ("done" in m) m.done = Number(m.done) || 0;
+  if ("done" in m && m.done !== null) m.done = Number(m.done) || 0;
   try { self.postMessage(m); } catch (e) { /* nothing more can be said */ }
 }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -54,7 +56,7 @@ self.onmessage = function (ev) {
   var m = ev.data || {};
   if (m.op === "start") {
     start(m).catch(function (e) {
-      post({ type: "error", id: m.id, message: (e && e.message) || "The download failed.", status: 0, done: 0 });
+      post({ type: "error", id: m.id, message: (e && e.message) || "The download failed.", status: 0, done: null });
     });
     return;
   }
@@ -146,9 +148,9 @@ async function fetchRange(start, end) {
 }
 
 async function start(m) {
-  if (job) { post({ type: "error", id: m.id, message: "This worker is already downloading.", status: 0, done: 0 }); return; }
+  if (job) { post({ type: "error", id: m.id, message: "This worker is already downloading.", status: 0, done: null }); return; }
   job = { id: m.id, url: String(m.url || ""), size: Math.max(0, Number(m.size) || 0), cancelled: false, pos: 0 };
-  var ah = null, pos = 0;
+  var ah = null, pos = 0, opened = false;
   // A word every few seconds even while waiting on OneDrive, so the page can tell a slow download from a worker that
   // has died.
   var beat = setInterval(function () { if (job) post({ type: "progress", id: job.id, done: job.pos }); }, 10000);
@@ -162,11 +164,12 @@ async function start(m) {
     ah = await fh.createSyncAccessHandle();
 
     /* Resume from the file's own length, not from the last number the page saved: writes go strictly in order, so
-       every byte below the length is the right byte, and the page only records progress now and then. A partial file
-       longer than the whole download is somebody else's bytes. */
+       every byte below the length is the right byte, and the page only records progress now and then. Only a part named
+       just now starts from the first byte. A partial file longer than the whole download is somebody else's bytes. */
     var have = ah.getSize();
     if (typeof have !== "number") throw failure("This browser cannot resume a download here.");
-    pos = Number(m.from) > 0 ? have : 0;
+    opened = true;
+    pos = m.fresh ? 0 : have;
     if (pos > job.size) pos = 0;
     ah.truncate(pos);
     job.pos = pos;
@@ -230,8 +233,8 @@ async function start(m) {
     post({ type: "done", id: job.id, size: pos, magic: magic });
   } catch (e) {
     try { if (ah) { ah.flush(); ah.close(); } } catch (e2) { /* nothing more to save */ }
-    if (e && e.cancelled) post({ type: "cancelled", id: job.id, done: pos });
-    else post({ type: "error", id: job.id, message: (e && e.message) || "The download failed.", status: (e && e.status) || 0, done: pos });
+    if (e && e.cancelled) post({ type: "cancelled", id: job.id, done: opened ? pos : null });
+    else post({ type: "error", id: job.id, message: (e && e.message) || "The download failed.", status: (e && e.status) || 0, done: opened ? pos : null });
   } finally {
     clearInterval(beat);
     job = null;

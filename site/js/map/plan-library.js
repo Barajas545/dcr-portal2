@@ -7,10 +7,13 @@
    * planFileOf(v)              one file of a plans_list / plan_link answer as the pages use it, or null;
    * folderLabel(folder)        where a file sits below its project's folder ("Rev 2/Level 1"; "" at the top);
    * sortFiles(files)           the menu's order: by folder, then name;
-   * fileNameFor(owner, id, v)  the saved copy's name on this device (one per version, plain characters only);
+   * fileNameFor(owner, id, v, stamp)  one download's file name on this device (never the same twice; plain characters);
    * statusOf(rec, job)         saved | outdated | downloading | paused | stopped | gone | denied | missing;
    * applyCheck(rec, answer)     a record after a plans_list answer for its project ({files} | null: not visible);
    * dueForCheck / needsWork     when to ask for new versions, and which saved plans to download again;
+   * dueForWork / withFailure / backoffMs / brokerWide  the automatic downloads' waits after a failure (5 min doubling
+                                up to 6 h) and which failures stop them all for a while (OneDrive's, the connection's);
+   * readyFresh(at)             "the takeoff app is kept on this device" is still believed (six days);
    * keepSet(records, handed)   the files a sweep keeps: every record's copy and part, and every copy handed to the
                                 takeoff app lately (it may still be reading it: HANDED_GRACE_MS);
    * fmtSize, fmtAgo            the words.
@@ -19,7 +22,18 @@
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
 export const CHECK_EVERY_MS = 30 * 60 * 1000;
 /** A copy handed to the takeoff app is kept this long after, even once replaced or removed (it reads it by slices). */
-export const HANDED_GRACE_MS = 24 * 3600 * 1000;
+export const HANDED_GRACE_MS = 7 * 24 * 3600 * 1000;
+/** The first wait before a failed automatic download is tried again; it doubles with each failure, up to the cap. */
+export const RETRY_FIRST_MS = 5 * 60 * 1000;
+export const RETRY_CAP_MS = 6 * 3600 * 1000;
+/** A failure that is OneDrive's or the connection's, not one file's: the automatic downloads stop for a while. */
+//  (js/repo/onedrive.js call()'s codes: a 5xx without a broker code is "failed"; the library's own per-file codes are
+//  never these: "not_plan", "no_size", "gone", "space", "changed", "removed".)
+export const BROKER_WIDE = Object.freeze(["busy", "unavailable", "failed", "server_error", "onedrive_failed", "not_configured",
+  "not_authorized", "takeoff_not_configured", "takeoff_root_missing", "projects_root_missing", "not_deployed", "auth", "offline",
+  "bad_link", "onedrive_full"]);
+/** "The takeoff app opened on this device" is believed this long (Safari clears a site's storage after a week unused). */
+export const READY_FRESH_MS = 6 * 24 * 3600 * 1000;
 /** Every .takeoff file starts with these bytes: a download that does not is not a plan. */
 export const MAGIC = "PDFCACHE1";
 /** The saved copies' folder in this site's private file system. */
@@ -71,9 +85,16 @@ export function hashOf(text) {
 
 const plain = (v, max) => String(v == null ? "" : v).replace(/[^A-Za-z0-9]/g, "").slice(0, max) || "x";
 
-/** The saved copy's file name for this person, file and version: plain characters only, one per version. */
-export function fileNameFor(owner, itemId, version) {
-  return "p" + hashOf(owner) + "-" + plain(itemId, 60) + "-" + hashOf(version) + ".takeoff";
+/** The file name of one download of this person's file and version: plain characters only, and never the same twice
+    (`stamp`: when it starts) - a copy kept for the takeoff app after a Remove is never written over by a new download. */
+export function fileNameFor(owner, itemId, version, stamp) {
+  return "p" + hashOf(owner) + "-" + plain(itemId, 60) + "-" + hashOf(version) + "-" + plain(stamp, 24) + ".takeoff";
+}
+
+/** The wait before automatic attempt number `fails + 1`: 5 min, 10, 20, … up to 6 h. */
+export function backoffMs(fails) {
+  const n = Math.max(1, Number(fails) || 1);
+  return Math.min(RETRY_CAP_MS, RETRY_FIRST_MS * Math.pow(2, Math.min(20, n - 1)));
 }
 
 /** The version OneDrive holds now differs from the one saved. */
@@ -104,14 +125,15 @@ export function statusOf(rec, job, running) {
   return outdated(rec) ? "outdated" : "saved";
 }
 
-/** The words of a status, for a row. */
-export function statusText(status) {
+/** The words of a status, for a row (`hasCopy`: a saved copy is on the device, so it still opens). */
+export function statusText(status, hasCopy) {
+  const opens = hasCopy ? " — this copy still opens" : "";
   return {
     downloading: "Downloading…",
     paused: "Download paused — it carries on when the portal is open and online",
     stopped: "Download stopped",
-    gone: "No longer in OneDrive — this copy still opens",
-    denied: "No longer open to your account — this copy still opens",
+    gone: "No longer in OneDrive" + opens,
+    denied: "No longer open to your account" + opens,
     outdated: "A newer version is downloading",
     saved: "Saved on this device",
     missing: "Not downloaded yet",
@@ -133,6 +155,9 @@ export function applyCheck(rec, answer, nowIso) {
     out.latest = { status: "gone", checkedAt: nowIso };
     return out;
   }
+  // a version other than the one last seen is a new download: its own tries, not the old one's waits
+  const before = rec.latest && rec.latest.status === "ok" ? rec.latest.version : null;
+  if (before !== f.version) { out.fails = 0; out.retryAt = null; }
   out.latest = { status: "ok", checkedAt: nowIso, version: f.version, size: f.size, modified: f.modified, name: f.name, folder: f.folder };
   return out;
 }
@@ -150,6 +175,31 @@ export function needsWork(rec) {
   if (rec.latest && (rec.latest.status === "gone" || rec.latest.status === "denied")) return false;
   if (rec.dl) return rec.dl.state !== "error" && !rec.dl.userPaused;
   return !rec.file || outdated(rec);
+}
+
+/** needsWork, and its wait after a failed attempt is over (`retryAt`: when it may be tried again by itself). A person's
+    own Save, Resume or Update now never waits. */
+export function dueForWork(rec, now) {
+  if (!needsWork(rec)) return false;
+  const t = Date.parse(rec.retryAt || "");
+  return !isFinite(t) || t <= now;
+}
+
+/** The record after a failed automatic attempt: one more failure, and when to try again. */
+export function withFailure(rec, now) {
+  const fails = (Number(rec && rec.fails) || 0) + 1;
+  return Object.assign({}, rec, { fails, retryAt: new Date(now + backoffMs(fails)).toISOString() });
+}
+
+/** A code of a failure that is OneDrive's or the connection's (stop every automatic download for a while). */
+export function brokerWide(code) {
+  return BROKER_WIDE.indexOf(String(code || "")) !== -1;
+}
+
+/** "The takeoff app opened on this device" (`at`, an ISO time) is still believed. */
+export function readyFresh(at, now) {
+  const t = Date.parse(at || "");
+  return isFinite(t) && now - t < READY_FRESH_MS && t <= now + 60 * 1000;
 }
 
 /**

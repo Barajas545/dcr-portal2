@@ -295,6 +295,18 @@ export async function status() {
 /** At most this many projects in one plans_list call (the broker's limit). */
 export const LIST_BATCH = 20;
 
+/** call(), asked once more after a busy answer with a short Retry-After (the broker kept the walks it finished, or its
+    walk did not finish: the next one answers). */
+async function callOnceMore(body) {
+  try {
+    return await call(body);
+  } catch (e) {
+    if (!(e && e.code === "busy" && e.retryAfter && e.retryAfter <= PLANS_RETRY_S)) throw e;
+    await new Promise(function (done) { setTimeout(done, e.retryAfter * 1000); });
+    return await call(body);
+  }
+}
+
 /** {"<id>": {number, files: [{id, name, folder, size, modified, version}]}} for the projects asked (1 to 20 a call,
     more in turns): only an admin or a person with Sees prices (403 forbidden otherwise); a project the person may not
     see is left out. Errors are thrown with the broker's codes. */
@@ -308,7 +320,7 @@ export async function plansList(projectIds) {
   if (!LIVE || !ids.length) return out;
   for (let i = 0; i < ids.length; i += LIST_BATCH) {
     const part = ids.slice(i, i + LIST_BATCH);
-    const d = (await call({ op: "plans_list", project_ids: part })) || {};
+    const d = (await callOnceMore({ op: "plans_list", project_ids: part })) || {};
     const projects = d.projects && typeof d.projects === "object" ? d.projects : {};
     part.forEach(function (id) {
       const v = projects[String(id)];
@@ -323,7 +335,7 @@ export async function plansList(projectIds) {
     the version OneDrive holds now. The link is good for minutes: the caller uses it at once and keeps it in memory. */
 export async function planLink(projectId, itemId) {
   if (typeof itemId !== "string" || !ITEM_ID.test(itemId)) throw failure("That plan file was not found.", "not_found", 404);
-  const d = (await call({ op: "plan_link", project_id: pidOf(projectId), item_id: itemId })) || {};
+  const d = (await callOnceMore({ op: "plan_link", project_id: pidOf(projectId), item_id: itemId })) || {};
   const f = planFileOf(d);
   if (!f || f.id !== itemId) throw failure("OneDrive could not do that just now.", "failed", 502);
   if (!linkOk(d.url)) throw failure("OneDrive sent a link this page does not open.", "bad_link", 502);

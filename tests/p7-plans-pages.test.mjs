@@ -60,7 +60,8 @@ test("the home page: Floor Plans in Projects for the people who see prices, open
   assert.match(dash, /\{ href: "plans-library\.html", ic: "💾", tt: "Plans Library", show: planFilesFor\(p\),/);
   assert.ok(projects.indexOf('tt: "Plans Library"') > projects.indexOf('tt: "Floor Plans"'));
   assert.match(dash, /^import \{ keepPlansFresh \} from "\.\.\/pages\/plan-buttons\.js";$/m);
-  assert.match(dash, /drain\(\);\s*keepPlansFresh\(p\);/);
+  // the home page asks for new versions only: downloads run on the pages whose policy names OneDrive
+  assert.match(dash, /drain\(\);\s*keepPlansFresh\(p, \{ download: false \}\);/);
 });
 
 test("the pages reach the broker only through repo/onedrive.js; plan-buttons.js says nothing on failure and calls no function itself", () => {
@@ -71,7 +72,10 @@ test("the pages reach the broker only through repo/onedrive.js; plan-buttons.js 
   const paint = pb.slice(pb.indexOf("export async function paintPlans"), pb.indexOf("function esc("));
   assert.ok(paint.length > 100 && !/textContent|say\(/.test(paint), "paintPlans says nothing");
   // the library is a dynamic import, for the people who see prices only
-  assert.match(pb, /if \(!lib\) lib = import\("\.\.\/plan-library\.js"\);/);
+  assert.match(pb, /if \(!lib\) lib = import\("\.\.\/plan-library\.js"\)\.catch\(function \(e\) \{ lib = null; throw e; \}\);/);
+  // the menu's rows are redrawn only for this project's plans, and a download's progress changes only its line
+  assert.match(pb, /if \(current !== c \|\| !m \|\| !c\.keys\[m\.key\]\) return;/);
+  assert.match(pb, /if \(m\.t === "progress"\) \{ paintProgress\(c, m\); return; \}/);
   assert.match(pb, /const menu = planFilesFor\(me\);/);
   assert.match(pb, /try \{ got = await onedrive\.plansFor\(ids\); \} catch \(e\) \{ return 0; \}/);
   assert.match(pb, /if \(!root \|\| typeof root\.querySelectorAll !== "function" \|\| !onedrive\.plansShownFor\(me\)\) return 0;/);
@@ -107,7 +111,9 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
     '<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous">',
     '<script type="module" src="js/pages/plans-library.js">']);
   const js = code(read("js/pages/plans-library.js"));
-  assert.match(js, /state\.me = await boot\("", \{ offline: true \}\);\s*if \(!planFilesFor\(state\.me\)\)/);
+  assert.match(js, /state\.me = await boot\("", \{ offline: true \}\);\s*const fresh = !!\(window\.DCR2 && window\.DCR2\.offline === false\);\s*if \(!planFilesFor\(state\.me\)\)/);
+  // Sees prices taken away: the plans saved here go, but only on a profile read online (never an old copy of it)
+  assert.match(js, /if \(fresh && L\.supported\(\)\) \{ try \{ gone = await L\.purgeOwner\(L\.owner\(\)\); \}/);
   assert.ok(!/functions\.invoke|\.rpc\(|\.from\(|sb\(\)/.test(js), "the data only through the library and repo/");
   // the hand-over: only to the takeoff app's address, only from its tab, with its word
   const ho = code(read("js/plan-handoff.js"));
@@ -118,6 +124,11 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
   assert.ok(!/postMessage\([^)]*["']\*["']/.test(ho), "never to any address");
   // the library: the bytes from OneDrive only through the broker's link, the link kept in memory only
   const lib = code(read("js/plan-library.js"));
-  assert.ok(!/localStorage|sessionStorage/.test(lib), "no link or plan detail in web storage");
+  assert.ok(!/sessionStorage/.test(lib), "no session storage");
+  // web storage holds two notes only, never a link or a plan's detail: the user ids with plans here, and when the takeoff
+  // app said it keeps itself for offline use
+  assert.deepEqual(Array.from(new Set(Array.from(lib.matchAll(/localStorage\.(?:getItem|setItem|removeItem)\(([A-Z_]+)/g)).map((m) => m[1]))).sort(),
+    ["OWNERS_KEY", "READY_KEY"]);
+  assert.match(lib, /const OWNERS_KEY = "dcr2-plan-owners";/);
   assert.match(lib, /onedrive\.planLink\(/);
 });
