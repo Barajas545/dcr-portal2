@@ -130,8 +130,10 @@ function noteOwner(who, has) {
     if (set.length) localStorage.setItem(OWNERS_KEY, JSON.stringify(set)); else localStorage.removeItem(OWNERS_KEY);
     let mail = {};
     try { mail = JSON.parse(localStorage.getItem(MAIL_KEY) || "{}") || {}; } catch (e) { mail = {}; }
-    Object.keys(mail).forEach(function (k) { if (mail[k] === who || set.indexOf(mail[k]) === -1) delete mail[k]; });
+    // a person's hint goes only when they leave the owners list (a purge cut short keeps it, so their next refused
+    // sign-in finds them again), or when a fresh e-mail of theirs replaces it
     const email = has && who === storedUserId() ? String(storedUserEmail() || "").trim().toLowerCase() : "";
+    Object.keys(mail).forEach(function (k) { if (set.indexOf(mail[k]) === -1 || (email && mail[k] === who)) delete mail[k]; });
     if (email) mail[hashOf(email)] = who;
     if (Object.keys(mail).length) localStorage.setItem(MAIL_KEY, JSON.stringify(mail)); else localStorage.removeItem(MAIL_KEY);
   } catch (e) { /* a hint only */ }

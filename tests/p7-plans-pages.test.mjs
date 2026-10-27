@@ -131,7 +131,7 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
     ["MAIL_KEY", "OWNERS_KEY", "READY_KEY"]);
   assert.match(lib, /const MAIL_KEY = "dcr2-plan-owner-mail";/);
   // the sign-in page's other way out for a turned-off account purges too; and sign-in finds a blocked account's plans
-  assert.match(code(read("js/shell/index.js")), /await forgetSavedPlans\(storedUserId\(\)\);\s*await signOut\(\);/);
+  assert.match(code(read("js/shell/index.js")), /if \(p && p\.id && p\.id === storedUserId\(\)\) await forgetSavedPlans\(p\.id\);\s*await signOut\(\);/);
   assert.match(code(read("js/sb.js")), /if \(error\.code === "user_banned"\) await forgetSavedPlans\(planOwnerFor\(addr\)\);/);
   assert.match(lib, /const OWNERS_KEY = "dcr2-plan-owners";/);
   assert.match(lib, /onedrive\.planLink\(/);
@@ -143,5 +143,5 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
   // the purge of a turned-off account's plans: sign-in and requireAuth share sb.js forgetSavedPlans
   const sbjs = code(read("js/sb.js"));
   assert.match(sbjs, /await forgetSavedPlans\(storedUserId\(\)\);\s*await signOut\(\);\s*throw inactiveError\(\);/);
-  assert.match(code(read("js/common2.js")), /await forgetSavedPlans\(storedUserId\(\)\);\s*await signOut\(\);/);
+  assert.match(code(read("js/common2.js")), /if \(p && p\.id && p\.id === storedUserId\(\)\) await forgetSavedPlans\(p\.id\);\s*await signOut\(\);/);
 });

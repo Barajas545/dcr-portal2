@@ -46,7 +46,8 @@ async function alreadyIn() {
     return;
   }
   if (!p || !p.active || p.role === "agents") {
-    await forgetSavedPlans(storedUserId());                  // the plans a turned-off account saved here go first
+    // the plans a turned-off account saved here go first: the account the profile was read for, never a newer sign-in
+    if (p && p.id && p.id === storedUserId()) await forgetSavedPlans(p.id);
     await signOut();
     showError("This account is not active. Ask the office.");
     return;

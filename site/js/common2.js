@@ -664,7 +664,7 @@ export async function requireAuth(opts) {
   }
   offlineOverlay(false);
   if (!p || !p.active || p.role === "agents") {
-    await forgetSavedPlans(storedUserId());
+    if (p && p.id && p.id === storedUserId()) await forgetSavedPlans(p.id);   // its saved plans go (never a newer sign-in's)
     await signOut();
     location.replace("index.html?inactive=1");
     return hold();
