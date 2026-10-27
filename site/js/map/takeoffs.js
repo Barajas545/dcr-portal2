@@ -56,22 +56,23 @@ export function groupKey(name) { return lowerPg(cleanName(name)); }
 
 /** Rows -> [{name (group: the level), children: [{name (category), children: [{name (sub), rows}]}]}], the groups in
     the takeoff's group order (groupOrder: takeoffs.group_order; listed names first in that order, then the others by
-    their first row). */
+    their first row). A listed group is named as the order spells it (tidy; the first spelling of a name listed
+    twice), another by its first row - figures.takeoff_levels, so a band reads the same as DCR Desktop 2's. */
 export function takeoffLevels(rows, groupOrder) {
   const root = bucket("");
-  const byKey = {};
+  // keys are group names: no inherited key ("constructor") may answer for one
+  const byKey = Object.create(null), listed = Object.create(null), spelled = Object.create(null);
+  (Array.isArray(groupOrder) ? groupOrder : []).forEach(function (n, i) {
+    const k = groupKey(n);
+    if (!(k in listed)) { listed[k] = i; spelled[k] = cleanName(n); }
+  });
   (rows || []).filter(function (r) { return r && typeof r === "object"; }).slice().sort(rowOrder).forEach(function (r) {
     const k = groupKey(r.level);
     let level = byKey[k];
-    if (!level) { level = byKey[k] = bucket(cleanName(r.level)); root.children.push(level); }
+    if (!level) { level = byKey[k] = bucket(spelled[k] || cleanName(r.level)); root.children.push(level); }
     const cat = child(level, trimmed(r.category));
     const sub = child(cat, trimmed(r.subcategory));
     sub.rows.push(r);
-  });
-  const listed = {};
-  (Array.isArray(groupOrder) ? groupOrder : []).forEach(function (n, i) {
-    const k = groupKey(n);
-    if (!(k in listed)) listed[k] = i;
   });
   const at = function (b) { const k = groupKey(b.name); return k in listed ? listed[k] : Infinity; };
   return root.children.map(function (b, i) { return { b, i, at: at(b) }; })

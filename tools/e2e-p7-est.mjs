@@ -13,7 +13,10 @@
      before anything is sent; the approved estimate's type, quantities and Delete kept; a locked word shown amount-free
      and read only; a new change order (the next number), a new group - a name only, "Empty" on its card (owner
      2026-10-27) -, an item of two lines in it, the group renamed, a second empty group deleted; a group row reads as
-     its name (no group code); leaving a changed sheet asks first; no horizontal scroll;
+     its name (no group code); leaving a changed sheet asks "Save changes?" (owner 2026-10-27: Cancel stays, Save
+     closes only once the save went through - one the database would refuse stays open -, Don't save closes); someone
+     else rearranging the groups while a sheet is open (the gids are per read): the new item and Move to group still go
+     into the group named, a deleted group refuses the new item; no horizontal scroll;
    - Quinn Manager (an Estimator WITH prices) on a desk: the price boxes and the live total, Approved offered, and
      someone else's save while the sheet is open (the notice, then the conflict panel: Use mine);
    - Morgan Manager (no Estimator switch) and Riley Lead: the read-only tab ("view only"), no edit control;
@@ -89,6 +92,9 @@ async function main() {
   const type = (p, sel, value) => p.eval("(() => { const n = document.querySelector(" + J(sel) + "); if (!n) throw new Error('no ' + " + J(sel) + "); n.value = " + J(value) +
     "; n.dispatchEvent(new Event('input', { bubbles: true })); n.dispatchEvent(new Event('change', { bubbles: true })); return true; })()");
   const modalYes = (p) => p.until("(() => { const h = document.getElementById('dcrModalHost'); if (!h || !h.classList.contains('open')) return false; document.getElementById('dcrMoYes').click(); return true; })()", 5000);
+  // a changed sheet's close asks Save changes? (owner 2026-10-27), its Save focused
+  const saveAsked = "(() => { const h = document.getElementById('dcrModalHost'); return !!h && h.classList.contains('open') && /Save changes\\?/.test(h.innerText) && " +
+    "!!document.getElementById('dcrMoAlt') && document.activeElement === document.getElementById('dcrMoYes'); })()";
   const DOLLARS = "/\\$\\s?\\d/";
 
   try {
@@ -135,7 +141,7 @@ async function main() {
       await m.until("document.getElementById('pane-estimate').innerText.indexOf('2 guys × 4 days') !== -1", 8000);
       check("estimator, phone: saved, and the card says 2 guys × 4 days", true);
     }, m);
-    await attempt("estimator, phone: words that quote an amount are refused before anything is sent; leaving asks first", async () => {
+    await attempt("estimator, phone: words that quote an amount are refused before anything is sent; leaving asks Save changes? first", async () => {
       await openItem(m, "Deck framing 12x16");
       await m.until(sheetOpen, 5000);
       const before = await m.eval("DCR2Demo.engine.rows.estimate_items.find(i => i.name === 'Deck framing 12x16').version");
@@ -144,11 +150,30 @@ async function main() {
       await m.until("/price boxes/.test(document.getElementById('esSheetErr').textContent)", 4000);
       const after = await m.eval("DCR2Demo.engine.rows.estimate_items.find(i => i.name === 'Deck framing 12x16').version");
       check("estimator, phone: Rule C before sending - nothing written", before === after, before + " / " + after);
+      // owner 2026-10-27 (E): Save changes? - Cancel | Don't save | Save (DCR Desktop 2's question)
       await click(m, ".es-sheet-ft [data-act=close]");
-      await m.until("document.getElementById('dcrModalHost') && document.getElementById('dcrModalHost').classList.contains('open') && /Leave without saving/.test(document.getElementById('dcrModalHost').innerText)", 4000);
-      await modalYes(m);
+      await m.until(saveAsked, 4000);
+      const q = await m.eval("(() => { const h = document.getElementById('dcrModalHost'); return { text: h.innerText, buttons: Array.from(h.querySelectorAll('.dcr-mo-ft button')).map(b => b.innerText.trim()), " +
+        "focus: document.activeElement && document.activeElement.id, off: Array.from(h.querySelectorAll('.dcr-mo-ft button')).filter(b => b.getBoundingClientRect().right > innerWidth).length }; })()");
+      check("estimator, phone: closing a changed item asks Save changes? - Cancel | Don't save | Save, Save the default, all in view",
+        /This item has changes that are not saved yet/.test(q.text) && J(q.buttons) === J(["Cancel", "Don't save", "Save"]) && q.focus === "dcrMoYes" && q.off === 0, J(q));
+      await shoot(m, "save_changes_estimator", "phone", false);
+      await shoot(m, "save_changes_estimator", "phone", true);
+      await click(m, "#dcrMoNo");
+      await m.until("!document.getElementById('dcrModalHost').classList.contains('open')", 4000);
+      check("estimator, phone: Cancel stays on the sheet, what was typed kept", await m.eval(sheetOpen + " && /\\$18/.test(document.getElementById('ef_material_description').value)"));
+      await click(m, ".es-x");
+      await m.until(saveAsked, 4000);
+      await click(m, "#dcrMoYes");
+      await m.until("!document.getElementById('dcrModalHost').classList.contains('open') && /price boxes/.test(document.getElementById('esSheetErr').textContent)", 4000);
+      const still = await m.eval("DCR2Demo.engine.rows.estimate_items.find(i => i.name === 'Deck framing 12x16').version");
+      check("estimator, phone: Save that the database would refuse keeps the sheet open, saying why; nothing written", (await m.eval(sheetOpen)) && still === before, still + " / " + before);
+      await click(m, ".es-sheet-bg");
+      await m.until(saveAsked, 4000);
+      await click(m, "#dcrMoAlt");
       await m.until(sheetClosed, 4000);
-      check("estimator, phone: a changed sheet asks before it closes", true);
+      const end = await m.eval("DCR2Demo.engine.rows.estimate_items.find(i => i.name === 'Deck framing 12x16')");
+      check("estimator, phone: Don't save closes, nothing written", end.version === before && !/\$18/.test(end.material_description || ""), J([end.version, end.material_description]));
     }, m);
     await attempt("estimator, phone: the approved estimate keeps its type, quantities and items; a word that quotes an amount is shown amount-free, read only", async () => {
       await openItem(m, "Floor joists and subfloor");
@@ -243,6 +268,64 @@ async function main() {
       await m.until(sheetClosed, 4000);
       check("estimator, phone: still no horizontal scroll", await noScroll(m), await m.eval("document.documentElement.scrollWidth"));
     }, m);
+    await attempt("estimator, phone: someone else rearranges the groups while a sheet is open (the gids are per read) - a new item and Move to group go into the group named, never another or General", async () => {
+      const eid = await m.eval("DCR2Demo.engine.rows.estimates.find(e => e.name === 'Web blocking at the stairs').id");
+      const card = "document.querySelector('.es-card[data-est=\"" + eid + "\"]')";
+      const groupRows = "Array.from(" + card + ".querySelectorAll('.pj-grp td')).map(t => t.innerText.replace(/\\s+/g, ' ').trim().toLowerCase()).join('|')";
+      const order = (names) => m.eval("DCR2Demo.remoteEdit('estimates', " + eid + ", { group_order: " + J(names) + " }, 'admin'); true");
+      const shows = (rows) => m.until(groupRows + " === " + J(rows.join("|")), 8000);
+      const gidOf = (title) => m.eval("(() => { const r = Array.from(" + card + ".querySelectorAll('.pj-grp')).find(x => x.innerText.trim().replace(/\\s+empty$/i, '') === " + J(title) + "); " +
+        "return r ? r.querySelector('[data-act=grp]').getAttribute('data-grp') : null; })()");
+      const groupOf = (name) => m.eval("(() => { const i = DCR2Demo.engine.rows.estimate_items.find(x => x.name === " + J(name) + " && !x.deleted_at); return i ? i.group_name : '(none)'; })()");
+      const fillLabor = async (name) => {
+        await type(m, "#ef_name", name);
+        await m.eval("(() => { const s = document.getElementById('ef_item_type'); s.value = 'labor'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()");
+        await type(m, "#ef_labor_guys", "1");
+        await type(m, "#ef_labor_days", "1");
+      };
+      await order(["Stair blocking", "Alpha", "Beta"]);
+      await shows(["stair blocking", "alpha empty", "beta empty"]);
+      // ＋ Item under Beta (g3), then Beta moved up elsewhere: g3 is Alpha now
+      const beta = await gidOf("Beta");
+      await click(m, ".es-card[data-est=\"" + eid + "\"] [data-act=add][data-grp=\"" + beta + "\"]");
+      await m.until(sheetOpen, 5000);
+      await order(["Stair blocking", "Beta", "Alpha"]);
+      await shows(["stair blocking", "beta empty", "alpha empty"]);
+      check("estimator, phone: the live read gave Beta's old gid to Alpha", (await gidOf("Alpha")) === beta, beta);
+      await fillLabor("Rail posts");
+      await click(m, "#esSave");
+      await m.until(sheetClosed, 8000);
+      const g1 = await groupOf("Rail posts");
+      check("estimator, phone: the new item went into Beta, the group its sheet named", g1 === "Beta", g1);
+      // ＋ Item under Alpha, then Alpha deleted elsewhere: said, refused, never General
+      await shows(["stair blocking", "beta", "alpha empty"]);
+      await click(m, ".es-card[data-est=\"" + eid + "\"] [data-act=add][data-grp=\"" + (await gidOf("Alpha")) + "\"]");
+      await m.until(sheetOpen, 5000);
+      await order(["Stair blocking", "Beta"]);
+      await m.until("/renamed or deleted by someone else/.test(document.getElementById('esSheetNotice').textContent)", 8000);
+      await fillLabor("Alpha posts");
+      await click(m, "#esSave");
+      await m.until("/renamed or deleted by someone else/.test(document.getElementById('esSheetErr').textContent)", 4000);
+      const g2 = await groupOf("Alpha posts");
+      check("estimator, phone: its group deleted meanwhile - the new item is refused with the reason, nothing added", g2 === "(none)" && (await m.eval(sheetOpen)), g2);
+      await click(m, ".es-x");
+      await m.until(saveAsked, 4000);
+      await click(m, "#dcrMoAlt");
+      await m.until(sheetClosed, 4000);
+      // an item sheet open, a group added ahead elsewhere: Move to group's choice is still the group picked
+      await openItem(m, "Rail posts");
+      await m.until(sheetOpen, 5000);
+      await order(["Zeta", "Stair blocking", "Beta"]);
+      await shows(["zeta empty", "stair blocking", "beta"]);
+      await m.eval("(() => { const s = document.getElementById('efToGroup'); s.value = Array.from(s.options).find(o => o.text === 'Stair blocking').value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()");
+      await click(m, "#esSheet [data-act=toGroup]");
+      await m.until("(() => { const i = DCR2Demo.engine.rows.estimate_items.find(x => x.name === 'Rail posts' && !x.deleted_at); return i.group_name !== 'Beta'; })()", 8000);
+      const g3 = await groupOf("Rail posts");
+      check("estimator, phone: Move to group - into Stair blocking, the group picked (its old gid is Zeta's now)", g3 === "Stair blocking", g3);
+      await m.until(sheetOpen + " && document.getElementById('pane-estimate').getAttribute('aria-busy') !== 'true'", 8000);
+      await click(m, ".es-x");
+      await m.until(sheetClosed, 4000);
+    }, m);
 
     /* ── Robin Estimator on a desk ──────────────────────────────────────── */
     const d = await newPage(cdp, "estimator-desk", OUT); pages.push(d);
@@ -261,6 +344,28 @@ async function main() {
       await shoot(d, "estimate_sheet_estimator", "desktop", false);
       await click(d, ".es-x");
       await d.until(sheetClosed, 4000);
+    }, d);
+    await attempt("estimator, desk: Save changes? - Save saves, then the sheet closes; the New group sheet asks too (Esc)", async () => {
+      await openItem(d, "Deck framing 12x16");
+      await d.until(sheetOpen, 5000);
+      await type(d, "#ef_labor_days", "5");
+      await click(d, ".es-x");
+      await d.until(saveAsked, 4000);
+      await shoot(d, "save_changes_estimator", "desktop", false);
+      await shoot(d, "save_changes_estimator", "desktop", true);
+      await click(d, "#dcrMoYes");
+      await d.until(sheetClosed, 8000);
+      const days = await d.eval("Number(DCR2Demo.engine.rows.estimate_items.find(i => i.name === 'Deck framing 12x16').labor_days)");
+      check("estimator, desk: Save changes? → Save - saved, then closed", days === 5, days);
+      await click(d, "[data-act=addgrp][data-est=\"2\"]");
+      await d.until(sheetOpen, 5000);
+      await type(d, "#ef_group_name", "Porch");
+      await d.eval("(() => { document.getElementById('ef_group_name').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true; })()");
+      await d.until(saveAsked + " && /This new group is not added yet/.test(document.getElementById('dcrModalHost').innerText)", 4000);
+      await click(d, "#dcrMoYes");
+      await d.until(sheetClosed, 8000);
+      const go = await d.eval("DCR2Demo.engine.rows.estimates.find(e => e.id === 2).group_order");
+      check("estimator, desk: the New group sheet asks Save changes? too; Save adds the group", J(go) === J(["Deck", "Porch"]), J(go));
     }, d);
 
     /* ── Quinn Manager: an Estimator with prices ────────────────────────── */

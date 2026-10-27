@@ -162,7 +162,7 @@ test("takeoff groups in the takeoff's group order (migration 20261029000200): li
   assert.deepEqual(tko.takeoffLevels(rows).map((l) => l.name), ["Main Level", "Roof", "", "Garage", "Deck"], "no order: first appearance");
   assert.deepEqual(tko.takeoffLevels(rows, []).map((l) => l.name), ["Main Level", "Roof", "", "Garage", "Deck"]);
   const lv = tko.takeoffLevels(rows, ["ROOF", "", "Empty group", " main   LEVEL "]);
-  assert.deepEqual(lv.map((l) => l.name), ["Roof", "", "Main Level", "Garage", "Deck"], "listed first, in the order's order; the others by first row");
+  assert.deepEqual(lv.map((l) => l.name), ["ROOF", "", "main LEVEL", "Garage", "Deck"], "listed first, in the order's order and spelling (tidy); the others by first row");
   assert.deepEqual(tko.allRows(lv[2]).map((r) => r.id), [1, 5], "'main  level' is the same group (tidy, any case)");
   assert.deepEqual(lv[2].children.map((c) => c.name), ["Walls", "Floor"], "an older line's category still bands");
   assert.equal(tko.groupKey("  Main \t Level "), "main level");

@@ -438,7 +438,9 @@ export function toast(message, opts) {
      await DCR2.confirm("Delete this row?", {danger: true})  -> true/false
      await DCR2.ask("What needs to happen?")                  -> string|null
      await DCR2.alert("Saved.")
-     await DCR2.modal({title, message, fields: […], okText})  -> {name: value}|null            */
+     await DCR2.modal({title, message, fields: […], okText})  -> {name: value}|null
+   altText (optional) adds a third button between Cancel and OK that answers "alt" (Save changes?: Cancel | Don't
+   save | Save); Esc and the backdrop stay null, OK stays true / the values.                     */
 const modalStack = [];
 
 function modalHost() {
@@ -488,6 +490,7 @@ export function modal(opts) {
       }).join("") +
       '<div class="dcr-mo-err" id="dcrMoErr"></div><div class="dcr-mo-ft">' +
       (o.cancel === false ? "" : '<button type="button" class="btn btn-ghost btn-sm" id="dcrMoNo">' + h(o.cancelText || "Cancel") + "</button>") +
+      (o.altText ? '<button type="button" class="btn btn-ghost btn-sm" id="dcrMoAlt">' + h(o.altText) + "</button>" : "") +
       '<button type="button" class="btn btn-sm' + (o.danger ? " dcr-mo-danger" : "") + '" id="dcrMoYes">' + h(o.okText || "OK") + "</button></div>";
 
     host.classList.add("open");
@@ -535,6 +538,8 @@ export function modal(opts) {
     card.querySelector("#dcrMoYes").addEventListener("click", submit);
     const no = card.querySelector("#dcrMoNo");
     if (no) no.addEventListener("click", () => close(null));
+    const alt = card.querySelector("#dcrMoAlt");
+    if (alt) alt.addEventListener("click", () => close("alt"));
     const first = card.querySelector("input, textarea, select");
     setTimeout(() => {
       if (first) { first.focus(); if (first.select) first.select(); }

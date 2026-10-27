@@ -504,9 +504,15 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   what the type hides after asking, assigned, notes and the live total with prices; Up / Down, Move to group, Move to
   estimate, Delete). The group code is neither shown nor set (owner 2026-10-27; the column stays, and an item added
   to a group takes the code its items carry). Empty groups need `estimate_edit_read` from migration
-  `20261029000100_estimate_links_groups` (before it a web Group ▲/▼ would write the order without them). Every write carries the versions it was shown (`save_estimate_item`: the row and its price
+  `20261029000100_estimate_links_groups` (before it a web Group ▲/▼ would write the order without them). Rolling
+  that migration back (DCR Desktop 2 `tools/rollback/20261029000100_estimate_links_groups_down.sql`) means
+  republishing Portal 2 at `449fa72` the same day: this site's ＋ New group writes an empty group into the group order,
+  and the `estimate_edit_read` the rollback puts back never sends it (the web would say "added" and show nothing).
+  Every write carries the versions it was shown (`save_estimate_item`: the row and its price
   row in one transaction); someone else's save first: the same changes again when they touched other fields, else the
   conflict panel (Keep theirs / Use mine). A full-screen sheet on a phone, Save always in view, 44 px controls.
+  Closing a sheet with changes asks "Save changes?" (owner 2026-10-27, as DCR Desktop 2): Save - the sheet closes once
+  the save went through -, Don't save, Cancel.
 - **Without prices** (a quantities-only Estimator): the database sends no amount, note or term at all
   (`estimate_edit_read`), the words amount-free; a word that quotes an amount is shown that way, read only, never
   sent; no price box, no Approved, no Duplicate; an approved estimate's status, archive, items, type and quantities are

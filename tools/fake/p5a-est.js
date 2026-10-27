@@ -7,7 +7,8 @@
    The same tables, columns and read rules as DCR Desktop 2's migrations (20261007000300 estimates, takeoffs,
    catalog; 20261007000600 policies; 20261007001400 the estimate_item_totals view; 20261012000100 group_order
    and archived_at; 20261013000100 item_type; 20261029000100 the Houzz Pro link estimates.houzz_url - projects'
-   is tools/fake/engine.js's - and estimate_edit_read's empty groups; 20261029000200 takeoffs.group_order and
+   is tools/fake/engine.js's -, estimate_edit_read's empty groups and reorder_estimate's new spelling of a group no
+   live item still spells the old way; 20261029000200 takeoffs.group_order and
    takeoff_print's group_order):
    * estimates, estimate_items — every active person reads live rows of a visible project (an admin also
      the deleted ones); no money column;
@@ -910,7 +911,17 @@
         itemRules(w, "UPDATE", r, old);
         plan.push({ table: "estimate_items", old, r });
       }
-      if (order !== null && JSON.stringify(cleanOrder(order).map(gkey)) !== JSON.stringify((est.group_order || []).map(gkey))) {
+      // a new order is written when it orders the groups differently, or when it spells a group anew that the estimate's
+      // live items (as the moves leave them) do not still spell the old way - an empty group's case-only rename, a
+      // rename whose moves carry the new spelling (migration 20261029000100; key order alone would drop it)
+      const was = est.group_order || [];
+      const respelled = () => {
+        const moved = new Map(plan.map((x) => [x.r.id, x.r.group_name]));
+        const spelt = new Set(rows.estimate_items.filter((i) => i.estimate_id === eid && !i.deleted_at)
+          .map((i) => tidy(moved.has(i.id) ? moved.get(i.id) : i.group_name)));
+        return cleanOrder(order).some((n, k) => n !== was[k] && !spelt.has(was[k]));
+      };
+      if (order !== null && (JSON.stringify(cleanOrder(order).map(gkey)) !== JSON.stringify(was.map(gkey)) || respelled())) {
         const r = Object.assign(clone(est), { group_order: order.slice() });
         if (!canWrite(w, "estimates", est)) throw deny("not allowed to rearrange this estimate");
         estimateRules(w, "UPDATE", r, est);

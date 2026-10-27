@@ -20,7 +20,7 @@
 import { esc, multiline } from "./est-render.js";
 import {
   ITEM_TYPES, ITEM_TYPE_LABELS, FIELD_LABELS, LOCKED_TITLE, APPROVED_HINT, QTY_KEYS, shownKeys, numText, isLocked, statusesFor,
-  itemMath,
+  itemMath, groupKey,
 } from "../map/estimate-edit.js";
 import { STATUS_LABELS, moneyText, crewText, cleanName, isChangeOrder } from "../map/estimates.js";
 
@@ -31,6 +31,15 @@ const MATERIAL_PRICES = [["material_unit_price", "material_markup_pct"]];
 const PLACEHOLDER = { labor_markup_pct: "0", material_markup_pct: "0", labor_rate: "project rate" };
 
 function attr(k, v) { return v === undefined || v === null || v === false ? "" : " " + k + (v === true ? "" : '="' + esc(v) + '"'); }
+
+/** A Move to group option's value: "=" and the group's key (its name tidy, any case; "=" alone is General) - never its
+    gid, which is per read (a live read while the sheet is open renumbers them). toGroupKey reads it back: the key, or
+    null for "—" and "New group…". */
+export function toGroupValue(group) { return "=" + groupKey(group && group.name); }
+export function toGroupKey(value) {
+  const v = String(value == null ? "" : value);
+  return v.charAt(0) === "=" ? v.slice(1) : null;
+}
 
 export const NAME_ROWS = 6;
 /** The rows of the item name's box: one per line of the name, at least 1, at most NAME_ROWS (then it scrolls). */
@@ -139,7 +148,7 @@ export function itemFormHtml(item, opts) {
       '<button type="button" class="es-act" data-act="down">▼ Down</button></div>' +
       '<div class="es-row"><label class="es-inl" for="efToGroup">Move to group</label><select id="efToGroup"' + attr("disabled", fixedGroup) +
       attr("title", fixedGroup ? LOCKED_TITLE : null) + '><option value="">—</option>' +
-      groups.map(function (g) { return '<option value="' + esc(g.gid) + '">' + esc(g.title) + "</option>"; }).join("") +
+      groups.map(function (g) { return '<option value="' + esc(toGroupValue(g)) + '">' + esc(g.title) + "</option>"; }).join("") +
       '<option value="*new">New group…</option></select><input type="text" id="efToGroupName" placeholder="New group name" maxlength="200" hidden>' +
       '<button type="button" class="es-act" data-act="toGroup"' + attr("disabled", fixedGroup) + ">Move</button></div>" +
       (others.length ? '<div class="es-row"><label class="es-inl" for="efToEst">Move to</label><select id="efToEst"' + attr("disabled", approved) + '><option value="">—</option>' +

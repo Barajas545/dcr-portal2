@@ -25,8 +25,11 @@
    they touched none of these fields, else the conflict panel ("Riley changed Material qty: theirs 420 · yours 400";
    Keep theirs / Use mine); a rearrangement someone else beat: "Changed by someone else — showing the latest." Live:
    the project's estimates, items, flags and (prices) price rows read again 300 ms after a burst; an open sheet keeps
-   what was typed, takes their values into the untouched boxes and says so. A refusal (42501) reads the Estimator
-   switch again: switched off, the tab turns read only. */
+   what was typed, takes their values into the untouched boxes and says so; a sheet finds its group again by the
+   group's name (the gids are per read: a New item never lands in another group, nor in General when its group went).
+   Closing a sheet with changes asks "Save changes?" (owner 2026-10-27, as DCR Desktop 2): Save (closes once the save
+   went through), Don't save, Cancel. A refusal (42501) reads the Estimator switch again: switched off, the tab turns
+   read only. */
 
 import * as repo from "../repo/estimate-edit.js";
 import { estimateAccess } from "../repo/estimates.js";
@@ -34,6 +37,7 @@ import * as M from "../map/estimate-edit.js";
 import { estimateCardsHtml, contractStripHtml, esc } from "./est-render.js";
 import {
   itemFormHtml, estimateFormHtml, groupFormHtml, newGroupFormHtml, conflictHtml, sheetHtml, liveLineHtml, nameRows, NAME_ROWS, DELETE_GROUP_HINT,
+  toGroupKey,
 } from "./est-sheet.js";
 import { moneyShown, isChangeOrder, wordsFor, estimateEditor, cleanName } from "../map/estimates.js";
 import { nameBook } from "../repo/people.js";
@@ -68,6 +72,7 @@ function firstName(uid) { const n = nameOf ? nameOf(uid) : ""; return (n.split(/
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const isConflict = (e) => !!e && (String(e.code) === "PT409" || e.status === 409);
 const isGone = (e) => !!e && String(e.code) === "PT404";
+const GROUP_GONE = "Its group was renamed or deleted by someone else: close this sheet and add the item again.";
 
 /** The read-only tab again (the Estimator switch is off, or the database has no editor read yet). */
 function toReadOnly(why) {
@@ -248,10 +253,21 @@ function mountSheet(title, body, opts) {
   setTimeout(function () { try { (first || box.querySelector(".es-x")).focus(); } catch (e) { /* */ } }, 20);
 }
 
+// the sheets with a Save: closing one with changes asks "Save changes?" (owner 2026-10-27, as DCR Desktop 2's item editor)
+const SAVE_QUESTION = { item: "This item has changes that are not saved yet.", est: "This estimate has changes that are not saved yet.",
+  newgrp: "This new group is not added yet." };
+
 async function closeSheet(force) {
   const s = state.sheet;
   if (!s) return;
-  if (!force && s.dirty && cx.confirm) {
+  const modal = D().modal;
+  if (!force && s.dirty && SAVE_QUESTION[s.kind] && typeof modal === "function") {
+    // Save | Don't save | Cancel: Save closes the sheet only once the save went through (a refusal, the conflict panel
+    // or a deleted row keeps it open, saying why); Cancel, Esc and the backdrop stay
+    const r = await modal({ title: "Save changes?", message: SAVE_QUESTION[s.kind], okText: "Save", altText: "Don't save", cancelText: "Cancel", fields: [] });
+    if (state.sheet !== s || (r !== true && r !== "alt")) return;
+    if (r === true) { sheetAct("save"); return; }
+  } else if (!force && s.dirty && cx.confirm) {
     const ok = await cx.confirm("Leave without saving? What you changed in this sheet is not kept.", { title: "Unsaved changes", okText: "Leave", danger: true });
     if (!ok || state.sheet !== s) return;
   }
@@ -569,7 +585,9 @@ function openNewItem(estId, gid) {
   const type = M.itemType(store.get(M.LAST_TYPE_KEY, M.DEFAULT_ITEM_TYPE)) || M.DEFAULT_ITEM_TYPE;
   const base = { item_type: type, name: "", labor_qty: 1, material_qty: 1, locked: [] };
   if (prices()) base.prices = { labor_markup_pct: 0, material_markup_pct: 0 };
-  state.sheet = { kind: "item", estId: est.id, isNew: true, gid: gid || null, base, type, dirty: false, touched: new Set() };
+  // gids are per read: the group is kept by its name too ("" = General), and found by it again when it is added
+  const g = gid ? est.groups.find(function (x) { return x.gid === gid; }) : null;
+  state.sheet = { kind: "item", estId: est.id, isNew: true, gid: g ? g.gid : null, key: g ? M.groupKey(g.name) : "", base, type, dirty: false, touched: new Set() };
   mountItemSheet();
 }
 
@@ -718,6 +736,10 @@ async function useMine() {
 async function addNewItem(form) {
   const s = state.sheet;
   const est = findEst(s.estId);
+  if (!est) { showErr("This estimate was deleted — nothing was added."); return; }
+  // the group by its name, as it is now (gids are per read); gone or renamed: nothing is added, never into General
+  const g = est.groups.find(function (x) { return M.groupKey(x.name) === s.key; });
+  if (!g && s.key) { showErr(GROUP_GONE); return; }
   const withPrices = prices();
   const shown = M.shownKeys(s.type);
   const fields = { item_type: s.type };
@@ -735,7 +757,6 @@ async function addNewItem(form) {
   });
   // the group's name; and the code its items carry, unseen (owner 2026-10-27: the code is not shown, but the items of
   // one group keep one code - an empty group has none)
-  const g = est.groups.find(function (x) { return x.gid === s.gid; });
   if (g && g.name) fields.group_name = g.name;
   if (g && g.code) fields.group_code = g.code;
   const money = {};
@@ -791,7 +812,13 @@ function moveToGroup() {
     if (why) { showErr(why); return; }
     if (!cleanName(name)) { showErr("Type the new group's name."); return; }
     target = { name };
-  } else target = { gid: sel.value };
+  } else {
+    // the group by its name, as it is now (est-sheet.js toGroupValue: gids are per read)
+    const k = toGroupKey(sel.value);
+    const g = k === null ? null : est.groups.find(function (x) { return M.groupKey(x.name) === k; });
+    if (!g) { showErr("That group was renamed or deleted by someone else: close this item and open it again."); return; }
+    target = { gid: g.gid };
+  }
   const moves = M.planItemDrop(M.slotsOf(est), s.itemId, target, null);
   if (!moves.length) { showErr("It is in that group already."); return; }
   rearrangeItem(moves, "Moved.");
@@ -827,6 +854,15 @@ async function deleteItemSheet() {
 /* ── live: an open sheet meets someone else's save ─────────────────── */
 function adoptLive() {
   const s = state.sheet;
+  if (s && s.kind === "item" && s.isNew) {
+    // gids are per read: the new item's group again by its name (General, "", is always there)
+    const est = findEst(s.estId);
+    if (!est) { notice("This estimate was deleted."); disableSave(); return; }
+    const g = est.groups.find(function (x) { return M.groupKey(x.name) === s.key; });
+    s.gid = g ? g.gid : null;
+    notice(g || !s.key ? "" : GROUP_GONE);
+    return;
+  }
   if (!s || s.isNew || s.pending) return;
   if (s.kind === "grp") {
     // gids are per read: the same group again by its name (gone or renamed elsewhere: nothing here acts on it)

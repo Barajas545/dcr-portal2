@@ -173,7 +173,7 @@ export async function run(h) {
     if (!("houzz_url" in estCols)) {
       results.push({ section: h.section, name: "20261029000100_estimate_links_groups is not in DCR Desktop 2 yet: the empty-group checks wait for it", ok: true });
     } else {
-      await check("empty groups (20261029000100): a new group is a name only - estimate_edit_read sends it empty in its place; Group up keeps it; rename and delete; never printed", async () => {
+      await check("empty groups (20261029000100): a new group is a name only - estimate_edit_read sends it empty in its place; Group up keeps it; rename (in capitals only too) and delete; never printed", async () => {
         await as("manager2");
         const made = await edit.createEstimate(S.pid, "estimate", { name: "Empty groups check" });
         S.emptyCheck = made.id;
@@ -198,6 +198,20 @@ export async function run(h) {
         await edit.reorder(e, ren.groupOrder, [], { prices: true });
         e = await est();
         same(e.groups.map((g) => [g.title, g.empty]), [["Stair rail and posts", true], ["Porch posts", false]], "renamed, still empty");
+        // a rename in capitals only is written too (20261029000100's reorder_estimate: the empty group's name lives in the
+        // order alone), and back; the same order in another case while the items still spell their group so writes nothing
+        for (const name of ["Stair Rail and Posts", "Stair rail and posts"]) {
+          const caps = M.planRename(M.slotsOf(e), e.group_order, e.groups[0].gid, name);
+          same(caps, { groupOrder: [name, "Porch posts"], moves: [] }, "a case-only rename: the order alone");
+          const v0 = e.version;
+          await edit.reorder(e, caps.groupOrder, [], { prices: true });
+          e = await est();
+          same([e.group_order, e.version, e.groups[0].title], [[name, "Porch posts"], v0 + 1, name], "a case-only rename of an empty group is written");
+        }
+        const v1 = e.version;
+        await edit.reorder(e, ["Stair rail and posts", "PORCH POSTS"], [], { prices: true });
+        e = await est();
+        same([e.group_order, e.version], [["Stair rail and posts", "Porch posts"], v1], "the items' spelling: no new version");
         const printed = await raw("estimate_print", { p_estimate_id: made.id });
         same(printed.groups.map((g) => g.title), ["Porch posts"], "estimate_print never has an empty group");
         // the office's empty group whose name quotes an amount: locked for Max (quantities only)
