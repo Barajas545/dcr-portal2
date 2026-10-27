@@ -308,9 +308,14 @@ test("a plan saved from a project's sub-folder (a Backup's, before the owner's r
   assert.match(src, /const all = \(await getAll\("plans"\)\)\.filter\(\(r\) => r\.owner === who && !inSubFolder\(r\.folder\)\);/, "list() leaves them out");
   // maybeCheck takes one off the device only once a check says OneDrive no longer lists it (a copy handed to the takeoff
   // app lately after its grace, as any Remove) - after the check, so a file moved up into the project's folder is kept
+  const drop = src.slice(src.indexOf("async function dropSubFolderCopies"), src.indexOf("/** A hold after a failure"));
+  assert.match(drop, /for \(const r of \(await getAll\("plans"\)\)\.filter\(\(x\) => x\.owner === who && inSubFolder\(x\.folder\) && x\.latest && x\.latest\.status !== "ok"\)\) \{\s*try \{ await remove\(r\.itemId, \{ owner: who \}\); \}/,
+    "gone, or denied (the project not visible: never found moved up)");
   const mc = src.slice(src.indexOf("export async function maybeCheck"), src.indexOf("/* ── opening in the takeoff app"));
-  assert.match(mc, /for \(const r of \(await getAll\("plans"\)\)\.filter\(\(x\) => x\.owner === who && inSubFolder\(x\.folder\) && x\.latest && x\.latest\.status === "gone"\)\) \{\s*try \{ await remove\(r\.itemId, \{ owner: who \}\); \}/);
-  assert.ok(mc.indexOf("inSubFolder(x.folder)") > mc.indexOf("await checkUpdates();"), "after the check");
+  assert.ok(mc.indexOf("await dropSubFolderCopies(who);") > mc.indexOf("await checkUpdates();"), "maybeCheck: after the check");
+  const cu = src.slice(src.indexOf("export async function checkUpdates"), src.indexOf("async function dropSubFolderCopies"));
+  assert.match(cu, /if \(!next \|\| inSubFolder\(next\.folder\)\) continue;/, "Check now never counts a Backup's copy");
+  assert.ok(cu.indexOf("await dropSubFolderCopies(who);") > cu.indexOf("sum.checked++"), "and takes them off at its end (Check now too)");
   // a check and a Save take the folder OneDrive lists the file in now
   assert.match(src, /const folder = a\.latest && a\.latest\.status === "ok" && a\.latest\.folder \? a\.latest\.folder : c\.folder;/);
   assert.match(src, /wide: false, folder: f\.folder \|\| r\.folder \}\);/);

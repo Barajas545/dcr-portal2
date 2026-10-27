@@ -796,7 +796,7 @@ export async function checkUpdates() {
         return Object.assign({}, c, { latest: a.latest, fails: a.fails !== undefined ? a.fails : c.fails, retryAt: a.retryAt !== undefined ? a.retryAt : c.retryAt,
           folder });
       });
-      if (!next) continue;
+      if (!next || inSubFolder(next.folder)) continue;            // a Backup's copy: not one of the plans shown
       sum.checked++;
       const st = next.latest ? next.latest.status : "";          // null: a first download not finished, nothing known
       if (st === "gone") sum.gone++;
@@ -805,9 +805,20 @@ export async function checkUpdates() {
       changed(r.key);
     }
   }
+  await dropSubFolderCopies(who);
   await metaPut("check:" + who, at);
   await metaPut("checkHold:" + who, null);                  // a check that worked ends a check hold
   return sum;
+}
+
+/** The copies saved from a project's sub-folder (a Backup's older copy) before the owner's rule of 2026-10-27 that a
+    check did not find as plans - gone (only the files right in a project's folder are), or denied (the project not
+    visible: never found moved up) - go from the device, a copy just handed to the takeoff app after its grace, as any
+    Remove. One the check found moved up into the project's folder took that folder and is a plan again. */
+async function dropSubFolderCopies(who) {
+  for (const r of (await getAll("plans")).filter((x) => x.owner === who && inSubFolder(x.folder) && x.latest && x.latest.status !== "ok")) {
+    try { await remove(r.itemId, { owner: who }); } catch (e) { /* the next page */ }
+  }
 }
 
 /** A hold after a failure: 5 min, doubling while it keeps failing (a hold that ran out within the hour), up to 6 h. */
@@ -901,12 +912,7 @@ export async function maybeCheck(me, opts) {
         }
       }
     }
-    // a copy saved from a project's sub-folder (a Backup's older copy) before the owner's rule of 2026-10-27: once a check
-    // says OneDrive no longer lists it as a plan (gone: only the files right in a project's folder are), it goes from the
-    // device - a copy just handed to the takeoff app after its grace, as any Remove
-    for (const r of (await getAll("plans")).filter((x) => x.owner === who && inSubFolder(x.folder) && x.latest && x.latest.status === "gone")) {
-      try { await remove(r.itemId, { owner: who }); } catch (e) { /* the next page */ }
-    }
+    await dropSubFolderCopies(who);                          // (a check that did not run now: what an earlier one found)
     if (o.download !== false && !iosHomeScreen()) await autoWork();
     await sweep();
   } catch (e) { /* the next page asks again */ }
