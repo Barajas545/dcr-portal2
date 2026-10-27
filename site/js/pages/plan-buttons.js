@@ -112,7 +112,7 @@ export function menuRows(files, saved) {
 /** A row's state line: "Downloading 45%", or what its status says. */
 function stateText(s, done, size) {
   if (!s) return "";
-  if (s.status === "downloading" && size) return "Downloading " + Math.min(100, Math.floor((done / size) * 100)) + "%";
+  if (s.status === "downloading" && size) return "Downloading " + Math.min(99, Math.floor((done / size) * 100)) + "%";
   return statusText(s.status, !!s.file) + (s.dl && s.dl.error && s.status !== "downloading" ? " — " + s.dl.error : "");
 }
 

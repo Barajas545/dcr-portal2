@@ -6,6 +6,7 @@
    plans_list and plan_link are js/repo/onedrive.js):
    * planFileOf(v)              one file of a plans_list / plan_link answer as the pages use it, or null;
    * folderLabel(folder)        where a file sits below its project's folder ("Rev 2/Level 1"; "" at the top);
+   * inSubFolder(folder)        a copy saved from a sub-folder (a Backup's) before the owner's rule of 2026-10-27;
    * sortFiles(files)           the menu's order: by folder, then name;
    * fileNameFor(owner, id, v, stamp)  one download's file name on this device (never the same twice; plain characters);
    * statusOf(rec, job)         saved | outdated | downloading | paused | stopped | gone | denied | missing;
@@ -61,6 +62,13 @@ export function planFileOf(v) {
 export function folderLabel(folder) {
   const parts = String(folder || "").split("/").filter(Boolean);
   return parts.slice(1).join("/");
+}
+
+/** A plan saved from a sub-folder of its project's folder (a Backup's older copy): its folder has a "/" - a OneDrive
+    name never does. Only the files right in a project's folder are its plans (the owner, 2026-10-27: "do not show
+    *.takeoff files inside any sub-folder"); one saved before that is not shown, and goes from the device. */
+export function inSubFolder(folder) {
+  return String(folder || "").indexOf("/") !== -1;
 }
 
 const coll = typeof Intl !== "undefined" ? new Intl.Collator("en", { numeric: true, sensitivity: "base" }) : null;
@@ -146,11 +154,12 @@ export function statusText(status, hasCopy) {
 /**
  * A row's progress bar (the owner, 2026-10-27: a green bar while a plan saves, full once the file is complete):
  * {pct, kind} or null (no bar). kind "run": downloading (`done` / `size`: its bytes now); "held": paused or stopped part
- * way (the record's own bytes); "done": saved - a whole copy of the version OneDrive holds.
+ * way (the record's own bytes; css: grey); "done": saved - a whole copy of the version OneDrive holds. Only "done" is
+ * full: a download whose last byte came is at 99 until it is checked against OneDrive and saved.
  */
 export function progressOf(row, done, size) {
   if (!row) return null;
-  const pct = (d, s) => (s > 0 ? Math.max(0, Math.min(100, Math.floor((d / s) * 100))) : 0);
+  const pct = (d, s) => (s > 0 ? Math.max(0, Math.min(99, Math.floor((d / s) * 100))) : 0);
   if (row.status === "downloading") return { pct: pct(Number(done) || 0, Number(size) || 0), kind: "run" };
   if (row.status === "saved") return { pct: 100, kind: "done" };
   const dl = row.dl;

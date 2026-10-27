@@ -42,7 +42,7 @@ import * as onedrive from "./repo/onedrive.js";
 import { storedUserId, storedUserEmail } from "./sb.js";
 import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
-  brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf,
+  brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder,
 } from "./map/plan-library.js";
 import { planFilesFor } from "./map/plans.js";
 import { openInTakeoff, iosHomeScreen, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -299,7 +299,8 @@ export async function list() {
   const who = owner();
   if (!who || !supported()) return [];
   const held = await heldLocks();
-  const all = (await getAll("plans")).filter((r) => r.owner === who);
+  // a copy saved from a project's sub-folder (a Backup's) is no plan of it: never shown (maybeCheck takes it off)
+  const all = (await getAll("plans")).filter((r) => r.owner === who && !inSubFolder(r.folder));
   return all.map(function (r) {
     const here = jobs[r.key];
     const there = remote[r.key] && Date.now() - remote[r.key].at < 30000 ? remote[r.key] : null;
@@ -874,7 +875,13 @@ export async function maybeCheck(me, opts) {
       if (o.fresh && ownersHere().indexOf(who) !== -1) await purgeOwner(who);
       return;
     }
-    const mine = (await getAll("plans")).filter((r) => r.owner === who);
+    let mine = (await getAll("plans")).filter((r) => r.owner === who);
+    // a copy saved from a project's sub-folder (a Backup's older copy) before the owner's rule of 2026-10-27 goes from
+    // the device (a copy just handed to the takeoff app after its grace, as any Remove)
+    for (const r of mine.filter((x) => inSubFolder(x.folder))) {
+      try { await remove(r.itemId, { owner: who }); } catch (e) { /* the next page */ }
+    }
+    mine = mine.filter((x) => !inSubFolder(x.folder));
     if (!mine.length) {
       // copies kept for the takeoff app after a Remove go at a sweep once their week is over
       await sweep();

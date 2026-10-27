@@ -1,17 +1,22 @@
 /* The project pictures of the Plans Library (the owner, 2026-10-27: "use the project thumbnail related to that
    project"): the picture of each project with a plan saved here, kept on this device so the page shows it with no
-   signal too.
+   signal too - for each person apart, as the plans are (a shared tablet: one person's visit never takes another's).
 
-   * shown(ids)     {projectId: object URL} of the pictures kept here for these projects (none: absent);
-   * refresh(ids)   online: each project's picture now (repo/projects.js pictureIds, then repo/files.js
-                    thumbnailUrls: a signed link), its bytes fetched once per picture and kept; a project whose
-                    picture was taken off, that is no longer visible, or that is no longer among `ids` (no plan of
-                    this person's saved here) loses its kept one. -> as shown(ids);
-   * forgetAll()    every kept picture off this device (a person who no longer opens plan files).
+   * shown(owner, ids)            {projectId: URL} of the pictures this page shows or this person keeps here for these
+                                  projects (none: absent);
+   * refresh(owner, ids, owners)  online: each project's picture now (repo/projects.js pictureIds, then repo/files.js
+                                  thumbnailUrls: a fresh signed link), its bytes fetched once per picture and kept; one
+                                  that could not be fetched keeps the picture kept before (or, with none, shows the link
+                                  while online) and is fetched again at the next refresh. A project whose picture was
+                                  taken off, that is no longer visible, or that is no longer among `ids` (no plan of this
+                                  person's saved here) loses this person's kept one; so do the people no longer among
+                                  `owners` (ownersHere: the ids with plans on this device). -> as shown(owner, ids);
+   * forgetAll(owner)             this person's kept pictures off this device (they no longer open plan files).
 
+   A picture replaced while the page shows it is let go at the next call, once the page has drawn what replaced it.
    Nothing here is a plan or a price: the same pictures Search and the project page show anyone who sees the project,
-   kept in IndexedDB "dcr2-plan-pictures" (key: the project id; {pid, fileId, blob}). Storage that fails (a private
-   window) keeps nothing and shows what came online. Nothing here throws. */
+   kept in IndexedDB "dcr2-plan-pictures" (key "<owner>|<project id>"; {owner, pid, fileId, blob}). Storage that fails
+   (a private window) keeps nothing and shows what came online. Nothing here throws. */
 
 import * as projectsRepo from "./repo/projects.js";
 import * as filesRepo from "./repo/files.js";
@@ -21,10 +26,16 @@ const STORE = "pics";
 /** A picture larger than this is not kept (thumb-prep.js makes them at most 800 px: far smaller). */
 const MAX_BYTES = 3 * 1024 * 1024;
 
-// project id -> {fileId, url, own}: what this page shows - an object URL it made (own: it lives with the page), or the
-// signed link itself when the bytes could not be fetched to keep (shown online, kept next time)
+// "<owner>|<pid>" -> {fileId, url, own}: what this page shows - an object URL it made (own: it lives with the page), or
+// the signed link itself when the bytes could not be fetched to keep (shown online; fetched again at the next refresh)
 const urls = new Map();
+// object URLs replaced on this page: let go at the next call, once the page has drawn what replaced them
+let retired = [];
 let dbp = null;
+
+const keyOf = (owner, pid) => String(owner) + "|" + String(pid);
+const ownerOf = (key) => key.slice(0, key.indexOf("|"));
+const pidOf = (key) => key.slice(key.indexOf("|") + 1);
 
 function open() {
   if (!dbp) {
@@ -57,6 +68,7 @@ function tx(mode, fn) {
   });
 }
 
+/** Every kept picture (anyone's), or null when storage cannot be read. */
 async function keptAll() {
   try {
     const all = await tx("readonly", function (s) { return s.getAll(); });
@@ -64,92 +76,114 @@ async function keptAll() {
   } catch (e) { return null; }
 }
 
-function release(u) {
-  if (u && u.own) URL.revokeObjectURL(u.url);
+function settle() {
+  const r = retired;
+  retired = [];
+  r.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) { /* gone */ } });
 }
 
-function urlFor(pid, fileId, blob) {
-  const had = urls.get(pid);
-  if (had && had.fileId === fileId && had.own) return had.url;
+function release(u) {
+  if (u && u.own) retired.push(u.url);
+}
+
+function show(key, fileId, blob) {
+  const had = urls.get(key);
+  if (had && had.own && had.fileId === fileId) return had.url;
   release(had);
   const url = URL.createObjectURL(blob);
-  urls.set(pid, { fileId, url, own: true });
+  urls.set(key, { fileId, url, own: true });
   return url;
 }
 
-function drop(pid) {
-  release(urls.get(pid));
-  urls.delete(pid);
-}
-
-export async function shown(ids) {
-  const want = new Set((ids || []).map(String));
+/** {pid: URL} for this person and these projects: what this page shows first, then what is kept here. */
+async function collect(who, list, all) {
+  const want = new Set(list);
   const out = {};
-  // what this visit already shows (fetched just now, kept or not) first; then what is kept here
-  urls.forEach(function (u, pid) { if (want.has(pid)) out[pid] = u.url; });
-  (await keptAll() || []).forEach(function (v) {
+  urls.forEach(function (u, key) { if (ownerOf(key) === who && want.has(pidOf(key))) out[pidOf(key)] = u.url; });
+  (all === undefined ? await keptAll() : all || []).forEach(function (v) {
     const pid = String(v.pid);
-    if (want.has(pid) && !out[pid]) out[pid] = urlFor(pid, String(v.fileId), v.blob);
+    if (v.owner === who && want.has(pid) && !out[pid]) out[pid] = show(keyOf(who, pid), String(v.fileId), v.blob);
   });
   return out;
 }
 
-export async function refresh(ids) {
+export async function shown(owner, ids) {
+  settle();
+  if (!owner) return {};
+  return collect(String(owner), (ids || []).map(String));
+}
+
+export async function refresh(owner, ids, owners) {
+  settle();
+  if (!owner) return {};
+  const who = String(owner);
   const list = Array.from(new Set((ids || []).map(String)));
   let pics;
-  try { pics = await projectsRepo.pictureIds(list); } catch (e) { return shown(list); }     // offline, or no answer
+  try { pics = await projectsRepo.pictureIds(list); } catch (e) { return collect(who, list); }     // offline, or no answer
   const byId = {};
   pics.forEach(function (p) { byId[p.id] = p; });
-  const kept = await keptAll();
+  const all = await keptAll();
   const keptBy = {};
-  (kept || []).forEach(function (v) { keptBy[String(v.pid)] = v; });
+  (all || []).forEach(function (v) { if (v.owner === who) keptBy[String(v.pid)] = v; });
   const need = pics.filter(function (p) {
     if (!p.thumbnailFileId) return false;
-    const k = keptBy[p.id], u = urls.get(p.id);
-    return !(k && String(k.fileId) === p.thumbnailFileId) && !(u && u.fileId === p.thumbnailFileId);
+    const k = keptBy[p.id], u = urls.get(keyOf(who, p.id));
+    return !(k && String(k.fileId) === p.thumbnailFileId) && !(u && u.own && u.fileId === p.thumbnailFileId);
   });
   let signed = {};
-  if (need.length) { try { signed = await filesRepo.thumbnailUrls(need); } catch (e) { signed = {}; } }
+  if (need.length) {
+    filesRepo.forgetThumbnails();                          // fresh links: one that failed or ran out is signed again
+    try { signed = await filesRepo.thumbnailUrls(need); } catch (e) { signed = {}; }
+  }
   for (const p of need) {
+    const key = keyOf(who, p.id);
     const link = signed[p.id];
-    if (!link) continue;
     let blob = null;
-    if (/^https:\/\//.test(link)) {                        // Storage's signed link (the demo's data: one is only shown)
+    if (link && /^https:\/\//.test(link)) {                // Storage's signed link (the demo's data: one is only shown)
       try {
         const r = await fetch(link, { cache: "no-store" });
         blob = r.ok ? await r.blob() : null;
       } catch (e) { blob = null; }
     }
-    if (!blob || !/^image\//.test(blob.type) || !blob.size || blob.size > MAX_BYTES) {
-      // not kept (the next visit tries again): shown from its link while online
-      release(urls.get(p.id));
-      urls.set(p.id, { fileId: p.thumbnailFileId, url: link, own: false });
+    if (blob && /^image\//.test(blob.type) && blob.size && blob.size <= MAX_BYTES) {
+      show(key, p.thumbnailFileId, blob);
+      if (all) {
+        try {
+          await tx("readwrite", function (s) { s.put({ owner: who, pid: p.id, fileId: p.thumbnailFileId, blob }, key); });
+          keptBy[p.id] = { owner: who, pid: p.id, fileId: p.thumbnailFileId, blob };
+        } catch (e) { /* shown, not kept */ }
+      }
       continue;
     }
-    urlFor(p.id, p.thumbnailFileId, blob);
-    if (kept) {
-      try { await tx("readwrite", function (s) { s.put({ pid: p.id, fileId: p.thumbnailFileId, blob }, p.id); }); } catch (e) { /* shown, not kept */ }
-    }
+    // not fetched: the picture shown or kept before stays (it shows with no signal too); with none, the link itself while
+    // online - fetched again at the next refresh
+    const had = urls.get(key);
+    if (link && !(had && had.own) && !keptBy[p.id]) urls.set(key, { fileId: p.thumbnailFileId, url: link, own: false });
   }
-  // what is no longer this list's picture goes
+  // what is no longer this person's picture goes, and the pictures of people with no plan on this device any more
   const gone = new Set();
-  Object.keys(keptBy).forEach(function (pid) {
-    const p = byId[pid];
-    if (list.indexOf(pid) === -1 || !p || !p.thumbnailFileId) gone.add(pid);
-  });
-  urls.forEach(function (u, pid) {
-    const p = byId[pid];
-    if (list.indexOf(pid) === -1 || !p || !p.thumbnailFileId) gone.add(pid);
-  });
-  if (gone.size) {
-    try { await tx("readwrite", function (s) { gone.forEach(function (pid) { s.delete(pid); }); }); } catch (e) { /* the next refresh */ }
-    gone.forEach(drop);
+  const stale = function (pid) { const p = byId[pid]; return list.indexOf(pid) === -1 || !p || !p.thumbnailFileId; };
+  Object.keys(keptBy).forEach(function (pid) { if (stale(pid)) gone.add(keyOf(who, pid)); });
+  urls.forEach(function (u, key) { if (ownerOf(key) === who && stale(pidOf(key))) gone.add(key); });
+  if (Array.isArray(owners)) {
+    (all || []).forEach(function (v) {
+      if (v.owner !== who && owners.indexOf(v.owner) === -1) gone.add(keyOf(v.owner, v.pid));
+    });
   }
-  return shown(list);
+  if (gone.size) {
+    try { await tx("readwrite", function (s) { gone.forEach(function (k) { s.delete(k); }); }); } catch (e) { /* the next refresh */ }
+    gone.forEach(function (k) { release(urls.get(k)); urls.delete(k); });
+  }
+  return collect(who, list);
 }
 
-export async function forgetAll() {
-  urls.forEach(release);
-  urls.clear();
-  try { await tx("readwrite", function (s) { s.clear(); }); } catch (e) { /* nothing kept */ }
+export async function forgetAll(owner) {
+  settle();
+  if (!owner) return;
+  const who = String(owner);
+  urls.forEach(function (u, key) { if (ownerOf(key) === who) { if (u.own) URL.revokeObjectURL(u.url); urls.delete(key); } });
+  const all = await keptAll();
+  const mine = (all || []).filter(function (v) { return v.owner === who; }).map(function (v) { return keyOf(who, v.pid); });
+  if (!mine.length) return;
+  try { await tx("readwrite", function (s) { mine.forEach(function (k) { s.delete(k); }); }); } catch (e) { /* nothing kept */ }
 }

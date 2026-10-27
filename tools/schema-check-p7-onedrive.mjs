@@ -73,6 +73,8 @@ export async function run(h) {
   }, subOf(jwt));
   // the plan buttons' op is in the broker (DCR Desktop 2) - before that its checks wait, and the drift is the older one
   const HAS_PLANS = Array.isArray(fn.OPS) && fn.OPS.includes("plans_for");
+  // and the Plans Library's two (2026-10-26)
+  const HAS_LIBRARY = Array.isArray(fn.OPS) && fn.OPS.includes("plans_list");
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   const deps = {
     settings: () => {
@@ -141,7 +143,8 @@ export async function run(h) {
 
   try {
     await check("Part 4 OneDrive: drift - the broker's ops, error codes, CORS origin, chunk unit and cap, allowlist and blocklist are the ones Portal 2 knows", async () => {
-      same(fn.OPS.slice().sort(), ["download", "ensure_folder", "list", "status", "upload_done", "upload_session"].concat(HAS_PLANS ? ["plans_for"] : []).sort(), "the ops");
+      same(fn.OPS.slice().sort(), ["download", "ensure_folder", "list", "status", "upload_done", "upload_session"].concat(HAS_PLANS ? ["plans_for"] : [])
+        .concat(HAS_LIBRARY ? ["plans_list", "plan_link"] : []).sort(), "the ops");
       same(Object.keys(fn.ERRORS).sort(), od.CONTRACT.filter((c) => HAS_PLANS || !/^takeoff_/.test(c)).sort(),
         "every error code the broker answers is one repo/onedrive.js reads");
       ok(fn.ALLOWED_ORIGINS.includes("https://portal.dcrframing.com"), "the site's origin is allowed in CORS");
@@ -290,24 +293,26 @@ export async function run(h) {
         same((await refused(() => od.call({ op: "plans_for", project_ids: [pid] }), "takeoff_not_configured", "the raw answer")).status, 503, "503");
         takeoffSet = true;
         if ("ONEDRIVE_TAKEOFF_ITEM_ID" in (TW.SETTINGS_OK || {})) {
-          // the made-up project's folder in the fake takeoff folder (when fake_graph.ts has one): two takeoff files at
-          // two depths, an autosave and a PDF that never count
+          // the made-up project's folder in the fake takeoff folder (when fake_graph.ts has one): a takeoff file right in
+          // it - the only one that counts (the owner, 2026-10-27: never one in a sub-folder) - and one in Plans/Rev 2, one
+          // in Backup, an autosave and a PDF that never count
           let want = null;
           if (g.takeoff && g.takeoff.id) {
             const tf = g.mkdir(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
             const plansDir = g.mkdir(tf.id, "Plans");
             g.file(tf.id, made.number + " Bid.takeoff", 10);
             g.file(g.mkdir(plansDir.id, "Rev 2").id, made.number + " Rev 2.takeoff", 10);
+            g.file(g.mkdir(tf.id, "Backup").id, made.number + " Bid (old).takeoff", 10);
             g.file(plansDir.id, made.number + " Bid.takeoff.autosave", 10);
             g.file(plansDir.id, "A1 - Floor plan.pdf", 10);
-            want = 2;
+            want = 1;
           }
           od.forgetPlans();
           const got = await od.plansFor([pid, Number(gone.id)]);
           same(Object.keys(got), [String(pid)], "the deleted project is left out");
           same(got[String(pid)].number, String(made.number), "the number, read under the caller's rules");
           ok(Number.isSafeInteger(got[String(pid)].plans) && got[String(pid)].plans >= 0, "a count");
-          if (want !== null) same(got[String(pid)].plans, want, "the takeoff files at any depth, nothing else");
+          if (want !== null) same(got[String(pid)].plans, want, "the takeoff files right in its folder, never a sub-folder's, nothing else");
           const raw = await od.call({ op: "plans_for", project_ids: [pid] });
           same(Object.keys(raw).sort(), ["checked_at", "projects"], "the answer's fields");
           same(Object.keys(raw.projects[String(pid)]).sort(), ["number", "plans"], "no name, item id or link");

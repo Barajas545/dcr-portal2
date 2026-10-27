@@ -10,7 +10,7 @@
 
    - Search as a field person and as an admin (decision 2: the same buttons): A267 gets 📐 beside its result (never
      inside its link), opening takeoff-web at #plans=A267 in a new tab (rel noopener), its accessible name and the count
-     in its title; among the A02… results A024 and A024-B each get theirs (apart), A021 none; one plans_for call a search;
+     in its title (the admin's names the Plans Library's menu of files it opens: the people who see prices); among the A02… results A024 and A024-B each get theirs (apart), A021 none; one plans_for call a search;
    - the project page's header: "📐 Plans ↗" on A267 (every tab), none on A001; the Takeoffs tab keeps its own link;
    - the home page's Floor Plans card for an admin, a manager with prices and an accountant (prices), never for a manager
      without prices, a lead, a field person or a view-only person; a new tab at takeoff-web's #plans;
@@ -119,7 +119,8 @@ async function main() {
         const a267 = rows.find((r) => /^A267\b/.test(r.title));
         check(key + ": A267's button - takeoff-web at #plans=A267 in a new tab, its name, the count in its title, beside the link",
           a267 && a267.btn && a267.btn.href === "https://barajas545.github.io/takeoff-web/index.html#plans=A267" && a267.btn.target === "_blank" &&
-          a267.btn.rel === "noopener" && a267.btn.label === "Plans for A267 — open in the takeoff app" && /^3 takeoff files for A267/.test(a267.btn.title) &&
+          a267.btn.rel === "noopener" && /^3 takeoff files for A267/.test(a267.btn.title) &&
+          a267.btn.label === (key === "admin" ? "Plans for A267 — open or save the plan files" : "Plans for A267 — open in the takeoff app") &&
           !a267.inLink && /📐/.test(a267.btn.text), JSON.stringify(rows));
         await countCalls(p);
         await p.eval("(() => { const b = document.getElementById('seInput'); b.value = 'A02'; b.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");

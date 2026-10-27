@@ -598,7 +598,7 @@ tbody tr:hover { background: var(--surface-2); }
 .plan-prog { height: 6px; border-radius: 3px; background: rgba(127, 127, 127, .22); overflow: hidden; margin-top: 5px; max-width: 360px; }
 .plan-prog[hidden] { display: none; }
 .plan-prog i { display: block; height: 100%; width: 0; background: var(--ok); border-radius: 3px; transition: width .4s ease; }
-.plan-prog.held i { opacity: .45; }
+.plan-prog.held i { background: var(--text-muted); opacity: .55; }
 .pl-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .pl-btns .btn { min-height: 38px; }
 .pl-empty { font-size: 13.5px; color: var(--text-muted); padding: 10px 0; }

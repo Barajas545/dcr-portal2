@@ -228,14 +228,18 @@ test("the menu's rows: OneDrive's files in order with what is saved here; offlin
   assert.deepEqual(menuRows([], saved).map((r) => r.name), ["L1 walls.takeoff", "Old.takeoff"], "offline: what is saved");
 });
 
-test("the green bar (owner 2026-10-27): filling while a plan saves, full once it is saved, dimmed part way when paused; none otherwise", () => {
+test("the green bar (owner 2026-10-27): filling while a plan saves, full only once it is saved, grey part way when paused; none otherwise", () => {
   const row = (status, over) => Object.assign(rec(over), { status });
   assert.deepEqual(lib.progressOf(row("downloading"), 450, 1000), { pct: 45, kind: "run" });
   assert.deepEqual(lib.progressOf(row("downloading"), 0, 0), { pct: 0, kind: "run" }, "the size not known yet: an empty bar");
-  assert.deepEqual(lib.progressOf(row("downloading"), 1200, 1000), { pct: 100, kind: "run" }, "never past full");
+  assert.deepEqual(lib.progressOf(row("downloading"), 1200, 1000), { pct: 99, kind: "run" }, "never past 99 while it downloads");
+  assert.deepEqual(lib.progressOf(row("downloading"), 1000, 1000), { pct: 99, kind: "run" },
+    "the last byte came: 99 until it is checked against OneDrive and saved (full green means complete)");
   assert.deepEqual(lib.progressOf(row("saved")), { pct: 100, kind: "done" }, "saved: full - the file is complete");
   assert.deepEqual(lib.progressOf(row("paused", { dl: { state: "paused", done: 250, size: 1000 } })), { pct: 25, kind: "held" });
   assert.deepEqual(lib.progressOf(row("stopped", { dl: { state: "error", done: 999, size: 1000 } })), { pct: 99, kind: "held" });
+  assert.deepEqual(lib.progressOf(row("paused", { dl: { state: "paused", done: 1000, size: 1000 } })), { pct: 99, kind: "held" },
+    "downloaded, not checked yet (offline): not full");
   assert.equal(lib.progressOf(row("stopped", { dl: { state: "error", done: 0, size: 0 } })), null, "nothing downloaded: no bar");
   for (const s of ["outdated", "gone", "denied", "missing"]) assert.equal(lib.progressOf(row(s)), null, s);
   assert.equal(lib.progressOf(null), null);
@@ -251,6 +255,9 @@ test("the menu's rows and the library's draw the bar; it is green (the site's ow
   const css = read("css/styles.css");
   assert.match(css, /\.plan-prog i \{[^}]*background: var\(--ok\);/);
   assert.match(css, /\.plan-prog\[hidden\] \{ display: none; \}/);
+  assert.match(css, /\.plan-prog\.held i \{ background: var\(--text-muted\);/, "paused or stopped part way: grey, not green");
+  assert.match(read("js/pages/plan-buttons.js"), /"Downloading " \+ Math\.min\(99, /, "the menu's words never say 100% before it is saved");
+  assert.match(read("js/pages/plans-library.js"), /const pct = size \? Math\.min\(99, /, "nor the library's");
   const pb = read("js/pages/plan-buttons.js");
   assert.match(pb, /progressHtml\(s \? progressOf\(s, s\.job \? s\.job\.done : 0, s\.job \? s\.job\.size : 0\) : null\)/);
   assert.match(pb, /setBar\(row\.querySelector\("\.plan-prog"\), progressOf\(s, m\.done, m\.size\)\);/);
@@ -280,10 +287,179 @@ test("the library's project pictures: pictureIds reads two columns of the projec
   const page = readFileSync(new URL("../site/js/pages/plans-library.js", import.meta.url), "utf8");
   // a dynamic import: a page whose pictures cannot load still lists and opens the plans
   assert.match(page, /const P = await import\("\.\.\/plan-pictures\.js"\);/);
-  assert.match(page, /if \(fresh\) import\("\.\.\/plan-pictures\.js"\)\.then\(function \(P\) \{ return P\.forgetAll\(\); \}\)/);
+  assert.match(page, /if \(fresh\) import\("\.\.\/plan-pictures\.js"\)\.then\(function \(P\) \{ return P\.forgetAll\(L\.owner\(\)\); \}\)/);
+  assert.match(page, /state\.pics = await P\.shown\(who, pids\);/);
+  assert.match(page, /state\.pics = await P\.refresh\(who, pids, L\.ownersHere\(\)\);/);
+  assert.match(page, /L\.maybeCheck\(state\.me, \{ fresh \}\);\s*if \(navigator\.onLine !== false\) loadPictures\(projectIds\(\), true\);/,
+    "every 5 minutes too: a picture that failed is fetched again with no reload");
   const pics = readFileSync(new URL("../site/js/plan-pictures.js", import.meta.url), "utf8");
   assert.ok(!/localStorage|sessionStorage|caches\./.test(pics), "kept in IndexedDB only");
   assert.match(pics, /const DB = "dcr2-plan-pictures";/);
+});
+
+test("a plan saved from a project's sub-folder (a Backup's, before the owner's rule of 2026-10-27) is never shown and goes from the device", async () => {
+  assert.equal(lib.inSubFolder("A267 - 1 Test Way/Backups"), true);
+  assert.equal(lib.inSubFolder("A267 - 1 Test Way/Plans/Rev 2"), true);
+  assert.equal(lib.inSubFolder("A267 - 1 Test Way"), false, "right in the project's folder: a plan");
+  assert.equal(lib.inSubFolder(""), false);
+  assert.equal(lib.inSubFolder(null), false);
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../site/js/plan-library.js", import.meta.url), "utf8");
+  assert.match(src, /const all = \(await getAll\("plans"\)\)\.filter\(\(r\) => r\.owner === who && !inSubFolder\(r\.folder\)\);/, "list() leaves them out");
+  assert.match(src, /for \(const r of mine\.filter\(\(x\) => inSubFolder\(x\.folder\)\)\) \{\s*try \{ await remove\(r\.itemId, \{ owner: who \}\); \}/,
+    "maybeCheck takes them off the device (a copy handed to the takeoff app lately after its grace, as any Remove)");
+  assert.match(src, /mine = mine\.filter\(\(x\) => !inSubFolder\(x\.folder\)\);/);
+});
+
+/* ── js/plan-pictures.js over an in-memory IndexedDB and a stub client ──────────────────────────────────────────── */
+
+/** Just enough of IndexedDB for js/plan-pictures.js: open (with its upgrade), one store, getAll / put / delete. */
+function memoryIndexedDB() {
+  const dbs = new Map();
+  return {
+    dbs,
+    open(name) {
+      const req = {};
+      setTimeout(function () {
+        let stores = dbs.get(name);
+        const fresh = !stores;
+        if (fresh) { stores = new Map(); dbs.set(name, stores); }
+        req.result = {
+          createObjectStore(s) { stores.set(s, new Map()); },
+          transaction(s) {
+            const data = stores.get(s);
+            const t = {
+              objectStore() {
+                return {
+                  getAll() { return { result: Array.from(data.values()) }; },
+                  put(v, k) { data.set(k, v); return {}; },
+                  delete(k) { data.delete(k); return {}; },
+                };
+              },
+            };
+            setTimeout(function () { if (t.oncomplete) t.oncomplete(); }, 0);
+            return t;
+          },
+          close() {},
+        };
+        if (fresh && req.onupgradeneeded) req.onupgradeneeded();
+        if (req.onsuccess) req.onsuccess();
+      }, 0);
+      return req;
+    },
+  };
+}
+
+test("the library's pictures (js/plan-pictures.js): kept per person, fetched again after a failure, a kept one never swapped for a link, let go only once replaced on the page", async () => {
+  const idb = memoryIndexedDB();
+  const realFetch = globalThis.fetch, realRevoke = URL.revokeObjectURL;
+  globalThis.indexedDB = idb;
+  // the made-up world: project id -> its picture's file id; Storage's signing and the bytes can fail
+  const W = { pics: { 7: 55, 8: 66, 9: 77 }, signFails: false, fetchFails: false, fetched: [], signed: 0, revoked: [] };
+  useClient({
+    from(table) {
+      return {
+        select() { return this; },
+        in(col, ids) {
+          const rows = table === "projects"
+            ? ids.filter((id) => id in W.pics).map((id) => ({ id, thumbnail_file_id: W.pics[id], deleted_at: null }))
+            : ids.map((id) => ({ id, storage_path: "p/x/thumbnail/" + id + "/thumbnail.jpg", preview_path: null, storage: "cloud" }));
+          return Promise.resolve({ data: rows, error: null });
+        },
+      };
+    },
+    storage: { from() { return { async createSignedUrls(paths) {
+      W.signed++;
+      if (W.signFails) return { data: null, error: { message: "Failed to fetch", status: 0 } };
+      return { data: paths.map((pth) => ({ path: pth, signedUrl: "https://made-up.supabase.co/sign/" + pth + "?t=" + W.signed, error: null })), error: null };
+    } }; } },
+  });
+  globalThis.fetch = async (u) => {
+    W.fetched.push(String(u));
+    if (W.fetchFails) throw new TypeError("Failed to fetch");
+    return new Response(new Blob(["made-up picture " + u], { type: "image/jpeg" }));
+  };
+  URL.revokeObjectURL = (u) => { W.revoked.push(u); return realRevoke.call(URL, u); };
+  const kept = () => Array.from(idb.dbs.get("dcr2-plan-pictures").get("pics").entries()).map(([k, v]) => k + "=" + v.fileId).sort();
+  try {
+    const P = await import("../site/js/plan-pictures.js");
+    // A's picture of 7 is fetched and kept under A's name
+    const a1 = await P.refresh("userA", ["7"], ["userA"]);
+    assert.match(a1["7"], /^blob:/);
+    assert.deepEqual(kept(), ["userA|7=55"]);
+    // B (plans for 9 only) on the same device: A's stays, B's is kept apart
+    const b1 = await P.refresh("userB", ["9"], ["userA", "userB"]);
+    assert.match(b1["9"], /^blob:/);
+    assert.deepEqual(kept(), ["userA|7=55", "userB|9=77"], "one person's visit never takes another's picture");
+    assert.deepEqual(Object.keys(await P.shown("userA", ["7", "9"])), ["7"], "each person sees their own");
+    // Storage's signing fails once: nothing shown, nothing kept - and the next refresh signs again and keeps it
+    W.signFails = true;
+    assert.deepEqual(await P.refresh("userA", ["7", "8"], ["userA", "userB"]), { 7: a1["7"] }, "8 not loaded");
+    W.signFails = false;
+    const a2 = await P.refresh("userA", ["7", "8"], ["userA", "userB"]);
+    assert.match(a2["8"], /^blob:/, "signed again: a failed signing is never remembered as 'no picture'");
+    assert.deepEqual(kept(), ["userA|7=55", "userA|8=66", "userB|9=77"]);
+    // 7's picture changes but its bytes cannot be fetched: the kept one stays shown (it opens with no signal), never the link
+    W.pics[7] = 56;
+    W.fetchFails = true;
+    const a3 = await P.refresh("userA", ["7", "8"], ["userA", "userB"]);
+    assert.equal(a3["7"], a1["7"], "the picture kept before stays");
+    assert.deepEqual(kept(), ["userA|7=55", "userA|8=66", "userB|9=77"]);
+    // fetched again at the next refresh: the new one shown and kept; the old object URL is let go only at the call after
+    W.fetchFails = false;
+    const before = W.revoked.length;
+    const a4 = await P.refresh("userA", ["7", "8"], ["userA", "userB"]);
+    assert.ok(a4["7"] && a4["7"] !== a1["7"] && /^blob:/.test(a4["7"]));
+    assert.deepEqual(kept(), ["userA|7=56", "userA|8=66", "userB|9=77"]);
+    assert.equal(W.revoked.length, before, "not let go while the page may still draw it");
+    await P.shown("userA", ["7"]);
+    assert.ok(W.revoked.indexOf(a1["7"]) !== -1, "let go at the next call, once the page drew its replacement");
+    // a new project with no picture kept and its bytes failing: the link itself while online, fetched again next time
+    W.pics[10] = 88;
+    W.fetchFails = true;
+    const a5 = await P.refresh("userA", ["7", "8", "10"], ["userA", "userB"]);
+    assert.match(a5["10"], /^https:\/\/made-up\.supabase\.co\/sign\//);
+    W.fetchFails = false;
+    const a6 = await P.refresh("userA", ["7", "8", "10"], ["userA", "userB"]);
+    assert.match(a6["10"], /^blob:/, "fetched again and kept");
+    assert.ok(kept().includes("userA|10=88"));
+    // A removed the plans of 8 and 10: their pictures go; B is no longer on this device: B's goes too
+    await P.refresh("userA", ["7"], ["userA"]);
+    assert.deepEqual(kept(), ["userA|7=56"]);
+    // a picture taken off the project goes
+    delete W.pics[7];
+    assert.deepEqual(await P.refresh("userA", ["7"], ["userA"]), {});
+    assert.deepEqual(kept(), []);
+    // offline (no answer from the database): what is kept is shown, nothing is pruned
+    W.pics[7] = 57;
+    await P.refresh("userC", ["7"], ["userC"]);
+    useClient({ from() { return { select() { return this; }, in() { return Promise.reject(Object.assign(new Error("Failed to fetch"), { code: "NETWORK" })); } }; } });
+    const c1 = await P.refresh("userC", ["7"], ["userC"]);
+    assert.match(c1["7"], /^blob:/);
+    assert.deepEqual(kept(), ["userC|7=57"]);
+    // forgetAll is one person's only
+    await P.forgetAll("userZ");
+    assert.deepEqual(kept(), ["userC|7=57"]);
+    await P.forgetAll("userC");
+    assert.deepEqual(kept(), []);
+    assert.deepEqual(await P.shown("userC", ["7"]), {});
+    // a link that is not Storage's https one (the demo's data:) is shown, never fetched
+    W.fetched.length = 0;
+    useClient({
+      from(table) { return { select() { return this; }, in(col, ids) {
+        return Promise.resolve({ data: table === "projects" ? [{ id: 12, thumbnail_file_id: 99, deleted_at: null }]
+          : [{ id: 99, storage_path: "p/x/thumbnail/99/thumbnail.jpg", preview_path: null, storage: "cloud" }], error: null }); } }; },
+      storage: { from() { return { async createSignedUrls(paths) { return { data: paths.map((pth) => ({ path: pth, signedUrl: "data:image/svg+xml,x", error: null })), error: null }; } }; } },
+    });
+    assert.deepEqual(await P.refresh("userD", ["12"], ["userD"]), { 12: "data:image/svg+xml,x" });
+    assert.deepEqual(W.fetched, []);
+    assert.deepEqual(await P.shown(""), {}, "no person: nothing");
+  } finally {
+    useClient(null);
+    globalThis.fetch = realFetch;
+    URL.revokeObjectURL = realRevoke;
+    delete globalThis.indexedDB;
+  }
 });
 
 /* ── repo/onedrive.js: plansList, planLink ───────────────────────────────────────────────────────────────────── */

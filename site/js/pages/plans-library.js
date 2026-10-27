@@ -63,7 +63,7 @@ function paintNet() {
 }
 
 function stateLine(r, done, size) {
-  const pct = size ? Math.min(100, Math.floor((done / size) * 100)) : null;
+  const pct = size ? Math.min(99, Math.floor((done / size) * 100)) : null;
   let s = r.status === "downloading" && pct !== null ? "Downloading " + pct + "%" +
     (r.job && r.job.rate ? " · " + fmtSize(r.job.rate) + "/s" : "") : statusText(r.status, !!r.file);
   if (r.savedAt && r.status === "saved") s += " · " + day(r.savedAt);
@@ -126,8 +126,8 @@ function picHtml(pid) {
   return '<span class="lib-pic" data-pic="' + esc(pid) + '">' + (u ? '<img src="' + esc(u) + '" alt="">' : '<span class="ph">🏠</span>') + "</span>";
 }
 
-/** The pictures of these projects: the kept ones at once, then (online) each one as it is now. Once per set of projects
-    while the page is open, and again when the connection comes back. Never throws. */
+/** The pictures of these projects: the kept ones at once, then (online) each one as it is now. Once per set of projects,
+    again when the connection comes back and every 5 minutes (a picture that failed is fetched again). Never throws. */
 async function loadPictures(pids, again) {
   const key = pids.slice().sort().join(",");
   if (!again && key === state.picsFor) return;
@@ -136,10 +136,11 @@ async function loadPictures(pids, again) {
   state.picsFor = key;
   try {
     const P = await import("../plan-pictures.js");
-    state.pics = await P.shown(pids);
+    const who = L.owner();
+    state.pics = await P.shown(who, pids);
     paintPictures();
     if (navigator.onLine !== false) {
-      state.pics = await P.refresh(pids);
+      state.pics = await P.refresh(who, pids, L.ownersHere());
       paintPictures();
     }
   } catch (e) { /* the houses stay */ } finally {
@@ -246,7 +247,7 @@ async function main() {
     // online, never on an old copy of it
     let gone = 0;
     if (fresh && L.supported()) { try { gone = await L.purgeOwner(L.owner()); } catch (e) { gone = 0; } }
-    if (fresh) import("../plan-pictures.js").then(function (P) { return P.forgetAll(); }).catch(function () { /* none kept */ });
+    if (fresh) import("../plan-pictures.js").then(function (P) { return P.forgetAll(L.owner()); }).catch(function () { /* none kept */ });
     el("libList").innerHTML = '<div class="lib-empty">The Plans Library is for the people who see prices: plan files carry prices.' +
       (gone ? "<br>The " + gone + " plan" + (gone === 1 ? "" : "s") + " you had saved on this device " + (gone === 1 ? "was" : "were") + " removed." : "") + "</div>";
     el("libBar").textContent = "";
@@ -279,7 +280,10 @@ async function main() {
   await render();
   // new versions, interrupted downloads, copies the browser lost: quietly, while this page is open
   L.maybeCheck(state.me, { fresh }).finally(queueRender);
-  state.timer = setInterval(function () { L.maybeCheck(state.me, { fresh }); }, 5 * 60 * 1000);
+  state.timer = setInterval(function () {
+    L.maybeCheck(state.me, { fresh });
+    if (navigator.onLine !== false) loadPictures(projectIds(), true);
+  }, 5 * 60 * 1000);
 }
 
 main().catch(function (e) {
