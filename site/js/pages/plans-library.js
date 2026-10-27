@@ -13,7 +13,7 @@
 import { boot, el, esc, confirmBox } from "./shell.js";
 import { planFilesFor } from "../map/plans.js";
 import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh } from "../map/plan-library.js";
-import { handoffProblem, lastReady, iosHomeScreen } from "../plan-handoff.js";
+import { handoffProblem, lastReady, iosHomeScreen, IOS_HOME } from "../plan-handoff.js";
 import * as L from "../plan-library.js";
 
 const state = { me: null, rows: [], busy: false, timer: null };
@@ -40,13 +40,14 @@ async function paintBar() {
 
 function paintTool() {
   const n = el("libTool");
-  if (!state.rows.length) { n.hidden = true; return; }
-  n.hidden = false;
   if (iosHomeScreen()) {
+    n.hidden = false;
     n.className = "lib-note warn";
-    n.textContent = "On an iPhone or iPad, plans open from the portal in Safari: open portal.dcrframing.com in Safari (not from the home-screen icon) to open them.";
+    n.textContent = IOS_HOME;
     return;
   }
+  if (!state.rows.length) { n.hidden = true; return; }
+  n.hidden = false;
   const at = lastReady();
   const ok = readyFresh(at, Date.now());
   n.className = "lib-note" + (ok ? " ok" : " warn");
@@ -150,10 +151,10 @@ async function checkNow() {
     if (s.gone) bits.push(s.gone + " no longer in OneDrive.");
     if (s.denied) bits.push(s.denied + " no longer open to your account.");
     say(bits.join(" "));
-    L.autoWork();
   } catch (e) {
     say((e && e.message) || "Could not check for new versions.", "warn");
   } finally {
+    if (!iosHomeScreen()) L.autoWork();                      // what already needs it goes on, checked or not
     state.busy = false;
     queueRender();
   }
@@ -206,6 +207,7 @@ async function main() {
   });
   L.onChange(function (m) {
     if (m.t === "progress") paintProgress(m);
+    else if (m.t === "ready") paintTool();
     else queueRender();
   });
   window.addEventListener("online", function () { queueRender(); L.maybeCheck(state.me, { fresh: true }); });

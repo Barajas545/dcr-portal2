@@ -325,7 +325,7 @@ export async function plansList(projectIds) {
     part.forEach(function (id) {
       const v = projects[String(id)];
       if (!v || typeof v !== "object" || typeof v.number !== "string" || !Array.isArray(v.files)) return;
-      out[String(id)] = { number: v.number, files: v.files.map(planFileOf).filter(Boolean) };
+      out[String(id)] = { number: v.number, files: v.files.map(planFileOf).filter(Boolean), complete: v.complete !== false };
     });
   }
   return out;

@@ -390,7 +390,7 @@
       const projects = {};
       for (const id of ids) {
         const p = mine.get(id);
-        if (p) projects[String(id)] = { number: p.number, files: planFilesOf(p).map(shown) };
+        if (p) projects[String(id)] = { number: p.number, files: planFilesOf(p).map(shown), complete: true };
       }
       return answer(200, { projects, checked_at: nowIso() });
     }

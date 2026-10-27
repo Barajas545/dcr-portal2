@@ -35,19 +35,19 @@
 import * as onedrive from "./repo/onedrive.js";
 import { storedUserId } from "./sb.js";
 import {
-  DIR, MAGIC, FILE_RE, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, brokerWide, keepSet,
-  pruneHanded, projectBatches, fmtSize, hashOf,
+  DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
+  brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf,
 } from "./map/plan-library.js";
 import { planFilesFor } from "./map/plans.js";
-import { openInTakeoff, READY_KEY } from "./plan-handoff.js";
+import { openInTakeoff, iosHomeScreen, READY_KEY, IOS_HOME } from "./plan-handoff.js";
 
 const DB_NAME = "dcr2-plan-library";
 const DB_VER = 1;
 const LOCK = "dcr2-plan-dl:";
 const OWNERS_KEY = "dcr2-plan-owners";
 const SPACE_MARGIN = 64 * 1024 * 1024;         // never fill the last bit of the quota
-const HOLD_MIN_MS = 5 * 60 * 1000;             // the automatic downloads' pause after a OneDrive-wide failure
-const CHECK_HOLD_MS = 5 * 60 * 1000;           // and the version check's, after it failed
+// After a OneDrive-wide failure the automatic downloads stop, and after a failed version check the checks stop: 5 min,
+// doubling while it keeps failing, up to 6 h (map/plan-library.js backoffMs); {until, n} in meta.
 const HAS = typeof window !== "undefined";
 
 export const UNSUPPORTED = "This browser cannot keep plan files on the device. Use Chrome or Edge on a computer or Android phone, or Safari 16.4 or newer on an iPhone or iPad.";
@@ -212,9 +212,20 @@ function markHanded(name) {
     return { key: "handed", value: handed };
   });
 }
-/** An old version or a removed copy: gone now - or, handed to the takeoff app lately, at a sweep after the grace. */
+/** An old version or a removed copy: gone now - or, handed to the takeoff app lately, kept a week from now (the replace
+    or the remove; up to a week of an old copy per plan opened) and gone at a sweep after that. A takeoff tab still open
+    on it longer than that loses it (its save check then keeps the work as a draft). */
 async function retire(name) {
-  if (name && !(await handedLately(name))) await removeFile(name);
+  if (!name) return;
+  if (await handedLately(name)) await markHanded(name);
+  else await removeFile(name);
+}
+
+/** This person still has a file of theirs here (a copy kept for the takeoff app after a Remove counts). */
+async function hasCopies(who) {
+  const mark = "p" + hashOf(who) + "-";
+  try { for await (const n of (await dir()).keys()) if (n.indexOf(mark) === 0) return true; } catch (e) { /* none readable */ }
+  return false;
 }
 
 /* ── telling the pages ─────────────────────────────────────────────────── */
@@ -310,6 +321,7 @@ export async function lastChecked() {
 /** Save one plan file of a project on this device: {projectId, number, projectTitle, file: {id, name, folder, size,
     modified, version}}. Resolves when the download ends (or pauses); the rows follow it through onChange. */
 export async function save(info) {
+  if (iosHomeScreen()) throw err("ios_home", IOS_HOME);
   if (!(await canWrite())) throw err("unsupported", UNSUPPORTED);
   const who = owner();
   if (!who) throw err("signin", "Sign in first.");
@@ -320,10 +332,10 @@ export async function save(info) {
     if (!r) {
       return { key, owner: who, itemId: f.id, projectId: String(info.projectId), number: String(info.number || ""),
         projectTitle: String(info.projectTitle || ""), name: f.name, folder: f.folder || "", file: "", size: 0, modified: null,
-        version: "", savedAt: "", dl: null, latest: null, fails: 0, retryAt: null };
+        version: "", savedAt: "", dl: null, latest: null, fails: 0, retryAt: null, failCode: null };
     }
     // saved again: the person's own act - carry on now, from a fresh link
-    const out = Object.assign({}, r, { projectTitle: String(info.projectTitle || r.projectTitle || ""), fails: 0, retryAt: null });
+    const out = Object.assign({}, r, { projectTitle: String(info.projectTitle || r.projectTitle || ""), fails: 0, retryAt: null, failCode: null });
     if (out.dl) out.dl = Object.assign({}, out.dl, { userPaused: false, state: out.dl.state === "error" ? "paused" : out.dl.state });
     return out;
   });
@@ -334,10 +346,11 @@ export async function save(info) {
 
 /** Download a saved plan again now (a newer version, a paused or stopped download): the person's own act. */
 export async function resume(itemId) {
+  if (iosHomeScreen()) throw err("ios_home", IOS_HOME);
   const key = keyOf(itemId);
   await mutate("plans", key, function (r) {
     if (!r) return undefined;
-    const out = Object.assign({}, r, { fails: 0, retryAt: null });
+    const out = Object.assign({}, r, { fails: 0, retryAt: null, failCode: null });
     if (out.dl) out.dl = Object.assign({}, out.dl, { userPaused: false, state: out.dl.state === "error" ? "paused" : out.dl.state });
     return out;
   });
@@ -381,7 +394,13 @@ async function noteFailure(key, x, auto) {
       if (!r) return undefined;
       let out = Object.assign({}, r);
       if (code === "forbidden") out.latest = { status: "denied", checkedAt: nowIso() };
-      if (code !== "offline" && code !== "unsupported") out = withFailure(out, Date.now());
+      if (x && x.moved) {
+        // the download went forward before it stopped (a weak signal): not a failure to wait longer after
+        out.fails = 0; out.retryAt = null; out.failCode = null;
+      } else if (code !== "offline" && code !== "unsupported" && !brokerWide(code)) {
+        out = withFailure(out, Date.now());
+        out.failCode = code;
+      }
       if (!out.dl && !out.file && code !== "gone") {
         const final = code === "not_plan" || code === "no_size";
         out.dl = { file: "", done: 0, size: 0, version: "", state: final ? "error" : "paused", userPaused: false,
@@ -440,9 +459,10 @@ async function run(key, auto) {
     if (!r) throw err("removed", "That saved plan was removed.");
     // an automatic download looks again under the lock: a person may have paused it, or it may be waiting
     if (auto && !dueForWork(r, Date.now())) return { skipped: true };
-    // a device already full needs no walk of OneDrive to say so
-    const known = Number((r.latest && r.latest.size) || (r.dl && r.dl.size)) || 0;
-    if (known > 0) await roomFor(known - (r.dl && r.dl.version === (r.latest && r.latest.version) ? Number(r.dl.done) || 0 : 0));
+    // a device already full needs no walk of OneDrive to say so (with a part on the device the check below is the
+    // right one: it runs after an outdated part is removed, and counts what a reused part already holds)
+    const known = Number(r.latest && r.latest.status === "ok" && r.latest.size) || 0;
+    if (known > 0 && !(r.dl && r.dl.file)) await roomFor(known);
     let link;
     try {
       link = await linkFor(r);
@@ -458,7 +478,7 @@ async function run(key, auto) {
       // already the version OneDrive holds, and really on the device: nothing to fetch
       const part = r.dl && r.dl.file && r.dl.file !== r.file ? r.dl.file : "";
       await mutate("plans", key, (c) => (c ? Object.assign({}, c, { latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver),
-        dl: null, fails: 0, retryAt: null }) : undefined));
+        dl: null, fails: 0, retryAt: null, failCode: null }) : undefined));
       if (part) await removeFile(part);
       return { already: true };
     }
@@ -478,6 +498,7 @@ async function run(key, auto) {
       await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: Object.assign({}, dl, { state: "paused", error: "", userPaused: true }) }) : undefined));
       return { paused: true };
     }
+    const from = Number(dl.done) || 0;
     dl = Object.assign(dl, { state: "running", error: "", userPaused: false });
     if (!(await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl }) : undefined)))) throw err("removed", "That saved plan was removed.");
     changed(key);
@@ -510,7 +531,7 @@ async function run(key, auto) {
         return Object.assign({}, c, { dl: d2 });
       });
       if (!cur) { await removeFile(dl.file); throw err("removed", "That saved plan was removed."); }
-      throw err(retryable ? "paused" : "stopped", message);
+      throw err(retryable ? "paused" : "stopped", message, { moved: typeof x.done === "number" && x.done > from });
     }
     // removed from another window while this one was downloading: what was written here goes too
     if (!(await get("plans", key))) { await removeFile(dl.file); return { removed: true }; }
@@ -536,12 +557,14 @@ async function run(key, auto) {
       }
       await mutate("plans", key, (c) => (c && c.dl ? Object.assign({}, c, { dl: Object.assign({}, c.dl, { state: "paused", done: w.size,
         error: "Downloaded — checked against OneDrive when the portal is next online." }) }) : undefined));
-      throw err("paused", "Downloaded; it is checked against OneDrive when the portal is next online.");
+      throw err("paused", "Downloaded; it is checked against OneDrive when the portal is next online.", { moved: true });
     }
     if (after.version !== ver.version || Number(after.size) !== w.size) {
       await removeFile(dl.file);
       await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: null }) : undefined));
-      if (attempt === 0) continue;
+      // the person's own Save or Update tries once more at once; an automatic one waits (a file saved again and again in
+      // OneDrive would otherwise be downloaded and thrown away all day)
+      if (attempt === 0 && !auto) continue;
       await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: { file: "", done: 0, size: 0, version: "", state: "paused", userPaused: false,
         error: "The file kept changing in OneDrive while it downloaded — it tries again later." } }) : undefined));
       throw err("changed", "The file kept changing in OneDrive while it downloaded. It tries again later.");
@@ -551,10 +574,11 @@ async function run(key, auto) {
       if (!c) return undefined;
       old = c.file;
       return Object.assign({}, c, { file: dl.file, name: ver.name || c.name, folder: ver.folder || c.folder, size: ver.size,
-        modified: ver.modified, version: ver.version, savedAt: nowIso(), dl: null, fails: 0, retryAt: null,
+        modified: ver.modified, version: ver.version, savedAt: nowIso(), dl: null, fails: 0, retryAt: null, failCode: null,
         latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver) });
     });
     if (!committed) { await removeFile(dl.file); return { removed: true }; }
+    metaPut("autoHold:" + r.owner, null).catch(function () {});
     if (old && old !== dl.file) await retire(old);
     changed(key);
     return { saved: true };
@@ -656,7 +680,7 @@ export async function remove(itemId, opts) {
   if (r.file) {
     if (opts && opts.now) await removeFile(r.file); else await retire(r.file);
   }
-  noteOwner(r.owner, (await getAll("plans")).some((x) => x.owner === r.owner));
+  noteOwner(r.owner, (await getAll("plans")).some((x) => x.owner === r.owner) || (await hasCopies(r.owner)));
   changed(key);
 }
 
@@ -677,7 +701,8 @@ export async function purgeOwner(who) {
     Object.keys(handed).forEach(function (n) { if (n.indexOf(mark) === 0) delete handed[n]; });
     return { key: "handed", value: handed };
   });
-  noteOwner(who, false);
+  // a file still open in a writer (a download in a tab the browser froze) stays: the next online page tries again
+  noteOwner(who, await hasCopies(who));
   return mine.length;
 }
 
@@ -729,7 +754,7 @@ export async function checkUpdates() {
     try {
       answer = await onedrive.plansList(ids);
     } catch (x) {
-      if (x && x.code === "forbidden") {
+      if (x && x.code === "forbidden" && x.info && x.info.error === "forbidden") {
         sum.revoked = await purgeOwner(who);
         return sum;
       }
@@ -754,6 +779,14 @@ export async function checkUpdates() {
   return sum;
 }
 
+/** A hold after a failure: 5 min, doubling while it keeps failing (a hold that ran out within the hour), up to 6 h. */
+async function growHold(name, retryAfterS) {
+  const prev = await metaGet(name, null);
+  const now = Date.now();
+  const n = prev && prev.n && now - (Number(prev.until) || 0) < 3600 * 1000 ? prev.n + 1 : 1;
+  await metaPut(name, { until: now + Math.max(backoffMs(n), (Number(retryAfterS) || 0) * 1000), n });
+}
+
 let working = null;
 /** The saved plans that need it download again, one at a time (a phone is not asked for three big files at once); a
     OneDrive-wide failure stops them all for a while (meta "autoHold:<owner>"). */
@@ -762,7 +795,8 @@ export function autoWork() {
   working = (async function () {
     const who = owner();
     if (!who) return;
-    if (Date.now() < (await metaGet("autoHold:" + who, 0))) return;
+    const hold = await metaGet("autoHold:" + who, null);
+    if (hold && holding(hold.until, Date.now(), RETRY_CAP_MS)) return;
     const held = (await heldLocks()) || {};
     const todo = (await getAll("plans")).filter((r) => r.owner === who && dueForWork(r, Date.now()) && !jobs[r.key] && !held[r.key]);
     for (const r of todo) {
@@ -772,7 +806,7 @@ export function autoWork() {
       try { await download(r.key); } catch (x) {
         const code = x && x.code;
         if (brokerWide(code)) {
-          await metaPut("autoHold:" + who, Date.now() + Math.max(HOLD_MIN_MS, ((x && x.retryAfter) || 0) * 1000));
+          await growHold("autoHold:" + who, x && x.retryAfter);
           return;
         }
         // no room, no storage, or the connection dropped (most likely for the next file too): the next page goes on
@@ -798,14 +832,24 @@ export async function maybeCheck(me, opts) {
       return;
     }
     const mine = (await getAll("plans")).filter((r) => r.owner === who);
-    if (!mine.length) return;
+    if (!mine.length) {
+      // copies kept for the takeoff app after a Remove go at a sweep once their week is over
+      await sweep();
+      noteOwner(who, await hasCopies(who));
+      return;
+    }
+    noteOwner(who, true);                                    // the hint mends itself
     await verifyFiles();
-    if (o.force || (dueForCheck(await lastChecked(), Date.now()) && Date.now() >= (await metaGet("checkHold:" + who, 0)))) {
-      try { await checkUpdates(); } catch (e) {
-        if (!(e && e.code === "offline")) await metaPut("checkHold:" + who, Date.now() + CHECK_HOLD_MS);
+    const ch = await metaGet("checkHold:" + who, null);
+    if (o.force || (dueForCheck(await lastChecked(), Date.now()) && !(ch && holding(ch.until, Date.now(), RETRY_CAP_MS)))) {
+      try {
+        await checkUpdates();
+        await metaPut("checkHold:" + who, null);
+      } catch (e) {
+        await growHold("checkHold:" + who, e && e.retryAfter);
       }
     }
-    if (o.download !== false) await autoWork();
+    if (o.download !== false && !iosHomeScreen()) await autoWork();
     await sweep();
   } catch (e) { /* the next page asks again */ }
 }
@@ -815,18 +859,27 @@ export async function maybeCheck(me, opts) {
 /** "The takeoff app opened on this device" - only once it said it keeps itself for offline use. */
 function noteReady() {
   try { localStorage.setItem(READY_KEY, nowIso()); } catch (e) { /* a note only */ }
+  emit({ t: "ready" });                                     // other windows hear it through the storage event
 }
 
 /** Open a saved copy in the takeoff app (new tab). Call IN the click. onDone({ok, why, error}). */
 export function open(itemId, onDone) {
   const key = keyOf(itemId);
   openInTakeoff(async function () {
-    const r = await get("plans", key);
-    if (!r || !r.file) throw err("missing", "This plan has not finished downloading on this device yet.");
+    // marked as handed over first, then read again: a new version committed in between (here or in another window)
+    // would otherwise retire the very file being handed over
+    let r = null;
+    for (let i = 0; i < 2 && !r; i++) {
+      const cur = await get("plans", key);
+      if (!cur || !cur.file) throw err("missing", "This plan has not finished downloading on this device yet.");
+      await markHanded(cur.file);
+      const again = await get("plans", key);
+      if (again && again.file === cur.file) r = again;
+    }
+    if (!r) throw err("missing", "This plan was just updated on this device. Tap Open again.");
     const f = await fileOf(r.file);
     if (!f) throw err("missing", "This saved plan is no longer on this device. Save it again from 📐 while online.");
     if (Number(r.size) > 0 && f.size !== Number(r.size)) throw err("missing", "This saved plan did not finish downloading. It carries on while the portal is open and online.");
-    await markHanded(r.file);
     const t = Date.parse(r.modified || "");
     return { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : f.lastModified, number: r.number,
       updateAvailable: statusOf(r, null, false) === "outdated" };

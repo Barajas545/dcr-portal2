@@ -24,6 +24,13 @@ export const VERSION = 1;
 /** How long the new tab has to say it is ready (a slow phone on a weak signal, the app's first load); the app itself
     waits 120 s for the plan after it said so. */
 export const READY_WAIT_MS = 90 * 1000;
+/** How long, after the app said it is ready, the plan may take (a OneDrive walk for a link): under the app's own 120 s
+    wait for it (takeoff-web HANDOFF_WAIT_MS), so it never posts a plan the app has stopped waiting for. */
+export const PLAN_WAIT_MS = 100 * 1000;
+/** What an iPhone or iPad home-screen app says instead (it opens another site without an opener, in Safari - and its
+    storage is not Safari's, so plans are saved and opened from the portal in Safari). */
+export const IOS_HOME = "On an iPhone or iPad, open the portal in Safari (not from its home-screen icon) to save and open plans: " +
+  "the home-screen app cannot hand a plan to the takeoff app, and Safari does not see plans saved in it.";
 /** After a saved copy is handed over, how long this window still listens for "kept for offline use". */
 const OFFLINE_WAIT_MS = 4 * 60 * 1000;
 /** When the takeoff app last said it keeps itself on this device for offline use (localStorage; an ISO time). */
@@ -64,13 +71,18 @@ export function iosHomeScreen(win) {
 export function openInTakeoff(plan, renew, onDone, onOffline) {
   const word = nonce();
   const done = typeof onDone === "function" ? onDone : function () {};
+  if (iosHomeScreen()) { done({ ok: false, why: "ios_home" }); return; }
   let win = null;
   try { win = window.open(handoffLink(word), "_blank"); } catch (e) { win = null; }
   if (!win) { done({ ok: false, why: "blocked" }); return; }
   const got = Promise.resolve().then(plan);
   got.catch(function () { /* said when the app asks */ });
   let posted = false, finished = false, kind = "";
-  let timer = setTimeout(function () { if (!posted) finish({ ok: false, why: "no_answer" }); }, READY_WAIT_MS);
+  let timer = setTimeout(function () {
+    if (posted) return;
+    try { win.close(); } catch (e) { /* not ours to close */ }
+    finish({ ok: false, why: "no_answer" });
+  }, READY_WAIT_MS);
   // the tab closed: nothing more to answer
   const watch = setInterval(function () { if (win.closed) finish(null); }, 5000);
   function finish(result) {
@@ -89,11 +101,21 @@ export function openInTakeoff(plan, renew, onDone, onOffline) {
       posted = true;
       clearTimeout(timer);
       let p;
-      try { p = await got; } catch (e) {
+      let slow = null;
+      try {
+        p = await Promise.race([got, new Promise(function (_, no) {
+          slow = setTimeout(function () {
+            no(Object.assign(new Error("OneDrive took too long to answer. Try again in a minute."), { code: "slow" }));
+          }, PLAN_WAIT_MS);
+        })]);
+      } catch (e) {
         try { win.close(); } catch (x) { /* */ }
         finish({ ok: false, why: "failed", error: e });
         return;
+      } finally {
+        clearTimeout(slow);
       }
+      if (finished) return;                                   // the tab closed meanwhile: nothing to report as opened
       try {
         win.postMessage(Object.assign({}, p, { type: "ptt-open", v: VERSION, nonce: word }), TAKEOFF_ORIGIN);
       } catch (e) {
@@ -124,9 +146,7 @@ export function openInTakeoff(plan, renew, onDone, onOffline) {
 /** What to tell the person when a hand-over did not happen. */
 export function handoffProblem(result, win) {
   if (!result || result.ok) return "";
-  if ((result.why === "blocked" || result.why === "no_answer") && iosHomeScreen(win)) {
-    return "On an iPhone or iPad, plans open from the portal in Safari: open portal.dcrframing.com in Safari (not from the home-screen icon), then tap Open again.";
-  }
+  if (result.why === "ios_home" || ((result.why === "blocked" || result.why === "no_answer") && iosHomeScreen(win))) return IOS_HOME;
   if (result.why === "blocked") return "The browser blocked the new tab. Allow pop-ups for the portal, then try again.";
   if (result.why === "no_answer") {
     return "The takeoff app did not answer. Open a plan once while online so this device keeps the takeoff app for offline use, then try again.";

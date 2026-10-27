@@ -16,7 +16,7 @@
 import * as onedrive from "../repo/onedrive.js";
 import { planButtonHtml, planFilesFor, plansLink } from "../map/plans.js";
 import { folderLabel, sortFiles, fmtSize, statusText } from "../map/plan-library.js";
-import { handoffProblem } from "../plan-handoff.js";
+import { handoffProblem, iosHomeScreen, IOS_HOME } from "../plan-handoff.js";
 
 const wired = new WeakSet();
 let lib = null;
@@ -116,14 +116,15 @@ function stateText(s, done, size) {
   return statusText(s.status, !!s.file) + (s.dl && s.dl.error && s.status !== "downloading" ? " — " + s.dl.error : "");
 }
 
-function rowHtml(r) {
+function rowHtml(r, noSave) {
   const s = r.saved;
   const meta = [r.where, r.size != null ? fmtSize(r.size) : "", day(r.modified)].filter(Boolean).join(" · ");
   const state = s ? stateText(s, s.job ? s.job.done : 0, s.job ? s.job.size : 0) : "";
   const openable = (s && s.file) || r.file;
   const btns = [];
   if (openable) btns.push('<button type="button" class="btn btn-sm" data-pl-act="open" data-id="' + esc(r.id) + '">Open</button>');
-  if (!s && r.file) btns.push('<button type="button" class="btn btn-ghost btn-sm" data-pl-act="save" data-id="' + esc(r.id) + '">Save to this device</button>');
+  if (noSave) { /* an iPhone or iPad home-screen app: no saving here (IOS_HOME) */ }
+  else if (!s && r.file) btns.push('<button type="button" class="btn btn-ghost btn-sm" data-pl-act="save" data-id="' + esc(r.id) + '">Save to this device</button>');
   else if (s && s.status === "downloading") btns.push('<button type="button" class="btn btn-ghost btn-sm" data-pl-act="pause" data-id="' + esc(r.id) + '">Pause</button>');
   else if (s && (s.status === "paused" || s.status === "stopped" || s.status === "missing" || s.status === "outdated") && r.file) {
     btns.push('<button type="button" class="btn btn-ghost btn-sm" data-pl-act="save" data-id="' + esc(r.id) + '">' +
@@ -192,9 +193,11 @@ async function openMenu(o) {
     }
   };
   document.addEventListener("keydown", c.onKey, true);
-  // the backdrop closes the sheet only when the press began on it too (a drag out of the card, a double click on 📐)
+  // the backdrop closes the sheet only when the press began on it too (not a drag out of the card), and not in the first
+  // half second (the second click of a double click on 📐)
   let downOnBackdrop = false;
-  host.addEventListener("pointerdown", function (e) { downOnBackdrop = e.target === host; });
+  const openedAt = Date.now();
+  host.addEventListener("pointerdown", function (e) { downOnBackdrop = e.target === host && Date.now() - openedAt > 500; });
   host.addEventListener("click", function (e) {
     if (e.target === host) { if (downOnBackdrop) closeMenu(); return; }
     if (e.target.closest && e.target.closest(".pl-x")) { closeMenu(); return; }
@@ -223,7 +226,7 @@ async function openMenu(o) {
   } catch (e) {
     if (current !== c) return;
     c.files = null;
-    c.error = e && e.code === "offline" ? "You're offline — the plans saved on this device for this project are below."
+    c.error = e && e.code === "offline" ? "You're offline — only the plans saved on this device can open."
       : (e && e.message) || "The plan files could not be listed just now.";
   }
   paint(c);
@@ -258,12 +261,21 @@ async function paint(c) {
   const rows = menuRows(c.files || [], saved);
   const list = c.host.querySelector(".pl-list");
   const notes = [c.error, readError].filter(Boolean).map((t) => '<div class="pl-empty">' + esc(t) + "</div>").join("");
+  // the button that had the focus is drawn again: the focus goes back to it (or to ✕), never to the page behind
+  const a = document.activeElement;
+  const wasId = a && list.contains(a) ? a.getAttribute("data-id") || "" : null;
+  const ios = iosHomeScreen();
   if (!rows.length) {
-    list.innerHTML = notes || '<div class="pl-empty">' + esc(c.files ? "No plan files for this project in OneDrive." : "") + "</div>";
-    return;
+    list.innerHTML = notes || '<div class="pl-empty">' + esc(c.files ? "No plan files for this project in OneDrive." : "Nothing is saved on this device for this project.") + "</div>";
+  } else {
+    list.innerHTML = notes + rows.map(function (r) { return rowHtml(r, ios); }).join("");
   }
-  list.innerHTML = notes + rows.map(rowHtml).join("");
-  if (!c.L.supported()) say(c.L.UNSUPPORTED, "warn");
+  if (wasId !== null) {
+    const n = Array.prototype.find.call(list.querySelectorAll("[data-pl-act]"), (x) => x.getAttribute("data-id") === wasId);
+    try { (n || c.host.querySelector(".pl-x")).focus(); } catch (e) { /* */ }
+  }
+  if (ios) say(IOS_HOME, "warn");
+  else if (!c.L.supported()) say(c.L.UNSUPPORTED, "warn");
 }
 
 function act(c, what, id) {

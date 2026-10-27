@@ -74,6 +74,43 @@ test("the automatic downloads wait after a failure: 5 min, doubling, up to 6 h; 
   for (const code of ["gone", "forbidden", "not_plan", "no_size", "space", "changed", "removed", "paused", "", undefined]) assert.equal(lib.brokerWide(code), false, String(code));
 });
 
+test("the second review's rules: an unfinished walk never says gone; a file that keeps changing keeps its wait; a clock that was wrong never freezes the waits", () => {
+  const r = rec({ latest: { status: "ok", version: "qx:AAA" } });
+  assert.deepEqual(lib.applyCheck(r, { files: [], complete: false }, AT).latest, r.latest, "not reached by the walk: nothing changes");
+  assert.deepEqual(lib.applyCheck(r, { files: [], complete: true }, AT).latest, { status: "gone", checkedAt: AT });
+  assert.deepEqual(lib.applyCheck(r, { files: [] }, AT).latest, { status: "gone", checkedAt: AT }, "an answer without the flag is a finished walk");
+  // "the file kept changing": a new version from a check does not cancel that wait (no download thrown away all day)
+  const changing = Object.assign(lib.withFailure(rec({ latest: { status: "ok", version: "qx:BBB" } }), NOW), { failCode: "changed" });
+  const next = lib.applyCheck(changing, { files: [Object.assign({}, F1, { version: "qx:CCC" })] }, AT);
+  assert.deepEqual([next.fails, next.retryAt], [1, changing.retryAt]);
+  const other = Object.assign({}, changing, { failCode: "space" });
+  assert.deepEqual(lib.applyCheck(other, { files: [Object.assign({}, F1, { version: "qx:CCC" })] }, AT).fails, 0);
+  // waits written while the clock was a year ahead are over once it is right again
+  const ahead = lib.withFailure(rec({ latest: { status: "ok", version: "qx:BBB" } }), NOW + 365 * 86400000);
+  assert.equal(lib.dueForWork(ahead, NOW), true);
+  assert.equal(lib.holding(NOW + 60000, NOW, lib.RETRY_CAP_MS), true);
+  assert.equal(lib.holding(NOW - 1, NOW, lib.RETRY_CAP_MS), false);
+  assert.equal(lib.holding(NOW + 365 * 86400000, NOW, lib.RETRY_CAP_MS), false);
+  assert.equal(lib.holding(undefined, NOW, lib.RETRY_CAP_MS), false);
+});
+
+test("an iPhone or iPad home-screen app: told at once to use Safari (no tab, no saving); Safari, Android and computers are not", async () => {
+  const { iosHomeScreen, handoffProblem, IOS_HOME } = await import("../site/js/plan-handoff.js");
+  const win = (ua, standalone, touch) => ({ navigator: { userAgent: ua, standalone, maxTouchPoints: touch || 0 },
+    matchMedia: () => ({ matches: !!standalone }) });
+  const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1";
+  const IPAD = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
+  const ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
+  assert.equal(iosHomeScreen(win(IPHONE, true)), true);
+  assert.equal(iosHomeScreen(win(IPAD, true, 5)), true, "an iPad calls itself a Mac");
+  assert.equal(iosHomeScreen(win(IPHONE, false)), false, "Safari itself");
+  assert.equal(iosHomeScreen(win(IPAD, true, 0)), false, "a real Mac");
+  assert.equal(iosHomeScreen(win(ANDROID, true)), false, "an Android home-screen app keeps its opener");
+  assert.equal(handoffProblem({ ok: false, why: "ios_home" }), IOS_HOME);
+  assert.match(IOS_HOME, /Safari/);
+  assert.equal(handoffProblem({ ok: true }), "");
+});
+
 test("a copy handed to the takeoff app is kept a week; 'the takeoff app is kept on this device' is believed six days", () => {
   assert.equal(lib.HANDED_GRACE_MS, 7 * 24 * 3600 * 1000);
   const handed = { "p9-old-1.takeoff": new Date(NOW - 6 * 86400000).toISOString() };
@@ -200,7 +237,7 @@ test("plansList: op plans_list, 1 to 20 projects a call; each project's files re
   const got = await onedrive.plansList(ids.concat(["3", "x", 0]));
   assert.deepEqual(calls.map((c) => [c.name, c.body.op, c.body.project_ids.length]), [["onedrive", "plans_list", 20], ["onedrive", "plans_list", 20], ["onedrive", "plans_list", 5]]);
   assert.equal(onedrive.LIST_BATCH, 20);
-  assert.deepEqual(got["7"], { number: "A7", files: [F1, F2] });
+  assert.deepEqual(got["7"], { number: "A7", files: [F1, F2], complete: true }, "complete unless the broker says false");
   assert.equal(got["999"], undefined);
   assert.equal(Object.keys(got).length, 45);
   assert.deepEqual(await onedrive.plansList([]), {});
@@ -249,7 +286,7 @@ test("demo plans_list: the people who see prices get each project's .takeoff fil
     const got = await onedrive.plansList([a267.id, ab.id, a001.id]);
     assert.deepEqual(got[String(a267.id)].files.map((f) => f.name).sort(), ["A267 Bid.takeoff", "A267 Rev 2.takeoff", "L1 walls.takeoff"], key);
     assert.deepEqual(got[String(ab.id)].files.map((f) => f.name).sort(), ["A024-B Framing.takeoff", "A024-B Roof.takeoff"], key);
-    assert.deepEqual(got[String(a001.id)], { number: "A001", files: [] }, key);
+    assert.deepEqual(got[String(a001.id)], { number: "A001", files: [], complete: true }, key);
     const counts = await onedrive.plansFor([a267.id, ab.id]);
     assert.equal(counts[String(a267.id)].plans, got[String(a267.id)].files.length);
     assert.ok(got[String(a267.id)].files.every((f) => lib.planFileOf(f) && /^A267 - /.test(f.folder)), key);

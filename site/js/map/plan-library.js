@@ -152,12 +152,15 @@ export function applyCheck(rec, answer, nowIso) {
   }
   const f = (answer.files || []).map(planFileOf).filter(Boolean).find((x) => x.id === rec.itemId);
   if (!f) {
+    // a walk that did not finish (complete false) may simply not have reached it: nothing is known, nothing changes
+    if (answer.complete === false) return out;
     out.latest = { status: "gone", checkedAt: nowIso };
     return out;
   }
-  // a version other than the one last seen is a new download: its own tries, not the old one's waits
+  // a version other than the one last seen is a new download: its own tries, not the old one's waits - unless the last
+  // try failed because the file kept changing (a file saved more often than it downloads would start over each time)
   const before = rec.latest && rec.latest.status === "ok" ? rec.latest.version : null;
-  if (before !== f.version) { out.fails = 0; out.retryAt = null; }
+  if (before !== f.version && rec.failCode !== "changed") { out.fails = 0; out.retryAt = null; }
   out.latest = { status: "ok", checkedAt: nowIso, version: f.version, size: f.size, modified: f.modified, name: f.name, folder: f.folder };
   return out;
 }
@@ -182,7 +185,14 @@ export function needsWork(rec) {
 export function dueForWork(rec, now) {
   if (!needsWork(rec)) return false;
   const t = Date.parse(rec.retryAt || "");
-  return !isFinite(t) || t <= now;
+  // a wait further ahead than any wait is set (a clock that was wrong when it was written) is over
+  return !isFinite(t) || t <= now || t > now + RETRY_CAP_MS + 60 * 1000;
+}
+
+/** A hold (an ms time) still holds: not yet over, and no further ahead than `max` (a clock that was wrong). */
+export function holding(until, now, max) {
+  const t = Number(until) || 0;
+  return t > now && t - now <= max + 60 * 1000;
 }
 
 /** The record after a failed automatic attempt: one more failure, and when to try again. */

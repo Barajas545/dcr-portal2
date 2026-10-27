@@ -16,7 +16,7 @@
 
    No inline script or handler anywhere: the pages' security policy refuses them. */
 
-import { sb, me, session, signOut, cachedMe, hasStoredSession, isNetworkError, onAuth } from "./sb.js";
+import { sb, me, session, signOut, cachedMe, hasStoredSession, isNetworkError, onAuth, storedUserId } from "./sb.js";
 import { maskAmounts, fmtMoney, DASH } from "./money-mask.js";
 import { onPresence } from "./live.js";
 
@@ -664,6 +664,7 @@ export async function requireAuth(opts) {
   }
   offlineOverlay(false);
   if (!p || !p.active || p.role === "agents") {
+    await forgetSavedPlans();
     await signOut();
     location.replace("index.html?inactive=1");
     return hold();
@@ -687,6 +688,22 @@ export async function requireAuth(opts) {
     return hold();
   }
   return p;
+}
+
+/** A turned-off account: the plan files it saved on this device (they carry prices) go before it is signed out - only
+    when the Plans Library's list of owners names it (js/plan-library.js: ids only), and never waiting long. */
+async function forgetSavedPlans() {
+  const id = storedUserId();
+  let owners = [];
+  try { owners = JSON.parse(localStorage.getItem("dcr2-plan-owners") || "[]"); } catch (e) { owners = []; }
+  if (!id || !Array.isArray(owners) || owners.indexOf(id) === -1) return;
+  let timer = null;
+  try {
+    await Promise.race([
+      import("./plan-library.js").then(function (L) { return L.purgeOwner(id); }),
+      new Promise(function (res) { timer = setTimeout(res, 5000); }),
+    ]);
+  } catch (e) { /* the next sign-in tries again */ } finally { clearTimeout(timer); }
 }
 
 export async function logout() {
