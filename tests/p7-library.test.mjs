@@ -230,6 +230,7 @@ test("plansList: op plans_list, 1 to 20 projects a call; each project's files re
   const calls = stub((b) => {
     const projects = {};
     for (const id of b.project_ids) projects[String(id)] = { number: "A" + id, files: [F1, { id: "bad", name: "x.pdf" }, F2] };
+    if (projects["8"]) projects["8"].complete = false;              // a walk that did not finish
     projects["999"] = { number: "A999", files: [F3] };             // not asked: never used
     return ok({ projects, checked_at: AT });
   });
@@ -238,6 +239,12 @@ test("plansList: op plans_list, 1 to 20 projects a call; each project's files re
   assert.deepEqual(calls.map((c) => [c.name, c.body.op, c.body.project_ids.length]), [["onedrive", "plans_list", 20], ["onedrive", "plans_list", 20], ["onedrive", "plans_list", 5]]);
   assert.equal(onedrive.LIST_BATCH, 20);
   assert.deepEqual(got["7"], { number: "A7", files: [F1, F2], complete: true }, "complete unless the broker says false");
+  assert.equal(got["8"].complete, false, "the broker's false comes through");
+  // and through applyCheck: a saved plan missing from that unfinished list is not taken for gone
+  const kept = rec({ latest: { status: "ok", version: "qx:AAA" } });
+  assert.deepEqual(lib.applyCheck(kept, Object.assign({}, got["8"], { files: [] }), AT).latest, kept.latest);
+  assert.equal(lib.applyCheck(rec({ latest: null, file: "" }), { files: [], complete: false }, AT).latest, null,
+    "a first download not finished keeps latest null (checkUpdates' summary reads it null-safe)");
   assert.equal(got["999"], undefined);
   assert.equal(Object.keys(got).length, 45);
   assert.deepEqual(await onedrive.plansList([]), {});

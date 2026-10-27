@@ -264,6 +264,7 @@ async function paint(c) {
   // the button that had the focus is drawn again: the focus goes back to it (or to ✕), never to the page behind
   const a = document.activeElement;
   const wasId = a && list.contains(a) ? a.getAttribute("data-id") || "" : null;
+  const wasAct = wasId !== null && a.getAttribute ? a.getAttribute("data-pl-act") : null;
   const ios = iosHomeScreen();
   if (!rows.length) {
     list.innerHTML = notes || '<div class="pl-empty">' + esc(c.files ? "No plan files for this project in OneDrive." : "Nothing is saved on this device for this project.") + "</div>";
@@ -271,7 +272,9 @@ async function paint(c) {
     list.innerHTML = notes + rows.map(function (r) { return rowHtml(r, ios); }).join("");
   }
   if (wasId !== null) {
-    const n = Array.prototype.find.call(list.querySelectorAll("[data-pl-act]"), (x) => x.getAttribute("data-id") === wasId);
+    // the same button of the same row; else that row's last one (the Save / Pause / Resume that took its place)
+    const mine = Array.prototype.filter.call(list.querySelectorAll("[data-pl-act]"), (x) => x.getAttribute("data-id") === wasId);
+    const n = mine.find((x) => x.getAttribute("data-pl-act") === wasAct) || mine[mine.length - 1];
     try { (n || c.host.querySelector(".pl-x")).focus(); } catch (e) { /* */ }
   }
   if (ios) say(IOS_HOME, "warn");

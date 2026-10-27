@@ -334,10 +334,27 @@ export async function signIn(email, password, keep) {
   if (error) throw error;
   const p = await me({ fresh: true });
   if (!p || !p.active || p.role === "agents") {
+    await forgetSavedPlans(storedUserId());
     await signOut();
     throw inactiveError();
   }
   return p;
+}
+
+/** A turned-off account: the plan files it saved on this device (they carry prices) go before it is signed out - only
+    when the Plans Library's list of owners names it (js/plan-library.js keeps it: ids only), and never waiting long.
+    Not finished in time: the id stays on the list, and this person's next sign-in, or the next page, tries again. */
+export async function forgetSavedPlans(id) {
+  let owners = [];
+  try { owners = JSON.parse(localStorage.getItem("dcr2-plan-owners") || "[]"); } catch (e) { owners = []; }
+  if (!id || !Array.isArray(owners) || owners.indexOf(id) === -1) return;
+  let timer = null;
+  try {
+    await Promise.race([
+      import("./plan-library.js").then(function (L) { return L.purgeOwner(id); }),
+      new Promise(function (res) { timer = setTimeout(res, 5000); }),
+    ]);
+  } catch (e) { /* tried again next time */ } finally { clearTimeout(timer); }
 }
 
 /** End this device's session only. Never fails: offline, the local copy is dropped anyway. */

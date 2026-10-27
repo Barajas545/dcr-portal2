@@ -142,6 +142,7 @@ async function checkNow() {
   say("Asking OneDrive for new versions…");
   try {
     const s = await L.checkUpdates();
+    await L.clearHolds();
     if (s.revoked) {
       say("Your account no longer opens plan files, so the plans saved here were removed from this device.", "warn");
       return;

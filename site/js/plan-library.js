@@ -397,9 +397,10 @@ async function noteFailure(key, x, auto) {
       if (x && x.moved) {
         // the download went forward before it stopped (a weak signal): not a failure to wait longer after
         out.fails = 0; out.retryAt = null; out.failCode = null;
-      } else if (code !== "offline" && code !== "unsupported" && !brokerWide(code)) {
+      } else if (code !== "offline" && code !== "unsupported") {
         out = withFailure(out, Date.now());
-        out.failCode = code;
+        // a OneDrive-wide failure waits too (and goes behind the others), but is no reason of the file's own
+        out.failCode = brokerWide(code) ? null : code;
       }
       if (!out.dl && !out.file && code !== "gone") {
         const final = code === "not_plan" || code === "no_size";
@@ -511,9 +512,11 @@ async function run(key, auto) {
         await markGone(key);
         throw err("gone", "This file is no longer in OneDrive.");
       }
-      const restart = (x.status === 416 || x.changed) && attempt === 0;
+      const changing = x.status === 416 || !!x.changed;
+      // the file changed in OneDrive mid-download: the person's own Save or Update starts again once at once; an
+      // automatic one waits (as after the check once it is whole)
+      const restart = changing && attempt === 0 && !auto;
       if (restart) {
-        // the file changed in OneDrive mid-download: start again, once
         await removeFile(dl.file);
         await mutate("plans", key, (c) => (c ? Object.assign({}, c, { dl: null }) : undefined));
         continue;
@@ -531,7 +534,8 @@ async function run(key, auto) {
         return Object.assign({}, c, { dl: d2 });
       });
       if (!cur) { await removeFile(dl.file); throw err("removed", "That saved plan was removed."); }
-      throw err(retryable ? "paused" : "stopped", message, { moved: typeof x.done === "number" && x.done > from });
+      throw err(changing ? "changed" : retryable ? "paused" : "stopped", message,
+        { moved: !changing && typeof x.done === "number" && x.done > from });
     }
     // removed from another window while this one was downloading: what was written here goes too
     if (!(await get("plans", key))) { await removeFile(dl.file); return { removed: true }; }
@@ -769,13 +773,15 @@ export async function checkUpdates() {
       });
       if (!next) continue;
       sum.checked++;
-      if (next.latest.status === "gone") sum.gone++;
-      else if (next.latest.status === "denied") sum.denied++;
-      else if (next.file && next.latest.version !== next.version) sum.updates++;
+      const st = next.latest ? next.latest.status : "";          // null: a first download not finished, nothing known
+      if (st === "gone") sum.gone++;
+      else if (st === "denied") sum.denied++;
+      else if (next.file && next.latest && next.latest.version !== next.version) sum.updates++;
       changed(r.key);
     }
   }
   await metaPut("check:" + who, at);
+  await metaPut("checkHold:" + who, null);                  // a check that worked ends a check hold
   return sum;
 }
 
@@ -785,6 +791,14 @@ async function growHold(name, retryAfterS) {
   const now = Date.now();
   const n = prev && prev.n && now - (Number(prev.until) || 0) < 3600 * 1000 ? prev.n + 1 : 1;
   await metaPut(name, { until: now + Math.max(backoffMs(n), (Number(retryAfterS) || 0) * 1000), n });
+}
+
+/** The person's own "Check now" worked: the automatic downloads go on at once too. */
+export async function clearHolds() {
+  const who = owner();
+  if (!who) return;
+  await metaPut("autoHold:" + who, null);
+  await metaPut("checkHold:" + who, null);
 }
 
 let working = null;
@@ -798,13 +812,15 @@ export function autoWork() {
     const hold = await metaGet("autoHold:" + who, null);
     if (hold && holding(hold.until, Date.now(), RETRY_CAP_MS)) return;
     const held = (await heldLocks()) || {};
-    const todo = (await getAll("plans")).filter((r) => r.owner === who && dueForWork(r, Date.now()) && !jobs[r.key] && !held[r.key]);
+    const todo = (await getAll("plans")).filter((r) => r.owner === who && dueForWork(r, Date.now()) && !jobs[r.key] && !held[r.key])
+      .sort((a, b) => (Number(a.fails) || 0) - (Number(b.fails) || 0));     // the ones that failed least go first
     for (const r of todo) {
       if (HAS && navigator.onLine === false) return;
       const cur = await get("plans", r.key);                   // as it is now: paused or removed in another window?
       if (!cur || !dueForWork(cur, Date.now())) continue;
       try { await download(r.key); } catch (x) {
         const code = x && x.code;
+        if (code === "offline") return;
         if (brokerWide(code)) {
           await growHold("autoHold:" + who, x && x.retryAfter);
           return;
@@ -844,9 +860,8 @@ export async function maybeCheck(me, opts) {
     if (o.force || (dueForCheck(await lastChecked(), Date.now()) && !(ch && holding(ch.until, Date.now(), RETRY_CAP_MS)))) {
       try {
         await checkUpdates();
-        await metaPut("checkHold:" + who, null);
       } catch (e) {
-        await growHold("checkHold:" + who, e && e.retryAfter);
+        if (!(e && e.code === "offline")) await growHold("checkHold:" + who, e && e.retryAfter);
       }
     }
     if (o.download !== false && !iosHomeScreen()) await autoWork();
@@ -891,6 +906,7 @@ export function open(itemId, onDone) {
     the same (the tab says to open it again). */
 export function openOnline(projectId, number, file, onDone) {
   let version = null;
+  let stale = false;                        // saved again in OneDrive since it was opened: no fresh link will match
   openInTakeoff(async function () {
     const l = await onedrive.planLink(projectId, file.id);
     if (!(Number(l.size) > 0)) throw err("no_size", "OneDrive did not say how big this file is.");
@@ -898,7 +914,10 @@ export function openOnline(projectId, number, file, onDone) {
     const t = Date.parse(l.modified || "");
     return { kind: "link", url: l.url, name: l.name, size: Number(l.size), lastModified: isFinite(t) ? t : 0, number: String(number || "") };
   }, async function () {
+    if (stale) return "";
     const l = await onedrive.planLink(projectId, file.id);
-    return version && l.version === version ? l.url : "";
+    if (version && l.version === version) return l.url;
+    stale = true;                           // (a busy or failed ask throws instead: the next sheet may ask again)
+    return "";
   }, onDone, noteReady);
 }
