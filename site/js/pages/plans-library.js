@@ -272,7 +272,7 @@ async function main() {
   window.addEventListener("online", function () {
     queueRender();
     L.maybeCheck(state.me, { fresh: true });
-    loadPictures(projectIds(), true);
+    if (state.picsFor !== null) loadPictures(projectIds(), true);     // after the first draw: the rows are this person's
   });
   window.addEventListener("offline", queueRender);
   window.addEventListener("storage", function (e) { if (e.key === "dcr2-takeoff-ready-at") paintTool(); });
@@ -282,7 +282,7 @@ async function main() {
   L.maybeCheck(state.me, { fresh }).finally(queueRender);
   state.timer = setInterval(function () {
     L.maybeCheck(state.me, { fresh });
-    if (navigator.onLine !== false) loadPictures(projectIds(), true);
+    if (navigator.onLine !== false && state.picsFor !== null) loadPictures(projectIds(), true);
   }, 5 * 60 * 1000);
 }
 

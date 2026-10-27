@@ -299,7 +299,8 @@ export async function list() {
   const who = owner();
   if (!who || !supported()) return [];
   const held = await heldLocks();
-  // a copy saved from a project's sub-folder (a Backup's) is no plan of it: never shown (maybeCheck takes it off)
+  // a copy saved from a project's sub-folder (a Backup's) is no plan of it: never shown (maybeCheck takes it off once a
+  // check says OneDrive no longer lists it; one moved up into the project's folder meanwhile shows again)
   const all = (await getAll("plans")).filter((r) => r.owner === who && !inSubFolder(r.folder));
   return all.map(function (r) {
     const here = jobs[r.key];
@@ -352,8 +353,9 @@ export async function save(info) {
         projectTitle: String(info.projectTitle || ""), name: f.name, folder: f.folder || "", file: "", size: 0, modified: null,
         version: "", savedAt: "", dl: null, latest: null, fails: 0, retryAt: null, failCode: null };
     }
-    // saved again: the person's own act - carry on now, from a fresh link
-    const out = Object.assign({}, r, { projectTitle: String(info.projectTitle || r.projectTitle || ""), fails: 0, retryAt: null, failCode: null, wide: false });
+    // saved again: the person's own act - carry on now, from a fresh link (in the folder OneDrive lists it in now)
+    const out = Object.assign({}, r, { projectTitle: String(info.projectTitle || r.projectTitle || ""), fails: 0, retryAt: null, failCode: null,
+      wide: false, folder: f.folder || r.folder });
     if (out.dl) out.dl = Object.assign({}, out.dl, { userPaused: false, state: out.dl.state === "error" ? "paused" : out.dl.state });
     return out;
   });
@@ -789,7 +791,10 @@ export async function checkUpdates() {
       const next = await mutate("plans", r.key, function (c) {
         if (!c) return undefined;
         const a = applyCheck(c, answer[String(c.projectId)] || null, at);
-        return Object.assign({}, c, { latest: a.latest, fails: a.fails !== undefined ? a.fails : c.fails, retryAt: a.retryAt !== undefined ? a.retryAt : c.retryAt });
+        // and the folder OneDrive lists it in now (a file moved up out of a sub-folder is a plan again: inSubFolder)
+        const folder = a.latest && a.latest.status === "ok" && a.latest.folder ? a.latest.folder : c.folder;
+        return Object.assign({}, c, { latest: a.latest, fails: a.fails !== undefined ? a.fails : c.fails, retryAt: a.retryAt !== undefined ? a.retryAt : c.retryAt,
+          folder });
       });
       if (!next) continue;
       sum.checked++;
@@ -875,13 +880,7 @@ export async function maybeCheck(me, opts) {
       if (o.fresh && ownersHere().indexOf(who) !== -1) await purgeOwner(who);
       return;
     }
-    let mine = (await getAll("plans")).filter((r) => r.owner === who);
-    // a copy saved from a project's sub-folder (a Backup's older copy) before the owner's rule of 2026-10-27 goes from
-    // the device (a copy just handed to the takeoff app after its grace, as any Remove)
-    for (const r of mine.filter((x) => inSubFolder(x.folder))) {
-      try { await remove(r.itemId, { owner: who }); } catch (e) { /* the next page */ }
-    }
-    mine = mine.filter((x) => !inSubFolder(x.folder));
+    const mine = (await getAll("plans")).filter((r) => r.owner === who);
     if (!mine.length) {
       // copies kept for the takeoff app after a Remove go at a sweep once their week is over
       await sweep();
@@ -901,6 +900,12 @@ export async function maybeCheck(me, opts) {
           await growHold("checkHold:" + who, e && e.retryAfter);
         }
       }
+    }
+    // a copy saved from a project's sub-folder (a Backup's older copy) before the owner's rule of 2026-10-27: once a check
+    // says OneDrive no longer lists it as a plan (gone: only the files right in a project's folder are), it goes from the
+    // device - a copy just handed to the takeoff app after its grace, as any Remove
+    for (const r of (await getAll("plans")).filter((x) => x.owner === who && inSubFolder(x.folder) && x.latest && x.latest.status === "gone")) {
+      try { await remove(r.itemId, { owner: who }); } catch (e) { /* the next page */ }
     }
     if (o.download !== false && !iosHomeScreen()) await autoWork();
     await sweep();

@@ -290,14 +290,14 @@ test("the library's project pictures: pictureIds reads two columns of the projec
   assert.match(page, /if \(fresh\) import\("\.\.\/plan-pictures\.js"\)\.then\(function \(P\) \{ return P\.forgetAll\(L\.owner\(\)\); \}\)/);
   assert.match(page, /state\.pics = await P\.shown\(who, pids\);/);
   assert.match(page, /state\.pics = await P\.refresh\(who, pids, L\.ownersHere\(\)\);/);
-  assert.match(page, /L\.maybeCheck\(state\.me, \{ fresh \}\);\s*if \(navigator\.onLine !== false\) loadPictures\(projectIds\(\), true\);/,
+  assert.match(page, /L\.maybeCheck\(state\.me, \{ fresh \}\);\s*if \(navigator\.onLine !== false && state\.picsFor !== null\) loadPictures\(projectIds\(\), true\);/,
     "every 5 minutes too: a picture that failed is fetched again with no reload");
   const pics = readFileSync(new URL("../site/js/plan-pictures.js", import.meta.url), "utf8");
   assert.ok(!/localStorage|sessionStorage|caches\./.test(pics), "kept in IndexedDB only");
   assert.match(pics, /const DB = "dcr2-plan-pictures";/);
 });
 
-test("a plan saved from a project's sub-folder (a Backup's, before the owner's rule of 2026-10-27) is never shown and goes from the device", async () => {
+test("a plan saved from a project's sub-folder (a Backup's, before the owner's rule of 2026-10-27) is never shown, and goes once a check says OneDrive no longer lists it; one moved up is a plan again", async () => {
   assert.equal(lib.inSubFolder("A267 - 1 Test Way/Backups"), true);
   assert.equal(lib.inSubFolder("A267 - 1 Test Way/Plans/Rev 2"), true);
   assert.equal(lib.inSubFolder("A267 - 1 Test Way"), false, "right in the project's folder: a plan");
@@ -306,9 +306,19 @@ test("a plan saved from a project's sub-folder (a Backup's, before the owner's r
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../site/js/plan-library.js", import.meta.url), "utf8");
   assert.match(src, /const all = \(await getAll\("plans"\)\)\.filter\(\(r\) => r\.owner === who && !inSubFolder\(r\.folder\)\);/, "list() leaves them out");
-  assert.match(src, /for \(const r of mine\.filter\(\(x\) => inSubFolder\(x\.folder\)\)\) \{\s*try \{ await remove\(r\.itemId, \{ owner: who \}\); \}/,
-    "maybeCheck takes them off the device (a copy handed to the takeoff app lately after its grace, as any Remove)");
-  assert.match(src, /mine = mine\.filter\(\(x\) => !inSubFolder\(x\.folder\)\);/);
+  // maybeCheck takes one off the device only once a check says OneDrive no longer lists it (a copy handed to the takeoff
+  // app lately after its grace, as any Remove) - after the check, so a file moved up into the project's folder is kept
+  const mc = src.slice(src.indexOf("export async function maybeCheck"), src.indexOf("/* ── opening in the takeoff app"));
+  assert.match(mc, /for \(const r of \(await getAll\("plans"\)\)\.filter\(\(x\) => x\.owner === who && inSubFolder\(x\.folder\) && x\.latest && x\.latest\.status === "gone"\)\) \{\s*try \{ await remove\(r\.itemId, \{ owner: who \}\); \}/);
+  assert.ok(mc.indexOf("inSubFolder(x.folder)") > mc.indexOf("await checkUpdates();"), "after the check");
+  // a check and a Save take the folder OneDrive lists the file in now
+  assert.match(src, /const folder = a\.latest && a\.latest\.status === "ok" && a\.latest\.folder \? a\.latest\.folder : c\.folder;/);
+  assert.match(src, /wide: false, folder: f\.folder \|\| r\.folder \}\);/);
+  // and the rule itself: a sub-folder copy is gone at the next check (the broker never lists it), one moved up is ok again
+  const backup = rec({ folder: F1.folder + "/Backups" });
+  assert.equal(lib.applyCheck(backup, { files: [F2] }, AT).latest.status, "gone");
+  const movedUp = lib.applyCheck(backup, { files: [F1] }, AT);
+  assert.deepEqual([movedUp.latest.status, movedUp.latest.folder, lib.inSubFolder(movedUp.latest.folder)], ["ok", F1.folder, false]);
 });
 
 /* ── js/plan-pictures.js over an in-memory IndexedDB and a stub client ──────────────────────────────────────────── */
@@ -460,6 +470,72 @@ test("the library's pictures (js/plan-pictures.js): kept per person, fetched aga
     URL.revokeObjectURL = realRevoke;
     delete globalThis.indexedDB;
   }
+});
+
+test("the library's pictures with two tabs open: what the other tab kept wins over a link or an older picture this tab shows", async () => {
+  const idb = memoryIndexedDB();
+  const realFetch = globalThis.fetch;
+  globalThis.indexedDB = idb;
+  const W = { pics: { 20: 200, 21: 210 }, fetchFails: false, signed: 0 };
+  useClient({
+    from(table) {
+      return { select() { return this; }, in(col, ids) {
+        const rows = table === "projects"
+          ? ids.filter((id) => id in W.pics).map((id) => ({ id, thumbnail_file_id: W.pics[id], deleted_at: null }))
+          : ids.map((id) => ({ id, storage_path: "p/x/thumbnail/" + id + "/thumbnail.jpg", preview_path: null, storage: "cloud" }));
+        return Promise.resolve({ data: rows, error: null });
+      } };
+    },
+    storage: { from() { return { async createSignedUrls(paths) {
+      W.signed++;
+      return { data: paths.map((pth) => ({ path: pth, signedUrl: "https://made-up.supabase.co/sign/" + pth + "?t=" + W.signed, error: null })), error: null };
+    } }; } },
+  });
+  globalThis.fetch = async (u) => {
+    if (W.fetchFails) throw new TypeError("Failed to fetch");
+    return new Response(new Blob(["made-up picture " + u], { type: "image/jpeg" }));
+  };
+  try {
+    // two tabs: two copies of the module (each page has its own), one IndexedDB
+    const T1 = await import("../site/js/plan-pictures.js?tab=1");
+    const T2 = await import("../site/js/plan-pictures.js?tab=2");
+    // tab 1 keeps 21's picture; 20's bytes fail there: the link
+    W.fetchFails = true;
+    await T1.refresh("userA", ["21"], ["userA"]);
+    W.fetchFails = false;
+    const one = await T1.refresh("userA", ["21"], ["userA"]);
+    assert.match(one["21"], /^blob:/);
+    W.fetchFails = true;
+    const linked = await T1.refresh("userA", ["20", "21"], ["userA"]);
+    assert.match(linked["20"], /^https:/, "tab 1: 20 only as a link");
+    // 21's picture changes; tab 2 (working connection) keeps both 20 and the new 21
+    W.pics[21] = 211;
+    W.fetchFails = false;
+    const two = await T2.refresh("userA", ["20", "21"], ["userA"]);
+    assert.match(two["20"], /^blob:/);
+    // tab 1, with no connection to fetch anything: the kept ones win - 20's kept picture, not the link; 21's new one
+    W.fetchFails = true;
+    const again = await T1.refresh("userA", ["20", "21"], ["userA"]);
+    assert.match(again["20"], /^blob:/, "the kept picture, never the link that runs out");
+    assert.ok(again["21"] && again["21"] !== one["21"] && /^blob:/.test(again["21"]), "the new picture tab 2 kept, not the old one");
+    // and offline (no answer at all): what tab 1 shows now stays
+    useClient({ from() { return { select() { return this; }, in() { return Promise.reject(new Error("Failed to fetch")); } }; } });
+    assert.deepEqual(await T1.refresh("userA", ["20", "21"], ["userA"]), again);
+    assert.deepEqual(await T1.shown("userA", ["20", "21"]), again);
+  } finally {
+    useClient(null);
+    globalThis.fetch = realFetch;
+    delete globalThis.indexedDB;
+  }
+});
+
+test("the library page loads (and prunes) pictures only after its first draw: the rows are this person's then", async () => {
+  const { readFileSync } = await import("node:fs");
+  const page = readFileSync(new URL("../site/js/pages/plans-library.js", import.meta.url), "utf8");
+  assert.match(page, /picsFor: null,/);
+  assert.match(page, /if \(state\.picsFor !== null\) loadPictures\(projectIds\(\), true\);/, "the 'online' handler");
+  assert.match(page, /if \(navigator\.onLine !== false && state\.picsFor !== null\) loadPictures\(projectIds\(\), true\);/, "the 5 minutes");
+  assert.equal((page.match(/loadPictures\(/g) || []).length, 6, "its own line, render's two calls, the again path, the 'online' handler, the interval");
 });
 
 /* ── repo/onedrive.js: plansList, planLink ───────────────────────────────────────────────────────────────────── */

@@ -95,14 +95,18 @@ function show(key, fileId, blob) {
   return url;
 }
 
-/** {pid: URL} for this person and these projects: what this page shows first, then what is kept here. */
-async function collect(who, list, all) {
-  const want = new Set(list);
+/** {pid: URL} for this person and these projects. `current` (refresh: pid -> the picture's file id now) or null (shown:
+    not asked). What this page shows stays unless what is kept here is better: the page shows only a link, or an older
+    picture than the one kept (another tab kept the new one) - the kept one opens with no signal too. */
+async function collect(who, list, current) {
+  const kept = {};
+  ((await keptAll()) || []).forEach(function (v) { if (v.owner === who) kept[String(v.pid)] = v; });
   const out = {};
-  urls.forEach(function (u, key) { if (ownerOf(key) === who && want.has(pidOf(key))) out[pidOf(key)] = u.url; });
-  (all === undefined ? await keptAll() : all || []).forEach(function (v) {
-    const pid = String(v.pid);
-    if (v.owner === who && want.has(pid) && !out[pid]) out[pid] = show(keyOf(who, pid), String(v.fileId), v.blob);
+  list.forEach(function (pid) {
+    const key = keyOf(who, pid), u = urls.get(key), k = kept[pid];
+    if (u && u.own && (!k || u.fileId === String(k.fileId) || !current || current[pid] === u.fileId)) out[pid] = u.url;
+    else if (k) out[pid] = show(key, String(k.fileId), k.blob);
+    else if (u) out[pid] = u.url;
   });
   return out;
 }
@@ -110,7 +114,7 @@ async function collect(who, list, all) {
 export async function shown(owner, ids) {
   settle();
   if (!owner) return {};
-  return collect(String(owner), (ids || []).map(String));
+  return collect(String(owner), (ids || []).map(String), null);
 }
 
 export async function refresh(owner, ids, owners) {
@@ -119,9 +123,10 @@ export async function refresh(owner, ids, owners) {
   const who = String(owner);
   const list = Array.from(new Set((ids || []).map(String)));
   let pics;
-  try { pics = await projectsRepo.pictureIds(list); } catch (e) { return collect(who, list); }     // offline, or no answer
+  try { pics = await projectsRepo.pictureIds(list); } catch (e) { return collect(who, list, null); }    // offline, no answer
   const byId = {};
-  pics.forEach(function (p) { byId[p.id] = p; });
+  const current = {};
+  pics.forEach(function (p) { byId[p.id] = p; if (p.thumbnailFileId) current[p.id] = p.thumbnailFileId; });
   const all = await keptAll();
   const keptBy = {};
   (all || []).forEach(function (v) { if (v.owner === who) keptBy[String(v.pid)] = v; });
@@ -174,7 +179,7 @@ export async function refresh(owner, ids, owners) {
     try { await tx("readwrite", function (s) { gone.forEach(function (k) { s.delete(k); }); }); } catch (e) { /* the next refresh */ }
     gone.forEach(function (k) { release(urls.get(k)); urls.delete(k); });
   }
-  return collect(who, list);
+  return collect(who, list, current);
 }
 
 export async function forgetAll(owner) {
