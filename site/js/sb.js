@@ -208,6 +208,27 @@ export function storedUserId() {
   }
 }
 
+/** The e-mail of the sign-in this device holds, read without any network (or null). */
+export function storedUserEmail() {
+  try {
+    const raw = JSON.parse(authStorage.getItem(STORAGE_KEY) || "null");
+    return (raw && raw.user && raw.user.email) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** The plan owner a sign-in e-mail had on this device (the Plans Library's hint, js/plan-library.js), or null. */
+export function planOwnerFor(email) {
+  try {
+    const mail = JSON.parse(localStorage.getItem("dcr2-plan-owner-mail") || "{}") || {};
+    const s = String(email || "").trim().toLowerCase();
+    let h = 0x811c9dc5;                                      // the same short hash as map/plan-library.js hashOf
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return typeof mail[h.toString(36)] === "string" ? mail[h.toString(36)] : null;
+  } catch (e) { return null; }
+}
+
 /** The current session or null. A connection problem THROWS (status 0) instead of answering
     "signed out": network errors never sign anyone out. */
 export async function session() {
@@ -327,11 +348,16 @@ export function inactiveError() {
 export async function signIn(email, password, keep) {
   authStorage.setMode(keep ? "local" : "session");
   _me = null;
+  const addr = String(email || "").trim().toLowerCase();
   const { error } = await sb().auth.signInWithPassword({
-    email: String(email || "").trim().toLowerCase(),
+    email: addr,
     password: String(password || ""),
   });
-  if (error) throw error;
+  if (error) {
+    // a turned-off account (Desktop 2 blocks its sign-in): the plans it saved here go, found by its e-mail
+    if (error.code === "user_banned") await forgetSavedPlans(planOwnerFor(addr));
+    throw error;
+  }
   const p = await me({ fresh: true });
   if (!p || !p.active || p.role === "agents") {
     await forgetSavedPlans(storedUserId());

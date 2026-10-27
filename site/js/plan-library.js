@@ -15,7 +15,9 @@
        "<owner>|<item id>") and meta (when updates were last checked, the automatic downloads' hold after a OneDrive-wide
        failure, the copies handed to the takeoff app lately);
      · localStorage "dcr2-plan-owners": only the user ids that have plans saved here (no file, name or link), so a page
-       can tell, without opening the library, that a person whose Sees prices was taken away still has plans to remove.
+       can tell, without opening the library, that a person whose Sees prices was taken away still has plans to remove;
+       and "dcr2-plan-owner-mail": {a short hash of the sign-in e-mail: that id}, so a sign-in refused for a turned-off
+       account (Desktop 2 blocks it: no profile is ever read) still finds whose plans to remove.
    Records belong to the person who saved them (the sign-in's user id, read without the network: sb.js storedUserId). A
    shared tablet shows each person only their own plans. Someone whose Sees prices is turned off loses theirs from the
    device the next time an online portal page sees it (purgeOwner).
@@ -25,15 +27,19 @@
    is kept a week after it is replaced or removed (map/plan-library.js HANDED_GRACE_MS) and goes at a sweep after that.
 
    The automatic downloads are polite: after a failure a record waits 5 min, then 10, 20, … up to 6 h before it is tried
-   again by itself (a person's own Save, Resume or Update now never waits), and a OneDrive-wide failure (busy, not
-   allowed in, the connection) stops them all for a while. Every download is checked against OneDrive's version once it
-   is whole: a file saved again in OneDrive during it is downloaded again, never kept as a mix of two versions.
+   again by itself (a person's own Save, Resume or Update now never waits; a download that went forward before it
+   stopped does not wait longer), the records that failed least go first, and a OneDrive-wide failure (busy, not allowed
+   in) stops them all for a while, longer each time. No answer at all while the browser says it is online (a hotspot
+   with no internet, a broker the browser cannot read) pauses them 5 minutes; with the browser offline nothing waits
+   (coming online tries again). A person's own "Check now" ends the OneDrive-wide waits. Every download is checked
+   against OneDrive's version once it is whole: a file saved again in OneDrive during it is downloaded again, never kept
+   as a mix of two versions.
 
    The bytes come straight from OneDrive (the broker's plan_link: a pre-authenticated link, kept in memory only);
    nothing goes through the broker. Nothing here is a page: the pages draw what list() and onChange() say. */
 
 import * as onedrive from "./repo/onedrive.js";
-import { storedUserId } from "./sb.js";
+import { storedUserId, storedUserEmail } from "./sb.js";
 import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf,
@@ -45,9 +51,12 @@ const DB_NAME = "dcr2-plan-library";
 const DB_VER = 1;
 const LOCK = "dcr2-plan-dl:";
 const OWNERS_KEY = "dcr2-plan-owners";
+const MAIL_KEY = "dcr2-plan-owner-mail";
 const SPACE_MARGIN = 64 * 1024 * 1024;         // never fill the last bit of the quota
 // After a OneDrive-wide failure the automatic downloads stop, and after a failed version check the checks stop: 5 min,
-// doubling while it keeps failing, up to 6 h (map/plan-library.js backoffMs); {until, n} in meta.
+// doubling while it keeps failing, up to 6 h (map/plan-library.js backoffMs); {until, n} in meta. No answer at all
+// while the browser says it is online: a flat FLAT_HOLD_MS.
+const FLAT_HOLD_MS = 5 * 60 * 1000;
 const HAS = typeof window !== "undefined";
 
 export const UNSUPPORTED = "This browser cannot keep plan files on the device. Use Chrome or Edge on a computer or Android phone, or Safari 16.4 or newer on an iPhone or iPad.";
@@ -119,6 +128,12 @@ function noteOwner(who, has) {
     const set = ownersHere().filter((x) => x !== who);
     if (has) set.push(who);
     if (set.length) localStorage.setItem(OWNERS_KEY, JSON.stringify(set)); else localStorage.removeItem(OWNERS_KEY);
+    let mail = {};
+    try { mail = JSON.parse(localStorage.getItem(MAIL_KEY) || "{}") || {}; } catch (e) { mail = {}; }
+    Object.keys(mail).forEach(function (k) { if (mail[k] === who || set.indexOf(mail[k]) === -1) delete mail[k]; });
+    const email = has && who === storedUserId() ? String(storedUserEmail() || "").trim().toLowerCase() : "";
+    if (email) mail[hashOf(email)] = who;
+    if (Object.keys(mail).length) localStorage.setItem(MAIL_KEY, JSON.stringify(mail)); else localStorage.removeItem(MAIL_KEY);
   } catch (e) { /* a hint only */ }
 }
 
@@ -335,7 +350,7 @@ export async function save(info) {
         version: "", savedAt: "", dl: null, latest: null, fails: 0, retryAt: null, failCode: null };
     }
     // saved again: the person's own act - carry on now, from a fresh link
-    const out = Object.assign({}, r, { projectTitle: String(info.projectTitle || r.projectTitle || ""), fails: 0, retryAt: null, failCode: null });
+    const out = Object.assign({}, r, { projectTitle: String(info.projectTitle || r.projectTitle || ""), fails: 0, retryAt: null, failCode: null, wide: false });
     if (out.dl) out.dl = Object.assign({}, out.dl, { userPaused: false, state: out.dl.state === "error" ? "paused" : out.dl.state });
     return out;
   });
@@ -350,7 +365,7 @@ export async function resume(itemId) {
   const key = keyOf(itemId);
   await mutate("plans", key, function (r) {
     if (!r) return undefined;
-    const out = Object.assign({}, r, { fails: 0, retryAt: null, failCode: null });
+    const out = Object.assign({}, r, { fails: 0, retryAt: null, failCode: null, wide: false });
     if (out.dl) out.dl = Object.assign({}, out.dl, { userPaused: false, state: out.dl.state === "error" ? "paused" : out.dl.state });
     return out;
   });
@@ -396,11 +411,13 @@ async function noteFailure(key, x, auto) {
       if (code === "forbidden") out.latest = { status: "denied", checkedAt: nowIso() };
       if (x && x.moved) {
         // the download went forward before it stopped (a weak signal): not a failure to wait longer after
-        out.fails = 0; out.retryAt = null; out.failCode = null;
+        out.fails = 0; out.retryAt = null; out.failCode = null; out.wide = false;
       } else if (code !== "offline" && code !== "unsupported") {
         out = withFailure(out, Date.now());
-        // a OneDrive-wide failure waits too (and goes behind the others), but is no reason of the file's own
-        out.failCode = brokerWide(code) ? null : code;
+        // a OneDrive-wide failure waits too (and goes behind the others) - "Check now" ends that wait (clearHolds) - but
+        // it is no reason of the file's own: the file's last one (say "it keeps changing") stays
+        out.wide = brokerWide(code);
+        if (!out.wide) out.failCode = code;
       }
       if (!out.dl && !out.file && code !== "gone") {
         const final = code === "not_plan" || code === "no_size";
@@ -479,7 +496,7 @@ async function run(key, auto) {
       // already the version OneDrive holds, and really on the device: nothing to fetch
       const part = r.dl && r.dl.file && r.dl.file !== r.file ? r.dl.file : "";
       await mutate("plans", key, (c) => (c ? Object.assign({}, c, { latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver),
-        dl: null, fails: 0, retryAt: null, failCode: null }) : undefined));
+        dl: null, fails: 0, retryAt: null, failCode: null, wide: false }) : undefined));
       if (part) await removeFile(part);
       return { already: true };
     }
@@ -578,7 +595,7 @@ async function run(key, auto) {
       if (!c) return undefined;
       old = c.file;
       return Object.assign({}, c, { file: dl.file, name: ver.name || c.name, folder: ver.folder || c.folder, size: ver.size,
-        modified: ver.modified, version: ver.version, savedAt: nowIso(), dl: null, fails: 0, retryAt: null, failCode: null,
+        modified: ver.modified, version: ver.version, savedAt: nowIso(), dl: null, fails: 0, retryAt: null, failCode: null, wide: false,
         latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver) });
     });
     if (!committed) { await removeFile(dl.file); return { removed: true }; }
@@ -799,6 +816,11 @@ export async function clearHolds() {
   if (!who) return;
   await metaPut("autoHold:" + who, null);
   await metaPut("checkHold:" + who, null);
+  // and each record's own wait after a OneDrive-wide failure (a wait for a reason of the file's own stays)
+  for (const r of (await getAll("plans")).filter((x) => x.owner === who && x.wide && Number(x.fails) > 0)) {
+    const c2 = await mutate("plans", r.key, (c) => (c && c.wide && Number(c.fails) > 0 ? Object.assign({}, c, { fails: 0, retryAt: null, wide: false }) : undefined));
+    if (c2 && !c2.fails) changed(r.key);
+  }
 }
 
 let working = null;
@@ -820,7 +842,10 @@ export function autoWork() {
       if (!cur || !dueForWork(cur, Date.now())) continue;
       try { await download(r.key); } catch (x) {
         const code = x && x.code;
-        if (code === "offline") return;
+        if (code === "offline") {
+          if (!(HAS && navigator.onLine === false)) await metaPut("autoHold:" + who, { until: Date.now() + FLAT_HOLD_MS, n: 0 });
+          return;
+        }
         if (brokerWide(code)) {
           await growHold("autoHold:" + who, x && x.retryAfter);
           return;
@@ -861,7 +886,11 @@ export async function maybeCheck(me, opts) {
       try {
         await checkUpdates();
       } catch (e) {
-        if (!(e && e.code === "offline")) await growHold("checkHold:" + who, e && e.retryAfter);
+        if (e && e.code === "offline") {
+          if (!(HAS && navigator.onLine === false)) await metaPut("checkHold:" + who, { until: Date.now() + FLAT_HOLD_MS, n: 0 });
+        } else {
+          await growHold("checkHold:" + who, e && e.retryAfter);
+        }
       }
     }
     if (o.download !== false && !iosHomeScreen()) await autoWork();

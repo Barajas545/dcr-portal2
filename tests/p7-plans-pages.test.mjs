@@ -128,13 +128,17 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
   // web storage holds two notes only, never a link or a plan's detail: the user ids with plans here, and when the takeoff
   // app said it keeps itself for offline use
   assert.deepEqual(Array.from(new Set(Array.from(lib.matchAll(/localStorage\.(?:getItem|setItem|removeItem)\(([A-Z_]+)/g)).map((m) => m[1]))).sort(),
-    ["OWNERS_KEY", "READY_KEY"]);
+    ["MAIL_KEY", "OWNERS_KEY", "READY_KEY"]);
+  assert.match(lib, /const MAIL_KEY = "dcr2-plan-owner-mail";/);
+  // the sign-in page's other way out for a turned-off account purges too; and sign-in finds a blocked account's plans
+  assert.match(code(read("js/shell/index.js")), /await forgetSavedPlans\(storedUserId\(\)\);\s*await signOut\(\);/);
+  assert.match(code(read("js/sb.js")), /if \(error\.code === "user_banned"\) await forgetSavedPlans\(planOwnerFor\(addr\)\);/);
   assert.match(lib, /const OWNERS_KEY = "dcr2-plan-owners";/);
   assert.match(lib, /onedrive\.planLink\(/);
   // checkUpdates' summary never reads through a null latest (a first download not finished)
   assert.match(lib, /const st = next\.latest \? next\.latest\.status : "";/);
   // a connection failure holds nothing; the records that failed least go first
-  assert.match(lib, /if \(code === "offline"\) return;\s*if \(brokerWide\(code\)\)/);
+  assert.match(lib, /if \(code === "offline"\) \{\s*if \(!\(HAS && navigator\.onLine === false\)\) await metaPut\("autoHold:" \+ who, \{ until: Date\.now\(\) \+ FLAT_HOLD_MS, n: 0 \}\);\s*return;\s*\}/);
   assert.match(lib, /\.sort\(\(a, b\) => \(Number\(a\.fails\) \|\| 0\) - \(Number\(b\.fails\) \|\| 0\)\)/);
   // the purge of a turned-off account's plans: sign-in and requireAuth share sb.js forgetSavedPlans
   const sbjs = code(read("js/sb.js"));

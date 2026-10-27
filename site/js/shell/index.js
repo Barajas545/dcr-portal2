@@ -3,7 +3,7 @@
    page, "This account is not active", and network errors that never sign anyone out.
    One attempt per press: Supabase allows 30 sign-ins per 5 minutes per address, and the office PCs
    share the same address. */
-import { signIn, session, me, signOut, isNetworkError } from "../sb.js";
+import { signIn, session, me, signOut, isNetworkError, forgetSavedPlans, storedUserId } from "../sb.js";
 import { safeNext, scrubbedSearch, errorText, company, companyInfo } from "../common2.js";
 import "../install.js";
 
@@ -46,6 +46,7 @@ async function alreadyIn() {
     return;
   }
   if (!p || !p.active || p.role === "agents") {
+    await forgetSavedPlans(storedUserId());                  // the plans a turned-off account saved here go first
     await signOut();
     showError("This account is not active. Ask the office.");
     return;

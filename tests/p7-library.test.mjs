@@ -111,6 +111,23 @@ test("an iPhone or iPad home-screen app: told at once to use Safari (no tab, no 
   assert.equal(handoffProblem({ ok: true }), "");
 });
 
+test("a sign-in refused for a turned-off account finds whose plans to remove by its e-mail (sb.js reads the library's hint with the same short hash)", async () => {
+  const store = new Map();
+  const had = globalThis.localStorage;
+  globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+  try {
+    const { planOwnerFor } = await import("../site/js/sb.js");
+    const U = "00000000-0000-4000-8000-000000000003";
+    store.set("dcr2-plan-owner-mail", JSON.stringify({ [lib.hashOf("manager2@demo.test")]: U }));
+    assert.equal(planOwnerFor("  Manager2@Demo.test "), U, "trimmed, any case");
+    assert.equal(planOwnerFor("someone.else@demo.test"), null);
+    store.set("dcr2-plan-owner-mail", "not json");
+    assert.equal(planOwnerFor("manager2@demo.test"), null);
+  } finally {
+    if (had === undefined) delete globalThis.localStorage; else globalThis.localStorage = had;
+  }
+});
+
 test("a copy handed to the takeoff app is kept a week; 'the takeoff app is kept on this device' is believed six days", () => {
   assert.equal(lib.HANDED_GRACE_MS, 7 * 24 * 3600 * 1000);
   const handed = { "p9-old-1.takeoff": new Date(NOW - 6 * 86400000).toISOString() };

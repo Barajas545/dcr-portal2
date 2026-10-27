@@ -26,7 +26,9 @@ export const HANDED_GRACE_MS = 7 * 24 * 3600 * 1000;
 /** The first wait before a failed automatic download is tried again; it doubles with each failure, up to the cap. */
 export const RETRY_FIRST_MS = 5 * 60 * 1000;
 export const RETRY_CAP_MS = 6 * 3600 * 1000;
-/** A failure that is OneDrive's or the connection's, not one file's: the automatic downloads stop for a while. */
+/** A failure that is OneDrive's or the connection's, not one file's: the automatic downloads stop for a while (js/
+    plan-library.js: OneDrive's longer each time; "offline", no answer at all, is handled before: a flat 5 minutes while
+    the browser says it is online, nothing while it is offline). */
 //  (js/repo/onedrive.js call()'s codes: a 5xx without a broker code is "failed"; the library's own per-file codes are
 //  never these: "not_plan", "no_size", "gone", "space", "changed", "removed".)
 export const BROKER_WIDE = Object.freeze(["busy", "unavailable", "failed", "server_error", "onedrive_failed", "not_configured",
