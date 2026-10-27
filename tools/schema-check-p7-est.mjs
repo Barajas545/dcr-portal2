@@ -2,7 +2,8 @@
    reversed - an Estimator edits estimates and change orders on the web too): Portal 2's own site/js/repo/estimate-edit.js,
    repo/estimates.js estimateAccess and map/estimate-edit.js against the REAL migration 20261028000100_estimator.sql
    (estimate_edit_read, save_estimate_item, the changed answers of add_estimate_item / move_estimate_items /
-   reorder_estimate, the approval gate, the approved lock, the words guard, t25) as each made-up person, through
+   reorder_estimate, the approval gate, the approved lock, the words guard, t25) - and, once DCR Desktop 2 has it,
+   20261029000100_estimate_links_groups (owner 2026-10-27: estimate_edit_read's empty groups) - as each made-up person, through
    tools/pglite-rest.mjs. Mia Pricer (a manager with prices) and Max Manager (without) hold the Estimator switch for
    these checks only - Max is the quantities-only Estimator - and lose it again at the end. Made-up data only. */
 import path from "node:path";
@@ -134,7 +135,7 @@ export async function run(h) {
       ok(appr.status === "approved" && appr.approved_date, "approved, the day stamped");
     });
 
-    await check("an Estimator with prices: Up / Down, a new group, rename, code, another estimate, duplicate, archive and restore, delete", async () => {
+    await check("an Estimator with prices: Up / Down, a new group, rename, another estimate, duplicate, archive and restore, delete", async () => {
       await as("manager2");
       let deck = byName(await model(), "Deck option");
       const stairs = itemOf(deck, "Stairs");
@@ -146,9 +147,7 @@ export async function run(h) {
       const ren = M.planRename(M.slotsOf(deck), deck.group_order, deck.groups[0].gid, "Deck framing");
       await edit.reorder(deck, ren.groupOrder, ren.moves, { prices: true });
       deck = byName(await model(), "Deck option");
-      await edit.reorder(deck, null, M.planCode(M.slotsOf(deck)[0], "06.15.00"), { prices: true });
-      deck = byName(await model(), "Deck option");
-      same(deck.groups.map((g) => [g.title, g.code]), [["Deck framing", "06.15.00"], ["Stairs", ""]], "renamed and coded");
+      same(deck.groups.map((g) => g.title), ["Deck framing", "Stairs"], "renamed");
       const porch = byName(await model(), "Porch");
       await edit.moveItems(M.planMoveToEstimate(itemOf(deck, "Stairs"), porch), { prices: true });
       ok(itemOf(byName(await model(), "Porch"), "Stairs"), "moved to the change order");
@@ -167,6 +166,66 @@ export async function run(h) {
       await sql("reset role");
       same(Number((await one("select count(*) as n from public.estimate_items where estimate_id = $1 and deleted_at is null", [copy.id])).n), 0, "its items went with it");
     });
+
+    // the empty groups (owner 2026-10-27; migration 20261029000100_estimate_links_groups: estimate_edit_read sends a name the
+    // group order lists with no item) - known by the migration's other column, estimates.houzz_url
+    const estCols = (catalog.tables.estimates && catalog.tables.estimates.cols) || {};
+    if (!("houzz_url" in estCols)) {
+      results.push({ section: h.section, name: "20261029000100_estimate_links_groups is not in DCR Desktop 2 yet: the empty-group checks wait for it", ok: true });
+    } else {
+      await check("empty groups (20261029000100): a new group is a name only - estimate_edit_read sends it empty in its place; Group up keeps it; rename and delete; never printed", async () => {
+        await as("manager2");
+        const made = await edit.createEstimate(S.pid, "estimate", { name: "Empty groups check" });
+        S.emptyCheck = made.id;
+        await edit.addItem(made.id, { name: "Posts", item_type: "labor", labor_guys: 1, labor_days: 1, group_name: "Porch posts" }, null, { prices: true });
+        const est = () => model().then((m) => m.estimates.find((x) => x.id === made.id));
+        let e = await est();
+        let plan = M.planNewGroup(M.slotsOf(e), "Stair  rail ");
+        same(plan.groupOrder, ["Porch posts", "Stair rail"], "the order as shown plus the name");
+        await edit.reorder(e, plan.groupOrder, [], { prices: true });
+        const head = await raw("estimate_edit_read", { p_project_id: S.pid });
+        const mine = head.estimates.find((x) => x.id === made.id);
+        same(mine.groups.map((g) => [g.gid, g.name, g.code, g.title, "locked" in g]), [["g1", "Porch posts", "", "Porch posts", false], ["g2", "Stair rail", "", "Stair rail", false]],
+          "the database's groups, the empty one in its listed place (no lock key with prices)");
+        same(mine.items.map((i) => [i.name, i.gid]), [["Posts", "g1"]], "no item in it");
+        e = await est();
+        same(e.groups.map((g) => [g.title, g.items.length, g.empty]), [["Porch posts", 1, false], ["Stair rail", 0, true]], "the model");
+        await edit.reorder(e, M.planGroupStep(M.slotsOf(e), e.groups[1].gid, -1), [], { prices: true });
+        e = await est();
+        same(e.groups.map((g) => g.title), ["Stair rail", "Porch posts"], "Group up: the empty group moved, not dropped");
+        const ren = M.planRename(M.slotsOf(e), e.group_order, e.groups[0].gid, "Stair rail and posts");
+        same(ren.moves, [], "an empty group is renamed in the order alone");
+        await edit.reorder(e, ren.groupOrder, [], { prices: true });
+        e = await est();
+        same(e.groups.map((g) => [g.title, g.empty]), [["Stair rail and posts", true], ["Porch posts", false]], "renamed, still empty");
+        const printed = await raw("estimate_print", { p_estimate_id: made.id });
+        same(printed.groups.map((g) => g.title), ["Porch posts"], "estimate_print never has an empty group");
+        // the office's empty group whose name quotes an amount: locked for Max (quantities only)
+        await as("admin");
+        e = await est();
+        await edit.reorder(e, e.groups.map((g) => g.name).concat(["Allowance $300"]), [], { prices: true });
+        await as("manager");
+        const head2 = await raw("estimate_edit_read", { p_project_id: S.pid });
+        ok(!DOLLARS.test(JSON.stringify(head2)), "no typed amount in estimate_edit_read");
+        const m2 = M.fromEditRead(head2, {}).estimates.find((x) => x.id === made.id);
+        same([m2.groupOrderLocked, m2.groups.map((g) => [g.title, g.empty, g.locked])],
+          [true, [["Stair rail and posts", true, false], ["Porch posts", false, false], ["Allowance [amount]", true, true]]], "locked by its own words");
+        const del = M.planDeleteGroup(M.slotsOf(m2), m2.group_order, m2.groups[2].gid);
+        same(M.wordsRefusal(m2, del, [], { prices: false }), M.LOCKED_HINT, "the page never sends it");
+        await refused(() => edit.reorder(m2, del, [], { prices: false }), "42501", "Rule A: an amount name is not dropped from the order");
+        // deleted by someone with prices: the order without them
+        await as("manager2");
+        e = await est();
+        for (const title of ["Allowance $300", "Stair rail and posts"]) {
+          const g = e.groups.find((x) => x.title === title);
+          await edit.reorder(e, M.planDeleteGroup(M.slotsOf(e), e.group_order, g.gid), [], { prices: true });
+          e = await est();
+        }
+        same(e.groups.map((g) => g.title), ["Porch posts"], "both empty groups deleted");
+        same(M.planDeleteGroup(M.slotsOf(e), e.group_order, e.groups[0].gid), null, "a group with items is not");
+        await edit.deleteEstimate(e);
+      });
+    }
 
     await check("the quantities-only Estimator (Max): no answer carries money, a note or the terms; the words come amount-free with their locks", async () => {
       await as("manager");

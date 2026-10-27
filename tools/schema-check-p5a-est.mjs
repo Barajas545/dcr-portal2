@@ -3,7 +3,8 @@
    M5a (20261025000100_office_pm.sql: rpc estimate_print, rpc takeoff_print, estimate_item_flags) as each made-up
    person, through tools/pglite-rest.mjs. The P5 acceptance check 1 for the Estimate and Takeoffs tabs and the
    printed pages: a person without prices is sent no money key and no typed amount (the database scrubs it), and
-   a person with prices gets the database's own figures. Made-up data only. */
+   a person with prices gets the database's own figures; once DCR Desktop 2 has 20261029000200_takeoff_groups, the
+   takeoffs' groups in their group order (owner 2026-10-27). Made-up data only. */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -157,6 +158,37 @@ export async function run(h) {
       ok(deck.item && deck.item.name === "Deck framing" && deck.item.estimate_label === "Estimate #2", k + ": the item it is for");
     }
   });
+
+  // the takeoff groups (owner 2026-10-27; migration 20261029000200_takeoff_groups: takeoffs.group_order, takeoff_print sends it)
+  const tkCols = (catalog.tables.takeoffs && catalog.tables.takeoffs.cols) || {};
+  if (!("group_order" in tkCols)) {
+    results.push({ section: h.section, name: "20261029000200_takeoff_groups is not in DCR Desktop 2 yet: the takeoff group-order check waits for it", ok: true });
+  } else {
+    await check("takeoff groups (20261029000200): takeoff_print sends each takeoff's group_order - as stored with prices, each name scrubbed without; the tab and the paper draw the groups in it", async () => {
+      await sql("reset role");
+      await sql("update public.takeoffs set group_order = array['Roof', '', 'Main Level', 'Extras $50'] where id = $1", [S.t1]);
+      try {
+        for (const k of ["admin", "lead"]) {
+          await as(k);
+          const prices = k === "admin";
+          const raw = await client.rpc("takeoff_print", { p_takeoff_id: S.t1, p_project_id: null });
+          ok(!raw.error, k + " takeoff_print: " + JSON.stringify(raw.error));
+          same(raw.data.takeoffs[0].takeoff.group_order, prices ? ["Roof", "", "Main Level", "Extras $50"] : ["Roof", "", "Main Level", "Extras [amount]"],
+            k + ": the order as the database sends it");
+          const tk = await repo.listTakeoffs(S.pid);
+          const t1 = tk.takeoffs.find((t) => t.id === S.t1);
+          same(t1.levels.map((l) => tko.levelName(l.name)), ["Roof", "(no group)", "Main Level"], k + ": the groups in that order; a listed group with no line is not drawn");
+          const ml = render.takeoffSheetHtml({ internalIDNumber: "A999" }, [t1], { quote: false, company: { name: "DCR" }, date: "2026-10-27" });
+          const bands = Array.from(ml.html.matchAll(/<tr class="ml-lvl"><td colspan="\d">([^<]*)<\/td>/g)).map((m) => m[1]);
+          same(bands, ["Roof", "(no group)", "Main Level"], k + ": the Material List's bands");
+          ok(!DOLLARS.test(ml.html), k + ": the material list carries no amount");
+        }
+      } finally {
+        await sql("reset role");
+        await sql("update public.takeoffs set group_order = '{}' where id = $1", [S.t1]);
+      }
+    });
+  }
 
   await check("the agents account, an inactive account: refused (42501); a deleted estimate: PT404; the archived one only when asked", async () => {
     for (const k of ["agents", "inactive"]) {

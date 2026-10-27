@@ -9,7 +9,9 @@
                                      as typed, the item notes, the terms, each price row (with its version) and the
                                      money; without, NO money key, note or term at all, the words amount-free and each
                                      row's "locked" columns (their stored text quotes an amount: the database refuses
-                                     changing them). Groups are the database's, by its opaque gid (g1, g2 ... per read);
+                                     changing them). Groups are the database's, by its opaque gid (g1, g2 ... per read),
+                                     empty ones too (owner 2026-10-27, migration 20261029000100: a name the group
+                                     order lists with no item - "empty", no total);
    * the item types                  ITEM_TYPES, shownKeys / hiddenKeys / holdsValue / clearedValue / valuesLost /
                                      unseenPricesCleared / switchQuestion (est_logic.py): a type switch clears what the
                                      new type hides (asked first); without prices the database clears the hidden prices
@@ -20,10 +22,14 @@
                                      an amount, Rule C, or hold the hidden copy, Rule B);
    * statusesFor / approvedLock      Approved only with prices; an approved one keeps its status, dates, archive, type
                                      and quantities without prices (D5);
-   * the planners                    planItemStep / planItemDrop / planGroupStep / planRename / planCode /
-                                     planMoveToEstimate over the database's groups (slotsOf, by gid), -> the
-                                     reorder_estimate / move_estimate_items moves; wordsRefusal (estimates.py
-                                     _words_refusal): a rearrangement the database refuses a person without prices;
+   * the planners                    planItemStep / planItemDrop / planGroupStep / planRename / planNewGroup /
+                                     planDeleteGroup / planMoveToEstimate over the database's groups (slotsOf, by
+                                     gid; an empty group - a name the group order lists with no item, owner
+                                     2026-10-27 - is one of them), -> the reorder_estimate / move_estimate_items
+                                     moves; wordsRefusal (estimates.py _words_refusal): a rearrangement the database
+                                     refuses a person without prices. The group code is no longer shown or set here
+                                     (owner 2026-10-27): the column stays, and the database still gives an item moved
+                                     into a group that group's code;
    * itemMath                        one item's money in integer cents (estimate_math.py, BigInt; the database's view
                                      rounds the same way: tests/vectors/estimate-math.json);
    * conflictPlan                    a save refused as stale (PT409) -> done / resend / clash (est_save.py).
@@ -176,7 +182,7 @@ export function groupOrderProblem(names) {
   if (c.some(function (n) { return n.length > GROUP_NAME_MAX; })) return "A group name has at most " + GROUP_NAME_MAX + " characters.";
   return null;
 }
-/** A group name or code typed into a sheet: the size, and (without prices) the money words. */
+/** A group name typed into a sheet: the size, and (without prices) the money words. */
 export function groupNameProblem(name, prices) {
   if (cleanName(name).length > GROUP_NAME_MAX) return "A group name has at most " + GROUP_NAME_MAX + " characters.";
   return prices ? null : wordsProblem(name);
@@ -196,10 +202,13 @@ function sortCmp(a, b) {
   return Number(a.id) - Number(b.id);
 }
 /** groups_in_order: items grouped by name (tidy, any case), listed groups first in the group order, then by code
-    naturally, then by name ("" last); a group's name is its first item's, its code its first coded item's. */
-export function groupsInOrder(items, groupOrder) {
+    naturally, then by name ("" last); a group's name is its first item's, its code its first coded item's.
+    opts.includeEmpty (estimate_order.py include_empty): a listed name with no item (not "") is an empty group in its
+    listed place, spelled as listed - as the database's estimate_edit_read sends it. */
+export function groupsInOrder(items, groupOrder, opts) {
   const listed = {};
-  cleanGroupOrder(groupOrder).forEach(function (n, i) { listed[groupKey(n)] = i; });
+  const names = cleanGroupOrder(groupOrder);
+  names.forEach(function (n, i) { listed[groupKey(n)] = i; });
   const slots = {}, list = [];
   (items || []).slice().sort(sortCmp).forEach(function (it) {
     const k = groupKey(it.group_name);
@@ -208,6 +217,12 @@ export function groupsInOrder(items, groupOrder) {
     s.items.push(it);
     if (!s.code) s.code = String(it.group_code == null ? "" : it.group_code).trim();
   });
+  if (opts && opts.includeEmpty) {
+    names.forEach(function (n, i) {
+      const k = groupKey(n);
+      if (k && !slots[k]) { slots[k] = { key: k, name: n, code: "", items: [], listed: i }; list.push(slots[k]); }
+    });
+  }
   return list.sort(function (a, b) {
     if ((a.listed === null) !== (b.listed === null)) return a.listed === null ? 1 : -1;
     if (a.listed !== null) return a.listed - b.listed;
@@ -233,6 +248,12 @@ export function sameNumber(a, b) {
   return decCmp(x, y) === 0;
 }
 function sameText(a, b) { return String(a == null ? "" : a) === String(b == null ? "" : b); }
+// words as a box hands them back: a text area's value breaks its lines with "\n" whatever the stored words used, so
+// "\r\n" and "\n" are the same words (an item name or a description opened and saved as it was is never sent)
+function sameWords(a, b) {
+  const lf = function (v) { return String(v == null ? "" : v).replace(/\r\n?/g, "\n"); };
+  return lf(a) === lf(b);
+}
 /** Two values of one column the same (numbers as numbers, words as words). */
 export function sameValue(key, a, b) {
   if (QTY_KEYS.indexOf(key) !== -1 || MONEY_FIELDS.indexOf(key) !== -1 || PCT_FIELDS.indexOf(key) !== -1 ||
@@ -273,7 +294,7 @@ function itemMoney(it) {
 /**
  * rpc estimate_edit_read's answer -> {projectId, prices, canEdit, estimates}: each estimate as fromEstimatePrint shapes
  * it (label, title, displayName, status, statusText, archived, groups [{gid, key, name, title, label, code, locked,
- * addable, items, total}], items in order, priced, total) plus locked (its locked words), groupOrderLocked,
+ * addable, items, total, empty}], items in order, priced, total) plus locked (its locked words), groupOrderLocked,
  * approvedLock (approved and no prices) and addable; each item with money (cents, prices only), flags, locked (its
  * locked columns: none with prices). flagsOf: {itemId: [estimate_item_flags rows]}.
  */
@@ -299,7 +320,7 @@ function estimateModel(e, prices, fl) {
     const name = cleanName(g.name);
     const locked = !prices && !!g.locked;
     return { gid: g.gid, key: g.gid, name, title: g.title || name || "General", label: name || "(no group)", code: String(g.code == null ? "" : g.code).trim(),
-      locked, addable: !approved && !locked, items: gi, total: prices ? sumOf(gi) : null };
+      locked, addable: !approved && !locked, items: gi, total: prices && gi.length ? sumOf(gi) : null, empty: !gi.length };
   });
   const ordered = [];
   groups.forEach(function (g) { g.items.forEach(function (it) { ordered.push(it); }); });
@@ -368,7 +389,7 @@ export function diffItem(base, form, opts) {
       return;
     }
     const v = k === "name" ? String(f[k] == null ? "" : f[k]) : textOrNull(f[k]);
-    if (!sameText(v, b[k])) fields[k] = v;
+    if (!sameWords(v, b[k])) fields[k] = v;
   });
   if (prices) {
     const p = b.prices && typeof b.prices === "object" ? b.prices : {};
@@ -422,7 +443,7 @@ export function diffEstimate(base, form, opts) {
     if (!Object.prototype.hasOwnProperty.call(f, k)) return;
     if (!prices && (k === "client_notes" || isLocked(b, k))) return;
     const v = k === "name" ? String(f[k] == null ? "" : f[k]) : k === "status" ? statusWord(f[k]) : textOrNull(f[k]);
-    if (!sameText(v, b[k])) out[k] = v;
+    if (!sameWords(v, b[k])) out[k] = v;
   });
   return out;
 }
@@ -555,16 +576,29 @@ export function planGroupStep(slots, gid, dir) {
   return names;
 }
 
+/** The other group already called `name` (any case, any spacing), or null: an empty group is never renamed onto it (the
+    tidy group order would keep one of the two names and the empty group would be gone). */
+export function renameTaken(slots, gid, name) {
+  const k = groupKey(name);
+  return (slots || []).find(function (s) { return s.gid !== gid && s.key === k; }) || null;
+}
+
 /** Rename a group: every item under the new name in one write; the group keeps its place (the group order says so when
-    the new name alone would move it). -> {groupOrder | null, moves} or null when nothing changes. */
+    the new name alone would move it). An empty group (owner 2026-10-27) is renamed in the group order alone - never
+    onto another group's name (renameTaken). -> {groupOrder | null, moves} or null when nothing changes. */
 export function planRename(slots, groupOrder, gid, newName) {
   const list = slots || [];
   const slot = list.find(function (s) { return s.gid === gid; });
   const name = cleanName(newName);
-  if (!slot || !slot.items.length || !name || name === slot.name) return null;
-  const moves = slot.items.map(function (it) { return { id: it.id, version: it.version, group_name: name }; });
+  if (!slot || !name || name === slot.name) return null;
   const listed = cleanGroupOrder(groupOrder);
-  if (listed.some(function (n) { return groupKey(n) === slot.key; })) {
+  const isListed = listed.some(function (n) { return groupKey(n) === slot.key; });
+  if (!slot.items.length) {
+    if (!isListed || renameTaken(list, gid, name)) return null;
+    return { groupOrder: listed.map(function (n) { return groupKey(n) === slot.key ? name : n; }), moves: [] };
+  }
+  const moves = slot.items.map(function (it) { return { id: it.id, version: it.version, group_name: name }; });
+  if (isListed) {
     return { groupOrder: listed.map(function (n) { return groupKey(n) === slot.key ? name : n; }), moves };
   }
   const ids = new Set(slot.items.map(function (it) { return sid(it.id); }));
@@ -574,19 +608,33 @@ export function planRename(slots, groupOrder, gid, newName) {
   });
   const expected = [];
   list.forEach(function (s) { const k = s === slot ? groupKey(name) : s.key; if (expected.indexOf(k) === -1) expected.push(k); });
-  const after = groupsInOrder(items, groupOrder).map(function (s) { return s.key; });
+  const after = groupsInOrder(items, groupOrder, { includeEmpty: true }).map(function (s) { return s.key; });
   if (after.join("\u0001") === expected.join("\u0001")) return { groupOrder: null, moves };
   const order = list.map(function (s) { return s === slot ? name : s.name; });
   if (groupOrderProblem(order)) return { groupOrder: null, moves };     // another name too long to be listed: renamed all the same
   return { groupOrder: order, moves };
 }
 
-/** A group's code on every item of the group that has another ("" or blank: none). */
-export function planCode(slot, code) {
-  const c = String(code == null ? "" : code).trim() || null;
-  return ((slot && slot.items) || []).filter(function (it) {
-    return (String(it.group_code == null ? "" : it.group_code).trim() || null) !== c;
-  }).map(function (it) { return { id: it.id, version: it.version, group_code: c }; });
+/** A new group (owner 2026-10-27: a name only, no first item): an empty group at the end - the whole order as the
+    estimate shows it plus the new name, so no other group moves. -> {groupOrder, taken: null}, or {groupOrder: null,
+    taken: gid} when a group has that name already (any case, any spacing); null for a blank name. */
+export function planNewGroup(slots, newName) {
+  const name = cleanName(newName);
+  if (!name) return null;
+  const list = slots || [];
+  const taken = list.find(function (s) { return s.key === groupKey(name); });
+  if (taken) return { groupOrder: null, taken: taken.gid };
+  return { groupOrder: list.map(function (s) { return s.name; }).concat([name]), taken: null };
+}
+
+/** Delete an empty group (owner 2026-10-27): the group order without its name. null when the group has items (they are
+    moved or deleted first) or the order does not list it. */
+export function planDeleteGroup(slots, groupOrder, gid) {
+  const slot = (slots || []).find(function (s) { return s.gid === gid; });
+  if (!slot || slot.items.length || !slot.key) return null;
+  const listed = cleanGroupOrder(groupOrder);
+  if (!listed.some(function (n) { return groupKey(n) === slot.key; })) return null;
+  return listed.filter(function (n) { return groupKey(n) !== slot.key; });
 }
 
 /** move_estimate_items for one item to another estimate: last in its own group there (or last of all when that

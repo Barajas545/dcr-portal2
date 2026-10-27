@@ -137,7 +137,7 @@ test("an admin and an Estimator with prices: new estimate and change order (the 
   }
 });
 
-test("an admin and an Estimator with prices: Up / Down, another group, rename, code, another estimate, duplicate, archive and restore, delete", { skip }, async () => {
+test("an admin and an Estimator with prices: Up / Down, another group, rename, another estimate, duplicate, archive and restore, delete", { skip }, async () => {
   for (const key of ["admin", "manager_prices"]) {
     const e = await freshEngine();
     await as(e, key);
@@ -152,9 +152,7 @@ test("an admin and an Estimator with prices: Up / Down, another group, rename, c
     const plan = M.planRename(M.slotsOf(deck), deck.group_order, deck.groups[0].gid, "Deck framing");
     await edit.reorder(deck, plan.groupOrder, plan.moves, { prices: true });
     deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
-    await edit.reorder(deck, null, M.planCode(M.slotsOf(deck)[0], "06.15.00"), { prices: true });
-    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
-    assert.deepEqual(deck.groups.map((g) => [g.title, g.code]), [["Deck framing", "06.15.00"], ["Stairs", ""]], key + ": renamed, coded");
+    assert.deepEqual(deck.groups.map((g) => g.title), ["Deck framing", "Stairs"], key + ": renamed");
     // another estimate (the draft change order)
     let model = await edit.loadEditor(SANDBOX);
     const porch = model.estimates.find((x) => x.name === "Covered porch");
@@ -189,6 +187,77 @@ test("an admin and an Estimator with prices: Up / Down, another group, rename, c
     await edit.deleteItem(one);
     assert.ok(!itemNamed(byName(await edit.loadEditor(SANDBOX), "Deck option"), "Deck framing 12x16"));
   }
+});
+
+test("empty groups (owner 2026-10-27): a new group is a name only, read back empty in its place; an item into it, Up / Down, rename and delete; DCR Desktop 2's empty group survives a web Group up", { skip }, async () => {
+  for (const key of ["admin", "manager_prices", "estimator"]) {
+    const e = await freshEngine();
+    await as(e, key);
+    const prices = key !== "estimator";
+    let deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.group_order, [], key + ": the demo's deck option lists no group");
+    // ＋ New group: the whole order as shown plus the name - no item, no code
+    let plan = M.planNewGroup(M.slotsOf(deck), " Stairs  and rail ");
+    assert.deepEqual(plan, { groupOrder: ["Deck", "Stairs and rail"], taken: null });
+    assert.equal(M.wordsRefusal(deck, plan.groupOrder, [], { prices }), null, key + ": nothing the database refuses");
+    await edit.reorder(deck, plan.groupOrder, [], { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.groups.map((g) => [g.title, g.items.length, g.empty]), [["Deck", 2, false], ["Stairs and rail", 0, true]], key + ": read back empty, in its place");
+    assert.equal(e.rows.estimate_items.filter((i) => i.estimate_id === deck.id && !i.deleted_at).length, 2, key + ": no item was written");
+    assert.deepEqual(M.planNewGroup(M.slotsOf(deck), "stairs AND rail").taken, deck.groups[1].gid, key + ": the same name again is that group");
+    // Group up keeps it (the data loss this fixes: an item-only read wrote the order without it)
+    await edit.reorder(deck, M.planGroupStep(M.slotsOf(deck), deck.groups[1].gid, -1), [], { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.groups.map((g) => g.title), ["Stairs and rail", "Deck"], key + ": the empty group moved up, not dropped");
+    await edit.reorder(deck, M.planGroupStep(M.slotsOf(deck), deck.groups[1].gid, -1), [], { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.groups.map((g) => g.title), ["Deck", "Stairs and rail"], key + ": a group with items moved above it, the empty one kept");
+    // rename the empty group: the order alone
+    const ren = M.planRename(M.slotsOf(deck), deck.group_order, deck.groups[1].gid, "Stairs");
+    assert.deepEqual(ren, { groupOrder: ["Deck", "Stairs"], moves: [] });
+    await edit.reorder(deck, ren.groupOrder, ren.moves, { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.groups.map((g) => [g.title, g.empty]), [["Deck", false], ["Stairs", true]], key + ": renamed, still empty");
+    assert.equal(M.planRename(M.slotsOf(deck), deck.group_order, deck.groups[1].gid, "deck"), null, key + ": never onto the other group's name");
+    // a second empty group, deleted
+    plan = M.planNewGroup(M.slotsOf(deck), "Porch");
+    await edit.reorder(deck, plan.groupOrder, [], { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    const porch = deck.groups.find((g) => g.title === "Porch");
+    assert.ok(porch && porch.empty, key + ": a second empty group");
+    await edit.reorder(deck, M.planDeleteGroup(M.slotsOf(deck), deck.group_order, porch.gid), [], { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.groups.map((g) => g.title), ["Deck", "Stairs"], key + ": deleted");
+    // an item into the empty group (the page's ＋ Item): then it is a group like the others and is not deleted
+    await edit.addItem(deck.id, { name: "Stair stringers", item_type: "labor", labor_guys: 2, labor_days: 1, group_name: "Stairs" }, null, { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.groups.map((g) => [g.title, g.items.length, g.empty]), [["Deck", 2, false], ["Stairs", 1, false]], key + ": filled");
+    assert.equal(M.planDeleteGroup(M.slotsOf(deck), deck.group_order, deck.groups[1].gid), null, key + ": a group with items is not deleted here");
+    // an item moved into an empty group, then out again: the group stays, empty (it is listed)
+    plan = M.planNewGroup(M.slotsOf(deck), "Rail");
+    await edit.reorder(deck, plan.groupOrder, [], { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    const rail = deck.groups.find((g) => g.title === "Rail");
+    const stringers = itemNamed(deck, "Stair stringers");
+    await edit.reorder(deck, null, M.planItemDrop(M.slotsOf(deck), stringers.id, { gid: rail.gid }, null), { prices });
+    deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+    assert.deepEqual(deck.groups.map((g) => [g.title, g.items.length]), [["Deck", 2], ["Stairs", 0], ["Rail", 1]], key + ": Stairs emptied, still there");
+  }
+});
+
+test("empty groups without prices: one whose own name quotes an amount is locked (the office's) - not renamed or deleted, and no group order is sent while it is listed", { skip }, async () => {
+  const e = await freshEngine();
+  const row = e.rows.estimates.find((x) => x.project_id === SANDBOX && x.name === "Deck option");
+  row.group_order = ["Deck", "Allowance $400"];
+  await as(e, "estimator");
+  const deck = byName(await edit.loadEditor(SANDBOX), "Deck option");
+  assert.deepEqual([deck.groupOrderLocked, deck.groups.map((g) => [g.title, g.empty, g.locked])],
+    [true, [["Deck", false, false], ["Allowance [amount]", true, true]]], "the words amount-free, locked");
+  assert.ok(!DOLLARS.test(JSON.stringify(deck)), "no typed amount reached the browser");
+  const del = M.planDeleteGroup(M.slotsOf(deck), deck.group_order, deck.groups[1].gid);
+  assert.equal(M.wordsRefusal(deck, del, [], { prices: false }), M.LOCKED_HINT, "the page never sends it ...");
+  await refused(() => edit.reorder(deck, del, [], { prices: false }), "42501", "... and the database refuses dropping an amount name (Rule A)");
+  assert.equal(M.wordsRefusal(deck, M.planNewGroup(M.slotsOf(deck), "Rail").groupOrder, [], { prices: false }), M.LOCKED_HINT, "nor a new group while it is listed");
 });
 
 test("all or nothing: a stale item among the moves writes nothing; nor does a refused one", { skip }, async () => {

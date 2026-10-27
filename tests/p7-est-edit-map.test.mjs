@@ -140,7 +140,7 @@ test("planItemStep: Up / Down cross a group's edge; nothing at the very top or b
   assert.deepEqual(M.planItemStep(s, 3, +1), [], "the very bottom");
 });
 
-test("planGroupStep / planRename / planCode: the whole new order; a rename keeps the group's place; codes only where they differ", () => {
+test("planGroupStep / planRename: the whole new order; a rename keeps the group's place; no code planner (owner 2026-10-27: the code is not set on the web)", () => {
   const items = [it(1, "Walls", 1, "06.11.00"), it(2, "Roof", 1, "06.17.00"), it(3, null, 1), it(4, "Demo", 1, "02.41.00")];
   const s = slotsFrom(items);
   assert.deepEqual(s.map((x) => x.name), ["Demo", "Walls", "Roof", ""]);
@@ -157,9 +157,72 @@ test("planGroupStep / planRename / planCode: the whole new order; a rename keeps
   assert.deepEqual(M.planRename(plain, [], gidOf(plain, "beta"), "Zeta"), { groupOrder: ["Zeta", "Gamma"], moves: [{ id: 1, version: 1, group_name: "Zeta" }] });
   assert.equal(M.planRename(plain, [], gidOf(plain, "beta"), "Beta"), null, "the same name: nothing");
   assert.equal(M.planRename(plain, [], gidOf(plain, "beta"), "   "), null);
-  const walls = slotsFrom([it(1, "Walls", 1, "06.11.00"), it(2, "Walls", 2, null), it(3, "Walls", 3, " 06.11.00 ")])[0];
-  assert.deepEqual(M.planCode(walls, "06.11.00"), [{ id: 2, version: 1, group_code: "06.11.00" }], "a code that reads the same after a trim is the same");
-  assert.deepEqual(M.planCode(walls, ""), [{ id: 1, version: 1, group_code: null }, { id: 3, version: 1, group_code: null }]);
+  assert.equal(M.planCode, undefined, "the group code is not set on the web any more");
+});
+
+/* ── empty groups (owner 2026-10-27: a name the group order lists with no item; estimate_edit_read sends them) ── */
+
+/** the database's groups with the empty ones (estimate_edit_read since 20261029000100) */
+const slotsWithEmpty = (items, order) => M.groupsInOrder(items, order || [], { includeEmpty: true }).map((s, i) => ({ gid: "g" + (i + 1), key: s.key,
+  name: s.name, code: s.code, locked: false, items: s.items }));
+
+test("groupsInOrder includeEmpty: a listed name with no item is an empty group in its listed place, spelled as listed; never by default; never ''", () => {
+  const items = [it(1, "Walls", 1, "06.11.00"), it(2, "Roof", 1), it(3, null, 1)];
+  const order = ["Roof", "  Deck   stairs ", "", "Walls", "porch"];
+  assert.deepEqual(M.groupsInOrder(items, order).map((s) => s.name), ["Roof", "", "Walls"], "default: groups come from items only (printing)");
+  const all = M.groupsInOrder(items, order, { includeEmpty: true });
+  assert.deepEqual(all.map((s) => [s.name, s.items.length]), [["Roof", 1], ["Deck stairs", 0], ["", 1], ["Walls", 1], ["porch", 0]]);
+  assert.deepEqual([all[1].key, all[1].code, all[1].listed], ["deck stairs", "", 1]);
+  assert.deepEqual(M.groupsInOrder([], ["", "Deck"], { includeEmpty: true }).map((s) => s.name), ["Deck"], "a listed '' with no item is no group");
+});
+
+test("empty groups in the planners: Up / Down keeps them, an item drops into one, a step crosses into one", () => {
+  const items = [it(1, "Walls", 1), it(2, "Walls", 2), it(3, "Roof", 1)];
+  const s = slotsWithEmpty(items, ["Walls", "Deck", "Roof"]);
+  assert.deepEqual(s.map((x) => [x.name, x.items.length]), [["Walls", 2], ["Deck", 0], ["Roof", 1]]);
+  assert.deepEqual(M.planGroupStep(s, gidOf(s, "roof"), -1), ["Walls", "Roof", "Deck"], "the empty group is kept in the new order");
+  assert.deepEqual(M.planGroupStep(s, gidOf(s, "deck"), -1), ["Deck", "Walls", "Roof"], "an empty group moves too");
+  assert.deepEqual(M.planItemDrop(s, 3, { gid: gidOf(s, "deck") }, null), [{ id: 3, version: 1, sort: 1, group_name: "Deck" }], "into an empty group");
+  assert.deepEqual(M.planItemStep(s, 2, +1), [{ id: 2, version: 1, sort: 1, group_name: "Deck" }], "Down at the bottom of Walls: into the empty Deck");
+  assert.deepEqual(M.planItemStep(s, 3, -1), [{ id: 3, version: 1, sort: 1, group_name: "Deck" }], "Up at the top of Roof: into the empty Deck");
+});
+
+test("planRename on an empty group: the group order alone, in its place; never onto another group's name; a group with items as before", () => {
+  const items = [it(1, "Walls", 1), it(2, "Roof", 1)];
+  const order = ["Walls", "Deck", "Roof"];
+  const s = slotsWithEmpty(items, order);
+  const deck = gidOf(s, "deck");
+  assert.deepEqual(M.planRename(s, order, deck, " Deck  and stairs "), { groupOrder: ["Walls", "Deck and stairs", "Roof"], moves: [] });
+  assert.deepEqual(M.planRename(s, order, deck, "deck"), { groupOrder: ["Walls", "deck", "Roof"], moves: [] }, "a new spelling of the same name");
+  assert.equal(M.planRename(s, order, deck, "Deck"), null, "the same name: nothing");
+  assert.equal(M.planRename(s, order, deck, "ROOF"), null, "another group's name: nothing is sent");
+  assert.equal(M.renameTaken(s, deck, " roof ").gid, gidOf(s, "roof"), "the page says which group has it");
+  assert.equal(M.renameTaken(s, deck, "deck"), null, "its own name is not taken");
+  assert.equal(M.planRename(s, ["Walls", "Roof"], deck, "Porch"), null, "an empty group the order no longer lists: nothing");
+  // a group with items, the empty one listed beside it: renamed in its place, the empty group kept
+  assert.deepEqual(M.planRename(s, order, gidOf(s, "walls"), "Shear walls"), { groupOrder: ["Shear walls", "Deck", "Roof"], moves: [{ id: 1, version: 1, group_name: "Shear walls" }] });
+  // an unlisted group with items next to listed empty ones: the order written in full keeps them
+  const s2 = slotsWithEmpty([it(1, "Beta", 1), it(2, "Gamma", 1)], ["Deck"]);
+  assert.deepEqual(s2.map((x) => x.name), ["Deck", "Beta", "Gamma"]);
+  assert.deepEqual(M.planRename(s2, ["Deck"], gidOf(s2, "beta"), "Zeta"), { groupOrder: ["Deck", "Zeta", "Gamma"], moves: [{ id: 1, version: 1, group_name: "Zeta" }] });
+  assert.deepEqual(M.planRename(s2, ["Deck"], gidOf(s2, "beta"), "Alpha"), { groupOrder: null, moves: [{ id: 1, version: 1, group_name: "Alpha" }] },
+    "the new name keeps its place by itself: the items only");
+});
+
+test("planNewGroup / planDeleteGroup: a new group is a name only, at the end of the whole order; only an empty group is deleted", () => {
+  const items = [it(1, "Walls", 1, "06.11.00"), it(2, null, 1), it(3, "Demo", 1, "02.41.00")];
+  const s = slotsWithEmpty(items, ["Porch"]);
+  assert.deepEqual(s.map((x) => x.name), ["Porch", "Demo", "Walls", ""]);
+  assert.deepEqual(M.planNewGroup(s, "  Deck   stairs "), { groupOrder: ["Porch", "Demo", "Walls", "", "Deck stairs"], taken: null },
+    "the whole order as shown, so no group moves (unlisted ones by code would)");
+  assert.deepEqual(M.planNewGroup(s, "walls"), { groupOrder: null, taken: gidOf(s, "walls") }, "a group of that name is there: that one");
+  assert.deepEqual(M.planNewGroup(s, "porch"), { groupOrder: null, taken: gidOf(s, "porch") });
+  assert.equal(M.planNewGroup(s, "   "), null);
+  assert.deepEqual(M.planDeleteGroup(s, ["Walls", " porch ", "Demo"], gidOf(s, "porch")), ["Walls", "Demo"], "the order without its name");
+  assert.equal(M.planDeleteGroup(s, ["Porch"], gidOf(s, "walls")), null, "a group with items is never deleted here");
+  assert.equal(M.planDeleteGroup(s, ["Porch"], gidOf(s, "")), null, "nor the items with no group");
+  assert.equal(M.planDeleteGroup(s, [], gidOf(s, "porch")), null, "not listed (any more): nothing");
+  assert.equal(M.planDeleteGroup(s, ["Porch"], "g99"), null);
 });
 
 test("planMoveToEstimate: last in its own group there, or last of all", () => {
@@ -221,6 +284,18 @@ test("diffItem without prices: only what changed; never a locked box, the notes 
     "5 and 5.000 are one number");
   assert.deepEqual(M.diffItem(BASE, { name: "  ", material_description: "  " }, { prices: false }).fields, { name: "  ", material_description: null },
     "a blank name stays a name (not null); blank words are none");
+});
+
+test("diffItem: a name of several lines (owner 2026-10-27, DCR Desktop 2's item editor) comes back from its text area unchanged - \\r\\n or \\n", () => {
+  const base = Object.assign({}, BASE, { name: "Wall framing\nNorth side\nper S-2", locked: [] });
+  assert.deepEqual(M.diffItem(base, { name: "Wall framing\nNorth side\nper S-2" }, { prices: false }), { fields: {}, prices: {} }, "as it was: nothing sent");
+  const crlf = Object.assign({}, base, { name: "Wall framing\r\nNorth side\r\nper S-2", description: "Line one\r\nLine two" });
+  assert.deepEqual(M.diffItem(crlf, { name: "Wall framing\nNorth side\nper S-2", description: "Line one\nLine two" }, { prices: false }), { fields: {}, prices: {} },
+    "a text area hands back \\n: the same words");
+  assert.deepEqual(M.diffItem(base, { name: "Wall framing North side per S-2" }, { prices: false }).fields, { name: "Wall framing North side per S-2" },
+    "joining the lines is a change (the one-line box used to do it silently)");
+  assert.deepEqual(M.diffItem(base, { name: "Wall framing\nSouth side\nper S-2" }, { prices: false }).fields, { name: "Wall framing\nSouth side\nper S-2" });
+  assert.deepEqual(M.diffEstimate({ name: "Main", description: "a\r\nb", status: "draft", locked: [] }, { description: "a\nb" }, { prices: false }), {});
 });
 
 test("diffItem with prices: the price changes apart; a blank markup is 0; the type", () => {
@@ -329,4 +404,5 @@ test("fromEditRead: the database's groups by gid, the model's flags and locks; m
   const p = withPrices.estimates[0];
   assert.deepEqual([p.approvedLock, p.items[0].locked, p.items[0].money, p.total], [false, [], { labor: 2376000, material: 322204, total: 2698204 },
     { labor: 2376000, material: 322204, total: 2698204 }]);
+  assert.deepEqual(p.groups.map((g) => [g.gid, g.empty, g.total === null]), [["g1", true, true], ["g2", false, false]], "a group with no item: empty, no total");
 });

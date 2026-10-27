@@ -6,7 +6,9 @@
 
    The same tables, columns and read rules as DCR Desktop 2's migrations (20261007000300 estimates, takeoffs,
    catalog; 20261007000600 policies; 20261007001400 the estimate_item_totals view; 20261012000100 group_order
-   and archived_at; 20261013000100 item_type):
+   and archived_at; 20261013000100 item_type; 20261029000100 the Houzz Pro link estimates.houzz_url - projects'
+   is tools/fake/engine.js's - and estimate_edit_read's empty groups; 20261029000200 takeoffs.group_order and
+   takeoff_print's group_order):
    * estimates, estimate_items — every active person reads live rows of a visible project (an admin also
      the deleted ones); no money column;
    * estimate_item_prices, takeoff_row_prices, material_prices — the prices switch only (admin, or
@@ -57,7 +59,7 @@
     soft: ["estimates", "estimate_items"],      // rpc soft_delete and a DELETE hide them (tools/fake/engine.js SOFT)
     cols: {
       estimates: { id: null, project_id: null, number: null, kind: "estimate", co_number: null, name: "", description: null, status: "draft",
-        sent_date: null, approved_date: null, client_notes: null, group_order: [], archived_at: null, deleted_at: null },
+        sent_date: null, approved_date: null, client_notes: null, group_order: [], archived_at: null, deleted_at: null, houzz_url: null },
       estimate_items: { id: null, estimate_id: null, project_id: null, group_name: null, group_code: null, sort: null, name: "", description: null,
         labor_area: null, labor_guys: null, labor_days: null, labor_qty: 1, material_description: null, material_qty: 1, material_area: null,
         assigned_contact_id: null, assigned_text: null, notes: null, item_type: "both", deleted_at: null },
@@ -68,7 +70,7 @@
       materials: { id: null, name: null, code: null, category: null, subcategory: null, unit: null, active: true },
       material_prices: { material_id: null, unit_price: null },
       purposes: { id: null, code: null, name: null, sort: 0 },
-      takeoffs: { id: null, project_id: null, estimate_item_id: null, name: "", description: null, takeoff_date: null, notes: null },
+      takeoffs: { id: null, project_id: null, estimate_item_id: null, name: "", description: null, takeoff_date: null, notes: null, group_order: [] },
       takeoff_rows: { id: null, takeoff_id: null, project_id: null, sort: null, level: null, category: null, subcategory: null, material_id: null,
         item_name: null, purpose: null, qty: null, unit: null, formula: null, notes: null },
       takeoff_row_prices: { row_id: null, unit_price: null },
@@ -224,10 +226,13 @@
       return itemsOf(w, e.id).reduce((s, i) => s + Math.round(itemMath(i, rows.estimate_item_prices.find((x) => x.item_id === i.id)).total * 100), 0) / 100;
     }
     /** the groups of these items (in item order) in DCR Desktop 2's screen order: the group order, then by code
-        naturally, then by name ("" last) - estimate_print and estimate_edit_read share it */
-    function groupsOf(items, groupOrder) {
+        naturally, then by name ("" last) - estimate_print and estimate_edit_read share it. includeEmpty
+        (estimate_edit_read since 20261029000100): a listed name (not "") no item has is an empty group in its listed
+        place, spelled as the tidy order spells it */
+    function groupsOf(items, groupOrder, includeEmpty) {
       const listed = {};
-      cleanOrder(groupOrder).forEach((n, k) => { if (!(gkey(n) in listed)) listed[gkey(n)] = k + 1; });
+      const order = cleanOrder(groupOrder);
+      order.forEach((n, k) => { if (!(gkey(n) in listed)) listed[gkey(n)] = k + 1; });
       const groups = [];
       const byKey = {};
       for (const i of items) {
@@ -236,6 +241,12 @@
         if (!g) { g = byKey[k] = { gk: k, name: tidy(i.group_name), code: null, items: [] }; groups.push(g); }
         if (g.code === null && String(i.group_code || "").trim()) g.code = String(i.group_code).trim();
         g.items.push(i);
+      }
+      if (includeEmpty) {
+        for (const n of order) {
+          const k = gkey(n);
+          if (k && !byKey[k]) { byKey[k] = { gk: k, name: n, code: null, items: [], empty: true }; groups.push(byKey[k]); }
+        }
       }
       return groups.sort((x, y) => {
         const lx = listed[x.gk], ly = listed[y.gk];
@@ -347,8 +358,10 @@
         const it = t.estimate_item_id ? rows.estimate_items.find((x) => x.id === t.estimate_item_id && canRead(w, "estimate_items", x)) : null;
         const est = it ? rows.estimates.find((x) => x.id === it.estimate_id) : null;
         return Object.assign({
+          // group_order (20261029000200): the names as stored with prices, each scrubbed without (as estimate_print's)
           takeoff: { id: t.id, project_id: t.project_id, estimate_item_id: t.estimate_item_id, name: T(t.name), description: T(t.description),
-            takeoff_date: t.takeoff_date, notes: T(t.notes), version: t.version, updated_at: t.updated_at },
+            takeoff_date: t.takeoff_date, notes: T(t.notes), group_order: (t.group_order || []).map((g) => (prices ? g : scrub(g))),
+            version: t.version, updated_at: t.updated_at },
           item: it ? { id: it.id, estimate_id: it.estimate_id, name: T(it.name), estimate_label: est ? label(est.kind, est.number, est.co_number) : null } : null,
           rows: outRows,
         }, prices ? { subtotal: sub } : {});
@@ -656,7 +669,9 @@
       return r;
     }
 
-    // estimate_edit_read(p_project_id): the web editor's read (docs/DATABASE.md §27.5)
+    // estimate_edit_read(p_project_id): the web editor's read (docs/DATABASE.md §27.5); since 20261029000100 a name the
+    // group order lists with no live item is an empty group in its listed place (code "", locked by its own words) -
+    // so the web's group order writes keep DCR Desktop 2's empty groups
     function editRead(w, a) {
       if (!w.active) throw deny("not allowed");
       const pid = nil(a.p_project_id) ? null : Number(a.p_project_id);
@@ -674,7 +689,7 @@
           (Number(x.number) - Number(y.number)) || x.id - y.id);
       return { project_id: pid, prices, can_edit: E.canEdit(w, "estimates"), estimates: list.map((e) => {
         const items = itemsOf(w, e.id);
-        const groups = groupsOf(items, e.group_order);
+        const groups = groupsOf(items, e.group_order, true);
         const outItems = [];
         let hours = 0, labor = 0, material = 0, total = 0;
         const outGroups = groups.map((g, n) => {
@@ -705,7 +720,7 @@
             outItems.push(j);
           });
           return Object.assign({ gid, name: T(g.name), code: T(g.code) || "", title: g.name === "" ? "General" : T(g.name) },
-            prices ? {} : { locked: g.items.some((i) => lockedOf(i, ["group_name", "group_code"]).length > 0) });
+            prices ? {} : { locked: g.empty ? quotes(g.name) || holdsMask(g.name) : g.items.some((i) => lockedOf(i, ["group_name", "group_code"]).length > 0) });
         });
         return Object.assign({
           id: e.id, project_id: e.project_id, number: e.number, kind: e.kind, co_number: e.co_number, label: label(e.kind, e.number, e.co_number),
@@ -1057,7 +1072,7 @@
       const number = out.estimates.filter((e) => e.project_id === project.id).length + 1;
       const co = f.kind === "change_order" ? out.estimates.filter((e) => e.project_id === project.id && e.kind === "change_order").length + 1 : null;
       const e = Object.assign({ id, project_id: project.id, number, kind: "estimate", co_number: co, name: "", description: null, status: "draft",
-        sent_date: null, approved_date: null, client_notes: null, group_order: [], archived_at: null, deleted_at: null }, f, audit(days, P.manager_prices));
+        sent_date: null, approved_date: null, client_notes: null, group_order: [], archived_at: null, deleted_at: null, houzz_url: null }, f, audit(days, P.manager_prices));
       out.estimates.push(e);
       return e;
     };
@@ -1119,7 +1134,7 @@
       const tk = (project, f, days) => {
         const id = ++ids.t;
         out.takeoffs.push(Object.assign({ id, project_id: project.id, estimate_item_id: null, name: "", description: null,
-          takeoff_date: addDays(today, -days), notes: null }, f, audit(days, P.manager_prices)));
+          takeoff_date: addDays(today, -days), notes: null, group_order: [] }, f, audit(days, P.manager_prices)));
         return id;
       };
       const row = (takeoff, project, f, price) => {
@@ -1158,7 +1173,7 @@
       item(e, { group_name: "Roof", name: "Roof framing", labor_guys: 4, labor_days: 4 });
       const t = ++ids.t;
       out.takeoffs.push(Object.assign({ id: t, project_id: other.id, estimate_item_id: null, name: "Framing package", description: null,
-        takeoff_date: addDays(today, -14), notes: null }, audit(14, P.manager_prices)));
+        takeoff_date: addDays(today, -14), notes: null, group_order: [] }, audit(14, P.manager_prices)));
       const r = ++ids.r;
       out.takeoff_rows.push(Object.assign({ id: r, takeoff_id: t, project_id: other.id, sort: 1, level: "Main Level", category: "Walls", subcategory: null,
         material_id: mat["2x6x8 stud"], item_name: "2x6x8 stud", purpose: "Walls", qty: 300, unit: "ea", formula: null, notes: null }, audit(14, P.manager_prices)));

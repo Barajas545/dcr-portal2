@@ -8,8 +8,9 @@
    The one rule (BLUEPRINT 2.1 principle 8; P5 acceptance check 1): money is drawn only when `show` is
    true — a person with prices whose rows all came with their money (map/estimates.js moneyShown,
    map/takeoffs.js rowsPriced). Otherwise there is no amount column, no subtotal, no total, no terms and
-   no signature lines, and a dollar amount typed into ANY of the words - names, descriptions, group names and
-   codes, levels, categories, sub-categories, units - reads "(amount hidden)": the worksite copy. */
+   no signature lines, and a dollar amount typed into ANY of the words - names, descriptions, group names,
+   takeoff groups (levels), categories, sub-categories, units - reads "(amount hidden)": the worksite copy. The
+   group code is not drawn at all (owner 2026-10-27). */
 
 import {
   DASH, WORKSITE_TAG, moneyText, qtyText, pctText, wordsFor, crewText, crewPrint, ITEM_TYPES, isChangeOrder,
@@ -152,7 +153,10 @@ export function contractStripHtml(estimates, show) {
     Total with prices). opts: {show, pid, edit}. With `edit` (the web editor, pages/project-estimate-edit.js; owner
     2026-10-24) the cards carry its hooks — "✎ Edit" on the estimate, "⋯" on a group (its database gid in data-grp,
     never its name), every item row a button, "＋ Item" under a group a person may add to (e.addable, g.addable: the
-    approved lock and the locked groups without prices) and "＋ Item in a new group"; without it nothing changes. */
+    approved lock and the locked groups without prices) and "＋ New group"; an empty group (owner 2026-10-27: a name the
+    group order lists with no item yet) is drawn with "Empty" and no subtotal. Without it nothing changes, and a group
+    with no item is never drawn (the printed estimate has none either). A group is its name: the group code is not
+    shown (owner 2026-10-27). */
 export function estimateCardsHtml(estimates, opts) {
   const o = opts || {};
   const show = !!o.show;
@@ -161,6 +165,8 @@ export function estimateCardsHtml(estimates, opts) {
   const cols = show ? 4 : 1;
   return (estimates || []).map(function (e) {
     const t = e.total;
+    const groups = e.groups.filter(function (g) { return edit || g.items.length; });
+    const filled = groups.filter(function (g) { return g.items.length; }).length;
     let html = '<div class="es-card' + (e.archived ? " es-archived" : "") + (isChangeOrder(e) ? " es-co" : "") + '" data-est="' + esc(e.id) + '">' +
       '<table class="pj-tbl es-tbl"><thead><tr class="es-head"><td>' +
       (edit ? '<button type="button" class="es-act es-edit" data-act="est" data-est="' + esc(e.id) + '" title="Name, description, status, archive, delete">✎ Edit</button>' : "") +
@@ -170,11 +176,14 @@ export function estimateCardsHtml(estimates, opts) {
       (plain(e.description).trim() ? '<div class="es-desc">' + multilineMasked(e.description, wordsFor(show)) + "</div>" : "") + "</td>" +
       (show && t ? '<td class="num es-mob-hide">' + esc(m(t.labor)) + '</td><td class="num es-mob-hide">' + esc(m(t.material)) + '</td><td class="num es-tot">' + esc(moneyText(t.total)) + "</td>" : "") + "</tr>" +
       '<tr class="es-colhead"><th>Item</th>' + (show ? '<th class="num es-mob-hide">Labor</th><th class="num es-mob-hide">Material</th><th class="num">Total</th>' : "") + "</tr></thead><tbody>";
-    if (!e.items.length) html += '<tr><td colspan="' + cols + '" class="es-none">No items yet.</td></tr>';
-    e.groups.forEach(function (g) {
-      html += '<tr class="pj-grp"><td colspan="' + cols + '">' + esc(wordsFor(show)(g.label)) + (g.code ? ' <span class="es-code">' + esc(wordsFor(show)(g.code)) + "</span>" : "") +
-        (edit ? '<button type="button" class="es-act es-grp-act" data-act="grp" data-est="' + esc(e.id) + '" data-grp="' + esc(g.gid) + '" aria-label="Group: rename, code, move" title="Group: rename, code, move"></button>' : "") +
+    if (!groups.length) html += '<tr><td colspan="' + cols + '" class="es-none">No items yet.</td></tr>';
+    groups.forEach(function (g) {
+      const empty = !g.items.length;
+      html += '<tr class="pj-grp' + (empty ? " es-grp-empty" : "") + '"><td colspan="' + cols + '">' + esc(wordsFor(show)(g.label)) +
+        (empty ? ' <span class="es-empty">Empty</span>' : "") +
+        (edit ? '<button type="button" class="es-act es-grp-act" data-act="grp" data-est="' + esc(e.id) + '" data-grp="' + esc(g.gid) + '" aria-label="Group: rename, move, delete" title="Group: rename, move, delete"></button>' : "") +
         "</td></tr>";
+      if (empty && !(g.addable !== false && e.addable !== false)) html += '<tr><td colspan="' + cols + '" class="es-none">No items in this group.</td></tr>';
       g.items.forEach(function (it) {
         html += '<tr class="es-item' + (edit ? " es-item-edit" : "") + '" data-item="' + esc(it.id) + '"' +
           (edit ? ' data-act="item" data-est="' + esc(e.id) + '" tabindex="0" role="button" aria-label="Edit this item"' : "") + '><td class="pj-il">' + itemScreenHtml(it, show) + "</td>" +
@@ -184,13 +193,13 @@ export function estimateCardsHtml(estimates, opts) {
       if (edit && g.addable !== false && e.addable !== false) {
         html += '<tr class="es-add"><td colspan="' + cols + '"><button type="button" class="es-act" data-act="add" data-est="' + esc(e.id) + '" data-grp="' + esc(g.gid) + '">＋ Item</button></td></tr>';
       }
-      if (show && g.total && e.groups.length > 1) {
+      if (show && g.total && !empty && filled > 1) {
         html += '<tr class="pj-grpTot"><td>Subtotal — ' + esc(wordsFor(show)(g.label)) + '</td><td class="num es-mob-hide">' + esc(m(g.total.labor)) +
           '</td><td class="num es-mob-hide">' + esc(m(g.total.material)) + '</td><td class="num">' + esc(moneyText(g.total.total)) + "</td></tr>";
       }
     });
     if (edit && e.addable !== false) {
-      html += '<tr class="es-add es-add-grp"><td colspan="' + cols + '"><button type="button" class="es-act" data-act="addgrp" data-est="' + esc(e.id) + '">＋ Item in a new group</button></td></tr>';
+      html += '<tr class="es-add es-add-grp"><td colspan="' + cols + '"><button type="button" class="es-act" data-act="addgrp" data-est="' + esc(e.id) + '">＋ New group</button></td></tr>';
     }
     return html + "</tbody></table></div>";
   }).join("");
@@ -198,8 +207,9 @@ export function estimateCardsHtml(estimates, opts) {
 
 /* ── the Takeoffs tab ───────────────────────────────────────────────── */
 
-/** The takeoff cards (read only): name, date, the item it belongs to, its rows by level / category /
-    sub-category; unit price and line total with prices. opts: {show, pid, open: id of the open one}. */
+/** The takeoff cards (read only): name, date, the item it belongs to, its rows by group (a line's group is its
+    level, in the takeoff's group order: owner 2026-10-27) and, for older lines, category / sub-category; unit price
+    and line total with prices. opts: {show, pid, open: id of the open one}. */
 export function takeoffCardsHtml(takeoffs, opts) {
   const o = opts || {};
   const w = wordsFor(o.show);
@@ -317,8 +327,10 @@ function linesTable(list, detailed, show, notes, sectionHeads) {
   let out = '<table class="est"><thead><tr><th>Description of work</th>' + (show ? '<th class="amt">Amount</th>' : "") + "</tr></thead>";
   list.forEach(function (e) {
     if (sectionHeads) out += '<tbody class="est-band"><tr class="estb"><td colspan="' + cols + '">' + esc(wordsFor(show)(estimateTitle(e))) + "</td></tr></tbody>";
-    if (!e.groups.length) out += '<tbody><tr><td colspan="' + cols + '"><p class="empty">This estimate has no items yet.</p></td></tr></tbody>';
-    e.groups.forEach(function (g) {
+    // a group with no item is never printed (owner 2026-10-27: empty groups are the editor's)
+    const groups = e.groups.filter(function (g) { return g.items.length; });
+    if (!groups.length) out += '<tbody><tr><td colspan="' + cols + '"><p class="empty">This estimate has no items yet.</p></td></tr></tbody>';
+    groups.forEach(function (g) {
       out += '<tbody class="group-block">';
       out += show && !detailed && g.total
         ? '<tr class="grp"><td>' + esc(wordsFor(show)(g.title)) + '</td><td class="amt">' + esc(moneyText(g.total.total)) + "</td></tr>"

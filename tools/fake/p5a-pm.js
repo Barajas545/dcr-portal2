@@ -387,7 +387,7 @@
       const id = ++ids.e;
       const number = out.estimates.filter((e) => e.project_id === project.id).length + 1;
       out.estimates.push(Object.assign({ id, project_id: project.id, number, kind: "estimate", co_number: null, name: "", description: null, status: "draft",
-        sent_date: null, approved_date: null, client_notes: null, group_order: [], archived_at: null, deleted_at: null }, f, audit(days, P.manager_prices)));
+        sent_date: null, approved_date: null, client_notes: null, group_order: [], archived_at: null, deleted_at: null, houzz_url: null }, f, audit(days, P.manager_prices)));
       return id;
     }
     function item(project, estimateId, f, prices) {

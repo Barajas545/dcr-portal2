@@ -5,17 +5,21 @@
 
    The cards are the read-only tab's (est-render.js estimateCardsHtml with its edit hooks); a tap opens a sheet
    (est-sheet.js): the estimate (name, description, the terms with prices, the status; archive / restore, duplicate
-   with prices, delete), a group (rename, code, Up / Down, a new item in it) or an item (name, type, the Labor /
-   Material / Sub-contractor boxes its type shows, assigned, the notes and the live total with prices; Up / Down, Move
-   to group, Move to estimate, Delete). ＋ Estimate and ＋ Change order make a new one (the database numbers it). On a
-   phone (375 px) a sheet is the whole screen with Save always in view; there is no drag and no hover.
+   with prices, delete), a group (rename, Up / Down, a new item in it, Delete while it is empty) or an item (name - of
+   one line or several -, type, the Labor / Material / Sub-contractor boxes its type shows, assigned, the notes and the
+   live total with prices; Up / Down, Move to group, Move to estimate, Delete). ＋ Estimate and ＋ Change order make a
+   new one (the database numbers it); ＋ New group is a name only (owner 2026-10-27): the group starts empty - a name
+   in the estimate's group order with no item, "Empty" on its card - and its items come with its ＋ Item. A group is
+   its name: the group code is neither shown nor set here (owner 2026-10-27; the database keeps it, and an item added
+   to a group still takes the code its items carry). On a phone (375 px) a sheet is the whole screen with Save always
+   in view; there is no drag and no hover.
 
    The data: repo/estimate-edit.js (rpc estimate_edit_read; never estimate_print). For a person WITHOUT prices the
    database sends no amount, note or term at all and the words amount-free; a box whose stored words quote an amount is
    shown that way, read only, and never sent; Approved, Duplicate and every price box are not there; an approved
    estimate keeps its status, archive, deletion, its items' type and quantities, and nothing moves in or out of it;
-   a group whose name or code quotes an amount is not renamed, recoded, added to or moved into, and groups are not
-   reordered while one is (the database refuses each of these anyway: D5, D6).
+   a group whose name or code quotes an amount is not renamed, added to, moved into or deleted, and groups are not
+   reordered, added or deleted while one is (the database refuses each of these anyway: D5, D6).
 
    Every write carries the versions it was shown. An item saved by someone else first: the same changes go again when
    they touched none of these fields, else the conflict panel ("Riley changed Material qty: theirs 420 · yours 400";
@@ -28,7 +32,9 @@ import * as repo from "../repo/estimate-edit.js";
 import { estimateAccess } from "../repo/estimates.js";
 import * as M from "../map/estimate-edit.js";
 import { estimateCardsHtml, contractStripHtml, esc } from "./est-render.js";
-import { itemFormHtml, estimateFormHtml, groupFormHtml, conflictHtml, sheetHtml, liveLineHtml } from "./est-sheet.js";
+import {
+  itemFormHtml, estimateFormHtml, groupFormHtml, newGroupFormHtml, conflictHtml, sheetHtml, liveLineHtml, nameRows, NAME_ROWS, DELETE_GROUP_HINT,
+} from "./est-sheet.js";
 import { moneyShown, isChangeOrder, wordsFor, estimateEditor, cleanName } from "../map/estimates.js";
 import { nameBook } from "../repo/people.js";
 import { D, store } from "./shell.js";
@@ -163,20 +169,22 @@ function onClick(e) {
   if (act === "est") openEstimate(est);
   else if (act === "grp") openGroup(est, t.getAttribute("data-grp"));
   else if (act === "item") openItem(t.getAttribute("data-item"));
-  else if (act === "add") openNewItem(est, t.getAttribute("data-grp"), false);
-  else if (act === "addgrp") openNewItem(est, null, true);
+  else if (act === "add") openNewItem(est, t.getAttribute("data-grp"));
+  else if (act === "addgrp") openNewGroup(est);
 }
 
-// a sheet's form never submits (it would load the page again): Enter in a one-line box is that box's button
+// a sheet's form never submits (it would load the page again): Enter in a one-line box is that box's button (the item
+// name is a text area: Enter there is a new line of the name)
 function onSubmit(e) { e.preventDefault(); }
-const ENTER_ACT = { ef_group_name: "rename", ef_group_code: "code", efToGroupName: "toGroup" };
+const ENTER_ACT = { ef_group_name: "rename", efToGroupName: "toGroup" };
 
 function onKey(e) {
   if (e.key === "Escape" && state.sheet) { e.preventDefault(); closeSheet(false); return; }
   const t = e.target;
   if (e.key === "Enter" && state.sheet && t && t.tagName === "INPUT" && t.closest && t.closest("#esSheet")) {
     e.preventDefault();
-    const act = ENTER_ACT[t.id] || (state.sheet.kind === "grp" ? null : "save");
+    const kind = state.sheet.kind;
+    const act = kind === "newgrp" ? "save" : ENTER_ACT[t.id] || (kind === "grp" ? null : "save");
     if (act) sheetAct(act);
     return;
   }
@@ -201,7 +209,22 @@ function onInput(e) {
   if (!t || !state.sheet || !t.closest || !t.closest("#esSheet")) return;
   const key = t.getAttribute("data-key");
   if (key) markTouched(key);
+  if (t.id === "ef_name") fitName(t);
   if (state.sheet.kind === "item") drawLive();
+}
+
+/** The item name's box grows with its lines, typed or wrapped, up to est-sheet.js NAME_ROWS lines (then it scrolls). */
+function fitName(t) {
+  if (!t || t.tagName !== "TEXTAREA") return;
+  t.rows = nameRows(t.value);
+  try {
+    const cs = getComputedStyle(t);
+    const n = function (v) { return parseFloat(v) || 0; };
+    const frame = n(cs.borderTopWidth) + n(cs.borderBottomWidth);               // box-sizing: border-box (styles.css)
+    const most = (n(cs.lineHeight) || 21) * NAME_ROWS + n(cs.paddingTop) + n(cs.paddingBottom) + frame;
+    t.style.height = "auto";
+    t.style.height = Math.min(t.scrollHeight + frame, most) + "px";
+  } catch (e) { /* the rows alone */ }
 }
 
 function onUnload(e) {
@@ -285,9 +308,11 @@ function sheetAct(act) {
     else if (act === "delete") deleteEstimateSheet();
   } else if (s.kind === "grp") {
     if (act === "rename") renameGroup();
-    else if (act === "code") codeGroup();
     else if (act === "gup" || act === "gdown") stepGroup(act === "gup" ? -1 : 1);
-    else if (act === "addHere") { const gid = s.gid, est = s.estId; closeSheet(true).then(function () { openNewItem(est, gid, false); }); }
+    else if (act === "gdelete") deleteGroup();
+    else if (act === "addHere") { const gid = s.gid, est = s.estId; closeSheet(true).then(function () { openNewItem(est, gid); }); }
+  } else if (s.kind === "newgrp") {
+    if (act === "save") addGroup();
   }
 }
 
@@ -458,21 +483,50 @@ async function renameGroup() {
   const why = M.groupNameProblem(name, prices());
   if (why) { showErr(why); return; }
   if (!cleanName(name)) { showErr("Type the group's new name."); return; }
-  const plan = M.planRename(M.slotsOf(est), est.group_order, s.gid, name);
+  const slots = M.slotsOf(est);
+  const slot = slots.find(function (x) { return x.gid === s.gid; });
+  const other = slot && !slot.items.length ? M.renameTaken(slots, s.gid, name) : null;
+  if (other) { showErr("Another group is called “" + (other.name || "General") + "” already: pick another name."); return; }
+  const plan = M.planRename(slots, est.group_order, s.gid, name);
   if (!plan) { closeSheet(true); return; }
   await arrange(est, plan.groupOrder, plan.moves, "Group renamed to " + cleanName(name) + ".");
 }
 
-async function codeGroup() {
+/** Delete an empty group (owner 2026-10-27): the group order without its name; a group with items is never deleted
+    here (the button is off: its items are moved or deleted first). */
+async function deleteGroup() {
   const s = state.sheet, est = findEst(s.estId);
-  const input = $("ef_group_code");
-  const code = input ? input.value : "";
-  const why = M.groupNameProblem(code, prices());
+  const g = est && est.groups.find(function (x) { return x.gid === s.gid; });
+  const order = est ? M.planDeleteGroup(M.slotsOf(est), est.group_order, s.gid) : null;
+  if (!order) { showErr(g && g.items.length ? DELETE_GROUP_HINT : "This group is not in the estimate's group order any more: read again (↻)."); return; }
+  await arrange(est, order, [], "Group deleted.");
+}
+
+/* ── a new group: a name only, an empty group (owner 2026-10-27) ────── */
+function openNewGroup(estId) {
+  const est = findEst(estId);
+  if (!est || !est.addable) return;
+  state.sheet = { kind: "newgrp", estId: est.id, isNew: true, dirty: false, touched: new Set() };
+  mountSheet("New group", newGroupFormHtml(est), { save: "Add group" });
+}
+
+async function addGroup() {
+  const s = state.sheet, est = findEst(s.estId);
+  if (!est) { closeSheet(true); return; }
+  const input = $("ef_group_name");
+  const name = input ? input.value : "";
+  const why = M.groupNameProblem(name, prices());
   if (why) { showErr(why); return; }
-  const slot = M.slotsOf(est).find(function (x) { return x.gid === s.gid; });
-  const moves = M.planCode(slot, code);
-  if (!moves.length) { closeSheet(true); return; }
-  await arrange(est, null, moves, cleanName(code) ? "Group code set." : "Group code taken off.");
+  if (!cleanName(name)) { showErr("Type the group's name."); return; }
+  const plan = M.planNewGroup(M.slotsOf(est), name);
+  if (plan.taken) {
+    // a group of that name is there already: that group, not a second one
+    await closeSheet(true);
+    toast("There is a group called “" + cleanName(name) + "” already.", "info");
+    openGroup(est.id, plan.taken);
+    return;
+  }
+  await arrange(est, plan.groupOrder, [], "Group “" + cleanName(name) + "” added: add its items with ＋ Item.");
 }
 
 async function stepGroup(dir) {
@@ -501,20 +555,21 @@ function mountItemSheet() {
   const s = state.sheet;
   const est = findEst(s.estId);
   const it = s.base;
-  const title = s.isNew ? (s.newGroup ? "New item in a new group" : "New item") : (cleanName(it.name) || "Item");
-  mountSheet(title, itemFormHtml(it, { prices: prices(), est, estimates: state.model.estimates, isNew: !!s.isNew, gid: s.gid, newGroup: !!s.newGroup, type: s.type }), {
+  const title = s.isNew ? "New item" : (cleanName(it.name) || "Item");
+  mountSheet(title, itemFormHtml(it, { prices: prices(), est, estimates: state.model.estimates, isNew: !!s.isNew, gid: s.gid, type: s.type }), {
     save: s.isNew ? "Add item" : "Save",
     danger: s.isNew ? null : { act: "deleteItem", text: "Delete", disabled: !!(est && est.approvedLock), title: est && est.approvedLock ? M.APPROVED_HINT : null },
   });
+  fitName($("ef_name"));
 }
 
-function openNewItem(estId, gid, newGroup) {
+function openNewItem(estId, gid) {
   const est = findEst(estId);
   if (!est || !est.addable) return;
   const type = M.itemType(store.get(M.LAST_TYPE_KEY, M.DEFAULT_ITEM_TYPE)) || M.DEFAULT_ITEM_TYPE;
   const base = { item_type: type, name: "", labor_qty: 1, material_qty: 1, locked: [] };
   if (prices()) base.prices = { labor_markup_pct: 0, material_markup_pct: 0 };
-  state.sheet = { kind: "item", estId: est.id, isNew: true, gid: gid || null, newGroup: !!newGroup, base, type, dirty: false, touched: new Set() };
+  state.sheet = { kind: "item", estId: est.id, isNew: true, gid: gid || null, base, type, dirty: false, touched: new Set() };
   mountItemSheet();
 }
 
@@ -678,17 +733,11 @@ async function addNewItem(form) {
     const v = String(form[k] == null ? "" : form[k]);
     if (k === "name" || v.trim()) fields[k] = v;
   });
-  if (s.newGroup) {
-    const name = form.group_name || "", code = form.group_code || "";
-    const why = M.groupNameProblem(name, withPrices) || M.groupNameProblem(code, withPrices);
-    if (why) { showErr(why); return; }
-    if (cleanName(name)) fields.group_name = cleanName(name);
-    if (String(code).trim()) fields.group_code = String(code).trim();
-  } else {
-    const g = est.groups.find(function (x) { return x.gid === s.gid; });
-    if (g && g.name) fields.group_name = g.name;
-    if (g && g.code) fields.group_code = g.code;
-  }
+  // the group's name; and the code its items carry, unseen (owner 2026-10-27: the code is not shown, but the items of
+  // one group keep one code - an empty group has none)
+  const g = est.groups.find(function (x) { return x.gid === s.gid; });
+  if (g && g.name) fields.group_name = g.name;
+  if (g && g.code) fields.group_code = g.code;
   const money = {};
   if (withPrices) {
     M.PRICE_KEYS.forEach(function (k) {
@@ -766,7 +815,7 @@ async function moveToEstimate() {
 
 async function deleteItemSheet() {
   const s = state.sheet;
-  const ok = await cx.confirm("Delete this item" + (cleanName(s.base.name) ? " (" + s.base.name + ")" : "") + "?", { title: "Delete the item", okText: "Delete", danger: true });
+  const ok = await cx.confirm("Delete this item" + (cleanName(s.base.name) ? " (" + cleanName(s.base.name) + ")" : "") + "?", { title: "Delete the item", okText: "Delete", danger: true });
   if (!ok || state.sheet !== s) return;
   setBusy(true);
   try {
@@ -784,7 +833,7 @@ function adoptLive() {
     const est = findEst(s.estId);
     const g = est && est.groups.find(function (x) { return M.groupKey(x.name) === s.key; });
     if (g) { s.gid = g.gid; return; }
-    notice("This group was renamed or emptied by someone else — close it and open it again.");
+    notice("This group was renamed or deleted by someone else — close it and open it again.");
     const box = $("esSheet");
     if (box) box.querySelectorAll(".es-sheet-bd button").forEach(function (b) { b.disabled = true; });
     return;
@@ -821,6 +870,7 @@ function adoptInto(s, flat, row) {
     if (n.tagName === "SELECT") n.value = v == null ? n.value : String(v);
     else if (M.QTY_KEYS.indexOf(k) !== -1 || M.MONEY_FIELDS.indexOf(k) !== -1 || M.PCT_FIELDS.indexOf(k) !== -1) n.value = M.numText(k, v);
     else n.value = v == null ? "" : String(v);
+    if (k === "name") fitName(n);
     const locked = !prices() && M.isLocked(row, k);
     if (locked) { n.disabled = true; n.dataset.masked = "1"; n.title = M.LOCKED_TITLE; }
     if (M.PRICE_KEYS.indexOf(k) !== -1) { if (s.base.prices) s.base.prices[k] = v; }

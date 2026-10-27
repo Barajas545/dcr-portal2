@@ -8,8 +8,9 @@ import { readFileSync } from "node:fs";
 import { available, freshEngine, person, clientAs } from "./pages-engine.mjs";
 import { useClient } from "../site/js/repo/_db.js";
 import * as edit from "../site/js/repo/estimate-edit.js";
-import { estimateCardsHtml } from "../site/js/pages/est-render.js";
-import { itemFormHtml, estimateFormHtml, groupFormHtml, conflictHtml, sheetHtml, liveLineHtml } from "../site/js/pages/est-sheet.js";
+import { estimateCardsHtml, estimateSheetHtml } from "../site/js/pages/est-render.js";
+import { itemFormHtml, estimateFormHtml, groupFormHtml, newGroupFormHtml, conflictHtml, sheetHtml, liveLineHtml, nameRows, NAME_ROWS } from "../site/js/pages/est-sheet.js";
+import * as M from "../site/js/map/estimate-edit.js";
 import { moneyShown } from "../site/js/map/estimates.js";
 
 const skip = !available && "the demo database (tools/fake) is not here";
@@ -83,8 +84,10 @@ test("the item sheet with prices: the price boxes, the notes, the live total; a 
   assert.match(sub, /<legend id="efLaborLegend">Sub-contractor<\/legend>/);
   assert.match(sub, /<label for="ef_description" id="efDescLabel">Scope of work/);
   assert.match(sub, /<fieldset class="es-part" data-part="material" hidden>/, "a sub has no material card");
-  const fresh = itemFormHtml({ item_type: "labor", labor_qty: 1, material_qty: 1 }, { prices: true, est: byName(m, "Deck option"), isNew: true, newGroup: true, type: "labor" });
-  assert.match(fresh, /name="group_name"/);
+  const deck = byName(m, "Deck option");
+  const fresh = itemFormHtml({ item_type: "labor", labor_qty: 1, material_qty: 1 }, { prices: true, est: deck, isNew: true, gid: deck.groups[0].gid, type: "labor" });
+  assert.match(fresh, /Group: <b>Deck<\/b>/, "a new item goes into the group it was added to");
+  assert.ok(!/name="group_name"|name="group_code"/.test(fresh), "no group boxes on an item (a new group is a name only: newGroupFormHtml)");
   assert.ok(!/es-moves/.test(fresh), "a new item has no moves yet");
   assert.match(itemFormHtml({ name: "<b>Bold</b>" }, { prices: true, est: {}, isNew: true }), /&lt;b&gt;Bold&lt;\/b&gt;/, "words are text, never HTML");
 });
@@ -108,15 +111,81 @@ test("the estimate and group sheets: Approved and Duplicate only with prices; an
   const est = { label: "Estimate #2", groups: [locked, { gid: "g2", name: "Deck", code: "", locked: false, items: [] }], addable: true };
   const g = groupFormHtml(locked, { prices: false, est });
   assert.match(g, /data-act="rename" disabled/);
-  assert.match(g, /data-act="code" disabled/);
   assert.match(g, /data-act="gup" disabled/);
+  assert.match(g, /data-act="gdelete" disabled/);
   assert.ok(!/data-act="addHere"/.test(g), "nothing added to a locked group");
   const open = groupFormHtml(est.groups[1], { prices: false, est });
   assert.ok(!/data-act="rename" disabled/.test(open), "an unlocked group is renamed");
   assert.match(open, /data-act="gup" disabled/, "groups are not reordered while one of them is locked");
+  assert.match(open, /data-act="gdelete" disabled title="Contains an amount/, "nor is a group deleted then (it sends the group order)");
+  for (const html of [g, open]) assert.ok(!/group_code|data-act="code"|Group code|Set code/.test(html), "no group code (owner 2026-10-27)");
   const c = conflictHtml([{ label: "Material qty", theirs: "420", mine: "400" }], "Riley");
   assert.match(c, /Riley changed Material qty: theirs <b>420<\/b> · yours <b>400<\/b>/);
   assert.match(c, /data-act="keepTheirs"/);
+});
+
+test("the item name is a text area of its lines (owner 2026-10-27): a name of several lines is shown as it is and, saved as it was, sends nothing", { skip }, async () => {
+  const m = await modelAs("estimator");
+  const deck = byName(m, "Deck option");
+  const item = Object.assign({}, deck.items[0], { name: "Deck framing 12x16\nPT joists at 16\" o.c.\nper sheet S-4" });
+  const html = itemFormHtml(item, { prices: false, est: deck, estimates: m.estimates });
+  assert.match(html, /<textarea id="ef_name" name="name" data-key="name" class="es-grow" rows="3">Deck framing 12x16\nPT joists at 16&quot; o\.c\.\nper sheet S-4<\/textarea>/,
+    "a text area, a row per line, the line breaks kept (an <input> would join them)");
+  assert.ok(!/<input[^>]*id="ef_name"/.test(html), "never a one-line box");
+  // the box hands the words back as they are: nothing to send
+  const value = /<textarea id="ef_name"[^>]*>([\s\S]*?)<\/textarea>/.exec(html)[1].replace(/&quot;/g, '"');
+  assert.deepEqual(M.diffItem(item, { name: value }, { prices: false }), { fields: {}, prices: {} });
+  assert.equal(nameRows("one"), 1);
+  assert.equal(nameRows(""), 1);
+  assert.equal(nameRows("a\r\nb\nc"), 3);
+  assert.equal(nameRows("1\n2\n3\n4\n5\n6\n7\n8"), NAME_ROWS, "at most six rows, then it scrolls");
+  assert.equal(NAME_ROWS, 6);
+  assert.match(itemFormHtml({ name: "\nStarts on a new line" }, { prices: true, est: {}, isNew: true }), /rows="2">\n\nStarts on a new line<\/textarea>/,
+    "the parser drops the first line break after <textarea>: one more keeps the name's own");
+  const walls = byName(m, "Main house framing").items[0];
+  const locked = itemFormHtml(Object.assign({}, walls, { locked: ["name"], name: "Allowance [amount]\nsecond line" }), { prices: false, est: byName(m, "Main house framing"), estimates: m.estimates });
+  assert.match(locked, /<textarea id="ef_name" name="name" data-key="name" disabled data-masked="1" title="Contains an amount — hidden for you" aria-describedby="efLockedNote" class="es-grow" rows="2">/,
+    "a locked name: read only, masked, never sent");
+  const page = code(read("js/pages/project-estimate-edit.js"));
+  assert.match(page, /t\.tagName === "INPUT"/, "Enter is Save in a one-line box only: in the name it is a new line");
+  assert.match(page, /if \(t\.id === "ef_name"\) fitName\(t\);/, "the name's box grows as one types");
+  assert.match(read("css/estimates.css"), /\.es-form textarea\.es-grow\{resize:none; overflow-y:auto; max-height:calc\(6 \* 1\.4em \+ 22px\);\}/);
+});
+
+test("empty groups in the editor (owner 2026-10-27): the demo's estimate_edit_read sends a listed name with no item; its card says Empty, its sheet deletes it; the read-only tab and the paper never show it", { skip }, async () => {
+  const e = await freshEngine();
+  const deckRow = e.rows.estimates.find((x) => x.project_id === SANDBOX && x.name === "Deck option");
+  deckRow.group_order = ["Deck", "Stairs and rail", "Allowance $400"];
+  for (const key of ["estimator", "manager_prices"]) {
+    useClient(clientAs(e, (await person(key)).id));
+    const m = await edit.loadEditor(SANDBOX);
+    const prices = key === "manager_prices";
+    const deck = byName(m, "Deck option");
+    const amount = prices ? "Allowance $400" : "Allowance [amount]";
+    assert.deepEqual(deck.groups.map((g) => [g.name, g.items.length, g.empty, g.locked]),
+      [["Deck", 2, false, false], ["Stairs and rail", 0, true, false], [amount, 0, true, !prices]], key + ": the empty groups in their listed place, locked by their own words");
+    const html = estimateCardsHtml([deck], { show: moneyShown(m.prices, [deck]), pid: SANDBOX, edit: true });
+    assert.match(html, /<tr class="pj-grp es-grp-empty"><td colspan="\d">Stairs and rail <span class="es-empty">Empty<\/span><button type="button" class="es-act es-grp-act" data-act="grp" data-est="\d+" data-grp="g2"/);
+    assert.match(html, /data-act="add" data-est="\d+" data-grp="g2">＋ Item</, key + ": ＋ Item into the empty group");
+    if (!prices) assert.match(html, /\(amount hidden\) <span class="es-empty">Empty<\/span>|\[amount\] <span class="es-empty">Empty<\/span>/, "a locked empty group: its words amount-free");
+    if (!prices) assert.ok(!/data-grp="g3">＋ Item/.test(html), "nothing added to a locked empty group");
+    assert.ok(!/Subtotal — Stairs and rail/.test(html), key + ": an empty group has no subtotal");
+    assert.match(html, /data-act="addgrp" data-est="\d+">＋ New group</, key + ": a new group is a name only");
+    const sheet = groupFormHtml(deck.groups[1], { prices: m.prices, est: deck });
+    assert.match(sheet, /Empty: no items yet/);
+    if (prices) assert.match(sheet, /<button type="button" class="es-act es-danger" data-act="gdelete">Delete group<\/button>/, "an empty group is deleted from its sheet");
+    else assert.match(sheet, /data-act="gdelete" disabled title="Contains an amount/, "not while a group name of this estimate quotes an amount (the order is locked)");
+    const full = groupFormHtml(deck.groups[0], { prices: true, est: deck });
+    assert.match(full, /data-act="gdelete" disabled title="Move or delete its items first\."/, "a group with items is never deleted here");
+    const readOnly = estimateCardsHtml([deck], { show: false, pid: SANDBOX });
+    assert.ok(!/Stairs and rail|es-empty/.test(readOnly), key + ": without the edit hooks an empty group is not drawn");
+    const paper = estimateSheetHtml({ internalIDNumber: "A267" }, [deck], { show: false, company: { name: "DCR" }, date: "2026-10-27" }).html;
+    assert.ok(!/Stairs and rail/.test(paper), key + ": never printed");
+  }
+  const ng = newGroupFormHtml({ label: "Estimate #2" });
+  assert.match(ng, /<input type="text" autocomplete="off" id="ef_group_name" name="group_name" data-key="group_name" value="" maxlength="200">/);
+  assert.ok(!/group_code|First item|name="name"/.test(ng), "a name only: no code, no first item");
+  assert.ok(!/es-code/.test(read("js/pages/est-render.js")) && !/\.es-code\{/.test(read("css/estimates.css")), "the group code chip is gone");
 });
 
 test("the Estimate tab: the editor is a lazy import (never in a crew phone's offline set); the old words are gone; the phone sheet", () => {

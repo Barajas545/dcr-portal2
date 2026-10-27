@@ -5,9 +5,13 @@
    Ports of DCR Desktop 2's dcrdesk/printing/figures.py (takeoff_levels, unit_price, row_total, quote_totals)
    and printing/takeoffs.py (the Material List and the Material Quote), so the paper a crew or a lumber
    yard reads is the same from the office or a phone:
-   * rows -> levels -> categories -> sub-categories, each in the order its first row comes (rows by sort,
-     then id); blank names are their own group ("(no level)", no band for a blank category or
-     sub-category unless something under it is named);
+   * rows -> groups -> categories -> sub-categories (owner 2026-10-27: a line's group is its level, "Group" on
+     every screen; migration 20261029000200_takeoff_groups): the groups in the takeoff's group_order (the
+     estimates' rule - names tidied, any case; "" = the lines without a group), the groups it does not list
+     after them in the order their first row comes (rows by sort, then id); categories and sub-categories
+     (older lines only: they left DCR Desktop 2's grid) in the order their first row comes; blank names are
+     their own group ("(no group)", no band for a blank category or sub-category unless something under it is
+     named); a listed group with no line is not printed;
    * the Material Quote (people with prices only): line total = qty × unit price in cents, a subtotal
      per level, then Subtotal, Sales tax at settings.tax_rate percent and GRAND TOTAL. A row without its
      price (no prices switch, or the price row missing) never prints as $0.00: the sheet is the Material
@@ -17,7 +21,7 @@
 
    Pure module: no DOM, no network. */
 
-import { toCents, mulCents, pctOfCents, parseDec, lowerPg } from "./estimates.js";
+import { toCents, mulCents, pctOfCents, parseDec, lowerPg, cleanName } from "./estimates.js";
 
 function sortNum(v) {
   const d = parseDec(v);
@@ -47,16 +51,32 @@ export function allRows(b) {
   return out;
 }
 
-/** Rows -> [{name (level), children: [{name (category), children: [{name (sub), rows}]}]}]. */
-export function takeoffLevels(rows) {
+/** A group's key: its name tidied (runs of white space as one space), lower case - app.group_key. */
+export function groupKey(name) { return lowerPg(cleanName(name)); }
+
+/** Rows -> [{name (group: the level), children: [{name (category), children: [{name (sub), rows}]}]}], the groups in
+    the takeoff's group order (groupOrder: takeoffs.group_order; listed names first in that order, then the others by
+    their first row). */
+export function takeoffLevels(rows, groupOrder) {
   const root = bucket("");
+  const byKey = {};
   (rows || []).filter(function (r) { return r && typeof r === "object"; }).slice().sort(rowOrder).forEach(function (r) {
-    const level = child(root, trimmed(r.level));
+    const k = groupKey(r.level);
+    let level = byKey[k];
+    if (!level) { level = byKey[k] = bucket(cleanName(r.level)); root.children.push(level); }
     const cat = child(level, trimmed(r.category));
     const sub = child(cat, trimmed(r.subcategory));
     sub.rows.push(r);
   });
-  return root.children;
+  const listed = {};
+  (Array.isArray(groupOrder) ? groupOrder : []).forEach(function (n, i) {
+    const k = groupKey(n);
+    if (!(k in listed)) listed[k] = i;
+  });
+  const at = function (b) { const k = groupKey(b.name); return k in listed ? listed[k] : Infinity; };
+  return root.children.map(function (b, i) { return { b, i, at: at(b) }; })
+    .sort(function (x, y) { return x.at !== y.at ? (x.at < y.at ? -1 : 1) : x.i - y.i; })
+    .map(function (x) { return x.b; });
 }
 
 /** The row's unit price in cents, or null (no prices, or none set). */
@@ -101,11 +121,13 @@ export function rowUnit(row) {
 }
 
 /**
- * The answer of rpc takeoff_print (M5a: {prices, project, takeoffs [{takeoff, item {id, estimate_id, name,
- * estimate_label} | null, rows [...] [, subtotal]}] [, totals {subtotal, tax_rate, tax, total}]}) -> {prices,
- * project, taxRate, takeoffs: [{...takeoff, item, rows (in print order, each with prices {unit_price,
- * line_total} only when the database sent them), lines, levels, priced}] newest first (date, then id)}.
- * Without the prices switch the database sent no price key and scrubbed the typed words.
+ * The answer of rpc takeoff_print (M5a: {prices, project, takeoffs [{takeoff {..., group_order}, item {id,
+ * estimate_id, name, estimate_label} | null, rows [...] [, subtotal]}] [, totals {subtotal, tax_rate, tax,
+ * total}]}) -> {prices, project, taxRate, takeoffs: [{...takeoff, item, rows (in print order, each with prices
+ * {unit_price, line_total} only when the database sent them), lines, levels (by its group order), priced}] newest
+ * first (date, then id)}. Without the prices switch the database sent no price key and scrubbed the typed words
+ * (the group order's names too). A database before migration 20261029000200 sends no group_order: the groups come
+ * in the order their first row does.
  */
 export function fromTakeoffPrint(answer) {
   const a = answer || {};
@@ -116,7 +138,8 @@ export function fromTakeoffPrint(answer) {
       if ("unit_price" in r) out.prices = { unit_price: r.unit_price, line_total: r.line_total };
       return out;
     }).sort(rowOrder);
-    return Object.assign({}, x.takeoff, { item: x.item || null, rows, lines: rows.length, levels: takeoffLevels(rows), priced: rowsPriced(rows) });
+    return Object.assign({}, x.takeoff, { item: x.item || null, rows, lines: rows.length, levels: takeoffLevels(rows, x.takeoff.group_order),
+      priced: rowsPriced(rows) });
   });
   list.sort(function (p, q) {
     const x = String(p.takeoff_date || ""), y = String(q.takeoff_date || "");
@@ -127,8 +150,8 @@ export function fromTakeoffPrint(answer) {
   return { prices: !!a.prices, project: a.project || null, taxRate: t ? t.tax_rate : null, takeoffs: list };
 }
 
-/** A band's words: "(no level)" for a blank level. */
-export function levelName(name) { return name ? name : "(no level)"; }
+/** A group band's words: "(no group)" for the lines without a group (a blank level). */
+export function levelName(name) { return name ? name : "(no group)"; }
 
 /** Whether a category band is drawn: it is named, or one of its sub-categories is. */
 export function categoryBand(cat) {

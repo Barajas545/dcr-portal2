@@ -101,7 +101,7 @@
       address: null, city: null, notes: null, deleted_at: null }, AUDIT),
     projects: Object.assign({ id: null, number: null, name: null, address: null, city: null, state: "CA", zip: null,
       client_contact_id: null, client_name: null, client_phone: null, client_email: null, status: "new_request",
-      status_note: null, scope: null, tags: [], plans_url: null, start_date: null, completed_date: null, lat: null, lng: null,
+      status_note: null, scope: null, tags: [], plans_url: null, houzz_url: null, start_date: null, completed_date: null, lat: null, lng: null,
       location_source: null, thumbnail_file_id: null, folder_name: null, legacy_sp_id: null, deleted_at: null }, AUDIT),
     project_prices: Object.assign({ project_id: null, labor_rate: null, rate_source: null }, AUDIT),
     activity: Object.assign({ id: null, project_id: null, kind: "note", text: null, from_status: null, to_status: null,

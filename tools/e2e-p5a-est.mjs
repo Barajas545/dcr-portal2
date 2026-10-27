@@ -12,7 +12,7 @@
      the crew lines, the item flags; with prices the Labor / Material / Total columns and the contract strip,
      without prices not ONE amount on the page (typed ones arrive scrubbed) and "prices hidden"; the picker
      shows one estimate; "Show archived (1)"; a change made in the office arrives live;
-   - tab Takeoffs: the fold-out takeoffs (the first with rows open), rows by level / category / sub-category,
+   - tab Takeoffs: the fold-out takeoffs (the first with rows open), rows by group (level) / category / sub-category,
      the unit price and line total with prices only, "Material list" for everybody, "Material quote" with prices;
    - report-estimate.html: the full copy (GRAND TOTAL, terms, signatures) with prices, the worksite copy for
      everybody else (no switch to undo it); a person with prices ticks "Hide prices" and the sheet is drawn
@@ -139,7 +139,7 @@ async function main() {
           "money: " + DOLLARS + ".test(p.innerText), strip: (p.querySelector('.es-contract') || {}).innerText || '', cols: p.querySelectorAll('th.num').length, " +
           "scrubbed: /\\[amount\\]/.test(p.innerText), flags: p.querySelectorAll('.es-flag').length, groups: Array.from(p.querySelector('.es-card').querySelectorAll('.pj-grp td')).map(t => t.innerText.trim()) }; })()");
         check(role + ": Estimate tab — four estimates and change orders (archived and deleted left out)", st.cards === 4, JSON.stringify(st));
-        check(role + ": the office's group order", JSON.stringify(st.groups) === JSON.stringify(["Floor system 06.11.00", "Walls 06.11.00", "Roof 06.17.00", "(no group)"]), JSON.stringify(st.groups));
+        check(role + ": the office's group order (a group is its name: no code, owner 2026-10-27)", JSON.stringify(st.groups) === JSON.stringify(["Floor system", "Walls", "Roof", "(no group)"]), JSON.stringify(st.groups));
         if (prices) {
           check(role + ": with prices — Labor / Material / Total and the contract strip", st.money && st.cols >= 3 && /contract/i.test(st.strip) && /\$71,680\.58/.test(st.strip), st.strip);
           if (role === "admin") keepFigs(await figsIn(d, "#pane-estimate"));
@@ -200,7 +200,7 @@ async function main() {
         await d.eval("(() => { const m = Array.from(document.querySelectorAll('#pane-takeoffs details')).find(x => /Main house/.test(x.innerText)); m.open = true; return true; })()");
         await sleep(250);
         const lv = await d.eval("Array.from(document.querySelectorAll('#pane-takeoffs details[open] .tk-lvl td')).map(t => t.innerText).join('|')");
-        check(role + ": rows by level, in the order their first row comes", /Main Level\|Second Level\|Roof\|\(no level\)/.test(lv), lv);
+        check(role + ": rows by group (the level; the demo lists no group order: the order their first row comes)", /Main Level\|Second Level\|Roof\|\(no group\)/.test(lv), lv);
       }, d);
       if (role === "admin" || role === "lead") await shoot(d, "takeoffs_" + role, "desktop", false);
 

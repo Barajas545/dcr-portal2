@@ -131,7 +131,7 @@ test("contract summary (the Estimate tab's strip): estimates not declined + appr
 
 /* ── takeoffs ───────────────────────────────────────────────────────── */
 
-test("takeoff levels: level -> category -> sub-category in the order the first row comes (sort, then id); names any case; blanks their own group", () => {
+test("takeoff groups: group (the level) -> category -> sub-category in the order the first row comes (sort, then id); names any case; blanks their own group", () => {
   const rows = [
     { id: 5, sort: 3, level: "Roof", category: "", subcategory: "" },
     { id: 1, sort: 1, level: "Main Level", category: "Walls", subcategory: "Exterior" },
@@ -144,9 +144,34 @@ test("takeoff levels: level -> category -> sub-category in the order the first r
   assert.deepEqual(lv[0].children.map((c) => c.name), ["Walls", "Floor"]);
   assert.deepEqual(lv[0].children[0].children.map((s) => s.name), ["Exterior", "Interior"]);
   assert.deepEqual(tko.allRows(lv[0]).map((r) => r.id), [1, 2, 4]);
-  assert.equal(tko.levelName(""), "(no level)");
+  assert.equal(tko.levelName(""), "(no group)", "owner 2026-10-27: a line's group is its level");
+  assert.equal(tko.levelName("Roof"), "Roof");
   assert.equal(tko.categoryBand(lv[1].children[0]), false, "a blank category with no named sub-category draws no band");
   assert.equal(tko.categoryBand({ name: "", children: [{ name: "Exterior" }] }), true);
+});
+
+test("takeoff groups in the takeoff's group order (migration 20261029000200): listed first in that order (tidy, any case; \"\" = no group), the rest by their first row; a listed group with no line is not drawn", () => {
+  const rows = [
+    { id: 1, sort: 1, level: "Main Level", category: "Walls" },
+    { id: 2, sort: 2, level: "Roof" },
+    { id: 3, sort: 3, level: "" },
+    { id: 4, sort: 4, level: "Garage" },
+    { id: 5, sort: 5, level: "main  level", category: "Floor" },
+    { id: 6, sort: 6, level: "Deck" },
+  ];
+  assert.deepEqual(tko.takeoffLevels(rows).map((l) => l.name), ["Main Level", "Roof", "", "Garage", "Deck"], "no order: first appearance");
+  assert.deepEqual(tko.takeoffLevels(rows, []).map((l) => l.name), ["Main Level", "Roof", "", "Garage", "Deck"]);
+  const lv = tko.takeoffLevels(rows, ["ROOF", "", "Empty group", " main   LEVEL "]);
+  assert.deepEqual(lv.map((l) => l.name), ["Roof", "", "Main Level", "Garage", "Deck"], "listed first, in the order's order; the others by first row");
+  assert.deepEqual(tko.allRows(lv[2]).map((r) => r.id), [1, 5], "'main  level' is the same group (tidy, any case)");
+  assert.deepEqual(lv[2].children.map((c) => c.name), ["Walls", "Floor"], "an older line's category still bands");
+  assert.equal(tko.groupKey("  Main \t Level "), "main level");
+  assert.deepEqual(tko.takeoffLevels(rows, "nonsense").map((l) => l.name), ["Main Level", "Roof", "", "Garage", "Deck"], "not a list: no order");
+  const t = tko.fromTakeoffPrint({ prices: false, takeoffs: [{ takeoff: { id: 3, group_order: ["Deck", "Garage"] }, rows }] });
+  assert.deepEqual(t.takeoffs[0].levels.map((l) => tko.levelName(l.name)), ["Deck", "Garage", "Main Level", "Roof", "(no group)"]);
+  assert.deepEqual(t.takeoffs[0].group_order, ["Deck", "Garage"], "the order stays on the takeoff");
+  const old = tko.fromTakeoffPrint({ prices: false, takeoffs: [{ takeoff: { id: 3 }, rows }] });
+  assert.deepEqual(old.takeoffs[0].levels.map((l) => l.name), ["Main Level", "Roof", "", "Garage", "Deck"], "a database before the migration: first appearance");
 });
 
 test("fromTakeoffPrint: rows by sort, newest takeoff first, prices only when the database sent them; quote totals as the database's", () => {
@@ -322,7 +347,7 @@ test("printed estimate: the worksite copy has no amount, no total, no terms, no 
   assert.ok(!DOLLARS.test(s2.html) && !/CONTRACT TOTAL/.test(s2.html) && s2.html.includes(est.WORKSITE_TAG));
 });
 
-test("every typed word is masked on the worksite copy - group codes, levels, categories, sub-categories, units (review: \"$2,500\" in a group code); the database scrubs them for a person without prices", { skip }, async () => {
+test("every typed word is masked on the worksite copy - levels (takeoff groups), categories, sub-categories, units (review: \"$2,500\" in a group code - no longer drawn at all, owner 2026-10-27); the database scrubs them for a person without prices", { skip }, async () => {
   const e = await freshEngine();
   const project = { internalIDNumber: "A267", projectName: "Sandbox — test project" };
   const it = e.rows.estimate_items.find((x) => x.project_id === SANDBOX && !x.deleted_at && x.group_code);
@@ -337,13 +362,40 @@ test("every typed word is masked on the worksite copy - group codes, levels, cat
       takeoffCardsHtml(tks, { show: false, pid: SANDBOX }) + takeoffSheetHtml(project, tks, { quote: false, company: COMPANY, date: "2026-10-21" }).html;
     assert.ok(!DOLLARS.test(html), key + ": no $ amount on the worksite tab or paper: " + (html.match(/.{40}\$\s?\d.{10}/) || [""])[0]);
     for (const x of ["2,500", "3,100", "1,250"]) assert.ok(!html.includes(x), key + ": " + x);
+    assert.ok(!html.includes("Allowance"), key + ": the group code is not drawn (owner 2026-10-27)");
     if (key === "admin") {
-      assert.ok(html.includes("Allowance (amount hidden)") && html.includes("L1 (amount hidden)"), "the price person's own worksite copy masks them");
+      assert.ok(html.includes("L1 (amount hidden)"), "the price person's own worksite copy masks them");
       const full = estimateCardsHtml(ests, { show: true, pid: SANDBOX }) + takeoffCardsHtml(tks, { show: true, pid: SANDBOX });
-      assert.ok(full.includes("Allowance $2,500") && full.includes("L1 $3,100") && full.includes("$12/ea"), "with prices: as typed");
+      assert.ok(full.includes("L1 $3,100") && full.includes("$12/ea"), "with prices: as typed");
+      assert.ok(!full.includes("Allowance") && !/class="es-code"/.test(full), "with prices too: no group code");
     } else {
-      assert.ok(html.includes("Allowance [amount]") && html.includes("L1 [amount]") && html.includes("[amount]/ea"), "scrubbed by the database");
+      assert.ok(html.includes("L1 [amount]") && html.includes("[amount]/ea"), "scrubbed by the database");
     }
+  }
+});
+
+test("the demo's takeoff_print sends each takeoff's group_order (migration 20261029000200): as stored with prices, each name scrubbed without; the tab and the paper draw the groups in it", { skip }, async () => {
+  const e = await freshEngine();
+  const t1 = e.rows.takeoffs.find((t) => t.project_id === SANDBOX && t.name === "Main house framing");
+  t1.group_order = ["Roof", "", "Second Level $900"];
+  for (const r of e.rows.takeoff_rows.filter((x) => x.takeoff_id === t1.id && x.level === "Second Level")) r.level = "Second Level $900";
+  const project = { internalIDNumber: "A267", projectName: "Sandbox — test project" };
+  for (const key of ["admin", "lead"]) {
+    useClient(clientAs(e, (await person(key)).id));
+    const tk = await repo.listTakeoffs(SANDBOX);
+    const t = tk.takeoffs.find((x) => x.id === t1.id);
+    const prices = key === "admin";
+    assert.deepEqual(t.group_order, prices ? ["Roof", "", "Second Level $900"] : ["Roof", "", "Second Level [amount]"], key + ": the order as the database sends it");
+    assert.deepEqual(t.levels.map((l) => tko.levelName(l.name)), ["Roof", "(no group)", prices ? "Second Level $900" : "Second Level [amount]", "Main Level"],
+      key + ": listed first in that order, the unlisted after");
+    const cards = takeoffCardsHtml([t], { show: prices, pid: SANDBOX });
+    const bands = Array.from(cards.matchAll(/<tr class="tk-lvl"><td colspan="\d">([^<]*)<\/td>/g)).map((m) => m[1]);
+    assert.deepEqual(bands, ["Roof", "(no group)", prices ? "Second Level $900" : "Second Level [amount]", "Main Level"], key + ": the tab's bands");
+    const sheet = takeoffSheetHtml(project, [t], { quote: false, company: COMPANY, date: "2026-10-21" });
+    const paper = Array.from(sheet.html.matchAll(/<tr class="ml-lvl"><td colspan="\d">([^<]*)<\/td>/g)).map((m) => m[1]);
+    assert.deepEqual(paper, ["Roof", "(no group)", prices ? "Second Level (amount hidden)" : "Second Level [amount]", "Main Level"],
+      key + ": the Material List's bands (its words masked; scrubbed by the database without prices)");
+    assert.equal(sheet.lines, 10, key + ": every line printed once");
   }
 });
 

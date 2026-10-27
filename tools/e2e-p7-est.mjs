@@ -11,8 +11,9 @@
      (＋ Estimate, ＋ Change order, the hooks), not one amount on the page or in a sheet, no price box; an item sheet
      is the whole screen with Save in view and 44 px controls; a quantity saved; words that quote an amount refused
      before anything is sent; the approved estimate's type, quantities and Delete kept; a locked word shown amount-free
-     and read only; a new change order (the next number), an item in a new group, the group renamed; leaving a
-     changed sheet asks first; no horizontal scroll;
+     and read only; a new change order (the next number), a new group - a name only, "Empty" on its card (owner
+     2026-10-27) -, an item of two lines in it, the group renamed, a second empty group deleted; a group row reads as
+     its name (no group code); leaving a changed sheet asks first; no horizontal scroll;
    - Quinn Manager (an Estimator WITH prices) on a desk: the price boxes and the live total, Approved offered, and
      someone else's save while the sheet is open (the notice, then the conflict panel: Use mine);
    - Morgan Manager (no Estimator switch) and Riley Lead: the read-only tab ("view only"), no edit control;
@@ -108,7 +109,7 @@ async function main() {
         "scrubbed: /\\[amount\\]/.test(p.innerText), groups: Array.from(p.querySelector('.es-card').querySelectorAll('.pj-grp td')).map(t => t.innerText.trim()) }; })()");
       check("estimator, phone: the editor's controls, quantities only, no amount in the page", !st.money && /quantities only/.test(st.count) && st.edits === 4 && st.scrubbed, J(st));
       check("estimator, phone: nothing added to the approved estimate", !st.addMain, J(st));
-      check("estimator, phone: a group row reads as its name and code", J(st.groups) === J(["Floor system 06.11.00", "Walls 06.11.00", "Roof 06.17.00", "(no group)"]), J(st.groups));
+      check("estimator, phone: a group row reads as its name (owner 2026-10-27: no group code)", J(st.groups) === J(["Floor system", "Walls", "Roof", "(no group)"]), J(st.groups));
       check("estimator, phone: no horizontal scroll", await noScroll(m), await m.eval("document.documentElement.scrollWidth"));
       await shoot(m, "tab_estimator", "phone", false);
     }, m);
@@ -164,7 +165,7 @@ async function main() {
       await click(m, ".es-x");
       await m.until(sheetClosed, 4000);
     }, m);
-    await attempt("estimator, phone: a new change order, an item in a new group, the group renamed", async () => {
+    await attempt("estimator, phone: a new change order, a new group (a name only: Empty), an item of two lines in it, the group renamed, an empty group deleted", async () => {
       await click(m, "#esNewCo");
       await m.until("document.getElementById('dcrModalHost') && document.getElementById('dcrModalHost').classList.contains('open')", 4000);
       await m.eval("(() => { const i = document.getElementById('dcrMoF0'); i.value = 'Web blocking at the stairs'; return true; })()");
@@ -172,18 +173,44 @@ async function main() {
       await m.until("document.getElementById('pane-estimate').innerText.indexOf('CO #3 — Web blocking at the stairs') !== -1", 8000);
       check("estimator, phone: the new change order got the next number (CO #3)", true);
       const eid = await m.eval("DCR2Demo.engine.rows.estimates.find(e => e.name === 'Web blocking at the stairs').id");
+      const card = "document.querySelector('.es-card[data-est=\"" + eid + "\"]')";
+      const groupRows = "Array.from(" + card + ".querySelectorAll('.pj-grp td')).map(t => t.innerText.replace(/\\s+/g, ' ').trim().toLowerCase())";
+      // ＋ New group: the name only - the group starts empty
       await click(m, "[data-act=addgrp][data-est=\"" + eid + "\"]");
       await m.until(sheetOpen, 5000);
+      const ng = await m.eval("(() => ({ boxes: Array.from(document.querySelectorAll('#esNewGrpForm [data-key]')).map(n => n.getAttribute('data-key')) }))()");
+      check("estimator, phone: New group asks a name only (no code, no first item)", J(ng.boxes) === J(["group_name"]), J(ng));
       await type(m, "#ef_group_name", "Stairs");
-      await type(m, "#ef_name", "Blocking at the stair stringers");
+      await click(m, "#esSave");
+      await m.until(sheetClosed, 8000);
+      await m.until(groupRows + ".indexOf('stairs empty') !== -1", 8000);
+      const g1 = await m.eval("(() => { const e = DCR2Demo.engine.rows.estimates.find(x => x.name === 'Web blocking at the stairs'); return [e.group_order, DCR2Demo.engine.rows.estimate_items.filter(i => i.estimate_id === e.id && !i.deleted_at).length]; })()");
+      check("estimator, phone: the empty group is a name in the group order, no item written", J(g1) === J([["Stairs"], 0]), J(g1));
+      await shoot(m, "empty_group_estimator", "phone", false);
+      // ＋ Item into it: a name of two lines (the name is a text area)
+      await click(m, ".es-card[data-est=\"" + eid + "\"] [data-act=add]");
+      await m.until(sheetOpen, 5000);
+      await type(m, "#ef_name", "Blocking at the stair stringers\nboth sides, 16\" o.c.");
+      const nb = await m.eval("(() => { const n = document.getElementById('ef_name'); return { tag: n.tagName, rows: n.rows, h: Math.round(n.getBoundingClientRect().height) }; })()");
+      check("estimator, phone: the item name is a text area that grew to its two lines", nb.tag === "TEXTAREA" && nb.rows === 2 && nb.h >= 44, J(nb));
       await m.eval("(() => { const s = document.getElementById('ef_item_type'); s.value = 'labor'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()");
       await type(m, "#ef_labor_guys", "2");
       await type(m, "#ef_labor_days", "1");
+      await shoot(m, "item_name_two_lines_estimator", "phone", false);
       await click(m, "#esSave");
       await m.until(sheetClosed, 8000);
       await m.until("document.getElementById('pane-estimate').innerText.indexOf('Blocking at the stair stringers') !== -1", 8000);
-      const row = await m.eval("(() => { const i = DCR2Demo.engine.rows.estimate_items.find(x => x.name === 'Blocking at the stair stringers'); const p = DCR2Demo.engine.rows.estimate_item_prices.find(x => x.item_id === i.id); return [i.group_name, i.item_type, p.labor_rate]; })()");
-      check("estimator, phone: the item in its new group, a labor item, the project's rate on its price row", J(row) === J(["Stairs", "labor", 90]), J(row));
+      const row = await m.eval("(() => { const i = DCR2Demo.engine.rows.estimate_items.find(x => /^Blocking at the stair stringers/.test(x.name)); const p = DCR2Demo.engine.rows.estimate_item_prices.find(x => x.item_id === i.id); return [i.group_name, i.name, i.item_type, p.labor_rate]; })()");
+      check("estimator, phone: the item in the new group, its two lines kept, a labor item, the project's rate on its price row",
+        J(row) === J(["Stairs", "Blocking at the stair stringers\nboth sides, 16\" o.c.", "labor", 90]), J(row));
+      // opened and saved as it is: the two lines are not rewritten
+      const v0 = await m.eval("DCR2Demo.engine.rows.estimate_items.find(x => /^Blocking at the stair stringers/.test(x.name)).version");
+      await openItem(m, "Blocking at the stair stringers");
+      await m.until(sheetOpen, 5000);
+      await click(m, "#esSave");
+      await m.until(sheetClosed, 8000);
+      const v1 = await m.eval("DCR2Demo.engine.rows.estimate_items.find(x => /^Blocking at the stair stringers/.test(x.name)).version");
+      check("estimator, phone: a two-line name opened and saved as it was sends nothing", v0 === v1, v0 + " / " + v1);
       await click(m, "[data-act=grp][data-est=\"" + eid + "\"]");
       await m.until(sheetOpen, 5000);
       await type(m, "#ef_group_name", "Stair blocking");
@@ -191,6 +218,29 @@ async function main() {
       await m.until(sheetClosed, 8000);
       await m.until("Array.from(document.querySelectorAll('#pane-estimate .pj-grp td')).some(t => t.innerText.trim() === 'Stair blocking')", 8000);
       check("estimator, phone: the group renamed", true);
+      // a second group, left empty, deleted from its sheet
+      await click(m, "[data-act=addgrp][data-est=\"" + eid + "\"]");
+      await m.until(sheetOpen, 5000);
+      await type(m, "#ef_group_name", "Rail");
+      await click(m, "#esSave");
+      await m.until(sheetClosed, 8000);
+      await m.until(groupRows + ".indexOf('rail empty') !== -1", 8000);
+      await m.eval("(() => { const r = Array.from(" + card + ".querySelectorAll('.pj-grp')).find(x => /^Rail/.test(x.innerText.trim())); r.querySelector('[data-act=grp]').click(); return true; })()");
+      await m.until(sheetOpen, 5000);
+      const dl = await m.eval("(() => { const b = document.querySelector('#esSheet [data-act=gdelete]'); return { there: !!b, disabled: b ? b.disabled : null }; })()");
+      check("estimator, phone: an empty group's sheet offers Delete group", dl.there && dl.disabled === false, J(dl));
+      await shoot(m, "empty_group_sheet_estimator", "phone", false);
+      await click(m, "#esSheet [data-act=gdelete]");
+      await m.until(sheetClosed, 8000);
+      await m.until(groupRows + ".indexOf('rail empty') === -1", 8000);
+      const g2 = await m.eval("DCR2Demo.engine.rows.estimates.find(x => x.name === 'Web blocking at the stairs').group_order");
+      check("estimator, phone: the empty group deleted (the order without it)", J(g2) === J(["Stair blocking"]), J(g2));
+      await click(m, "[data-act=grp][data-est=\"" + eid + "\"]");
+      await m.until(sheetOpen, 5000);
+      const full = await m.eval("(() => { const b = document.querySelector('#esSheet [data-act=gdelete]'); return { disabled: b.disabled, title: b.title }; })()");
+      check("estimator, phone: a group with items is not deleted (move or delete its items first)", full.disabled && /Move or delete its items first/.test(full.title), J(full));
+      await click(m, ".es-x");
+      await m.until(sheetClosed, 4000);
       check("estimator, phone: still no horizontal scroll", await noScroll(m), await m.eval("document.documentElement.scrollWidth"));
     }, m);
 

@@ -10,6 +10,11 @@
      disabled), its archive and deletion, its items' type and quantities, and no item moves in or out (D5);
    * the type shows only its fields (est_logic shown_keys): the boxes of the other types stay in the form, hidden, so a
      switch back finds them;
+   * the item name is a text area of its own lines (owner 2026-10-27: a name of several lines, as DCR Desktop 2's
+     item editor writes it - a one-line box would join them and the next Save would rewrite the name): one row per
+     line, at most NAME_ROWS, and it grows as one types (estimates.css .es-grow; project-estimate-edit.js);
+   * a group is a name only (owner 2026-10-27: no group code on the web, no first item for a new group); an empty
+     group is deleted from its sheet, a group with items never is;
    * number boxes are inputmode="decimal" (a phone's number pad), every control at least 44 px high (estimates.css). */
 
 import { esc, multiline } from "./est-render.js";
@@ -27,6 +32,12 @@ const PLACEHOLDER = { labor_markup_pct: "0", material_markup_pct: "0", labor_rat
 
 function attr(k, v) { return v === undefined || v === null || v === false ? "" : " " + k + (v === true ? "" : '="' + esc(v) + '"'); }
 
+export const NAME_ROWS = 6;
+/** The rows of the item name's box: one per line of the name, at least 1, at most NAME_ROWS (then it scrolls). */
+export function nameRows(text) {
+  return Math.min(NAME_ROWS, Math.max(1, String(text == null ? "" : text).split(/\r\n|\r|\n/).length));
+}
+
 /** One box: its label, its value, why it is read only (a locked word, an approved quantity). */
 function box(key, value, o) {
   const id = "ef_" + key;
@@ -37,7 +48,11 @@ function box(key, value, o) {
   const common = attr("id", id) + attr("name", key) + attr("data-key", key) + attr("disabled", ro) + attr("data-masked", locked ? "1" : null) +
     attr("title", title || null) + attr("aria-describedby", locked ? "efLockedNote" : null);
   let input;
-  if (o.textarea) input = "<textarea" + common + ' rows="' + (o.rows || 2) + '">' + esc(value == null ? "" : value) + "</textarea>";
+  if (o.textarea) {
+    // the HTML parser drops ONE line break right after <textarea>: words that start with one get it back this way
+    const words = String(value == null ? "" : value);
+    input = "<textarea" + common + attr("class", o.cls || null) + ' rows="' + (o.rows || 2) + '">' + (/^[\r\n]/.test(words) ? "\n" : "") + esc(words) + "</textarea>";
+  }
   else if (o.number) input = '<input type="text" inputmode="decimal" autocomplete="off"' + common + attr("value", numText(key, value)) + attr("placeholder", PLACEHOLDER[key] || null) + ">";
   else input = '<input type="text" autocomplete="off"' + common + attr("value", value == null ? "" : value) + attr("maxlength", o.max || null) + ">";
   return '<div class="es-f" data-f="' + esc(key) + '"><label for="' + id + '"' + (o.labelId ? attr("id", o.labelId) : "") + ">" + esc(label) +
@@ -68,8 +83,8 @@ export function liveLineHtml(values, prices) {
 
 /**
  * The item sheet. item: the model's item (map/estimate-edit.js fromEditRead), or {} for a new one; opts: {prices, est
- * (its estimate), estimates (the project's, for Move to estimate), isNew, gid (a new item's group), newGroup (a new
- * item in a new group), type (the type to show), canMove}.
+ * (its estimate), estimates (the project's, for Move to estimate), isNew, gid (a new item's group), type (the type to
+ * show), canMove}.
  */
 export function itemFormHtml(item, opts) {
   const o = opts || {};
@@ -82,12 +97,8 @@ export function itemFormHtml(item, opts) {
   const lk = function (k) { return !prices && isLocked(it, k); };
   const group = o.isNew ? (est.groups || []).find(function (g) { return g.gid === o.gid; }) : null;
   let h = '<form class="es-form" id="esItemForm" autocomplete="off" novalidate data-type="' + esc(type) + '">';
-  if (o.isNew) {
-    h += o.newGroup
-      ? '<div class="es-f2">' + box("group_name", "", { label: "New group", max: 200 }) + box("group_code", "", { label: "Group code", max: 60 }) + "</div>"
-      : '<p class="es-sheet-sub">Group: <b>' + esc(group ? group.title : "General") + "</b></p>";
-  }
-  h += box("name", it.name, { label: "Item name", locked: lk("name") });
+  if (o.isNew) h += '<p class="es-sheet-sub">Group: <b>' + esc(group ? group.title : "General") + "</b></p>";
+  h += box("name", it.name, { label: "Item name", textarea: true, rows: nameRows(it.name), cls: "es-grow", locked: lk("name") });
   h += '<div class="es-f"><label for="ef_item_type">Type</label><select id="ef_item_type" name="item_type" data-key="item_type"' +
     attr("disabled", approved && !o.isNew) + attr("title", approved && !o.isNew ? APPROVED_HINT : null) + ">" +
     ITEM_TYPES.map(function (t) { return '<option value="' + t + '"' + (t === type ? " selected" : "") + ">" + esc(ITEM_TYPE_LABELS[t]) + "</option>"; }).join("") +
@@ -169,7 +180,10 @@ export function estimateFormHtml(est, opts) {
   return h + '<div class="es-err" id="esSheetErr" role="alert"></div></form>';
 }
 
-/** The group sheet: rename, code, Up / Down, a new item in it. opts: {prices, est}. */
+export const DELETE_GROUP_HINT = "Move or delete its items first.";
+
+/** The group sheet: rename, Up / Down, a new item in it; Delete for an empty group (owner 2026-10-27: a group with
+    items is never deleted here - its items are moved or deleted first). opts: {prices, est}. */
 export function groupFormHtml(group, opts) {
   const o = opts || {};
   const g = group || {};
@@ -177,23 +191,33 @@ export function groupFormHtml(group, opts) {
   const est = o.est || {};
   const locked = !prices && !!g.locked;
   const orderLocked = !prices && (est.groupOrderLocked || (est.groups || []).some(function (x) { return x.locked; }));
+  const n = (g.items || []).length;
   let h = '<form class="es-form" id="esGrpForm" autocomplete="off" novalidate>' +
-    '<p class="es-sheet-sub">' + esc(est.label || "") + " · " + (g.items ? g.items.length : 0) + " item" + ((g.items || []).length === 1 ? "" : "s") + "</p>";
+    '<p class="es-sheet-sub">' + esc(est.label || "") + " · " + (n ? n + " item" + (n === 1 ? "" : "s") : "Empty: no items yet") + "</p>";
   if (!g.name) {
     h += '<p class="es-sheet-sub">These items have no group ("General"). Move them into a group from each item.</p>';
   } else {
     h += '<div class="es-row es-f-act">' + box("group_name", g.name, { label: "Group name", locked, max: 200 }) +
-      '<button type="button" class="es-act" data-act="rename"' + attr("disabled", locked) + ">Rename</button></div>" +
-      '<div class="es-row es-f-act">' + box("group_code", g.code, { label: "Group code", locked, max: 60 }) +
-      '<button type="button" class="es-act" data-act="code"' + attr("disabled", locked) + ">Set code</button></div>";
+      '<button type="button" class="es-act" data-act="rename"' + attr("disabled", locked) + ">Rename</button></div>";
   }
+  // deleting an empty group sends the group order without its name: refused while a name in it quotes an amount
+  const noDelete = n ? DELETE_GROUP_HINT : locked || orderLocked ? LOCKED_TITLE : null;
   h += '<div class="es-moves"><div class="es-row">' +
     '<button type="button" class="es-act" data-act="gup"' + attr("disabled", orderLocked) + attr("title", orderLocked ? LOCKED_TITLE : null) + ">▲ Group up</button>" +
     '<button type="button" class="es-act" data-act="gdown"' + attr("disabled", orderLocked) + attr("title", orderLocked ? LOCKED_TITLE : null) + ">▼ Group down</button>" +
     (g.addable !== false && est.addable !== false ? '<button type="button" class="es-act" data-act="addHere">＋ Item in this group</button>' : "") +
+    (g.name ? '<button type="button" class="es-act es-danger" data-act="gdelete"' + attr("disabled", !!noDelete) + attr("title", noDelete) + ">Delete group</button>" : "") +
     "</div></div>";
-  if (locked || orderLocked) h += '<p class="es-sheet-sub">🔒 A group name or code here quotes an amount: someone who sees prices renames or reorders those groups.</p>';
+  if (locked || orderLocked) h += '<p class="es-sheet-sub">🔒 A group here quotes an amount: someone who sees prices renames, reorders or deletes those groups.</p>';
   return h + '<div class="es-err" id="esSheetErr" role="alert"></div></form>';
+}
+
+/** The New group sheet (owner 2026-10-27): a name only - the group starts empty, its items are added with ＋ Item. */
+export function newGroupFormHtml(est) {
+  const e = est || {};
+  return '<form class="es-form" id="esNewGrpForm" autocomplete="off" novalidate>' +
+    '<p class="es-sheet-sub">' + esc(e.label || "") + ": the group starts empty; add its items with ＋ Item.</p>" +
+    box("group_name", "", { label: "Group name", max: 200 }) + '<div class="es-err" id="esSheetErr" role="alert"></div></form>';
 }
 
 /** The conflict panel: one line per field both changed; [Keep theirs] [Use mine]. lines: [{label, theirs, mine}]. */

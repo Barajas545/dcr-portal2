@@ -5,7 +5,8 @@
    takeoff-web opens: the bar always links to it, at this project's number).
 
    The project's takeoffs, newest first, each a fold-out card: its name, date, the estimate item it belongs
-   to, its rows by level, category and sub-category (L#, quantity, unit, item, purpose; with prices the
+   to, its rows by group (a line's level, in the takeoff's group order: owner 2026-10-27) and, for older lines,
+   category and sub-category (L#, quantity, unit, item, purpose; with prices the
    unit price and the line total), and "Material list" (everybody) / "Material quote" (prices) opening
    report-takeoff.html. Without the prices switch the database sends no price (rpc takeoff_print). Live: the
    project's takeoffs and rows (and, with prices, the row prices). */

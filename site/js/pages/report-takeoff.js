@@ -3,11 +3,12 @@
    "report-takeoff.html"; BLUEPRINT 3.3.11).
 
    ?id=<project>[&tk=<takeoff id>|all][&kind=quote]. The Material List (everybody): letterhead, the project,
-   the takeoff band, then one table per level (the level band and the column labels repeat on a new
-   page), category and sub-category bands, rows L# | Qty | Unit | Item | Purpose; L# counts 1..N over the
-   sheet; a blank or zero quantity prints blank; amounts typed into the words are masked (it goes to the
-   yard and the crew). The Material Quote (people with prices only, every row priced): Unit price and Total
-   columns, a subtotal per level, Subtotal, Sales tax at the company's rate and GRAND TOTAL.
+   the takeoff band, then one table per group (a line's level, in the takeoff's group order - owner
+   2026-10-27; the group band and the column labels repeat on a new page), category and sub-category bands
+   for older lines, rows L# | Qty | Unit | Item | Purpose; L# counts 1..N over the sheet; a blank or zero
+   quantity prints blank; amounts typed into the words are masked (it goes to the yard and the crew). The
+   Material Quote (people with prices only, every row priced): Unit price and Total columns, a subtotal per
+   group, Subtotal, Sales tax at the company's rate and GRAND TOTAL.
 
    A person without prices is never sent a price (rpc takeoff_print) and never sees the quote switch;
    ?kind=quote then prints the Material List. */
