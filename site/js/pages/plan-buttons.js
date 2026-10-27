@@ -15,7 +15,7 @@
 
 import * as onedrive from "../repo/onedrive.js";
 import { planButtonHtml, planFilesFor, plansLink } from "../map/plans.js";
-import { folderLabel, sortFiles, fmtSize, statusText } from "../map/plan-library.js";
+import { folderLabel, sortFiles, fmtSize, statusText, progressOf, progressHtml } from "../map/plan-library.js";
 import { handoffProblem, iosHomeScreen, IOS_HOME } from "../plan-handoff.js";
 
 const wired = new WeakSet();
@@ -134,7 +134,17 @@ function rowHtml(r, noSave) {
     '<div class="pl-name">' + esc(r.name) + "</div>" +
     (meta ? '<div class="pl-meta">' + esc(meta) + "</div>" : "") +
     '<div class="pl-state' + (s && s.status === "saved" ? " ok" : "") + '"' + (state ? "" : " hidden") + ">" + esc(state) + "</div>" +
+    progressHtml(s ? progressOf(s, s.job ? s.job.done : 0, s.job ? s.job.size : 0) : null) +
     '<div class="pl-btns">' + btns.join("") + "</div></div>";
+}
+
+/** A row's bar moved in place (progressHtml's). */
+function setBar(bar, p) {
+  if (!bar) return;
+  bar.hidden = !p;
+  bar.className = "plan-prog" + (p ? " " + p.kind : "");
+  bar.setAttribute("aria-valuenow", String(p ? p.pct : 0));
+  bar.firstChild.style.width = (p ? p.pct : 0) + "%";
 }
 
 function focusables(c) {
@@ -232,7 +242,7 @@ async function openMenu(o) {
   paint(c);
 }
 
-/** Only the state line of the row that is downloading changes: its buttons stay where the pointer is. */
+/** Only the state line and the bar of the row that is downloading change: its buttons stay where the pointer is. */
 function paintProgress(c, m) {
   const id = String(m.key).slice(String(m.key).indexOf("|") + 1);
   const row = Array.prototype.find.call(c.host.querySelectorAll(".pl-row"), (n) => n.getAttribute("data-id") === id);
@@ -242,6 +252,7 @@ function paintProgress(c, m) {
   const n = row.querySelector(".pl-state");
   n.hidden = false;
   n.textContent = stateText(s, m.done, m.size);
+  setBar(row.querySelector(".plan-prog"), progressOf(s, m.done, m.size));
 }
 
 async function paint(c) {

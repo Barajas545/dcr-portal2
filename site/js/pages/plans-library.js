@@ -12,11 +12,11 @@
 
 import { boot, el, esc, confirmBox } from "./shell.js";
 import { planFilesFor } from "../map/plans.js";
-import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh } from "../map/plan-library.js";
+import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh, progressOf, progressHtml } from "../map/plan-library.js";
 import { handoffProblem, lastReady, iosHomeScreen, IOS_HOME } from "../plan-handoff.js";
 import * as L from "../plan-library.js";
 
-const state = { me: null, rows: [], busy: false, timer: null };
+const state = { me: null, rows: [], busy: false, timer: null, pics: {}, picsFor: null, picsBusy: false, picsAgain: false };
 
 function day(iso) {
   const t = Date.parse(iso || "");
@@ -68,7 +68,16 @@ function stateLine(r, done, size) {
     (r.job && r.job.rate ? " · " + fmtSize(r.job.rate) + "/s" : "") : statusText(r.status, !!r.file);
   if (r.savedAt && r.status === "saved") s += " · " + day(r.savedAt);
   if (r.dl && r.dl.error && r.status !== "downloading") s += " — " + r.dl.error;
-  return { text: s, pct };
+  return { text: s, bar: progressOf(r, done, size) };
+}
+
+/** A row's bar moved in place (progressHtml's). */
+function setBar(bar, p) {
+  if (!bar) return;
+  bar.hidden = !p;
+  bar.className = "plan-prog" + (p ? " " + p.kind : "");
+  bar.setAttribute("aria-valuenow", String(p ? p.pct : 0));
+  bar.firstChild.style.width = (p ? p.pct : 0) + "%";
 }
 
 function rowHtml(r) {
@@ -87,8 +96,7 @@ function rowHtml(r) {
   return '<div class="lib-row" data-key="' + esc(r.key) + '">' +
     '<div class="lib-name">' + esc(r.name) + "</div>" +
     (meta ? '<div class="lib-meta">' + esc(meta) + "</div>" : "") +
-    '<div class="lib-state' + kind + '"><span class="lib-state-t">' + esc(line.text) + "</span>" +
-      '<div class="lib-bar-p"' + (r.status === "downloading" && line.pct !== null ? "" : " hidden") + '><i style="width:' + (line.pct || 0) + '%"></i></div></div>' +
+    '<div class="lib-state' + kind + '"><span class="lib-state-t">' + esc(line.text) + "</span>" + progressHtml(line.bar) + "</div>" +
     '<div class="lib-btns">' + b.join("") + "</div></div>";
 }
 
@@ -101,9 +109,55 @@ function paintProgress(m) {
   if (r.status !== "downloading") { r.status = "downloading"; queueRender(); return; }
   const line = stateLine(r, m.done, m.size);
   row.querySelector(".lib-state-t").textContent = line.text;
-  const bar = row.querySelector(".lib-bar-p");
-  bar.hidden = line.pct === null;
-  bar.querySelector("i").style.width = (line.pct || 0) + "%";
+  setBar(row.querySelector(".plan-prog"), line.bar);
+}
+
+/* ── the projects' pictures (js/plan-pictures.js: kept on this device, so they show with no signal too) ── */
+
+/** The ids of the projects with a plan of this person's saved here. */
+function projectIds() {
+  const seen = {};
+  state.rows.forEach(function (r) { seen[String(r.projectId)] = true; });
+  return Object.keys(seen);
+}
+
+function picHtml(pid) {
+  const u = state.pics[String(pid)];
+  return '<span class="lib-pic" data-pic="' + esc(pid) + '">' + (u ? '<img src="' + esc(u) + '" alt="">' : '<span class="ph">🏠</span>') + "</span>";
+}
+
+/** The pictures of these projects: the kept ones at once, then (online) each one as it is now. Once per set of projects
+    while the page is open, and again when the connection comes back. Never throws. */
+async function loadPictures(pids, again) {
+  const key = pids.slice().sort().join(",");
+  if (!again && key === state.picsFor) return;
+  if (state.picsBusy) { state.picsAgain = true; return; }
+  state.picsBusy = true;
+  state.picsFor = key;
+  try {
+    const P = await import("../plan-pictures.js");
+    state.pics = await P.shown(pids);
+    paintPictures();
+    if (navigator.onLine !== false) {
+      state.pics = await P.refresh(pids);
+      paintPictures();
+    }
+  } catch (e) { /* the houses stay */ } finally {
+    state.picsBusy = false;
+    if (state.picsAgain) {
+      state.picsAgain = false;
+      loadPictures(projectIds(), true);
+    }
+  }
+}
+
+function paintPictures() {
+  Array.prototype.forEach.call(document.querySelectorAll("[data-pic]"), function (n) {
+    const u = state.pics[n.getAttribute("data-pic")];
+    const img = n.querySelector("img");
+    if (u && (!img || img.getAttribute("src") !== u)) n.innerHTML = '<img src="' + esc(u) + '" alt="">';
+    else if (!u && img) n.innerHTML = '<span class="ph">🏠</span>';
+  });
 }
 
 async function render() {
@@ -114,6 +168,7 @@ async function render() {
   if (!state.rows.length) {
     el("libList").innerHTML = '<div class="lib-empty">Nothing saved on this device yet.<br>Search a project, tap 📐, then ' +
       "<b>Save to this device</b>.</div>";
+    loadPictures([]);                                        // the pictures kept for plans removed go too
     return;
   }
   const groups = [];
@@ -123,10 +178,11 @@ async function render() {
     g.rows.push(r);
   });
   el("libList").innerHTML = groups.map(function (g) {
-    return '<div class="lib-proj"><a class="lib-proj-hd" href="project.html?id=' + encodeURIComponent(g.pid) + '">' +
-      "<b>" + esc(g.number) + "</b><span>" + esc(g.title && g.title !== g.number ? g.title : "") + "</span></a>" +
+    return '<div class="lib-proj"><a class="lib-proj-hd" href="project.html?id=' + encodeURIComponent(g.pid) + '">' + picHtml(g.pid) +
+      '<span class="lib-proj-t"><b>' + esc(g.number) + "</b><span>" + esc(g.title && g.title !== g.number ? g.title : "") + "</span></span></a>" +
       g.rows.map(rowHtml).join("") + "</div>";
   }).join("");
+  loadPictures(groups.map((g) => String(g.pid)));
 }
 
 let queued = false;
@@ -190,6 +246,7 @@ async function main() {
     // online, never on an old copy of it
     let gone = 0;
     if (fresh && L.supported()) { try { gone = await L.purgeOwner(L.owner()); } catch (e) { gone = 0; } }
+    if (fresh) import("../plan-pictures.js").then(function (P) { return P.forgetAll(); }).catch(function () { /* none kept */ });
     el("libList").innerHTML = '<div class="lib-empty">The Plans Library is for the people who see prices: plan files carry prices.' +
       (gone ? "<br>The " + gone + " plan" + (gone === 1 ? "" : "s") + " you had saved on this device " + (gone === 1 ? "was" : "were") + " removed." : "") + "</div>";
     el("libBar").textContent = "";
@@ -211,7 +268,11 @@ async function main() {
     else if (m.t === "ready") paintTool();
     else queueRender();
   });
-  window.addEventListener("online", function () { queueRender(); L.maybeCheck(state.me, { fresh: true }); });
+  window.addEventListener("online", function () {
+    queueRender();
+    L.maybeCheck(state.me, { fresh: true });
+    loadPictures(projectIds(), true);
+  });
   window.addEventListener("offline", queueRender);
   window.addEventListener("storage", function (e) { if (e.key === "dcr2-takeoff-ready-at") paintTool(); });
   try { await L.sweep(); } catch (e) { /* leftovers can wait for the next visit */ }

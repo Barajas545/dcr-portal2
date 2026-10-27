@@ -35,7 +35,8 @@
    * ensure_folder {project_id} -> {made_project_folder, created, existed, blocked}; status {} (admins) -> ok;
    * plans_for {project_ids: 1 to 50 different positive whole numbers} (the plan buttons, owner 2026-10-26) -> {projects:
      {"<id>": {number, plans}}, checked_at}: every active person; each project the caller may read (a deleted one is
-     left out, an admin's too) with the count of .takeoff files at any depth in its folder(s) of the takeoff folder
+     left out, an admin's too) with the count of .takeoff files right in its folder(s) of the takeoff folder - never in a
+     sub-folder (a Backup folder of older copies: the owner, 2026-10-27)
      ("Projects-Takeoff-Files": "<number> - <address> - <city>", DCR Desktop 2's folder_candidates - a suffix number's
      folder is its own; "Materials Catalog" is nobody's) - never a name, an item id or a link; 503
      takeoff_not_configured while the demo's takeoff folder is switched off (setTakeoff(false) in node; in a browser
@@ -47,10 +48,11 @@
      project the person may not see too) and this tab's own download link (a blob:; node: a placeholder on the host)
      answering byte ranges; its bytes start "PDFCACHE1" as a takeoff file does (made up: the takeoff app cannot open
      it). setPlanVersion(path, version) gives one a new version (a node test's "new save in OneDrive").
-   The takeoff folder (made up, the same every time): A267 three .takeoff files 1 to 3 folders down (and an autosave, a
-   PDF and plan notes, never counted); A024 one and A024-B two (apart); A120 one in its folder and one in an older second
-   folder; the other A### numbers by their last digit: ending in 0 or 5 one, in 2 or 7 two, in 3 or 8 a folder with
-   PDFs and an autosave only (0); the rest no folder.
+   The takeoff folder (made up, the same every time): A267 three .takeoff files in its folder (and an autosave, a PDF
+   and plan notes, never counted) and two older ones in Backup/ and Backup/Old/ (never counted); A024 one and A024-B
+   two (apart; a third in Backup/); A120 one in its folder and one in an older second folder; the other A### numbers by
+   their last digit: ending in 0 or 5 one (and one in Backup/), in 2 or 7 one (and one in Backup/), in 3 or 8 a folder
+   with PDFs, an autosave and a Backup/ copy only (0); the rest no folder.
    The drive: /Projects with a made-up folder for most projects (folder_name), seeded the same way every time and
    built when first asked (Floor Plans with sheets, a level, a takeoff and plan notes; Photos/<a day>; Documents with
    permits, a contract, an estimate quoting an amount, invoices, a program, a lock file; the old portal's copy);
@@ -316,13 +318,13 @@
         const n = String(p.number || ""), at = n + " - " + p.address + " - " + p.city;
         const m = /^A(\d{3})$/.exec(n), last = m ? Number(m[1]) % 5 : -1;
         if (n === "A267") {
-          out.push({ name: at, files: ["Plans/A267 Bid.takeoff", "Plans/A267 Bid.takeoff.autosave", "Plans/A1 - Floor plan.pdf",
-            "Plans/Rev 2/A267 Rev 2.takeoff", "Plans/Rev 2/Level 1/L1 walls.takeoff", "Plans/Rev 2/Level 1/L1 walls.pdfnotes"] });
+          out.push({ name: at, files: ["A267 Bid.takeoff", "A267 Bid.takeoff.autosave", "A1 - Floor plan.pdf", "A267 Rev 2.takeoff",
+            "L1 walls.takeoff", "L1 walls.pdfnotes", "Backup/A267 Bid (Sep 1).takeoff", "Backup/Old/A267 First bid.takeoff"] });
         } else if (n === "A024") out.push({ name: at, files: ["A024 Framing.takeoff", "A024 plans.pdf"] });
-        else if (n === "A024-B") out.push({ name: at, files: ["Plans/A024-B Framing.takeoff", "Plans/A024-B Roof.takeoff"] });
-        else if (last === 0) out.push({ name: at, files: ["Plans/" + n + " Bid.takeoff", "Plans/" + n + " plans.pdf"] });
-        else if (last === 2) out.push({ name: at, files: ["Plans/" + n + " Bid.takeoff", "Plans/Rev 1/" + n + " Rev 1.TAKEOFF"] });
-        else if (last === 3) out.push({ name: at, files: ["Plans/" + n + " plans.pdf", "Plans/" + n + " Bid.takeoff.autosave"] });
+        else if (n === "A024-B") out.push({ name: at, files: ["A024-B Framing.takeoff", "A024-B Roof.takeoff", "Backup/A024-B Framing (old).takeoff"] });
+        else if (last === 0) out.push({ name: at, files: [n + " Bid.takeoff", n + " plans.pdf", "Backup/" + n + " Bid (old).takeoff"] });
+        else if (last === 2) out.push({ name: at, files: [n + " Bid.takeoff", "Backup/" + n + " Rev 1.TAKEOFF"] });
+        else if (last === 3) out.push({ name: at, files: ["Plans/" + n + " plans.pdf", n + " Bid.takeoff.autosave", "Backup/" + n + " Bid.takeoff"] });
         if (n === "A120") out.push({ name: "A120 - older plans", files: ["A120 First bid.takeoff"] });
       }
       return (takeoffTree = out);
@@ -344,7 +346,7 @@
         if (!p) continue;
         const names = candidates(folders.map((f) => f.name), p.number);
         const plans = folders.filter((f) => names.includes(f.name))
-          .reduce((sum, f) => sum + f.files.filter((x) => /\.takeoff$/i.test(x)).length, 0);
+          .reduce((sum, f) => sum + f.files.filter((x) => /\.takeoff$/i.test(x) && !x.includes("/")).length, 0);
         projects[String(id)] = { number: p.number, plans };
       }
       return answer(200, { projects, checked_at: nowIso() });
@@ -358,7 +360,7 @@
       folders.forEach(function (f, fi) {
         if (!names.includes(f.name)) return;
         f.files.forEach(function (path, i) {
-          if (!/\.takeoff$/i.test(path)) return;
+          if (!/\.takeoff$/i.test(path) || path.includes("/")) return;     // a sub-folder's (Backup): never one of its plans
           const parts = (f.name + "/" + path).split("/");
           const name = parts.pop();
           const full = parts.concat(name).join("/");

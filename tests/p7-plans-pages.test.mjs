@@ -100,7 +100,7 @@ test("nothing new in any security policy: the buttons and the card are navigatio
 test("the offline list keeps the plan buttons' code (Search, the project page and the home page load it) and the Plans Library (it opens with no signal); the cache name stays", () => {
   const sw = read("sw.js");
   for (const f of ["js/map/plans.js", "js/pages/plan-buttons.js", "plans-library.html", "js/pages/plans-library.js", "js/plan-library.js",
-    "js/plan-library-worker.js", "js/plan-handoff.js", "js/map/plan-library.js"]) assert.ok(sw.includes('"' + f + '"'), f + " is in SHELL");
+    "js/plan-library-worker.js", "js/plan-handoff.js", "js/map/plan-library.js", "js/plan-pictures.js"]) assert.ok(sw.includes('"' + f + '"'), f + " is in SHELL");
   assert.match(sw, /^const CACHE = "dcr-portal2-v3";$/m);
 });
 

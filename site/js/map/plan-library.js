@@ -9,6 +9,7 @@
    * sortFiles(files)           the menu's order: by folder, then name;
    * fileNameFor(owner, id, v, stamp)  one download's file name on this device (never the same twice; plain characters);
    * statusOf(rec, job)         saved | outdated | downloading | paused | stopped | gone | denied | missing;
+   * progressOf(row, done, size), progressHtml(p)  a row's green bar: filling while it saves, full once it is saved;
    * applyCheck(rec, answer)     a record after a plans_list answer for its project ({files} | null: not visible);
    * dueForCheck / needsWork     when to ask for new versions, and which saved plans to download again;
    * dueForWork / withFailure / backoffMs / brokerWide  the automatic downloads' waits after a failure (5 min doubling
@@ -140,6 +141,31 @@ export function statusText(status, hasCopy) {
     saved: "Saved on this device",
     missing: "Not downloaded yet",
   }[status] || "";
+}
+
+/**
+ * A row's progress bar (the owner, 2026-10-27: a green bar while a plan saves, full once the file is complete):
+ * {pct, kind} or null (no bar). kind "run": downloading (`done` / `size`: its bytes now); "held": paused or stopped part
+ * way (the record's own bytes); "done": saved - a whole copy of the version OneDrive holds.
+ */
+export function progressOf(row, done, size) {
+  if (!row) return null;
+  const pct = (d, s) => (s > 0 ? Math.max(0, Math.min(100, Math.floor((d / s) * 100))) : 0);
+  if (row.status === "downloading") return { pct: pct(Number(done) || 0, Number(size) || 0), kind: "run" };
+  if (row.status === "saved") return { pct: 100, kind: "done" };
+  const dl = row.dl;
+  if ((row.status === "paused" || row.status === "stopped") && dl && Number(dl.size) > 0 && Number(dl.done) > 0) {
+    return { pct: pct(Number(dl.done), Number(dl.size)), kind: "held" };
+  }
+  return null;
+}
+
+/** The bar as HTML (css/styles.css .plan-prog), hidden when progressOf says none: the 📐 menu's rows and the Plans
+    Library's. A page then moves it in place as the bytes come (the row is not drawn again). */
+export function progressHtml(p) {
+  const pct = p ? p.pct : 0;
+  return '<div class="plan-prog' + (p ? " " + p.kind : "") + '" role="progressbar" aria-label="Saved on this device" ' +
+    'aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '"' + (p ? "" : " hidden") + '><i style="width:' + pct + '%"></i></div>';
 }
 
 /**

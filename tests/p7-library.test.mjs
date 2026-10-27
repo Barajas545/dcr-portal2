@@ -228,6 +228,64 @@ test("the menu's rows: OneDrive's files in order with what is saved here; offlin
   assert.deepEqual(menuRows([], saved).map((r) => r.name), ["L1 walls.takeoff", "Old.takeoff"], "offline: what is saved");
 });
 
+test("the green bar (owner 2026-10-27): filling while a plan saves, full once it is saved, dimmed part way when paused; none otherwise", () => {
+  const row = (status, over) => Object.assign(rec(over), { status });
+  assert.deepEqual(lib.progressOf(row("downloading"), 450, 1000), { pct: 45, kind: "run" });
+  assert.deepEqual(lib.progressOf(row("downloading"), 0, 0), { pct: 0, kind: "run" }, "the size not known yet: an empty bar");
+  assert.deepEqual(lib.progressOf(row("downloading"), 1200, 1000), { pct: 100, kind: "run" }, "never past full");
+  assert.deepEqual(lib.progressOf(row("saved")), { pct: 100, kind: "done" }, "saved: full - the file is complete");
+  assert.deepEqual(lib.progressOf(row("paused", { dl: { state: "paused", done: 250, size: 1000 } })), { pct: 25, kind: "held" });
+  assert.deepEqual(lib.progressOf(row("stopped", { dl: { state: "error", done: 999, size: 1000 } })), { pct: 99, kind: "held" });
+  assert.equal(lib.progressOf(row("stopped", { dl: { state: "error", done: 0, size: 0 } })), null, "nothing downloaded: no bar");
+  for (const s of ["outdated", "gone", "denied", "missing"]) assert.equal(lib.progressOf(row(s)), null, s);
+  assert.equal(lib.progressOf(null), null);
+  const full = lib.progressHtml({ pct: 100, kind: "done" });
+  assert.match(full, /^<div class="plan-prog done" role="progressbar" aria-label="Saved on this device" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><i style="width:100%"><\/i><\/div>$/);
+  assert.match(lib.progressHtml(null), /^<div class="plan-prog" [^>]* aria-valuenow="0" hidden><i style="width:0%"><\/i><\/div>$/);
+  assert.match(lib.progressHtml({ pct: 45, kind: "run" }), /class="plan-prog run"[^>]*aria-valuenow="45"><i style="width:45%">/);
+});
+
+test("the menu's rows and the library's draw the bar; it is green (the site's own --ok) in both", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (f) => readFileSync(new URL("../site/" + f, import.meta.url), "utf8");
+  const css = read("css/styles.css");
+  assert.match(css, /\.plan-prog i \{[^}]*background: var\(--ok\);/);
+  assert.match(css, /\.plan-prog\[hidden\] \{ display: none; \}/);
+  const pb = read("js/pages/plan-buttons.js");
+  assert.match(pb, /progressHtml\(s \? progressOf\(s, s\.job \? s\.job\.done : 0, s\.job \? s\.job\.size : 0\) : null\)/);
+  assert.match(pb, /setBar\(row\.querySelector\("\.plan-prog"\), progressOf\(s, m\.done, m\.size\)\);/);
+  const page = read("js/pages/plans-library.js");
+  assert.match(page, /progressHtml\(line\.bar\)/);
+  assert.match(page, /setBar\(row\.querySelector\("\.plan-prog"\), line\.bar\);/);
+  assert.ok(!/lib-bar-p/.test(page + read("plans-library.html")), "the old blue bar is gone");
+});
+
+test("the library's project pictures: pictureIds reads two columns of the projects asked (deleted ones left out); the page loads them lazily", async () => {
+  const asked = [];
+  useClient({ from(table) {
+    const q = { table, select: null, ids: null };
+    asked.push(q);
+    return { select(cols) { q.select = cols; return this; }, in(col, ids) { q.col = col; q.ids = ids;
+      return Promise.resolve({ data: [{ id: 7, thumbnail_file_id: 55, deleted_at: null }, { id: 8, thumbnail_file_id: null, deleted_at: null },
+        { id: 9, thumbnail_file_id: 66, deleted_at: AT }], error: null }); } };
+  } });
+  const projectsRepo = await import("../site/js/repo/projects.js");
+  try {
+    assert.deepEqual(await projectsRepo.pictureIds(["7", "8", "9", "7", "x", null]), [{ id: "7", thumbnailFileId: "55" }, { id: "8", thumbnailFileId: null }]);
+    assert.deepEqual(asked.map((q) => [q.table, q.select, q.col, q.ids]), [["projects", "id, thumbnail_file_id, deleted_at", "id", [7, 8, 9]]]);
+    assert.deepEqual(await projectsRepo.pictureIds([]), []);
+    assert.equal(asked.length, 1, "nothing asked for no project");
+  } finally { useClient(null); }
+  const { readFileSync } = await import("node:fs");
+  const page = readFileSync(new URL("../site/js/pages/plans-library.js", import.meta.url), "utf8");
+  // a dynamic import: a page whose pictures cannot load still lists and opens the plans
+  assert.match(page, /const P = await import\("\.\.\/plan-pictures\.js"\);/);
+  assert.match(page, /if \(fresh\) import\("\.\.\/plan-pictures\.js"\)\.then\(function \(P\) \{ return P\.forgetAll\(\); \}\)/);
+  const pics = readFileSync(new URL("../site/js/plan-pictures.js", import.meta.url), "utf8");
+  assert.ok(!/localStorage|sessionStorage|caches\./.test(pics), "kept in IndexedDB only");
+  assert.match(pics, /const DB = "dcr2-plan-pictures";/);
+});
+
 /* ── repo/onedrive.js: plansList, planLink ───────────────────────────────────────────────────────────────────── */
 
 function stub(answer) {

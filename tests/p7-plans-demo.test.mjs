@@ -30,10 +30,11 @@ async function refusal(p) {
   try { await p; } catch (e) { return e; }
   assert.fail("expected a refusal");
 }
-// the made-up takeoff folder (the fake's header): what each project's folder(s) hold
-const WANT = { A267: 3, A024: 1, "A024-B": 2, A120: 2, A005: 1, A007: 2, A003: 0, A001: 0, A000T2: 0, A305: 1, A304: 0 };
+// the made-up takeoff folder (the fake's header): what each project's folder(s) hold right in them - never a sub-folder's
+// (Backup/: the owner, 2026-10-27); A003 has a Backup/ copy only
+const WANT = { A267: 3, A024: 1, "A024-B": 2, A120: 2, A005: 1, A007: 1, A003: 0, A001: 0, A000T2: 0, A305: 1, A304: 0 };
 
-test("demo plans_for: every active person gets the same counts (decision 2) - at any depth, a suffix number's folder apart, two folders added", { skip }, async () => {
+test("demo plans_for: every active person gets the same counts (decision 2) - right in the folders, never a Backup's, a suffix number's folder apart, two folders added", { skip }, async () => {
   await setup();
   const ids = Object.keys(WANT).map((n) => project(n).id);
   const expected = {};

@@ -34,7 +34,9 @@
    The Plans Library (owner 2026-10-26) keeps "dcr-portal2-v3" the same way: its page, its rules, the library, its
    download worker and the hand-over to the takeoff app join the list, so the page opens offline from a cold start. The
    saved plans themselves live in the site's private file system (js/plan-library.js), never in this cache; no
-   plans_list answer or download link is ever kept here. */
+   plans_list answer or download link is ever kept here. The library's project pictures (owner 2026-10-27) keep
+   "dcr-portal2-v3" the same way: their module joins the list; the pictures themselves live in IndexedDB
+   (js/plan-pictures.js), never here - Storage is never cached. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
@@ -70,7 +72,7 @@ const SHELL = [
   "js/map/plans.js", "js/pages/plan-buttons.js",
   // the Plans Library (owner 2026-10-26): it opens with no signal
   "plans-library.html", "js/pages/plans-library.js", "js/plan-library.js", "js/plan-library-worker.js", "js/plan-handoff.js",
-  "js/map/plan-library.js",
+  "js/map/plan-library.js", "js/plan-pictures.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

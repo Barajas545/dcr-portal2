@@ -13,6 +13,8 @@
    * createProject(f)      rpc create_project (admin, manager): the database gives the number; the New
                            Project dialog's fields (a zone alone needs no prices, a custom rate does);
    * setThumbnail(p, id)   the project's picture (projects.thumbnail_file_id), versioned;
+   * pictureIds(ids)       [{id, thumbnailFileId}] of these live projects (the Plans Library's pictures: two
+                           columns, the same RLS as every read);
    * setLocation(...)      rpc set_project_location (write-once rules live in the database). */
 
 import { db, must, versioned, pageAll, conflict, notFound, forbidden, idOf } from "./_db.js";
@@ -36,6 +38,17 @@ export function loadProjects(opts) {
 }
 
 export function forgetProjects() { shared = null; }
+
+/** [{id, thumbnailFileId}] of these projects as this person sees them (a deleted one, or one RLS hides, is absent). */
+export async function pictureIds(ids) {
+  const list = Array.from(new Set((ids || []).map(String).filter(function (v) { return /^\d{1,15}$/.test(v); })));
+  if (!list.length) return [];
+  const c = await db();
+  const rows = must(await c.from("projects").select("id, thumbnail_file_id, deleted_at").in("id", list.map(idOf))) || [];
+  return rows.filter(function (r) { return !r.deleted_at; }).map(function (r) {
+    return { id: String(r.id), thumbnailFileId: r.thumbnail_file_id == null ? null : String(r.thumbnail_file_id) };
+  });
+}
 
 export async function getProject(id) {
   const c = await db();

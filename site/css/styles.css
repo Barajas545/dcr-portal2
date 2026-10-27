@@ -594,6 +594,11 @@ tbody tr:hover { background: var(--surface-2); }
 .pl-state { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; }
 .pl-state.ok { color: var(--ok); }
 .pl-state[hidden] { display: none; }
+/* a plan's bar (map/plan-library.js progressHtml; the owner, 2026-10-27): green, filling while it saves, full once saved */
+.plan-prog { height: 6px; border-radius: 3px; background: rgba(127, 127, 127, .22); overflow: hidden; margin-top: 5px; max-width: 360px; }
+.plan-prog[hidden] { display: none; }
+.plan-prog i { display: block; height: 100%; width: 0; background: var(--ok); border-radius: 3px; transition: width .4s ease; }
+.plan-prog.held i { opacity: .45; }
 .pl-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .pl-btns .btn { min-height: 38px; }
 .pl-empty { font-size: 13.5px; color: var(--text-muted); padding: 10px 0; }
@@ -601,5 +606,6 @@ tbody tr:hover { background: var(--surface-2); }
 .pl-say.warn { color: var(--danger); } .pl-say.ok { color: var(--ok); }
 .pl-ft { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; border-top: 1px solid var(--border);
   padding-top: 10px; margin-top: 8px; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .plan-prog i { transition: none; } }
 @media (max-width: 520px) { .pl-sheet { align-items: flex-end; padding: 0; }
   .pl-card { border-radius: 14px 14px 0 0; max-height: 92vh; max-height: calc(100% - 24px); padding-bottom: calc(16px + env(safe-area-inset-bottom)); } }
