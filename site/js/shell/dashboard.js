@@ -25,9 +25,12 @@
    the readers of sub_submissions), with "N waiting" (repo/submissions.js pendingCount, a dynamic import).
    Owner decision 2026-10-26 (4): Floor Plans in Projects for the people who see prices (an admin, or Sees prices:
    map/plans.js plansCardFor), opening the takeoff app's plans (takeoff-web #plans: the Plans Archive and the plans kept
-   on that device) in a new tab - a link only, nothing is asked of the database or the broker for it. */
+   on that device) in a new tab - a link only, nothing is asked of the database or the broker for it. The Plans
+   Library (owner 2026-10-26), for the same people: the plan files saved on this device (plans-library.html); this page
+   keeps them up to date (pages/plan-buttons.js keepPlansFresh). */
 import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday } from "../common2.js";
-import { PLANS_HOME, plansCardFor } from "../map/plans.js";
+import { PLANS_HOME, plansCardFor, planFilesFor } from "../map/plans.js";
+import { keepPlansFresh } from "../pages/plan-buttons.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
 import { summaryOf, badgeOf } from "../map/tasks.js";
@@ -61,6 +64,9 @@ export function cardsFor(p, opts) {
     /* 2026-10-26 (4): the takeoff app's plans, in a new tab (another site: ext) */
     { href: PLANS_HOME, ic: "📐", tt: "Floor Plans", ext: true, show: plansCardFor(p),
       ds: "Open plans in the takeoff app — the Plans Archive and the plans kept on this device." },
+    /* the Plans Library (owner 2026-10-26): the plan files saved on this device, kept up to date by themselves */
+    { href: "plans-library.html", ic: "💾", tt: "Plans Library", show: planFilesFor(p),
+      ds: "Plan files saved on this device: they open with no signal and update by themselves." },
     { href: "logs.html", ic: "📜", tt: "Log History", ds: "Today's project logs, grouped by project, or any period." },
   ] });
   /* P5c: the office lists the database lets this person read (leads and marketing tasks: admin, manager, accountant,
@@ -329,6 +335,7 @@ async function start() {
   // the photos waiting on this phone go up — both as soon as the home page is open
   startSweeper(p);
   drain();
+  keepPlansFresh(p);                                // the Plans Library's new versions (people who see prices)
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

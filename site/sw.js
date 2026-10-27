@@ -30,7 +30,11 @@
    onedrive-selftest.js, loaded only when an admin clicks it on the test project) stays out of it, as the admins'
    pages do. Nothing of OneDrive is kept for offline use but the code: no listing, link or upload address.
    The plan buttons (owner 2026-10-26) keep "dcr-portal2-v3" the same way: their rules and the slot filler join the
-   list (Search, the project page and the home page load them); no plans_for answer is ever kept. */
+   list (Search, the project page and the home page load them); no plans_for answer is ever kept.
+   The Plans Library (owner 2026-10-26) keeps "dcr-portal2-v3" the same way: its page, its rules, the library, its
+   download worker and the hand-over to the takeoff app join the list, so the page opens offline from a cold start. The
+   saved plans themselves live in the site's private file system (js/plan-library.js), never in this cache; no
+   plans_list answer or download link is ever kept here. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
@@ -64,6 +68,9 @@ const SHELL = [
   "js/map/onedrive.js", "js/onedrive-upload.js", "js/scrub-money.js",
   // the plan buttons and the Floor Plans card (owner 2026-10-26)
   "js/map/plans.js", "js/pages/plan-buttons.js",
+  // the Plans Library (owner 2026-10-26): it opens with no signal
+  "plans-library.html", "js/pages/plans-library.js", "js/plan-library.js", "js/plan-library-worker.js", "js/plan-handoff.js",
+  "js/map/plan-library.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

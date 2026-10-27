@@ -576,3 +576,27 @@ tbody tr:hover { background: var(--surface-2); }
 .tp-msg.err { color: var(--err); } .tp-msg.ok { color: var(--ok); }
 .tp-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .ts-theme a.btn { text-decoration: none; }
+
+/* The 📐 menu of a project's plan files (js/pages/plan-buttons.js; the Plans Library, owner 2026-10-26) */
+.pl-sheet { position: fixed; inset: 0; z-index: 9000; background: rgba(0, 0, 0, .45); display: flex; align-items: center;
+  justify-content: center; padding: 16px; box-sizing: border-box; }
+.pl-card { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 14px; width: 100%;
+  max-width: 520px; max-height: 88vh; overflow: auto; padding: 16px; box-sizing: border-box; box-shadow: 0 10px 40px rgba(0, 0, 0, .35); }
+.pl-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 17px; font-weight: 700; }
+.pl-x { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; min-width: 40px;
+  min-height: 40px; font-size: 16px; cursor: pointer; }
+.pl-proj { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+.pl-lead { font-size: 13px; color: var(--text-muted); margin: 8px 0 10px; line-height: 1.45; }
+.pl-row { border-top: 1px solid var(--border); padding: 10px 0; }
+.pl-name { font-weight: 600; font-size: 14px; word-break: break-word; }
+.pl-meta { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+.pl-state { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; }
+.pl-state.ok { color: var(--ok); }
+.pl-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.pl-btns .btn { min-height: 38px; }
+.pl-empty { font-size: 13.5px; color: var(--text-muted); padding: 10px 0; }
+.pl-say { min-height: 18px; font-size: 13px; margin: 6px 0 0; }
+.pl-say.warn { color: var(--danger); } .pl-say.ok { color: var(--ok); }
+.pl-ft { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; border-top: 1px solid var(--border);
+  padding-top: 10px; margin-top: 8px; font-size: 13px; }
+@media (max-width: 520px) { .pl-sheet { align-items: flex-end; padding: 0; } .pl-card { border-radius: 14px 14px 0 0; max-height: 92vh; } }

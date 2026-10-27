@@ -39,7 +39,14 @@
      ("Projects-Takeoff-Files": "<number> - <address> - <city>", DCR Desktop 2's folder_candidates - a suffix number's
      folder is its own; "Materials Catalog" is nobody's) - never a name, an item id or a link; 503
      takeoff_not_configured while the demo's takeoff folder is switched off (setTakeoff(false) in node; in a browser
-     localStorage "dcr2-demo-takeoff" = "off").
+     localStorage "dcr2-demo-takeoff" = "off");
+   * plans_list {project_ids: 1 to 20} (the Plans Library, owner 2026-10-26) -> {projects: {"<id>": {number, files:
+     [{id, name, folder, size, modified, version}]}}, checked_at}: the same .takeoff files plans_for counts; ONLY an
+     admin or a person with prices (403 forbidden "Plan files are for the people who see prices." otherwise);
+   * plan_link {project_id, item_id} -> {url, id, name, folder, size, modified, version}: one of them (404 otherwise, a
+     project the person may not see too) and this tab's own download link (a blob:; node: a placeholder on the host)
+     answering byte ranges; its bytes start "PDFCACHE1" as a takeoff file does (made up: the takeoff app cannot open
+     it). setPlanVersion(path, version) gives one a new version (a node test's "new save in OneDrive").
    The takeoff folder (made up, the same every time): A267 three .takeoff files 1 to 3 folders down (and an autosave, a
    PDF and plan notes, never counted); A024 one and A024-B two (apart); A120 one in its folder and one in an older second
    folder; the other A### numbers by their last digit: ending in 0 or 5 one, in 2 or 7 two, in 3 or 8 a folder with
@@ -155,7 +162,7 @@
     const secret = "demo-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
     const sessions = new Map();          // token -> the upload session (this tab)
     const bytes = new Map();             // item id -> Blob (this tab)
-    const links = new Map();             // a download link -> {id, name} (this tab)
+    const links = new Map();             // a download link -> {id, name} or {plan} (a takeoff file) (this tab)
     let sessionN = 0, linkN = 0;
     const browser = typeof root.document !== "undefined" && root.URL && typeof root.URL.createObjectURL === "function";
     const nowMs = () => Date.parse(nowIso());
@@ -342,6 +349,64 @@
       }
       return answer(200, { projects, checked_at: nowIso() });
     }
+    /* the Plans Library: each .takeoff file of the takeoff folder as plans_list answers it (made up, the same every time) */
+    const planVersions = new Map();      // path -> a version a test set (a "new save")
+    function planFilesOf(p) {
+      const folders = takeoffFolders();
+      const names = candidates(folders.map((f) => f.name), p.number);
+      const out = [];
+      folders.forEach(function (f, fi) {
+        if (!names.includes(f.name)) return;
+        f.files.forEach(function (path, i) {
+          if (!/\.takeoff$/i.test(path)) return;
+          const parts = (f.name + "/" + path).split("/");
+          const name = parts.pop();
+          const full = parts.concat(name).join("/");
+          const size = 180000 + ((fi * 7 + i * 13) % 9) * 41000;
+          out.push({ id: "01DEMOTKO" + String(fi).padStart(3, "0") + "F" + String(i).padStart(3, "0"), name, folder: parts.join("/"),
+            size, modified: new Date(Date.UTC(2026, 8, 1 + ((fi + i) % 27), 17, 0, 0)).toISOString(),
+            version: planVersions.get(full) || "qx:demo" + full.length.toString(36) + i + fi, full });
+        });
+      });
+      return out;
+    }
+    function planBytes(f) {
+      const head = "PDFCACHE1 made-up demo plan file - the takeoff app cannot open it: " + f.name + "\n";
+      const text = head + ".".repeat(Math.max(0, f.size - head.length));
+      return typeof Blob !== "undefined" ? new Blob([text], { type: "application/octet-stream" }) : text;
+    }
+    const pricesOnly = (w) => (!w.active ? fail("forbidden") : !(w.admin || w.prices) ? fail("forbidden", null, "Plan files are for the people who see prices.") : null);
+    const shown = (f) => ({ id: f.id, name: f.name, folder: f.folder, size: f.size, modified: f.modified, version: f.version });
+    function plansList(b, w) {
+      const ids = b.project_ids;
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20 || new Set(ids).size !== ids.length ||
+        ids.some((x) => typeof x !== "number" || !Number.isSafeInteger(x) || x <= 0)) {
+        return bad("project_ids", "project_ids must be 1 to 20 different positive whole numbers");
+      }
+      if (!takeoffOn()) return fail("takeoff_not_configured");
+      const no = pricesOnly(w);
+      if (no) return no;
+      const mine = new Map(E.readable(w, "projects").filter((p) => !p.deleted_at).map((p) => [p.id, p]));
+      const projects = {};
+      for (const id of ids) {
+        const p = mine.get(id);
+        if (p) projects[String(id)] = { number: p.number, files: planFilesOf(p).map(shown) };
+      }
+      return answer(200, { projects, checked_at: nowIso() });
+    }
+    function planLink(b, w) {
+      if (!takeoffOn()) return fail("takeoff_not_configured");
+      const no = pricesOnly(w);
+      if (no) return no;
+      const p = E.readable(w, "projects").find((x) => x.id === b.project_id && !x.deleted_at);
+      const f = p ? planFilesOf(p).find((x) => x.id === b.item_id) : null;
+      if (!f) return fail("not_found");
+      let url;
+      if (browser) url = root.URL.createObjectURL(planBytes(f));
+      else url = "https://" + HOST + "/__demo/dl/" + (++linkN) + "-" + f.id;
+      links.set(url, { plan: f });
+      return answer(200, Object.assign({ url }, shown(f)));
+    }
 
     /* ── answers ── */
     const answer = (status, data) => ({ status, data });
@@ -393,12 +458,14 @@
       const b = body && typeof body === "object" && !Array.isArray(body) ? body : null;
       if (!b) return bad("body", "the body must be a JSON object");
       const ops = { list: ["path", "cursor"], download: ["item_id"], upload_session: ["folder", "rel_dir", "name", "size", "modified"],
-        upload_done: ["item_id", "ticket"], ensure_folder: [], status: [], plans_for: ["project_ids"] };
+        upload_done: ["item_id", "ticket"], ensure_folder: [], status: [], plans_for: ["project_ids"], plans_list: ["project_ids"],
+        plan_link: ["item_id"] };
       if (!Object.prototype.hasOwnProperty.call(ops, b.op)) return bad("op", "op must be one of " + Object.keys(ops).join(", "));
-      const allowed = ["op"].concat(b.op === "status" || b.op === "plans_for" ? [] : ["project_id"], ops[b.op]);
+      const allowed = ["op"].concat(b.op === "status" || b.op === "plans_for" || b.op === "plans_list" ? [] : ["project_id"], ops[b.op]);
       const extra = Object.keys(b).find((k) => !allowed.includes(k));
       if (extra) return bad(extra, "unknown field: " + extra);
       if (b.op === "plans_for") return plansFor(b, w);
+      if (b.op === "plans_list") return plansList(b, w);
       if (b.op === "status") {
         if (!w.active) return fail("forbidden");
         if (!w.admin) return fail("forbidden", null, "The OneDrive status is for admins.");
@@ -409,6 +476,10 @@
       if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return bad("project_id", "project_id must be a positive whole number");
       if (b.item_id !== undefined && (typeof b.item_id !== "string" || !/^[A-Za-z0-9!_.-]{8,128}$/.test(b.item_id))) {
         return bad("item_id", "item_id must be an item id from the list");
+      }
+      if (b.op === "plan_link") {
+        if (typeof b.item_id !== "string") return bad("item_id", "item_id must be an item id from the list");
+        return planLink(b, w);
       }
       const c = context(w, pid);
       if (c.refuse) return c.refuse;
@@ -569,8 +640,8 @@
       Object.keys(headers || {}).forEach((k) => { h[k.toLowerCase()] = headers[k]; });
       if (links.has(url)) {
         const l = links.get(url);
-        const it = itemById(l.id);
-        const blob = it ? contentOf(it) : null;
+        const it = l.plan ? { mime: "application/octet-stream" } : itemById(l.id);
+        const blob = l.plan ? planBytes(l.plan) : it ? contentOf(it) : null;
         if (!blob || method !== "GET") return graphJson(404, { error: { code: "itemNotFound" } });
         const r = /^bytes=(\d+)-(\d*)$/.exec(String(h.range || ""));
         const size = typeof blob === "string" ? blob.length : blob.size;
@@ -622,7 +693,9 @@
     return { name: "p7-onedrive", tables: new Set([TABLE]), canRead: () => false, functions: ["onedrive"], invoke, http, owns,
       host: HOST, handles: () => false,
       /** plans_for's takeoff folder: false = not set up (503 takeoff_not_configured), true = there, null = the default */
-      setTakeoff(on) { takeoffSet = on === null || on === undefined ? null : !!on; } };
+      setTakeoff(on) { takeoffSet = on === null || on === undefined ? null : !!on; },
+      /** the Plans Library: a takeoff file's new version ("<folder>/<path>", as the takeoff folder lists it) */
+      setPlanVersion(full, version) { if (version) planVersions.set(full, version); else planVersions.delete(full); } };
   });
 
   /* ── made-up data: the switch for two people, the admin's test project ── */

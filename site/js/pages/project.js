@@ -46,7 +46,7 @@ import * as estimateTab from "./project-estimate.js";
 import * as takeoffsTab from "./project-takeoffs.js";
 import { startSweeper } from "./journal-sync.js";
 import { openNewProject, takeNotice } from "./new-project.js";
-import { paintPlans } from "./plan-buttons.js";
+import { paintPlans, keepPlansFresh } from "./plan-buttons.js";
 
 const TABS = ["overview", "estimate", "takeoffs", "log", "journal", "mailing", "files", "tasks", "expenses", "payments"];
 const MONEY_TABS = ["expenses", "payments"];
@@ -500,7 +500,9 @@ async function init() {
   renderHead();
   loadThumb();
   el("pjPlans").setAttribute("data-plans", String(ctx.project.id));
+  el("pjPlans").setAttribute("data-plans-title", el("pjTitle").textContent || "");
   paintPlans(document.querySelector(".pj-head"), ctx.me);
+  keepPlansFresh(ctx.me);                         // the Plans Library's new versions (people who see prices)
   const left = takeNotice(ctx.pid);               // said by the New Project dialog before it opened this page
   if (left) toast(left, "info");
   startSweeper(ctx.me, { skip: ctx.pid });        // other projects' journal entries written with no signal

@@ -39,7 +39,14 @@
                                      answer with a short Retry-After (the broker's time ran out on a first walk: it
                                      keeps what it counted) is asked once more after it, a longer one is waited out
                                      (only what is kept answers meanwhile);
-   * call(body)                      any op; errors are {code, status, message, field, info, retryAfter}: the
+   * plansList(projectIds)           op "plans_list" {project_ids: 1 to 20 a call} (the Plans Library, owner 2026-10-26;
+                                     map/plan-library.js): {"<id>": {number, files: [{id, name, folder, size, modified,
+                                     version}]}} - the project's .takeoff files; only an admin or Sees prices (plan files
+                                     carry prices: 403 forbidden for anyone else);
+   * planLink(projectId, itemId)     op "plan_link" -> {url, id, name, folder, size, modified, version}: one of them and a
+                                     download link (minutes; kept in memory only: js/plan-library.js reads it in ranges
+                                     into this device's storage, or the takeoff app opens it over ranges);
+   * call(body)                    any op; errors are {code, status, message, field, info, retryAfter}: the
                                      broker's own codes (its messages are a fixed map), "not_deployed" (the gateway's
                                      own 404: no such function), the 503s by name, "offline" (no answer).
 
@@ -49,6 +56,7 @@
 import { db, idOf } from "./_db.js";
 import { sameName, renamedFrom } from "../map/onedrive.js";
 import { planEntry } from "../map/plans.js";
+import { planFileOf } from "../map/plan-library.js";
 
 export const FUNCTION = "onedrive";
 /** The pages call the function only when this is true (see the header): set by the Files tab's OneDrive go-live. */
@@ -281,6 +289,45 @@ export async function status() {
     checks: (Array.isArray(d.checks) ? d.checks : []).filter(function (c) { return c && typeof c.name === "string"; })
       .map(function (c) { return { name: c.name, ok: c.ok === true, code: typeof c.code === "string" ? c.code : "" }; }),
   };
+}
+
+/* ── the Plans Library (ops plans_list, plan_link; owner 2026-10-26) ── */
+/** At most this many projects in one plans_list call (the broker's limit). */
+export const LIST_BATCH = 20;
+
+/** {"<id>": {number, files: [{id, name, folder, size, modified, version}]}} for the projects asked (1 to 20 a call,
+    more in turns): only an admin or a person with Sees prices (403 forbidden otherwise); a project the person may not
+    see is left out. Errors are thrown with the broker's codes. */
+export async function plansList(projectIds) {
+  const ids = [];
+  (Array.isArray(projectIds) ? projectIds : [projectIds]).forEach(function (x) {
+    const n = idOf(String(x == null ? "" : x).trim());
+    if (typeof n === "number" && Number.isSafeInteger(n) && n > 0 && ids.indexOf(n) === -1) ids.push(n);
+  });
+  const out = {};
+  if (!LIVE || !ids.length) return out;
+  for (let i = 0; i < ids.length; i += LIST_BATCH) {
+    const part = ids.slice(i, i + LIST_BATCH);
+    const d = (await call({ op: "plans_list", project_ids: part })) || {};
+    const projects = d.projects && typeof d.projects === "object" ? d.projects : {};
+    part.forEach(function (id) {
+      const v = projects[String(id)];
+      if (!v || typeof v !== "object" || typeof v.number !== "string" || !Array.isArray(v.files)) return;
+      out[String(id)] = { number: v.number, files: v.files.map(planFileOf).filter(Boolean) };
+    });
+  }
+  return out;
+}
+
+/** One of the project's .takeoff files and a download link for it ({url, id, name, folder, size, modified, version}),
+    the version OneDrive holds now. The link is good for minutes: the caller uses it at once and keeps it in memory. */
+export async function planLink(projectId, itemId) {
+  if (typeof itemId !== "string" || !ITEM_ID.test(itemId)) throw failure("That plan file was not found.", "not_found", 404);
+  const d = (await call({ op: "plan_link", project_id: pidOf(projectId), item_id: itemId })) || {};
+  const f = planFileOf(d);
+  if (!f || f.id !== itemId) throw failure("OneDrive could not do that just now.", "failed", 502);
+  if (!linkOk(d.url)) throw failure("OneDrive sent a link this page does not open.", "bad_link", 502);
+  return Object.assign({ url: String(d.url) }, f);
 }
 
 /* ── the plan buttons (op plans_for) ── */

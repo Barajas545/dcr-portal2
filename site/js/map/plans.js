@@ -22,6 +22,21 @@
 
 export const TAKEOFF_WEB = "https://barajas545.github.io/takeoff-web/index.html";
 export const PLANS_HOME = TAKEOFF_WEB + "#plans";
+/** The takeoff app's site: the Plans Library hands it a plan window to window (js/plan-handoff.js), to this address only. */
+export const TAKEOFF_ORIGIN = new URL(TAKEOFF_WEB).origin;
+const NONCE = /^[A-Za-z0-9_-]{16,64}$/;
+
+/** The takeoff app in a new tab, waiting for the plan this page hands it (takeoff-web js/core/portal-handoff.js). */
+export function handoffLink(nonce) {
+  if (!NONCE.test(String(nonce || ""))) throw new Error("not a hand-over word");
+  return TAKEOFF_WEB + "#portal=" + nonce;
+}
+
+/** The Plans Library (save plan files on this device, the 📐 menu of files): the people who see prices, as the
+    Floor Plans card - plan files carry prices (the broker's plans_list / plan_link refuse anyone else). */
+export function planFilesFor(me) {
+  return plansCardFor(me);
+}
 /** A project number as the broker answers one (A068, A024-B, A000T1): short text without control characters. */
 const NUMBER = /^[^\u0000-\u001f\u007f]{1,40}$/;
 
@@ -55,12 +70,17 @@ export function planTitle(number, plans) {
     " — opens its plans in the takeoff app (your Plans Archive, or the plans kept on this device)";
 }
 
-/** The 📐 button of a project with at least one takeoff file, or "" (no button). */
-export function planButtonHtml(entry, style) {
+/** The 📐 button of a project with at least one takeoff file, or "" (no button). `menu`: the person sees prices, so
+    the button opens the menu of the project's plan files (js/pages/plan-buttons.js) - the link stays for a middle
+    click and for a page whose script has not run. */
+export function planButtonHtml(entry, style, menu) {
   const e = planEntry(entry);
   if (!e || e.plans < 1) return "";
-  const attrs = ' href="' + esc(plansLink(e.number)) + '" target="_blank" rel="noopener" aria-label="' + esc(planLabel(e.number)) +
-    '" title="' + esc(planTitle(e.number, e.plans)) + '"';
+  const attrs = ' href="' + esc(plansLink(e.number)) + '" target="_blank" rel="noopener" aria-label="' +
+    esc(menu ? "Plans for " + e.number + " — open or save the plan files" : planLabel(e.number)) +
+    '" title="' + esc(menu ? e.plans + " takeoff file" + (e.plans === 1 ? "" : "s") + " for " + e.number +
+      " — open one, or save it on this device" : planTitle(e.number, e.plans)) + '"' +
+    (menu ? ' data-plan-menu="' + esc(e.number) + '" aria-haspopup="dialog"' : "");
   if (style === "button") return '<a class="pj-btn"' + attrs + '><span aria-hidden="true">📐 Plans ↗</span></a>';
   return '<a class="se-plan-go"' + attrs + '><span class="ic" aria-hidden="true">📐</span><span class="tx" aria-hidden="true">Plans</span></a>';
 }

@@ -6,13 +6,14 @@
    plan-files (.takeoff) menu (owner decisions 2026-10-26): a project whose takeoff folder holds a
    .takeoff file gets 📐 beside it, opening takeoff-web at its number (js/pages/plan-buttons.js, one
    plans_for call for the projects shown; everyone who sees the project sees it; nothing when the
-   broker does not answer). */
+   broker does not answer). For the people who see prices 📐 opens the project's plan files (open, or save on this
+   device: the Plans Library), and this page keeps the saved ones up to date (keepPlansFresh). */
 
 import { boot, el, esc, errorText, qs, setQs, maskFor } from "./shell.js";
 import * as searchRepo from "../repo/search.js";
 import * as projectsRepo from "../repo/projects.js";
 import * as filesRepo from "../repo/files.js";
-import { paintPlans } from "./plan-buttons.js";
+import { paintPlans, keepPlansFresh } from "./plan-buttons.js";
 
 let timer = null, seq = 0, numbers = {}, list = [], listReady = null, me = null, mask = function (t) { return t; };
 
@@ -32,7 +33,8 @@ function itemHtml(it) {
       '<span class="se-txt"><div class="se-title">' + esc(it.title) + "</div>" + sub + "</span></a>";
     // a project: its plan button's slot beside the link (never inside it), filled by paintPlans
     return it.projectId == null ? row : '<div class="se-proj">' + row +
-      '<span class="se-plan" data-plans="' + esc(it.projectId) + '" data-plans-style="icon" hidden></span></div>';
+      '<span class="se-plan" data-plans="' + esc(it.projectId) + '" data-plans-style="icon" data-plans-title="' + esc(it.title) +
+      '" hidden></span></div>';
   }
   if (it.href) return '<a class="se-item" href="' + esc(it.href) + '"><div class="se-title">' + esc(it.title) + "</div>" + sub + "</a>";
   const contact = [];
@@ -95,6 +97,7 @@ async function run(q) {
 async function init() {
   me = await boot("search");
   mask = maskFor(me);
+  keepPlansFresh(me);                           // the Plans Library's new versions (people who see prices)
   listReady = loadNumbers();
   const q0 = qs("q") || "";
   const box = el("seInput");
