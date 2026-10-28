@@ -100,6 +100,14 @@ const ANSWER = () => ({
   tasks: [{ id: 1, project_id: 7, title: "Pay the yard $12,000", status: "open" }],
   files: [{ id: 9, project_id: 7, folder: "documents", name: "Bid $12,000.pdf", version_no: 1 }],
 });
+// what the database answers q with: the rows whose searched words hold it as typed (public.search, any case)
+const SEARCHED = { projects: ["number", "name"], items: ["name", "description", "group_name", "material_description"],
+  tasks: ["title", "description", "category"], files: ["name"] };
+const DB = (q) => {
+  const a = ANSWER(), n = q.trim().toLowerCase();
+  Object.keys(SEARCHED).forEach((k) => { a[k] = a[k].filter((r) => SEARCHED[k].some((f) => String(r[f] || "").toLowerCase().includes(n))); });
+  return a;
+};
 
 test("R3C3 global search: without prices an item, task or file stays only when the words typed are in what is shown (masked); with prices the database's answer as it is", async () => {
   const hidden = toGroups(ANSWER(), { mask: maskAmounts, prices: false, q: " 12,000 " });
@@ -107,10 +115,12 @@ test("R3C3 global search: without prices an item, task or file stays only when t
     "\"Rail (amount hidden)\", \"Extras (amount hidden) allowance\", the task and the file are not kept; the words as shown are");
   assert.doesNotMatch(JSON.stringify(hidden), /\$\s?\d/);
   // what is shown is still found: the masked words themselves, any case
-  assert.deepEqual(toGroups(ANSWER(), { mask: maskAmounts, prices: false, q: "RAIL" })[1].items.map((i) => i.title), ["Rail (amount hidden)", "Rail 12,000 lf"]);
+  assert.deepEqual(toGroups(DB("RAIL"), { mask: maskAmounts, prices: false, q: "RAIL" })[0].items.map((i) => i.title), ["Rail (amount hidden)", "Rail 12,000 lf"]);
+  // (every row as the answer: "Rail 12,000 lf" in the group "Deck" holds no "amount hidden" as typed either, so only
+  // words the page doesn't show could have found it - kept, as a description's hit; round 4)
   assert.deepEqual(toGroups(ANSWER(), { mask: maskAmounts, prices: false, q: "amount hidden" }).map((g) => [g.key, g.total]),
-    [["projects", 1], ["items", 2], ["tasks", 1], ["files", 1]]);
-  assert.deepEqual(toGroups(ANSWER(), { mask: maskAmounts, prices: false, q: "deck" })[1].items.map((i) => i.title), ["Rail (amount hidden)", "Rail 12,000 lf"], "the group's name");
+    [["projects", 1], ["items", 3], ["tasks", 1], ["files", 1]]);
+  assert.deepEqual(toGroups(DB("deck"), { mask: maskAmounts, prices: false, q: "deck" })[0].items.map((i) => i.title), ["Rail (amount hidden)", "Rail 12,000 lf"], "the group's name");
   // with prices (or no flag): as the database answered
   for (const opts of [{ prices: true, q: "12,000" }, { q: "12,000" }, { mask: maskAmounts, q: "12,000" }]) {
     assert.deepEqual(toGroups(ANSWER(), opts).map((g) => [g.key, g.total]), [["projects", 1], ["items", 3], ["tasks", 1], ["files", 1]], JSON.stringify(opts));

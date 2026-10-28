@@ -13,9 +13,11 @@
    The money rule (BLUEPRINT 2.1 principle 8, Q11, Appendix D): ctx.prices says the person has the prices
    switch (amounts on items and quotes, and a quote's notes - they name its price: quote_prices since the M5a review);
    ctx.money says they may see prices AND financials (bills, payments, invoices, costs, quote_commitments). Without
-   them no amount is copied into the payload even if a row carried one, and the free text people typed (item names
-   and notes, flag notes, task words, document names) goes through ctx.mask - the amount mask of Desktop 2
-   (money-mask.js; Q28: on screen only). "priced" is the database's (estimate_item_totals.priced, the same yes / no
+   them no amount is copied into the payload even if a row carried one, and the free text people typed (flag notes,
+   task words, document names) goes through ctx.mask - the amount mask of Desktop 2 (money-mask.js; Q28: on screen
+   only); the item's, group's, estimate's and takeoff's words (names, descriptions, assigned text) through the
+   database's no-price rule on top (scrubMoney over ctx.mask: app.priceless_text, Desktop's est_logic.hide_amounts -
+   "400 dollars", "Deposit 1,200" too). "priced" is the database's (estimate_item_totals.priced, the same yes / no
    for every reader), so the bidding steps read the same for everyone. worksitePayload takes the amounts out of a
    price person's payload AND masks every typed word again (the worksite copy carries no "$" at all).
 
@@ -307,6 +309,9 @@ export function toPayload(rows, ctx) {
   const prices = !!c.prices;
   const money = prices && !!c.money;
   const mask = c.mask;
+  // item, group, estimate and takeoff names without prices: the database's no-price rule (app.priceless_text;
+  // Desktop's est_logic.hide_amounts) - "400 dollars", "Deposit 1,200" too, not "$" amounts only
+  const words = prices ? ident : function (t) { return scrubMoney(mask(t == null ? "" : String(t))); };
   const p = r.project || {};
 
   const contacts = {};
@@ -336,7 +341,7 @@ export function toPayload(rows, ctx) {
     const k = String(t.estimate_item_id);
     const cur = takeoffOf[k] || { lines: 0, names: [] };
     cur.lines += Array.isArray(t.takeoff_rows) ? t.takeoff_rows.length : num(t.rows);
-    if (trim(t.name)) cur.names.push(mask(trim(t.name)));
+    if (trim(t.name)) cur.names.push(words(trim(t.name)));
     takeoffOf[k] = cur;
   });
 
@@ -361,17 +366,17 @@ export function toPayload(rows, ctx) {
       // estimate went to the client (everyone can tell that); a database without the column: the prices person's figures
       const hasPrice = k in pricedOf ? pricedOf[k] : (prices && ((total || 0) > 0 || (quoted || 0) > 0));
       items.push({
-        key: "i" + it.id, itemId: it.id, estimateId: e.id, estimateName: mask(estimateName(e)), estimateKind: e.kind || "estimate",
+        key: "i" + it.id, itemId: it.id, estimateId: e.id, estimateName: words(estimateName(e)), estimateKind: e.kind || "estimate",
         estimateStatus: e.status || "draft",
-        groupName: mask(groupNameOf[groupKey(it.group_name)] || ""), name: mask(cleanName(it.name)) || "(unnamed item)",
+        groupName: words(groupNameOf[groupKey(it.group_name)] || ""), name: words(cleanName(it.name)) || "(unnamed item)",
         // how the project log names the item (a quick note): the database's scrub rule for every role - never an amount,
         // never a display mask stored for everyone (P5 check 5)
         logName: scrubMoney(cleanName(it.name)) || "(unnamed item)",
-        assignees: who ? [{ name: mask(who) }] : [],
+        assignees: who ? [{ name: words(who) }] : [],
         priced: hasPrice || e.status === "sent" || e.status === "approved",
         estTotal: prices ? total : null, quotedPrice: prices ? quoted : null,
-        laborNames: type !== "material" && trim(it.description) ? [mask(cleanName(it.description))] : [],
-        materialNames: type !== "labor" && type !== "sub" && trim(it.material_description) ? [mask(cleanName(it.material_description))] : [],
+        laborNames: type !== "material" && trim(it.description) ? [words(cleanName(it.description))] : [],
+        materialNames: type !== "labor" && type !== "sub" && trim(it.material_description) ? [words(cleanName(it.material_description))] : [],
         flag: flagOf[k] || null,
         takeoff: takeoffOf[k] || null,
       });
@@ -404,10 +409,12 @@ export function toPayload(rows, ctx) {
 
 /** The payload with every amount taken out: what a worksite copy is drawn from. The money fields go, and every word
     people typed is masked AGAIN - a price person's payload carries their words as typed ("credit asked $1,200"), and
-    the worksite copy promises no price at all (as the estimate's worksite copy and DCR Desktop 2's printing do). */
+    the worksite copy promises no price at all (as the estimate's worksite copy and DCR Desktop 2's printing do); the
+    item's, group's, estimate's and takeoff's words by the database's no-price rule, as toPayload's without prices. */
 export function worksitePayload(p) {
   const m = function (t) { return maskAmounts(t == null ? "" : String(t)); };
-  const all = function (list) { return (list || []).map(m); };
+  const w = function (t) { return scrubMoney(m(t)); };
+  const all = function (list) { return (list || []).map(w); };
   const pj = p.project || {};
   return Object.assign({}, p, {
     pricesHidden: true, moneyHidden: true, bills: null, invoices: null, costs: null, commitments: null,
@@ -416,8 +423,8 @@ export function worksitePayload(p) {
     items: (p.items || []).map(function (it) {
       return Object.assign({}, it, {
         estTotal: null, quotedPrice: null,
-        name: m(it.name), groupName: m(it.groupName), estimateName: m(it.estimateName),
-        assignees: (it.assignees || []).map(function (a) { return Object.assign({}, a, { name: m(a.name) }); }),
+        name: w(it.name), groupName: w(it.groupName), estimateName: w(it.estimateName),
+        assignees: (it.assignees || []).map(function (a) { return Object.assign({}, a, { name: w(a.name) }); }),
         laborNames: all(it.laborNames), materialNames: all(it.materialNames),
         flag: it.flag ? Object.assign({}, it.flag, { note: m(it.flag.note) }) : it.flag,
         takeoff: it.takeoff ? Object.assign({}, it.takeoff, { names: all(it.takeoff.names) }) : it.takeoff,

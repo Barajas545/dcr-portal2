@@ -39,6 +39,8 @@
 
 import { addDays, ymd } from "./pacific.js";
 import { csvCell } from "./timesheets.js";
+import { maskAmounts } from "../money-mask.js";
+import { scrubMoney } from "../scrub-money.js";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 function num(v) {
@@ -165,18 +167,22 @@ export function employeeOf(cost, employees) {
 }
 
 /* ── one row ────────────────────────────────────────────────────────── */
-/** The estimate line a cost is booked to: "Walls — Exterior walls" (a change order: "CO #2 · …"). */
-export function lineLabel(item, estimate) {
+/** The estimate line a cost is booked to: "Walls — Exterior walls" (a change order: "CO #2 · …"). prices false (the
+    financials switch without prices): its words amount-free by the database's no-price rule (app.priceless_text, as
+    the Estimate tab and DCR Desktop 2's money_logic.item_choices) - display only, the line is chosen by its id. */
+export function lineLabel(item, estimate, prices) {
   if (!item) return "";
-  const name = text(item.name) || text(item.description) || "Item " + item.id;
-  const g = text(item.group_name);
+  const shown = prices === false ? function (t) { return text(scrubMoney(maskAmounts(t))); } : text;
+  const name = shown(item.name) || shown(item.description) || "Item " + item.id;
+  const g = shown(item.group_name);
   const co = estimate && estimate.kind === "change_order" ? "CO #" + (estimate.co_number || "") + " · " : "";
   return co + (g && g.toLowerCase() !== name.toLowerCase() ? g + " — " : "") + name;
 }
 
 /** A DCR Desktop 2 `costs` row -> the ledger row every screen, the CSV and the printed sheet read.
     ctx: {projects: {id: project}, items: {id: item}, estimates: {id: estimate}, employees: {id: employee},
-    receipts: {costId: [file]}, nameOf: uid -> name}. */
+    receipts: {costId: [file]}, nameOf: uid -> name, prices: the prices switch (false: the line's words amount-free,
+    lineLabel)}. */
 export function toLedgerRow(cost, ctx) {
   const c = cost || {};
   const x = ctx || {};
@@ -206,7 +212,7 @@ export function toLedgerRow(cost, ctx) {
     employeeId: who.id, employeeName: who.name, employeeSource: who.source,
     receipts: ((x.receipts || {})[String(c.id)] || []).slice(),
     itemId: c.estimate_item_id == null ? null : c.estimate_item_id,
-    group: item ? lineLabel(item, est) : "",
+    group: item ? lineLabel(item, est, x.prices) : "",
   };
 }
 

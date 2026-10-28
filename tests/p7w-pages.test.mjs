@@ -113,7 +113,7 @@ test("the cost dialog: fetched on demand from the Expenses tab only (never stati
   assert.match(dc, /estimate_item_id: \$\("cfLine"\) \? \$\("cfLine"\)\.value : undefined/);
   assert.match(dc, /payload\(f, \{ editing: true, before: st\.before, lineShown: st\.lineShown \}\)/);
   assert.match(dc, /st\.lineShown = sel \? sel\.value : undefined/);
-  assert.match(dc, /repo\.lineChoices\(ctx\.pid, line\)/);
+  assert.match(dc, /repo\.lineChoices\(ctx\.pid, line, !!ctx\.prices\)/);
   assert.ok(dc.indexOf("repo.getCost(o.costId)") < dc.indexOf("repo.lineChoices("), "the cost is read first, for its line");
   const sw = read("sw.js");
   for (const f of ["js/pages/expense-dialog.js", "js/map/cost-form.js", "js/pages/project-expenses.js"]) assert.ok(!sw.includes('"' + f + '"'), f + " is not kept on phones");

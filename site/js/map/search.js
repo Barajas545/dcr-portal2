@@ -8,6 +8,7 @@
 
 import { statusLabel } from "./status.js";
 import { folderLabel } from "./files.js";
+import { scrubMoney } from "../scrub-money.js";
 
 export const LIMIT = 20;
 
@@ -17,20 +18,29 @@ const SHOWN = { items: ["name", "group_name"], tasks: ["title"], files: ["name"]
 
 function join(parts, sep) { return parts.filter(function (x) { return x != null && String(x).trim() !== ""; }).join(sep || " · "); }
 
-/** opts: {numberOf, mask, prices, q}; prices false: an item, task or file is kept only when q (as the database reads
-    it: trimmed, any case) is in what this person is shown of it - "12,000" never keeps "Rail $12,000", shown "Rail
-    (amount hidden)", so watching which hits stay can't spell an amount out (DCR Desktop 2's global search). */
+/** opts: {numberOf, mask, prices, q}; prices false: an item, task or file is kept when q (as the database reads it:
+    trimmed, any case) is in what this person is shown of it - "12,000" never keeps "Rail $12,000", shown "Rail
+    (amount hidden)", so watching which hits stay can't spell an amount out (DCR Desktop 2's global search) - or when
+    the database found it through words the page doesn't show (an item's material, a task's description: q is in
+    none of its shown words as typed) and q has no digit, which every amount has. An item's name and group show by
+    the database's no-price rule (scrubMoney over the mask: app.priceless_text, as the Estimate tab - "400 dollars",
+    "Deposit 1,200" too). */
 export function toGroups(res, opts) {
   res = res || {};
   opts = opts || {};
   const numberOf = opts.numberOf || function () { return ""; };
   // names people typed (files, tasks) may quote an amount: masked for people without prices (Q28)
   const mask = typeof opts.mask === "function" ? opts.mask : function (t) { return t; };
+  // an item's name and group without prices: the database's own no-price words (the Estimate tab's estimate_print)
+  const itemMask = opts.prices === false ? function (t) { return scrubMoney(mask(t)); } : mask;
   const needle = opts.prices === false ? String(opts.q == null ? "" : opts.q).trim().slice(0, 100).toLowerCase() : "";
   function shown(key, r) {
-    return !needle || !SHOWN[key] || SHOWN[key].some(function (f) {
-      return String(mask(r && r[f] != null ? String(r[f]) : "")).toLowerCase().indexOf(needle) !== -1;
-    });
+    if (!needle || !SHOWN[key]) return true;
+    const m = key === "items" ? itemMask : mask;
+    const has = function (t) { return String(t).toLowerCase().indexOf(needle) !== -1; };
+    const field = function (f) { return r && r[f] != null ? String(r[f]) : ""; };
+    if (SHOWN[key].some(function (f) { return has(m(field(f))); })) return true;
+    return !/\p{Nd}/u.test(needle) && !SHOWN[key].some(function (f) { return has(field(f)); });
   }
   const groups = [];
   function add(label, key, rows, mapper) {
@@ -60,8 +70,8 @@ export function toGroups(res, opts) {
   // the project's read-only Estimate tab
   add("Estimate items", "items", res.items, function (i) {
     return {
-      title: i.name ? mask(i.name) : "(no name)",
-      sub: join([i.project_number, i.group_name ? mask(i.group_name) : ""]),
+      title: i.name ? itemMask(i.name) : "(no name)",
+      sub: join([i.project_number, i.group_name ? itemMask(i.group_name) : ""]),
       href: "project.html?id=" + encodeURIComponent(i.project_id) + "&tab=estimate",
     };
   });

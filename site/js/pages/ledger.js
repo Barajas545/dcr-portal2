@@ -20,7 +20,7 @@
    Who: the financials switch (app.can_financials — costs are read with it). Anyone else is told so and the
    page asks the database for nothing. */
 
-import { boot, el, esc, toast, confirmBox, errorText, qs, setQs, D } from "./shell.js";
+import { boot, el, esc, toast, confirmBox, errorText, qs, setQs, seesPrices, D } from "./shell.js";
 import * as repo from "../repo/ledger.js";
 import {
   ledgerView, PERIODS, DIMENSIONS, CARDS, cardLabel, money, seesLedger, canTag, billedOut, ledgerCsvRows, csvText, stampDay,
@@ -451,7 +451,7 @@ function refresh() { state.picked = {}; render(); }
 
 async function load() {
   try {
-    state.data = await repo.loadLedger();
+    state.data = await repo.loadLedger({ prices: seesPrices(state.me) });   // the lines' words (lineLabel)
     state.today = ymd(new Date());
     render();
   } catch (e) {

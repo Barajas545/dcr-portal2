@@ -77,7 +77,7 @@ async function load() {
   if (!host) return;
   const my = ++seq;
   try {
-    const rows = await repo.projectExpenses(st.ctx.pid);
+    const rows = await repo.projectExpenses(st.ctx.pid, { prices: !!st.ctx.prices });   // the line's words (lineLabel)
     if (my !== seq) return;
     st.rows = rows;
     paint();

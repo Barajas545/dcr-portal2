@@ -211,7 +211,8 @@ export async function openCostDialog(ctx, opts) {
     if (!row) { ctx.toast("That cost was not found — it may have been removed in DCR Desktop 2.", "error"); return; }
   }
   const line = row && row.estimate_item_id !== null && row.estimate_item_id !== undefined ? row.estimate_item_id : null;
-  try { st.lines = await repo.lineChoices(ctx.pid, line); } catch (e) { st.lines = []; }
+  // the financials switch without prices: the lines' words amount-free (map/ledger.js lineLabel)
+  try { st.lines = await repo.lineChoices(ctx.pid, line, !!ctx.prices); } catch (e) { st.lines = []; }
   const vendors = Array.from(new Set((o.vendors || []).map((v) => String(v || "").trim()).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   draw(!!row, vendors, line !== null);

@@ -5,14 +5,15 @@
    app.can_financials()) — and the pages do not even ask (map/ledger.js seesLedger).
 
    Reads
-   * loadLedger()                    every cost the person may read, as ledger rows (map/ledger.js toLedgerRow),
+   * loadLedger(opts)                every cost the person may read, as ledger rows (map/ledger.js toLedgerRow),
                                      with their projects, estimate lines, employees (names only), receipts
                                      (files.cost_id, M5b: live, newest version) and the people who tagged /
                                      reconciled them;
                                      plus the live invoices (billed out: shown greyed, never added to a cost);
+                                     opts.prices false: the lines' words amount-free (map/ledger.js lineLabel);
    * hoursBetween(from, to)          timesheet hours by employee for the side block (never turned into money);
-   * projectExpenses(projectId)      one project's costs as ledger rows (the project's Expenses tab, the
-                                     printed expense report);
+   * projectExpenses(pid, opts)      one project's costs as ledger rows (the project's Expenses tab, the
+                                     printed expense report); opts.prices as loadLedger's;
    * projectPayments(projectId)      one project's bills with their payments, and its invoices with their lines
                                      and client payments (the project's Payments tab);
    * receiptUrl(file, seconds)       a signed URL for one receipt (120 s for a document, BLUEPRINT 2.2.5).
@@ -37,10 +38,11 @@
    * addCost(fields)                 one INSERT (once: no retry) -> the row;
    * updateCost(row, patch)          a versioned PATCH of the changed columns (not project_id) -> the row; PT409 with
                                      err.current = the row now;
-   * lineChoices(projectId, keepId)  [{id, label}] the live estimate lines a cost can be booked to (map/ledger.js
-                                     lineLabel: "CO #2 · Walls — Exterior walls"), archived estimates left out —
-                                     but the line keepId (the cost being corrected is booked to it) is always kept,
-                                     marked "(archived estimate)" or "(removed)", so an edit shows the line it has.
+   * lineChoices(pid, keep, prices)  [{id, label}] the live estimate lines a cost can be booked to (map/ledger.js
+                                     lineLabel: "CO #2 · Walls — Exterior walls"; prices false: amount-free),
+                                     archived estimates left out — but the cost's own line (keep: the cost
+                                     being corrected is booked to it) is always kept, marked "(archived
+                                     estimate)" or "(removed)", so an edit shows the line it has.
 
    The RPC names and arguments live in RPC below and nowhere else. */
 
@@ -96,7 +98,7 @@ async function receiptsOf(c, ids) {
 }
 const indexBy = (rows, key) => { const m = {}; (rows || []).forEach((r) => { m[String(r[key || "id"])] = r; }); return m; };
 
-/** The lookups every ledger row needs, for the costs `costs`. */
+/** The lookups every ledger row needs, for the costs `costs` (opts: {projects, prices}). */
 async function context(c, costs, opts) {
   const o = opts || {};
   const itemIds = costs.map((r) => r.estimate_item_id).filter((v) => v !== null && v !== undefined);
@@ -117,19 +119,19 @@ async function context(c, costs, opts) {
   Object.keys(byCost).forEach((k) => byCost[k].sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")) || a.id - b.id));
   return {
     projects: indexBy(projects), items: indexBy(items), estimates: indexBy(estimates), employees: indexBy(employees),
-    receipts: byCost, nameOf,
+    receipts: byCost, nameOf, prices: o.prices,
   };
 }
 
 /** Everything the ledger screen draws: {rows, employees: [{id, full_name, active}], invoices, cards}. */
-export async function loadLedger() {
+export async function loadLedger(opts) {
   const c = await db();
   const [costs, invoices] = await Promise.all([
     pageAll((cl) => cl.from("costs").select(COST_COLS).order("cost_date", { ascending: false }).order("id", { ascending: false })),
     pageAll((cl) => cl.from("invoices").select("id, project_id, invoice_date, status, deleted_at, invoice_lines(amount)")
       .order("id", { ascending: true })),
   ]);
-  const ctx = await context(c, costs);
+  const ctx = await context(c, costs, { prices: (opts || {}).prices });
   return {
     rows: costs.map((r) => toLedgerRow(r, ctx)),
     employees: Object.keys(ctx.employees).map((k) => ctx.employees[k]).sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || ""))),
@@ -152,12 +154,12 @@ export async function hoursBetween(from, to) {
 }
 
 /** One project's costs as ledger rows (newest first). */
-export async function projectExpenses(projectId) {
+export async function projectExpenses(projectId, opts) {
   const c = await db();
   const pid = idOf(projectId);
   const costs = await pageAll((cl) => cl.from("costs").select(COST_COLS).eq("project_id", pid)
     .order("cost_date", { ascending: false }).order("id", { ascending: false }));
-  const ctx = await context(c, costs);
+  const ctx = await context(c, costs, { prices: (opts || {}).prices });
   return costs.map((r) => toLedgerRow(r, ctx));
 }
 
@@ -257,8 +259,8 @@ export async function updateCost(row, patch) {
 }
 
 /** The project's live estimate lines (not an archived estimate's), in estimate and line order; plus the line
-    `keepId` whatever its estimate (a cost's present line). */
-export async function lineChoices(projectId, keepId) {
+    `keepId` whatever its estimate (a cost's present line). `prices` false: the labels amount-free (lineLabel). */
+export async function lineChoices(projectId, keepId, prices) {
   const pid = idOf(projectId);
   const keep = keepId === null || keepId === undefined || keepId === "" ? null : String(keepId);
   const [items, estimates] = await Promise.all([
@@ -278,5 +280,5 @@ export async function lineChoices(projectId, keepId) {
   return items.filter((i) => live(i) || (keep !== null && String(i.id) === keep))
     .sort((a, b) => order(all[String(a.estimate_id)]) - order(all[String(b.estimate_id)]) || a.estimate_id - b.estimate_id ||
       Number(a.sort || 0) - Number(b.sort || 0) || a.id - b.id)
-    .map((i) => ({ id: i.id, label: lineLabel(i, all[String(i.estimate_id)] || null) + (live(i) ? "" : why(i)) }));
+    .map((i) => ({ id: i.id, label: lineLabel(i, all[String(i.estimate_id)] || null, prices) + (live(i) ? "" : why(i)) }));
 }

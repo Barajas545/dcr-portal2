@@ -11,7 +11,7 @@
    subcontractors + labour, equipment and other in their own column and not in Cost, billed-out money not on
    this sheet. Financials only: anyone else is told so and nothing is read. */
 
-import { boot, el, esc, errorText, qs, D } from "./shell.js";
+import { boot, el, esc, errorText, qs, seesPrices, D } from "./shell.js";
 import * as EF from "../expense-filter.js";
 import * as repo from "../repo/ledger.js";
 import { getProject } from "../repo/projects.js";
@@ -87,7 +87,8 @@ async function init() {
     return;
   }
   try {
-    const [p, all] = await Promise.all([getProject(pid), repo.projectExpenses(pid)]);
+    // the line's words as the Expenses tab shows them (its group filter is the line's label)
+    const [p, all] = await Promise.all([getProject(pid), repo.projectExpenses(pid, { prices: seesPrices(me) })]);
     if (!all.length) { el("rpSheet").innerHTML = '<div class="rp-loading">This project has no expense records.</div>'; return; }
     const rows = EF.sort(EF.filter(all, F, today), F);
     if (!rows.length) {
