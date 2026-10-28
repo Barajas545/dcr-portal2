@@ -778,6 +778,9 @@ async function addNewItem(form) {
       if (v !== null && v !== undefined) money[k] = v;
     });
   }
+  // no signal: nothing would leave the device, so it is not a maybe-added (Desktop's ConnectError) - the typed values
+  // and Add item stay; asked before sending, never in the catch (the signal can drop after the add went out)
+  if (typeof navigator !== "undefined" && navigator.onLine === false) { showErr(errorText({ code: "offline" })); return; }
   setBusy(true);
   try {
     await repo.addItem(est.id, fields, money, { prices: withPrices });

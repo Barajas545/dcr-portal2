@@ -44,7 +44,7 @@ function row(v, dueTxt, dueCls, sub) {
 
 function render() {
   const t = today();
-  const b = board(state.vehicles, state.maint, t, state.q, { retired: state.retired });
+  const b = board(state.vehicles, state.maint, t, state.q, { retired: state.retired, mask: state.mask });
   el("vbOilCount").textContent = b.oil.length;
   el("vbOilList").innerHTML = b.oil.map(function (x) {
     const d = x.due;

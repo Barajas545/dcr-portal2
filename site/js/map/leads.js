@@ -127,11 +127,15 @@ export function suggestions(leads, key) {
 }
 
 const SEARCHED = ["leadClientName", "leadClientPhone", "leadClientAddress", "leadProjectName", "leadCategory", "leadSource", "leadNotes", "projectID"];
+// the words the page shows through its mask (pages/leads.js): searched as shown, so watching which leads stay can't
+// spell out an amount hidden from a person without prices
+const MASKED = ["leadClientName", "leadClientAddress", "leadProjectName", "leadSource", "leadNotes"];
 
 /** The list on screen: the category chip, the words typed (every word must match somewhere), the newest lead first
-    (then the most recently contacted, then the name). opts: {cat, q, show: "open" | "converted" | "all"} */
+    (then the most recently contacted, then the name). opts: {cat, q, show: "open" | "converted" | "all", mask} */
 export function visibleLeads(leads, opts) {
   const o = opts || {};
+  const mask = typeof o.mask === "function" ? o.mask : txt;
   const words = txt(o.q).toLowerCase().split(/\s+/).filter(Boolean);
   const cat = o.cat || "all";
   const show = o.show || "all";
@@ -140,7 +144,7 @@ export function visibleLeads(leads, opts) {
     if (show === "open" && l.leadCreateEstimate) return false;
     if (show === "converted" && !l.leadCreateEstimate) return false;
     if (!words.length) return true;
-    const hay = SEARCHED.map(function (k) { return txt(l[k]); }).join(" ").toLowerCase();
+    const hay = SEARCHED.map(function (k) { return MASKED.indexOf(k) !== -1 ? txt(mask(txt(l[k]))) : txt(l[k]); }).join(" ").toLowerCase();
     return words.every(function (w) { return hay.indexOf(w) !== -1; });
   }).sort(function (a, b) {
     return (b.leadDate || "").localeCompare(a.leadDate || "") ||

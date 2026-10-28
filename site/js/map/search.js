@@ -11,19 +11,34 @@ import { folderLabel } from "./files.js";
 
 export const LIMIT = 20;
 
+// the words of a hit the page shows, masked (below); the database matched these and unseen ones too (an item's
+// description and material, a task's description and category), as typed
+const SHOWN = { items: ["name", "group_name"], tasks: ["title"], files: ["name"] };
+
 function join(parts, sep) { return parts.filter(function (x) { return x != null && String(x).trim() !== ""; }).join(sep || " · "); }
 
+/** opts: {numberOf, mask, prices, q}; prices false: an item, task or file is kept only when q (as the database reads
+    it: trimmed, any case) is in what this person is shown of it - "12,000" never keeps "Rail $12,000", shown "Rail
+    (amount hidden)", so watching which hits stay can't spell an amount out (DCR Desktop 2's global search). */
 export function toGroups(res, opts) {
   res = res || {};
   opts = opts || {};
   const numberOf = opts.numberOf || function () { return ""; };
   // names people typed (files, tasks) may quote an amount: masked for people without prices (Q28)
   const mask = typeof opts.mask === "function" ? opts.mask : function (t) { return t; };
+  const needle = opts.prices === false ? String(opts.q == null ? "" : opts.q).trim().slice(0, 100).toLowerCase() : "";
+  function shown(key, r) {
+    return !needle || !SHOWN[key] || SHOWN[key].some(function (f) {
+      return String(mask(r && r[f] != null ? String(r[f]) : "")).toLowerCase().indexOf(needle) !== -1;
+    });
+  }
   const groups = [];
   function add(label, key, rows, mapper) {
     rows = Array.isArray(rows) ? rows : [];
+    const more = rows.length >= LIMIT;           // the database's own limit, before the hits this person can't find
+    rows = rows.filter(function (r) { return shown(key, r); });
     if (!rows.length) return;
-    groups.push({ label: label, key: key, total: rows.length, more: rows.length >= LIMIT, items: rows.map(mapper) });
+    groups.push({ label: label, key: key, total: rows.length, more: more, items: rows.map(mapper) });
   }
   add("Projects", "projects", res.projects, function (p) {
     return {

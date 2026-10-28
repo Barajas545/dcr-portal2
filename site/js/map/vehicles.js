@@ -209,18 +209,23 @@ export function serviceText(m) {
   return (m && (m.nextServiceRequirements || m.serviceDescription || m.servicePerformed)) || "Service";
 }
 
-function matches(v, q) {
+// the label, the driver and the insurer as the page shows them (its mask): watching which vehicles stay can't spell out
+// an amount hidden from a person without prices
+function matches(v, q, mask) {
   const words = txt(q).toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const hay = [vLabel(v), v.vehicleName, v.vehicleDriverInformation, v.vehicleVIN, v.insuranceProvider].join(" ").toLowerCase();
+  const m = typeof mask === "function" ? function (t) { return txt(mask(txt(t))); } : txt;
+  const hay = [m(vLabel(v)), v.vehicleName, m(v.vehicleDriverInformation), v.vehicleVIN, m(v.insuranceProvider)].join(" ").toLowerCase();
   return words.every(function (w) { return hay.indexOf(w) !== -1; });
 }
 
 /** Everything the board shows, in its order:
     {oil: [{v, due}], svc: [{v, m, over}], papers: [{v, p}], all: [{v, open}], retired, dueCount}
-    q: the search words (on the label, the driver, the VIN and the insurer); opts.retired: list retired vehicles too. */
+    q: the search words (on the label, the driver, the VIN and the insurer); opts.retired: list retired vehicles too;
+    opts.mask: the page's mask (the words are searched as shown). */
 export function board(vehicles, maintenance, today, q, opts) {
-  const vs = (vehicles || []).filter(function (v) { return matches(v, q); });
+  const mask = opts && opts.mask;
+  const vs = (vehicles || []).filter(function (v) { return matches(v, q, mask); });
   const live = vs.filter(function (v) { return v.vehicleActive !== false; });
   const byId = {};
   (vehicles || []).forEach(function (v) { byId[String(v.id)] = v; });
@@ -229,7 +234,7 @@ export function board(vehicles, maintenance, today, q, opts) {
     .sort(function (a, b) { return (a.due.due || "0000").localeCompare(b.due.due || "0000") || vLabel(a.v).localeCompare(vLabel(b.v)); });
   const svc = (maintenance || []).filter(function (m) {
     const v = byId[String(m.vehicleID)];
-    return isOpen(m) && m.nextServiceDate && eom && m.nextServiceDate <= eom && v && v.vehicleActive !== false && matches(v, q);
+    return isOpen(m) && m.nextServiceDate && eom && m.nextServiceDate <= eom && v && v.vehicleActive !== false && matches(v, q, mask);
   }).map(function (m) { return { v: byId[String(m.vehicleID)], m, over: m.nextServiceDate < today }; })
     .sort(function (a, b) { return a.m.nextServiceDate.localeCompare(b.m.nextServiceDate) || Number(a.m.id) - Number(b.m.id); });
   const papers = [];

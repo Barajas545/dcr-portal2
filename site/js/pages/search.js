@@ -9,7 +9,7 @@
    broker does not answer). For the people who see prices 📐 opens the project's plan files (open, or save on this
    device: the Plans Library), and this page keeps the saved ones up to date (keepPlansFresh). */
 
-import { boot, el, esc, errorText, qs, setQs, maskFor } from "./shell.js";
+import { boot, el, esc, errorText, qs, setQs, maskFor, seesPrices } from "./shell.js";
 import * as searchRepo from "../repo/search.js";
 import * as projectsRepo from "../repo/projects.js";
 import * as filesRepo from "../repo/files.js";
@@ -72,7 +72,8 @@ async function run(q) {
   const ph = el("seResults").querySelector(".se-empty");
   if (ph) ph.remove();
   try {
-    const groups = await searchRepo.search(q, { numberOf: function (id) { return numbers[String(id)] || ""; }, mask: mask });
+    // without prices: only the hits whose shown words hold q (map/search.js)
+    const groups = await searchRepo.search(q, { numberOf: function (id) { return numbers[String(id)] || ""; }, mask: mask, prices: seesPrices(me) });
     if (my !== seq) return;
     const total = groups.reduce(function (n, g) { return n + g.total; }, 0);
     el("seNote").textContent = total ? total + " result" + (total === 1 ? "" : "s") + " for “" + q + "”" : "";

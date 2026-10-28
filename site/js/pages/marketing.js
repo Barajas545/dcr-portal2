@@ -62,7 +62,7 @@ function render() {
     el("mkTotals").innerHTML = "";
   }
 
-  const gs = groups(state.tasks, { filter: state.filter, q: state.q, byId: state.byId });
+  const gs = groups(state.tasks, { filter: state.filter, q: state.q, byId: state.byId, mask: state.mask });
   if (!gs.length) { el("mkList").innerHTML = '<div class="ls-empty">No tasks match.</div>'; return; }
   const cols = 6 + (state.prices ? 1 : 0) + (state.canWrite ? 1 : 0);
   let body = "";

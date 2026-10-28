@@ -1,7 +1,8 @@
 /* Global search (rpc search; BLUEPRINT Appendix A "search") and the Mailing tab's contact search.
 
-   * search(q)            -> the old page's groups (map/search.js); tasks and files carry their
-                             project's number when the page has the projects list;
+   * search(q, opts)      -> the old page's groups (map/search.js); tasks and files carry their
+                             project's number when the page has the projects list; opts.prices false:
+                             only the hits whose shown (masked) words hold q;
    * searchContacts(q)    -> contacts (the same RPC: names, companies, trades, e-mail, phone digits). */
 
 import { db, must } from "./_db.js";
@@ -17,7 +18,7 @@ export async function raw(q) {
 
 export async function search(q, opts) {
   const res = await raw(q);
-  return toGroups(res, opts);
+  return toGroups(res, Object.assign({ q: String(q || "").trim() }, opts));
 }
 
 export async function searchContacts(q) {

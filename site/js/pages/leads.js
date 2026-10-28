@@ -45,7 +45,7 @@ function render() {
       esc(c.label || c.id) + '<span class="n">' + c.n + "</span></button>";
   }).join("");
 
-  const rows = visibleLeads(state.leads, { show: state.show, cat: state.cat, q: state.q });
+  const rows = visibleLeads(state.leads, { show: state.show, cat: state.cat, q: state.q, mask: state.mask });
   const t = today();
   el("ldList").innerHTML = rows.map(function (l) {
     const b = contactedBadge(l, t);

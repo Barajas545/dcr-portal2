@@ -143,15 +143,18 @@ export function projectLabel(pid, byId) {
 }
 export const GENERAL = "General / no project";
 
-/** The table: the filter, the words typed, grouped by project (General last), each group's newest task first. */
+/** The table: the filter, the words typed, grouped by project (General last), each group's newest task first.
+    opts.mask: the page's mask - the task's words are searched as shown, so watching which tasks stay can't spell out
+    an amount hidden from a person without prices. */
 export function groups(tasks, opts) {
   const o = opts || {};
+  const mask = typeof o.mask === "function" ? o.mask : txt;
   const words = txt(o.q).toLowerCase().split(/\s+/).filter(Boolean);
   const rows = (tasks || []).filter(function (x) {
     if (!passes(x, o.filter || "open")) return false;
     if (!words.length) return true;
-    const hay = [x.marketingTaskName, x.marketingTaskCaterogy, x.marketingTaskDescripiton, x.marketingTaskCompletedWork,
-      projectLabel(x.projectID, o.byId)].join(" ").toLowerCase();
+    const hay = [x.marketingTaskName, x.marketingTaskCaterogy, x.marketingTaskDescripiton, x.marketingTaskCompletedWork]
+      .map(function (t) { return txt(mask(txt(t))); }).concat([projectLabel(x.projectID, o.byId)]).join(" ").toLowerCase();
     return words.every(function (w) { return hay.indexOf(w) !== -1; });
   });
   const by = {};
