@@ -111,9 +111,9 @@ test("ledger: lineLabel without prices is amount-free by the database's rule; wi
   const item = { id: 5, name: "Rail $12,000", group_name: "Deposit 1,200" };
   const co = { kind: "change_order", co_number: 2 };
   const hidden = lineLabel(item, co, false);
-  assert.equal(hidden, "CO #2 · [amount] — Rail (amount hidden)");
-  assert.equal(lineLabel({ id: 6, name: "Walls", group_name: "Framing 400 dollars" }, null, false), "Framing [amount] — Walls");
-  assert.equal(lineLabel({ id: 7, name: "", description: "Paid 300 to framer" }, null, false), "[amount] to framer");
+  assert.equal(hidden, "CO #2 · [amount] — Rail (amount hidden) · line #5");   // round 5: the line's id (p7-est-v223-fix5)
+  assert.equal(lineLabel({ id: 6, name: "Walls", group_name: "Framing 400 dollars" }, null, false), "Framing [amount] — Walls · line #6");
+  assert.equal(lineLabel({ id: 7, name: "", description: "Paid 300 to framer" }, null, false), "[amount] to framer · line #7");
   for (const p of [true, undefined]) assert.equal(lineLabel(item, co, p), "CO #2 · Deposit 1,200 — Rail $12,000");
   // the Expenses row, its search and its line filter: what is shown
   const ctx = (prices) => ({ items: { 5: Object.assign({ estimate_id: 3 }, item) }, estimates: { 3: co }, prices });

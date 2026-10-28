@@ -169,14 +169,18 @@ export function employeeOf(cost, employees) {
 /* ── one row ────────────────────────────────────────────────────────── */
 /** The estimate line a cost is booked to: "Walls — Exterior walls" (a change order: "CO #2 · …"). prices false (the
     financials switch without prices): its words amount-free by the database's no-price rule (app.priceless_text, as
-    the Estimate tab and DCR Desktop 2's money_logic.item_choices) - display only, the line is chosen by its id. */
+    the Estimate tab and DCR Desktop 2's money_logic.item_choices) - display only, the line is chosen by its id. A
+    label with words hidden ends in the line's id (" · line #6", not an amount): it is the key the Expenses bands,
+    the "Line:" filter and the printed report group by, and "Rail $900" and "Rail $1,200" would otherwise be one. */
 export function lineLabel(item, estimate, prices) {
   if (!item) return "";
-  const shown = prices === false ? function (t) { return text(scrubMoney(maskAmounts(t))); } : text;
+  let masked = false;
+  const shown = prices === false
+    ? function (t) { const s = text(scrubMoney(maskAmounts(t))); masked = masked || s !== text(t); return s; } : text;
   const name = shown(item.name) || shown(item.description) || "Item " + item.id;
   const g = shown(item.group_name);
   const co = estimate && estimate.kind === "change_order" ? "CO #" + (estimate.co_number || "") + " · " : "";
-  return co + (g && g.toLowerCase() !== name.toLowerCase() ? g + " — " : "") + name;
+  return co + (g && g.toLowerCase() !== name.toLowerCase() ? g + " — " : "") + name + (masked ? " · line #" + item.id : "");
 }
 
 /** A DCR Desktop 2 `costs` row -> the ledger row every screen, the CSV and the printed sheet read.
