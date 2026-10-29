@@ -12,6 +12,7 @@ import { clearPeople } from "../site/js/repo/people.js";
 import * as books from "../site/js/repo/books.js";
 import * as filesRepo from "../site/js/repo/files.js";
 import { createQueue } from "../site/js/upload-queue2.js";
+import * as FV from "../site/js/pages/file-viewer.js";          // landingProblem, claimStage: asserted, not imported by name
 import { paperwork, documentProblem, withdrawsApproval, WITHDRAW_TEXT, paymentFileLabel, kindOf, fileOf } from "../site/js/pages/file-viewer.js";
 
 const skip = !available && "the demo database (tools/fake) is not here";
@@ -299,10 +300,11 @@ test("\"Make this the bill's document\" withdraws an approval only when the pers
 test("the first file to land is the bill's document: a later batch queued before it landed stays an extra (checked inside the one-at-a-time chain); two Replace… in a row end on the newest", () => {
   const js = code(read("js/pages/bill.js"));
   const link = js.slice(js.indexOf("function link("), js.indexOf("function paintQueue("));
-  const guard = link.indexOf("if (onlyIfNone) {");
+  const guard = link.indexOf("if (onlyIfNone) await load();");
   assert.ok(guard !== -1 && guard < link.indexOf("books.setDocument("), "the guard runs before the bill is pointed at the file");
   assert.ok(link.indexOf("state.chain = state.chain.then(") < guard, "inside the chain: after the file before it has been linked and the page read again");
-  assert.match(link.slice(guard), /^if \(onlyIfNone\) \{\s+await load\(\);\s+if \(state\.data\.bill\.documentFileId != null\) \{[\s\S]*?return;/, "read again; a document already there wins");
+  assert.match(link.slice(guard), /^if \(onlyIfNone\) await load\(\);\s+const why = landingProblem\(state\.data\.bill, state\.files, \{ first: !!onlyIfNone, agreed: !!agreed \}\);\s+if \(why === "has"\) \{[\s\S]*?return;/,
+    "read again; a live document already there wins (judged on the paperwork drawn from that read)");
   assert.match(js, /return link\(row\.id, tag === "document!", null, true, /, "a \"document\" tag links only while the bill has none");
   assert.match(js, /return link\(row\.id, m\[1\] === "!", m\[2\]\);/, "a replace is not that guard");
   // a replace removes the old document only while it is still the bill's document
@@ -311,6 +313,88 @@ test("the first file to land is the bill's document: a later batch queued before
   // the words of a refused link are written after the page is drawn again (a redraw would wipe them)
   const caught = link.slice(link.indexOf("} catch (e) {"));
   assert.ok(caught.indexOf("await load();") < caught.indexOf("sayFile(conflict"), "load, then say");
+});
+
+/* ── review fixes 2 (release A): a write that matches a version read AFTER an approval; a pointer to a removed file ── */
+
+test("landingProblem: a first file loses to a LIVE document only; nobody asked and the bill approved -> kept an extra; a yes goes on", () => {
+  assert.equal(typeof FV.landingProblem, "function", "file-viewer.js decides what a landed file may do");
+  const L = FV.landingProblem;
+  assert.equal(L({ approved: false }, [], {}), "");
+  assert.equal(L({ approved: false, documentFileId: 9 }, [{ id: 3, role: "extra" }], { first: true }), "", "a pointer to a removed file is no document");
+  assert.equal(L({ approved: false, documentFileId: 9 }, [{ id: 9, role: "document" }], { first: true }), "has");
+  assert.equal(L({ approved: true, documentFileId: 9 }, [{ id: 9, role: "document" }], { first: true }), "has", "the first file to land wins first");
+  assert.equal(L({ approved: true }, [], { agreed: false }), "approved", "never a silent withdrawal");
+  assert.equal(L({ approved: true }, [], { agreed: true }), "", "the person was asked and said yes");
+  assert.equal(L({ approved: false }, [{ id: 9, role: "document" }], { agreed: false }), "", "a replace on a waiting bill");
+});
+
+test("a Replace… queued on a waiting bill (nobody asked: \"replace:<id>\"), approved before it landed and read again: the file stays an extra - the approval, the document and the old file kept", { skip }, async () => {
+  // the page's rule, read from its source: judged on the bill as the page holds it now, before any write
+  const js = code(read("js/pages/bill.js"));
+  const link = js.slice(js.indexOf("function link("), js.indexOf("function paintQueue("));
+  const judged = link.indexOf("const why = landingProblem(state.data.bill, state.files, ");
+  const kept = link.indexOf('if (why === "approved") {');
+  assert.ok(judged !== -1 && kept > judged && kept < link.indexOf("books.setDocument(") && kept < link.indexOf("const replaces = "), "judged before the bill is pointed at the file or the old one removed");
+  assert.match(link.slice(kept), /^if \(why === "approved"\) \{\s+if \(!onlyIfNone\) await load\(\);\s+sayFile\("The bill was approved meanwhile: the file is kept as another file of the bill\.[^"]*", true\);\s+return;\s+\}/,
+    "drawn again (the landed file shows as an extra), then said");
+  assert.match(js, /return link\(row\.id, m\[1\] === "!", m\[2\]\);/, "a replace's yes is the one stored in its tag");
+  // over the demo database: what the page holds when the file lands
+  await setup();
+  as("accountant");
+  const b = billOf("Footings and stem wall, phase 1");
+  const docId = b.document_file_id;
+  const shown = (await books.loadBill(b.id, me("accountant"))).bill;
+  assert.equal(withdrawsApproval(shown), false, "waiting when Replace… is pressed: nothing asked");
+  const tag = (withdrawsApproval(shown) ? "replace!:" : "replace:") + shown.documentFileId;
+  const { q, done } = queueAs("accountant");
+  await q.enqueue({ projectId: b.project_id, file: fileNamed("Quarryman corrected invoice.pdf", "application/pdf"), kind: "bill", billId: b.id,
+    name: "Quarryman corrected invoice.pdf", tag, takenAt: WHEN });
+  // an approver approves it while the file waits on the device; the page reads the bill again (reopened over the
+  // durable queue, another file landing, a Remove, an approve): it now holds the approved row at its new version
+  E.rpc({ uid: uid("admin") }, "approve_bill", { id: b.id, pay_method: "check", version: E.rows.bills.find((x) => x.id === b.id).version, note: null });
+  const held = await books.loadBill(b.id, me("accountant"));
+  assert.equal(held.bill.approved, true);
+  await q.drain();
+  assert.equal(done.length, 1);
+  const m = /^replace(!?):(\d+)$/.exec(done[0].item.tag);
+  assert.ok(m && m[1] === "" && m[2] === String(docId), done[0].item.tag);
+  // landed() -> link(row.id, m[1] === "!", m[2]): no read first, so the bill and its paperwork as held
+  const why = FV.landingProblem(held.bill, paperwork(held.bill, held.files, held.payments), { first: false, agreed: m[1] === "!" });
+  assert.equal(why, "approved", "kept an extra: nothing is written");
+  const now = E.rows.bills.find((x) => x.id === b.id);
+  assert.ok(now.approved_at && now.document_file_id === docId, "the approval and the document the approver saw are kept");
+  assert.ok(!E.rows.files.find((f) => f.id === docId).deleted_at, "the old document is not removed");
+  assert.ok(!E.rows.files.find((f) => f.id === done[0].row.id).deleted_at, "the new file is there, another file of the bill");
+  // the trap: that write at the version held matches (no PT409) and the database withdraws the approval
+  const sent = await books.setDocument(held.bill, done[0].row.id, { withdraw: false });
+  assert.equal(sent.approved_at, null, "why the page must not send it");
+});
+
+test("a bill whose document was removed (the pointer left behind) takes the first file dropped on it as its document: judged on the live paperwork, not the bare pointer", { skip }, async () => {
+  const js = code(read("js/pages/bill.js"));
+  const link = js.slice(js.indexOf("function link("), js.indexOf("function paintQueue("));
+  assert.ok(!/state\.data\.bill\.documentFileId != null/.test(link), "never the bare pointer");
+  assert.match(js, /const hasDoc = state\.files\.some\(\(f\) => f\.role === "document"\);/, "the drop tags its first file by the same paperwork");
+  await setup();
+  as("accountant");
+  const b = billOf("Concrete pump rental (not estimated)");
+  assert.ok(!b.approved_at && b.document_file_id != null);
+  const old = E.rows.files.find((f) => f.id === b.document_file_id);
+  // an unapproved, unpaid bill: the database lets its document go (Desktop's Files page, an old tab's Remove)
+  await filesRepo.removeFile({ id: old.id, version: old.version });
+  const d = await books.loadBill(b.id, me("accountant"));
+  assert.equal(String(d.bill.documentFileId), String(old.id), "the pointer stays behind");
+  assert.ok(!paperwork(d.bill, d.files, d.payments).some((f) => f.role === "document"), "no live document: the drop's first file is tagged \"document\"");
+  const { q, done } = queueAs("accountant");
+  await q.enqueue({ projectId: b.project_id, file: fileNamed("Hillside pump invoice.pdf", "application/pdf"), kind: "bill", billId: b.id,
+    name: "Hillside pump invoice.pdf", tag: "document", takenAt: WHEN });
+  await q.drain();
+  // landed() -> link(row.id, false, null, true, name): read again inside the chain, then judged
+  const again = await books.loadBill(b.id, me("accountant"));
+  assert.equal(FV.landingProblem(again.bill, paperwork(again.bill, again.files, again.payments), { first: true, agreed: false }), "", "it becomes the document");
+  const row = await books.setDocument(again.bill, done[0].row.id, { withdraw: false });
+  assert.equal(row.document_file_id, done[0].row.id, "the bill is documented again (approve_bill takes it)");
 });
 
 test("the bill page lists a voided payment as Void with its reason (no amount), and only live payments settle how it is paid", { skip }, async () => {
@@ -423,6 +507,69 @@ test("openTab answers whether the file was sent to its tab (a refused link: fals
   });
 });
 
+test("the payment panel's box (#ckViewer): the last paperwork button pressed wins - a PDF's words over a late picture, a picture over a PDF's late words, a refused link's words kept", async () => {
+  const pp = await import("../site/js/pages/pay-panel.js");
+  assert.equal(typeof pp.showDoc, "function", "the panel's paperwork buttons, run as the page runs them");
+  assert.equal(typeof FV.claimStage, "function", "one turn for whoever writes on the box");
+  await withDom(async (doc) => {
+    const answer = {};
+    useClient({ storage: { from: () => ({ createSignedUrl: (path) => new Promise((res) => {
+      answer[path] = (url) => res(url ? { data: { signedUrl: url }, error: null } : { data: null, error: { message: "JWT expired", status: 401 } });
+    }) }) } });
+    const tabs = [];
+    globalThis.window = { open: () => { const w = { closed: false, close() { this.closed = true; }, location: {} }; tabs.push(w); return w; } };
+    const box = doc.createElement("div");
+    box.id = "ckViewer";
+    doc.body.appendChild(box);
+    const at = (c, n) => "f/9/receipts/" + c.repeat(32) + "/" + n;
+    const detail = { files: [
+      { id: 31, name: "made-up photo.jpg", storagePath: at("1", "photo.jpg") },
+      { id: 32, name: "made-up invoice.pdf", storagePath: at("2", "invoice.pdf") },
+      { id: 33, name: "made-up quote.pdf", storagePath: at("3", "quote.pdf") },
+      { id: 34, name: "made-up slip.png", storagePath: at("4", "slip.png") },
+      { id: 35, name: "made-up statement.pdf", storagePath: at("5", "statement.pdf") },
+      { id: 36, name: "made-up yard.jpg", storagePath: at("6", "yard.jpg") },
+    ] };
+    const sign = async (i, url) => {
+      const p = detail.files[i].storagePath;
+      for (let k = 0; k < 50 && !answer[p]; k++) await settle();
+      answer[p](url);
+    };
+    const imgs = () => box.children.filter((c) => c.tagName === "IMG").map((i) => i.src);
+    // a picture (its link slow), then a PDF: the PDF's line stays when the picture's link answers late
+    const a = pp.showDoc(0, detail);
+    const b = pp.showDoc(1, detail);
+    await sign(1, "https://x.example/invoice");
+    await b;
+    assert.equal(box.textContent, "made-up invoice.pdf opened in a new tab.");
+    await sign(0, "https://x.example/photo");
+    await a;
+    assert.deepEqual(imgs(), [], "no late picture over the PDF's line");
+    assert.equal(box.textContent, "made-up invoice.pdf opened in a new tab.");
+    // a PDF (its link slow), then a picture: the picture stays when the PDF's "opened" comes back late
+    const c = pp.showDoc(2, detail);
+    const d = pp.showDoc(3, detail);
+    await sign(3, "https://x.example/slip");
+    await d;
+    await sign(2, "https://x.example/quote");
+    await c;
+    assert.deepEqual(imgs(), ["https://x.example/slip"], "the picture picked last");
+    assert.ok(!/opened in a new tab/.test(box.textContent), box.textContent);
+    assert.equal(tabs.filter((w) => w.location.href).length, 2, "each PDF still went to its own tab");
+    // a picture (slow), then a PDF whose link is refused: the refusal's words stay
+    const e = pp.showDoc(5, detail);
+    const f = pp.showDoc(4, detail);
+    await sign(4, null);
+    await f;
+    const said = box.textContent;
+    assert.ok(said && !/opened in a new tab/.test(said), said);
+    await sign(5, "https://x.example/yard");
+    await e;
+    assert.deepEqual(imgs(), [], "no late picture over the refusal");
+    assert.equal(box.textContent, said);
+  });
+});
+
 test("the viewer's Esc closes the viewer only: a dialog under it (the expense dialog closes on Esc) never hears that key", async () => {
   const { openViewer } = await import("../site/js/pages/file-viewer.js");
   await withDom(async (doc) => {
@@ -439,6 +586,25 @@ test("the viewer's Esc closes the viewer only: a dialog under it (the expense di
     assert.equal(dialogClosed, 0, "the dialog stays open, with what was typed in it");
     doc.key("Escape");
     assert.equal(dialogClosed, 1, "the next Esc is the dialog's");
+  });
+});
+
+test("the cost dialog's Esc ignores an Esc a question over it already handled (\"Remove the receipt\": the common2 modal, heard first, preventDefault only)", async () => {
+  const dlg = code(read("js/pages/expense-dialog.js"));
+  const on = /document\.addEventListener\("keydown", \(e\) => \{ (if \(.*?\)) close\(\); \}\);/.exec(dlg);
+  assert.ok(on, "the dialog's own Esc listener");
+  assert.match(on[1], /^if \(e\.key === "Escape" && !e\.defaultPrevented && /, "an Esc already handled is not the dialog's");
+  assert.match(dlg, /const ask = st\.ctx\.confirm \|\|/, "the ✕ asks over the dialog");
+  // the same order a browser runs them in: the modal's capture listener (common2.js onKey), then this one
+  await withDom(async (doc) => {
+    let closed = 0, asked = true;
+    doc.addEventListener("keydown", (e) => { if (asked && e.key === "Escape") { e.preventDefault(); asked = false; } }, true);
+    const cond = new Function("e", "h", "st", "close", on[1] + " close();");
+    doc.addEventListener("keydown", (e) => cond(e, { classList: { contains: () => true } }, { busy: false }, () => { closed++; }));
+    doc.key("Escape");
+    assert.deepEqual([asked, closed], [false, 0], "the question closed, the dialog and what was typed stay");
+    doc.key("Escape");
+    assert.equal(closed, 1, "the next Esc closes the dialog");
   });
 });
 

@@ -44,7 +44,7 @@ import { fmtMoney, payMethodWords, paymentLabel, isPayMethod, PAY_METHODS, seesB
 import { fmtSize } from "../map/files.js";
 import { fmtDay } from "../map/pacific.js";
 import { mountFileDrop, queueAll, acceptable, ACCEPT } from "./file-drop.js";
-import { paperwork, showIn, openTab, documentProblem, withdrawsApproval, WITHDRAW_TEXT, kindOf } from "./file-viewer.js";
+import { paperwork, showIn, openTab, documentProblem, withdrawsApproval, landingProblem, WITHDRAW_TEXT, kindOf } from "./file-viewer.js";
 
 const h = esc;
 const money = fmtMoney;
@@ -353,18 +353,27 @@ async function removeFile(f) {
 }
 
 /* The bill points at `fileId` (one write at a time); a replaced document is then removed. onlyIfNone (a file queued
-   as "the first becomes the document"): only while the bill still has no document, read again inside the chain - the
-   first file to land wins, a later batch queued before it landed stays an extra (the contract §4.1). A replace whose
-   document an earlier replace already took off (two Replace… in a row) points the bill at the newest file and leaves
-   the earlier replacement an extra. The page is drawn again before its words are written (a redraw would wipe them). */
+   as "the first becomes the document"): only while the bill still has no LIVE document (its paperwork, not the bare
+   pointer: a removed document leaves the pointer behind), read again inside the chain - the first file to land wins,
+   a later batch queued before it landed stays an extra (the contract §4.1). Nobody asked (agreed false) and the bill
+   as the page holds it now is approved - approved after the file was queued or the button pressed, and read again
+   since (the page reopened over the durable queue, another file landed, a Remove, an approve): the file stays an
+   extra, because the versioned write would match and withdraw that approval with no question (a page that did not
+   read it again gets PT409 from setDocument). A replace whose document an earlier replace already took off (two
+   Replace… in a row) points the bill at the newest file and leaves the earlier replacement an extra. The page is
+   drawn again before its words are written (a redraw would wipe them). */
 function link(fileId, agreed, oldId, onlyIfNone, name) {
   state.chain = state.chain.then(async () => {
-    if (onlyIfNone) {
-      await load();
-      if (state.data.bill.documentFileId != null) {
-        if (name) sayFile("“" + name + "” is kept as another file of this bill: the bill has its document already.");
-        return;
-      }
+    if (onlyIfNone) await load();
+    const why = landingProblem(state.data.bill, state.files, { first: !!onlyIfNone, agreed: !!agreed });
+    if (why === "has") {
+      if (name) sayFile("“" + name + "” is kept as another file of this bill: the bill has its document already.");
+      return;
+    }
+    if (why === "approved") {
+      if (!onlyIfNone) await load();
+      sayFile("The bill was approved meanwhile: the file is kept as another file of the bill. Look at it again, then make it the document (that withdraws the approval).", true);
+      return;
     }
     const replaces = oldId != null && String(state.data.bill.documentFileId) === String(oldId);
     try {

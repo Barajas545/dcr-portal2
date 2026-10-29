@@ -6,13 +6,16 @@
    * showIn(stage, file)       a picture in place through a 120 s signed URL (its 320 px preview for a tile); a PDF or
                                any other file names itself and opens in its own tab (the site's policy lets no page
                                frame another site's file); a file kept on the office computers is named, not opened;
+   * claimStage(stage)         the last file asked for on a stage wins: showIn takes the stage's turn, and so does a
+                               caller that writes its own words there (the payment panel's "opened in a new tab");
    * openTab(file)             a new tab opened on the click itself (a pop-up blocker allows it), told nothing about
                                this page (opener = null), then sent to the signed URL;
    * openViewer(files, at)     a dialog paging "N of M" (← → and Esc), as the ledger's viewer does;
    * the bill's paperwork (pure, the contract §4.1): paperwork(bill, files, payments) - the document first, then the
      extras, then each payment's files labelled "Check #1043 · Oct 28"; documentProblem(bill) - why the document can't
      change now (a void bill, a bill marked entered in QuickBooks, a paid one: refused BEFORE any byte moves);
-     withdrawsApproval(bill) and WITHDRAW_TEXT - the question asked first on an approved bill.
+     withdrawsApproval(bill) and WITHDRAW_TEXT - the question asked first on an approved bill; landingProblem(bill,
+     paperwork, o) - whether a file that has just landed may now become the bill's document.
    Every name is put on the page with textContent, never as markup. Files are accepted in any of the shapes the repos
    answer (repo/books.js loadBill's {storagePath, previewPath, cloud}, repo/ledger.js's {path, preview, storage},
    or a files row). */
@@ -93,6 +96,20 @@ export function documentProblem(bill) {
 export function withdrawsApproval(bill) { return !!(bill && bill.approved); }
 export const WITHDRAW_TEXT = "A new document withdraws the approval — the bill goes back to waiting, and an approver approves it again.";
 
+/** May the bill be pointed at a file now (a file that has just landed, or "Make this the bill's document" whose turn
+    came), judged on the bill as the page holds it NOW and its paperwork (paperwork()'s roles)? o: {first (queued as
+    "the first becomes the document"), agreed (the person was asked and said yes to withdrawing an approval)}.
+    -> "" (point it), "has" (a first file, and the bill has a live document already: the first file to land wins - a
+    pointer to a removed file is no document, approve_bill refuses that bill too) or "approved" (the bill is approved
+    and the person was never asked: it was approved after the file was queued or the button pressed, and the page read
+    it again since, so a versioned write would match and withdraw the approval silently - the file stays an extra). */
+export function landingProblem(bill, files, o) {
+  const x = o || {};
+  if (x.first && (files || []).some((f) => f && f.role === "document")) return "has";
+  if (!x.agreed && withdrawsApproval(bill)) return "approved";
+  return "";
+}
+
 /* ── on the page ──────────────────────────────────────────────────────── */
 
 const STYLE = [
@@ -168,11 +185,19 @@ function message(stage, bold, rest, button) {
   return m;
 }
 
+/** Take `stage`'s turn -> mine(): true while no later file was asked for on that stage. Whoever writes on a stage
+    takes its turn first (showIn does; so does the payment panel's PDF / office-file path, which writes its own words),
+    so the last file asked for wins whichever answer comes back last. */
+export function claimStage(stage) {
+  const turn = (stage._fvTurn = (stage._fvTurn || 0) + 1);
+  return () => stage._fvTurn === turn;
+}
+
 /** Put a file on `stage`. o: {errorText(e), onOpen(file) (the Open button; default openTab)} -> resolves when shown.
     The last file asked for wins: a picture whose signed link answers after another file was put on the same stage is
     dropped (each call takes the stage's turn first, so a PDF's or an office file's words also make it stale). */
 export async function showIn(stage, f, opts) {
-  const turn = (stage._fvTurn = (stage._fvTurn || 0) + 1);
+  const mine = claimStage(stage);
   const o = opts || {};
   ensureStyle();
   const x = fileOf(f);
@@ -184,14 +209,14 @@ export async function showIn(stage, f, opts) {
     b.type = "button";
     b.style.maxWidth = "260px";
     b.style.margin = "12px auto 0";
-    b.addEventListener("click", () => (o.onOpen ? o.onOpen(f) : openTab(f, (e) => message(stage, x.name, err(e)))));
+    b.addEventListener("click", () => (o.onOpen ? o.onOpen(f) : openTab(f, (e) => { if (mine()) message(stage, x.name, err(e)); })));
     message(stage, x.name, kind === "pdf" ? "A PDF opens in its own tab." : kind === "heic" ? "An iPhone photo (HEIC): this browser cannot show it here — open it in its own tab." : "This kind of file opens in its own tab.", b);
     return;
   }
   message(stage, "", "Opening " + x.name + "…");
   try {
     const url = await urlFor(x, false);
-    if (stage._fvTurn !== turn) return;              // another file was put here meanwhile
+    if (!mine()) return;                             // another file was put here meanwhile
     if (!url) throw new Error("No link for this file.");
     stage.textContent = "";
     const img = node("img");
@@ -199,7 +224,7 @@ export async function showIn(stage, f, opts) {
     img.src = url;
     stage.appendChild(img);
   } catch (e) {
-    if (stage._fvTurn !== turn) return;
+    if (!mine()) return;
     message(stage, x.name, err(e)).style.color = "var(--danger, #c8371f)";
   }
 }

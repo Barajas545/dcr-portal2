@@ -13,10 +13,13 @@
      synthetic DragEvent) is an extra; "Make this the bill's document" only re-points (the old one stays an extra); a
      wrong paste is removed (a soft delete); the document is never removable;
    - a bill entered in QuickBooks: Replace is refused BEFORE any byte moves (nothing queued); an approved bill: Replace
-     asks first ("withdraws the approval"), then the new document is in, the approval gone, the old one removed;
+     asks first ("withdraws the approval"), then the new document is in, the approval gone, the old one removed; a
+     Replace… queued on a waiting bill (nothing asked) that an approver approves before it lands, the page opened again:
+     the file stays an extra, the approval, the document and the old file kept, and the page says so;
    - a payment's file on a part-paid bill (kind payment: the payment's bill and the payment), labelled on the page;
    - the expense dialog with 3 receipts at once (picked, pasted on the dialog, dropped), each its own row with a distinct
-     name; the ledger: a PDF dropped on a row and a screenshot pasted on a selected row attach to that cost;
+     name; on an edit, an Esc in the receipt viewer or on the "Remove the receipt" question over the dialog answers that
+     one only (the dialog and what was typed stay); the ledger: a PDF dropped on a row and a screenshot pasted on a selected row attach to that cost;
    - phone (390 px: no page scrolls sideways) and desktop, light and dark; no Content-Security-Policy violation and no
      console error on any page.
    Screenshots (--shots all): files8_<what>_<light|dark>_<desktop|phone>.png into --out (default: the system temp
@@ -145,11 +148,13 @@ async function main() {
         footings: by("Footings and stem wall, phase 1").id, footingsDoc: by("Footings and stem wall, phase 1").document_file_id,
         partProject: by("Telehandler, one week").project_id, admin: R.profiles.find((p) => p.email === "admin@demo.test").id,
         approvedDoc: by("-10% retainage held until the final walk").document_file_id, entered: by("Porch footings").id,
+        pump: by("Concrete pump rental (not estimated)").id, pumpDoc: by("Concrete pump rental (not estimated)").document_file_id,
+        pumpApproved: !!by("Concrete pump rental (not estimated)").approved_at,
         part: by("Telehandler, one week").id, partPay: pay(by("Telehandler, one week")).id, cost: c.id, costProject: c.project_id,
         files: R.files.length };
     })()`);
     check("demo: the bills the walk needs (blocked, approved, entered, part paid) and a cost", J.blocked && J.approved && J.entered && J.part && J.partPay && J.cost &&
-      J.footings && J.footingsDoc && J.admin, JSON.stringify(J));
+      J.footings && J.footingsDoc && J.admin && J.pump && J.pumpDoc && !J.pumpApproved, JSON.stringify(J));
     const fileRows = (expr) => db(acc, "R.files.filter((f) => " + expr + ").map((f) => ({ id: f.id, name: f.name, bill: f.bill_id, pay: f.payment_id, cost: f.cost_id, prev: f.previous_id, v: f.version_no, del: !!f.deleted_at, pv: f.preview_path }))");
 
     /* ── 1. a blocked bill: paste a picture, drop a PDF ─────────────────── */
@@ -253,6 +258,39 @@ async function main() {
       check("the page shows the bill as it is now: approved", true);
     }, acc);
 
+    /* ── 1c. a Replace… queued on a waiting bill, approved before it lands, the page opened again ── */
+    await attempt("the bill page: a queued Replace… and an approval meanwhile", async () => {
+      await open(acc, "/bill.html?id=" + J.pump, BILL + " && !!document.querySelector('[data-f][data-role=document]')");
+      // the queue held (its Web Lock taken here): the new file waits on the device
+      await acc.eval("(() => { window.__hold = new Promise((r) => { window.__let = r; }); navigator.locks.request('dcr2-upload-queue', () => { window.__held = true; return window.__hold; }); return true; })()");
+      await acc.until("window.__held === true", 5000);
+      await acc.eval("document.querySelector('[data-f][data-role=document]').click(); true");
+      await acc.until("!!document.getElementById('blReplace')", 5000);
+      await acc.eval("document.getElementById('blReplace').click(); true");
+      await acc.eval("(async () => window.__pick('#blReplaceIn', [window.__pdf('Hillside corrected invoice.pdf')]))()");
+      await acc.until("/on its way/.test(document.getElementById('blFileMsg').textContent)", 8000);
+      const asked = await acc.eval(modalOpen);
+      const q1 = await queued(acc);
+      check("a waiting bill: Replace… asks nothing (\"replace:<id>\"), the file waits on the device", !asked && q1 === 1, JSON.stringify({ asked, q1 }));
+      const v = await db(acc, "R.bills.find((b) => b.id === " + J.pump + ").version");
+      await db(acc, "DCR2Demo.engine.rpc({ uid: " + JSON.stringify(J.admin) + " }, 'approve_bill', { id: " + J.pump + ", pay_method: 'check', version: " + v + ", note: null }) && true");
+      // the page opened again (a closed tab, a slow phone, offline): it reads the APPROVED bill, then the queue lands the file
+      await open(acc, "/bill.html?id=" + J.pump, BILL);
+      await acc.until("DCR2Demo.engine.rows.files.some((f) => f.bill_id === " + J.pump + " && f.name === 'Hillside corrected invoice.pdf' && !f.deleted_at)", 15000);
+      await acc.until("/approved meanwhile: the file is kept as another file of the bill/.test(document.getElementById('blFileMsg').textContent) || " +
+        "DCR2Demo.engine.rows.bills.find((b) => b.id === " + J.pump + ").approved_at === null", 10000);
+      const b = await db(acc, "R.bills.find((b) => b.id === " + J.pump + ")");
+      const old = (await fileRows("f.id === " + J.pumpDoc))[0];
+      const nf = (await fileRows("f.bill_id === " + J.pump + " && f.name === 'Hillside corrected invoice.pdf'"))[0];
+      check("approved before the replacement landed: nobody asked, so the approval, the document and the old file are kept; the new file is an extra",
+        !!b.approved_at && b.document_file_id === J.pumpDoc && old && !old.del && nf && !nf.del && !(await acc.eval(modalOpen)),
+        JSON.stringify({ approved: b.approved_at, doc: b.document_file_id, old, nf }));
+      await acc.until("(document.getElementById('blState') || {}).textContent === 'APPROVED' && " +
+        "Array.from(document.querySelectorAll('[data-f][data-role=extra]')).some((x) => /Hillside corrected invoice\\.pdf$/.test(x.textContent))", 8000);
+      check("the page says so, and shows it approved with the new file as another file of the bill",
+        /approved meanwhile: the file is kept as another file of the bill/.test(await text(acc, "#blFileMsg")), await text(acc, "#blFileMsg"));
+    }, acc);
+
     /* ── 2. entered: refused before upload; approved: asked, then replaced ── */
     await attempt("the bill page: Replace", async () => {
       await open(acc, "/bill.html?id=" + J.entered, BILL);
@@ -336,6 +374,18 @@ async function main() {
       const kept = await acc.eval("({ viewer: document.getElementById('fvView').hidden, dialog: document.getElementById('exModal').classList.contains('open'), desc: (document.getElementById('cfDesc') || {}).value || null })");
       check("Esc in the receipt viewer over the cost dialog closes the viewer only (what was typed stays)",
         kept.viewer === true && kept.dialog === true && kept.desc === "Made-up: typed, not saved", JSON.stringify(kept));
+      // ✕ on a receipt asks "Remove the receipt" over the dialog (the common2 modal): an Esc answers that question only
+      const live = () => db(acc, "R.files.filter((f) => f.cost_id === " + cid + " && !f.deleted_at).length");
+      const live0 = await live();
+      await acc.eval("document.querySelector('#exModal [data-unhave]').click(); true");
+      await acc.until(modalOpen, 5000);
+      await sleep(150);
+      await esc();
+      const kept2 = await acc.eval("({ question: " + modalOpen + ", dialog: document.getElementById('exModal').classList.contains('open'), " +
+        "desc: (document.getElementById('cfDesc') || {}).value || null, have: document.querySelectorAll('#exModal [data-have]').length })");
+      const live1 = await live();
+      check("Esc on \"Remove the receipt\" over the cost dialog answers the question only (the receipt kept, the dialog and what was typed stay)",
+        !kept2.question && kept2.dialog && kept2.desc === "Made-up: typed, not saved" && kept2.have === 3 && live1 === live0, JSON.stringify({ kept2, live0, live1 }));
       await esc();
       check("the next Esc closes the dialog (nothing saved)", !(await acc.eval("document.getElementById('exModal').classList.contains('open')")) &&
         !(await db(acc, "R.costs.some((c) => c.description === 'Made-up: typed, not saved')")));

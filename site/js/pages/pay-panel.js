@@ -24,7 +24,7 @@ import * as books from "../repo/books.js";
 import * as checks from "../repo/checks.js";
 import * as uploads from "./uploads.js";
 import { mountFileDrop, queueAll } from "./file-drop.js";
-import { showIn, openTab, isImage } from "./file-viewer.js";
+import { showIn, openTab, isImage, claimStage } from "./file-viewer.js";
 import {
   fmtMoney, plural, payMethodWords, paymentLabel, parseAmount, amountAllowed, MEMO_MAX, PAYEE_MAX, CHECK_NUMBER_MAX, billHref,
   refField, payDateBounds, payDateProblem, shortDay,
@@ -256,14 +256,19 @@ async function warnNumber() {
     (info.next ? " The next free number is #" + info.next + "." : ""), "warn");
 }
 
-async function showDoc(i, detail) {
+/** The bill's paperwork button `i` pressed (exported for the node tests): a picture in the panel's box (#ckViewer), a
+    PDF or any other file in its own tab. The last file asked for wins in the box: a PDF or an office file takes the
+    box's turn too (file-viewer.js claimStage), so a picture whose signed link answers late is dropped, and this file's
+    own words ("opened in a new tab", a refused link) are written only while no later file was asked for. */
+export async function showDoc(i, detail) {
   const f = detail && detail.files[i];
   if (!f) return;
   const box = document.getElementById("ckViewer");
   if (isImage(f) && box) { await showIn(box, f, { errorText, onOpen: (x) => openTab(x, (e) => toast(errorText(e), "error")) }); return; }
+  const mine = box ? claimStage(box) : () => false;
   // "opened" only when it was: a refused link (a sign-in run out, no connection) keeps its words in the box
-  const sent = await openTab(f, (e) => { if (box) box.textContent = errorText(e); else toast(errorText(e), "error"); });
-  if (box && sent) box.textContent = f.name + " opened in a new tab.";
+  const sent = await openTab(f, (e) => { if (!box) toast(errorText(e), "error"); else if (mine()) box.textContent = errorText(e); });
+  if (sent && mine()) box.textContent = f.name + " opened in a new tab.";
 }
 
 /** Wire the open panel inside `box`. ctx: {bill (the deskChecks entry), which, me, today, detail, onClose(),

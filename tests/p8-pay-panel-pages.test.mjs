@@ -35,7 +35,7 @@ test("the panel is extracted with the SAME ids (the p5b tests and walks keep wor
   assert.match(acc, /panel\.wirePanel\(box, \{/);
   assert.match(acc, /panel\.snapshot\(\);/, "typed values survive a redraw");
   assert.ok(!/function doWriteCheck|function paintMethod|function chosenMethod|filesRepo\.signedUrl/.test(acc), "the panel's code lives in pay-panel.js only");
-  assert.match(pp, /import \{ showIn, openTab, isImage \} from "\.\/file-viewer\.js";/, "the bill's paperwork through js/pages/file-viewer.js");
+  assert.match(pp, /import \{ showIn, openTab, isImage, claimStage \} from "\.\/file-viewer\.js";/, "the bill's paperwork through js/pages/file-viewer.js");
   assert.ok(!/approve_bill|\.approve\(|setPayMethod/.test(pp + code(read("js/pages/books-checks.js")) + code(read("js/repo/checks.js"))), "nothing here approves");
 });
 
@@ -91,9 +91,14 @@ test("CSS: the register's printed page is its own - the print rules that take th
 test("the panel's viewer box says \"opened in a new tab\" only when the file was sent there; a refused link keeps its words", () => {
   const pp = code(read("js/pages/pay-panel.js"));
   const sd = pp.slice(pp.indexOf("async function showDoc("), pp.indexOf("export function wirePanel("));
-  assert.match(sd, /const sent = await openTab\(f, \(e\) => \{ if \(box\) box\.textContent = errorText\(e\); else toast\(errorText\(e\), "error"\); \}\);/);
-  assert.match(sd, /if \(box && sent\) box\.textContent = f\.name \+ " opened in a new tab\.";/);
+  assert.match(sd, /const sent = await openTab\(f, \(e\) => \{ if \(!box\) toast\(errorText\(e\), "error"\); else if \(mine\(\)\) box\.textContent = errorText\(e\); \}\);/);
+  assert.match(sd, /if \(sent && mine\(\)\) box\.textContent = f\.name \+ " opened in a new tab\.";/);
   assert.ok(!/\n\s*if \(box\) box\.textContent = f\.name \+ " opened in a new tab\."/.test(sd), "never written over the error");
+  // a PDF or an office file takes the box's turn BEFORE its link is asked for: a picture still being signed is dropped,
+  // and its words wait for no later file (run over a small DOM in p8-bill-files-pages: "the payment panel's box")
+  const turn = sd.indexOf("const mine = box ? claimStage(box) : () => false;");
+  assert.ok(turn !== -1 && turn > sd.indexOf("if (isImage(f) && box) {") && turn < sd.indexOf("await openTab(f,"), "the turn taken before openTab");
+  assert.match(pp, /export async function showDoc\(i, detail\) \{/, "run by the node tests");
 });
 
 test("the register page: refused before anything is read; write controls only for money editors; Void only while the switch is on; the switch an admin's", () => {

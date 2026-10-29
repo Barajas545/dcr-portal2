@@ -48,7 +48,9 @@ function host() {
     h.setAttribute("aria-labelledby", "cfH");
     document.body.appendChild(h);
     h.addEventListener("click", (e) => { if (e.target === h && !st.busy) close(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && h.classList.contains("open") && !st.busy) close(); });
+    // an Esc another dialog over this one already handled (the "Remove the receipt" question, the receipt viewer: both
+    // heard first, in the capture phase) is theirs - it never closes this one and throws away what was typed
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !e.defaultPrevented && h.classList.contains("open") && !st.busy) close(); });
   }
   return h;
 }
