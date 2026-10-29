@@ -2,7 +2,9 @@
 
    The database answers {projects, contacts, items, tasks, files} (at most 20 each, through the
    caller's own RLS: receipts and tasks a field account may not see never come back). The old
-   page drew {groups: [{label, total, more, items: [{title, sub, href, thumbId, email, phone}]}]}.
+   page drew {groups: [{label, total, more, items: [{title, sub, href, thumbId, email, phone}]}]}; a contact also
+   carries `contact` ({id, name, company, picture_path}: its picture - Books release A3, migration 20261030000200 -
+   or its initials, pages/avatar.js).
 
    Pure module. */
 
@@ -64,6 +66,7 @@ export function toGroups(res, opts) {
       title: c.name || c.company || "(no name)",
       sub: join([c.company && c.company !== c.name ? c.company : "", trades.length ? trades.join(", ") : c.trade, c.city]),
       email: c.email || "", phone: c.phone || "",
+      contact: { id: c.id, name: c.name || "", company: c.company || "", picture_path: c.picture_path || null },
     };
   });
   // P5a (acceptance check 1): an item's name and group are typed words too, masked the same way; the hit opens

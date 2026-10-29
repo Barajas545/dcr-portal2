@@ -2071,6 +2071,11 @@ section = "Part 4: the Files tab's OneDrive part through DCR Desktop 2's own one
 // ===========================================================================================
 await (await import("./schema-check-p7-onedrive.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "Books release A3: contact pictures and a contact's reach (repo/contacts.js, migration 20261030000200_contacts_pictures_vendors)";
+// ===========================================================================================
+await (await import("./schema-check-p8-contacts.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

@@ -14,6 +14,7 @@ const P5C_SUB = new URL("../tools/fake/p5c-sub.js", import.meta.url);       // P
 const P5C_SALES = new URL("../tools/fake/p5c-sales.js", import.meta.url);   // P5c sales (the switch, comps, sales estimates, materials, sales-media)
 const P7_WEB = new URL("../tools/fake/p7-web.js", import.meta.url);         // Part 3 (the Estimator / OneDrive switches, admin_set_profile)
 const P7_ONEDRIVE = new URL("../tools/fake/p7-onedrive.js", import.meta.url); // Part 4: the OneDrive broker's stand-in (the Files tab)
+const P8_CONTACTS = new URL("../tools/fake/p8-contacts.js", import.meta.url); // Books A3: contact pictures and a contact's reach
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
 const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
 const SEED = new URL("../tools/fake/seed.js", import.meta.url);
@@ -34,6 +35,7 @@ export async function loadFake() {
     if (existsSync(P5C_SALES)) await import(P5C_SALES.href);
     if (existsSync(P7_WEB)) await import(P7_WEB.href);
     if (existsSync(P7_ONEDRIVE)) await import(P7_ONEDRIVE.href);
+    if (existsSync(P8_CONTACTS)) await import(P8_CONTACTS.href);
     await import(ENGINE.href);
     if (existsSync(PC)) await import(PC.href);
     await import(SEED.href);

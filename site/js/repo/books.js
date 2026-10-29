@@ -33,6 +33,7 @@
 
 import { db, must, idOf, notFound, forbidden, pageAll } from "./_db.js";
 import { nameBook } from "./people.js";
+import { contactRows as readContacts } from "./contacts.js";
 import { buildDesk, approvalsQueue, toBill, toPayment, seesBooks, canApprove, canMoney, cleanRef, MEMO_MAX, PAYEE_MAX, CHECK_NUMBER_MAX,
   APPROVAL_NOTE_MAX, dayOf } from "../map/books.js";
 import { ymd } from "../map/pacific.js";
@@ -50,7 +51,9 @@ export const PAYMENT_COLS = "id, bill_id, project_id, paid_date, amount, method,
 export const INVOICE_COLS = "id, project_id, number, invoice_date, due_date, description, status, sent_date, qbo_entered_at, qbo_entered_by, " +
   "qbo_ref, deleted_at, version, invoice_lines(amount), client_payments(amount, paid_date)";
 export const PROJECT_COLS = "id, number, name, address, city, client_name";
-export const CONTACT_COLS = "id, name, company, email, phone, deleted_at";
+// + the contact's picture (Books release A3, migration 20261030000200; a database without it yet: read again without it,
+// initials - repo/contacts.js contactRows) and its version (the contact card's versioned PATCH)
+export const CONTACT_COLS = "id, name, company, email, phone, picture_path, deleted_at, version";
 export const FILE_COLS = "id, project_id, bill_id, folder, name, storage, storage_path, size, mime, created_at";
 
 function noBooks() {
@@ -85,7 +88,7 @@ export async function loadDesk(me, opts) {
     pageAll((cl) => cl.from("payments").select(PAYMENT_COLS).order("id", { ascending: true })),
     pageAll((cl) => cl.from("invoices").select(INVOICE_COLS).is("deleted_at", null).order("id", { ascending: true })),
     pageAll((cl) => cl.from("projects").select(PROJECT_COLS).order("id", { ascending: true })),
-    pageAll((cl) => cl.from("contacts").select(CONTACT_COLS).order("id", { ascending: true })),
+    readContacts((cols) => pageAll((cl) => cl.from("contacts").select(cols).order("id", { ascending: true })), CONTACT_COLS),
     pageAll((cl) => cl.from("quotes").select("id, project_id, vendor_contact_id").order("id", { ascending: true })),
     pageAll((cl) => cl.from("costs").select("id, project_id, cost_date, kind, amount, hours, rate").gte("cost_date", from30).order("id", { ascending: true })),
     nameBook(),
@@ -114,7 +117,8 @@ export async function loadBill(id, me) {
   const [payRows, projRows, contactRows, quoteRows, fileRows, nameOf] = await Promise.all([
     c.from("payments").select(PAYMENT_COLS).eq("bill_id", bid).order("paid_date", { ascending: false }).then(must),
     c.from("projects").select(PROJECT_COLS).eq("id", row.project_id).then(must),
-    row.vendor_contact_id != null ? c.from("contacts").select(CONTACT_COLS).eq("id", row.vendor_contact_id).then(must) : Promise.resolve([]),
+    row.vendor_contact_id != null
+      ? readContacts((cols) => c.from("contacts").select(cols).eq("id", row.vendor_contact_id).then(must), CONTACT_COLS) : Promise.resolve([]),
     row.quote_id != null
       ? c.from("quotes").select("id, project_id, kind, status, vendor_contact_id, vendor_name" + (prices ? ", prices:quote_prices(amount)" : "")).eq("id", row.quote_id).then(must)
       : Promise.resolve([]),
