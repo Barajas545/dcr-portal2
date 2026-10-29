@@ -15,20 +15,40 @@
    * Change how to pay (rpc set_bill_pay_method(p_id, p_method, p_version)): approve authority, an approved bill with
      no payment yet - the accountant carries out the approver's choice and cannot quietly switch it.
    * The payments already made, with their pick-up stamp; "In QuickBooks" when the accountant has marked it entered.
+   * The paperwork on the web (the Books program, release A; design-portal §6.5, the contract §4.1, decisions I2-I4),
+     for money editors (an admin, or a manager or accountant with financials - the database's rule): the document, the
+     bill's other files ("extras") and each payment's files ("Check #1043 · Oct 28"), all through the durable upload
+     queue (kind "bill" - the bill's id -, kind "payment" - the payment's too; js/pages/file-drop.js: several at
+     once, drop, paste, the camera):
+       - no document yet: the first PDF or picture added becomes the document (queued with the tag "document"; when it
+         has landed the page points the bill at it - books.setDocument, a versioned PATCH); the rest are extras. A page
+         closed in between leaves it an extra with "Make this the bill's document", so nothing is lost;
+       - "Make this the bill's document" on an extra only re-points (the old document stays as an extra);
+       - "Replace…" on the document uploads the new file, points the bill at it, then removes the old one (a soft
+         delete - the database keeps it in the history);
+       - a bill marked entered in QuickBooks, or a paid one, keeps its document: refused BEFORE any byte moves; on an
+         approved bill the page asks first ("this withdraws the approval"), and the database withdraws it;
+       - "Remove" on an extra or a payment's file (money editors, I4); never on the document - the database guards the
+         document of an approved, paid or entered bill anyway.
+     A file name is data: every name is put on the page with textContent or h(). A refused upload keeps the database's
+     sentence on its line ("this kind of file can't be attached to money: save it as a PDF or a picture").
    Editing a bill stays in DCR Desktop 2 (Q12): an edit of an approved bill's amount clears the approval there.
 
    Only with the financials switch: anyone else is told so and sent home before anything is read. */
 
-import { boot, esc, toast, errorText, qs, D } from "./shell.js";
+import { boot, esc, toast, errorText, qs, D, confirmBox } from "./shell.js";
 import * as books from "../repo/books.js";
 import * as filesRepo from "../repo/files.js";
+import * as uploads from "./uploads.js";
 import { fmtMoney, payMethodWords, paymentLabel, isPayMethod, PAY_METHODS, seesBooks, canApprove, APPROVAL_NOTE_MAX } from "../map/books.js";
-import { fmtSize, SIGNED_DOC_S } from "../map/files.js";
+import { fmtSize } from "../map/files.js";
 import { fmtDay } from "../map/pacific.js";
+import { mountFileDrop, queueAll, acceptable, ACCEPT } from "./file-drop.js";
+import { paperwork, showIn, openTab, documentProblem, withdrawsApproval, WITHDRAW_TEXT, kindOf } from "./file-viewer.js";
 
 const h = esc;
 const money = fmtMoney;
-const state = { me: null, data: null, active: 0, busy: false };
+const state = { me: null, data: null, active: 0, busy: false, files: [], drop: null, queue: [], watching: false, payFor: null, chain: Promise.resolve() };
 const BID = String(qs("id") || "").trim();
 
 function day(v) { const s = fmtDay(v); return s === "—" ? "" : s; }
@@ -38,18 +58,21 @@ function row(k, v, cls) {
   return '<div><span class="k">' + h(k) + '</span><span class="v' + (cls ? " " + cls : "") + '">' + v + "</span></div>";
 }
 
-function viewable(f) {
-  const m = String(f.mime || "").toLowerCase();
-  if (m === "application/pdf" || /\.pdf$/i.test(f.name)) return "pdf";
-  if (/^image\/(jpeg|png|gif|webp|bmp)$/.test(m) || /\.(jpe?g|png|gif|webp|bmp)$/i.test(f.name)) return "image";
-  return "";
+/* May this person add files here, and is the bill one that takes them (live: not void, not deleted)? */
+function editsPaper() {
+  const d = state.data;
+  return !!(d && d.can && d.can.pay && !d.bill.void && !d.bill.deleted);
 }
 
 const METHOD_OPTIONS = [{ value: "", label: "Choose…" }].concat(PAY_METHODS.map((m) => ({ value: m.id, label: m.label })));
 
 function render() {
   const d = state.data;
-  const b = d.bill, files = d.files || [], can = d.can || {};
+  const b = d.bill, can = d.can || {};
+  const files = state.files = paperwork(b, d.files || [], d.payments || []);
+  // the file looked at stays the one looked at when the list changes (a file landed, the document moved)
+  const was = state.activeId == null ? -1 : files.findIndex((f) => String(f.id) === String(state.activeId));
+  state.active = was !== -1 ? was : state.active < files.length ? state.active : 0;
   const waiting = !b.approved;
   const lateDue = (b.lateBy || 0) > 0;
   const stateCls = b.void ? "void" : waiting ? "wait" : "ok";
@@ -65,15 +88,26 @@ function render() {
 
   s += '<div class="bl-grid">';
 
-  // the paperwork
-  s += '<div class="bl-view"><div class="bl-card"><h3>The paperwork</h3>';
+  // the paperwork: the document, the bill's other files, each payment's files
+  const edit = editsPaper();
+  const hasDoc = files.some((f) => f.role === "document");
+  s += '<div class="bl-view"><div class="bl-card" id="blPaper"><h3>The paperwork</h3>';
   if (!files.length) {
-    s += '<div class="bl-stage"><div class="bl-smsg">No document is attached to this bill.<br>It cannot be approved until one is (in DCR Desktop 2).</div></div>';
+    s += '<div class="bl-stage"><div class="bl-smsg">No document is attached to this bill.<br>' + (edit
+      ? "It cannot be approved until one is: attach it here (or in DCR Desktop 2) - paste, drop or choose a PDF or photos below."
+      : "It cannot be approved until one is (attached in the Books, or in DCR Desktop 2).") + "</div></div>";
   } else {
-    s += '<div class="bl-tabs">' + files.map((f, i) => '<button type="button" data-f="' + i + '" aria-pressed="' + (i === state.active) + '" title="' + h(f.name) + '">' +
-      (f.primary ? "&#128206; " : "") + h(f.name) + "</button>").join("") + "</div>";
+    s += '<div class="bl-tabs">' + files.map((f, i) => '<button type="button" data-f="' + i + '" data-role="' + h(f.role) + '" aria-pressed="' + (i === state.active) +
+      '" title="' + h(f.label + ": " + f.name) + '">' + (f.role === "document" ? "&#128206; " : f.role === "payment" ? "&#128181; " : "") + h(f.name) + "</button>").join("") + "</div>";
     s += '<div class="bl-stage" id="blStage"><div class="bl-smsg">Opening…</div></div><div class="bl-viewbar" id="blViewBar"></div>';
   }
+  if (edit) {
+    s += '<div class="bl-q" id="blQueue"></div><div class="bl-drop" id="blDrop"></div>' +
+      '<input type="file" id="blReplaceIn" accept="' + h(ACCEPT) + '" hidden>' +
+      '<input type="file" id="blPayIn" accept="' + h(ACCEPT) + '" multiple hidden>';
+    if (!hasDoc && files.length) s += '<div class="bl-why" style="margin-top:8px">None of these files is the bill\'s document yet: pick one and press “Make this the bill\'s document”.</div>';
+  }
+  s += '<div class="bl-msg" id="blFileMsg" role="status"></div>';
   s += "</div></div>";
 
   // the facts and the decision
@@ -116,7 +150,7 @@ function render() {
     s += '<div class="bl-why" id="blNoApprove">Only an admin, or a manager with approve authority, can sign this off.' +
       (state.me && state.me.role === "accountant" ? " The accountant pays it once it is approved." : "") + "</div>";
   } else if (!b.hasDocument) {
-    s += '<div class="bl-why">Attach the invoice first (in DCR Desktop 2) — an approved payment needs the paperwork behind it.</div>';
+    s += '<div class="bl-why">Attach the invoice first (in the paperwork here, or in DCR Desktop 2) — an approved payment needs the paperwork behind it.</div>';
   } else {
     s += '<input class="bl-note" id="blNote" type="text" maxlength="' + APPROVAL_NOTE_MAX + '" placeholder="Note (optional)" aria-label="Approval note">' +
       '<button type="button" class="bl-approve" id="blGo">&#10003; Approve ' + money(b.amount) + " for payment</button>";
@@ -124,10 +158,14 @@ function render() {
   s += '<div class="bl-msg" id="blMsg"></div></div>';
 
   if (d.payments.length) {
+    const ofPay = (p) => files.filter((f) => f.role === "payment" && String(f.paymentId) === String(p.id));
     s += '<div class="bl-card"><h3>Paid on this bill</h3>' + d.payments.map((p) => '<div class="bl-pay"><span>' +
       h(paymentLabel(p.method)) + (p.method === "check" ? " #" + h(p.checkNumber) : p.reference && p.method !== "cash" ? " · " + h(p.reference) : "") +
       " · " + h(day(p.paidDate)) +
-      (p.payee ? '<br><span class="t">to ' + h(p.payee) + "</span>" : "") + "</span><span><b>" + money(p.amount) + "</b>" +
+      (p.payee ? '<br><span class="t">to ' + h(p.payee) + "</span>" : "") +
+      (ofPay(p).length ? '<br><span class="t">&#128181; ' + ofPay(p).map((f) => '<button type="button" class="bl-link" data-show="' + h(f.id) + '">' + h(f.name) + "</button>").join(", ") + "</span>" : "") +
+      (edit ? '<br><button type="button" class="bl-link" data-payfile="' + h(p.id) + '">＋ Add a file (a photo of the check, a confirmation)</button>' : "") +
+      "</span><span><b>" + money(p.amount) + "</b>" +
       (p.collectable ? '<br><span class="t">' + (p.toldAt ? "told " + h(p.toldHow) + " " + h(day(p.toldDay)) : "not told yet") + "</span>" : "") +
       "</span></div>").join("") + "</div>";
   }
@@ -137,70 +175,246 @@ function render() {
   s += '<a class="bl-secondary" href="accounting.html">The Books &rarr;</a>';
   s += "</div></div>";
 
+  if (state.drop) { state.drop.destroy(); state.drop = null; }
   document.getElementById("blRoot").innerHTML = s;
   document.title = "DCR Portal 2 — " + (b.vendor || "Bill") + (b.invoiceNumber ? " #" + b.invoiceNumber : "");
   if (files.length) {
     document.querySelectorAll("[data-f]").forEach((btn) => btn.addEventListener("click", () => show(Number(btn.getAttribute("data-f")))));
     show(state.active);
   }
+  document.querySelectorAll("[data-show]").forEach((btn) => btn.addEventListener("click", () => {
+    const i = files.findIndex((f) => String(f.id) === btn.getAttribute("data-show"));
+    if (i !== -1) show(i);
+  }));
+  if (edit) wirePaper(hasDoc);
   const how = document.getElementById("blHow");
   if (how) how.addEventListener("click", setPayMethod);
   const go = document.getElementById("blGo");
   if (go) go.addEventListener("click", approve);
 }
 
-/* Put a file on screen: an image in place, a PDF in its own tab, a file on the office computers named. */
-async function show(i) {
-  const f = state.data.files[i];
-  if (!f) return;
-  state.active = i;
-  document.querySelectorAll("[data-f]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.getAttribute("data-f")) === i)));
-  const stage = document.getElementById("blStage"), bar = document.getElementById("blViewBar");
-  bar.textContent = "";
-  bar.appendChild(document.createTextNode(f.name + (f.size ? " · " + fmtSize(f.size) : "")));
-  if (!f.cloud || !f.storagePath) {
-    stage.innerHTML = '<div class="bl-smsg"><b>' + h(f.name) + "</b><br>On the office computers — open it in DCR Desktop 2.</div>";
-    return;
-  }
-  const open = document.createElement("button");
-  open.type = "button";
-  open.textContent = "Open in a new tab ↗";
-  open.addEventListener("click", () => openFile(f));
+function barButton(bar, text, id, fn) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = id;
+  b.textContent = text;
+  b.addEventListener("click", fn);
   bar.appendChild(document.createTextNode(" · "));
-  bar.appendChild(open);
-  const kind = viewable(f);
-  if (kind !== "image") {
-    stage.innerHTML = '<div class="bl-smsg"><b>' + h(f.name) + "</b><br>" + (kind === "pdf" ? "A PDF opens in its own tab." : "This kind of file opens in its own tab.") +
-      '<br><button type="button" class="bl-secondary" id="blOpenDoc" style="max-width:260px;margin:12px auto 0">Open ' + (kind === "pdf" ? "the PDF" : "it") + " ↗</button></div>";
-    const b = document.getElementById("blOpenDoc");
-    if (b) b.addEventListener("click", () => openFile(f));
-    return;
-  }
-  stage.innerHTML = '<div class="bl-smsg">Opening ' + h(f.name) + "…</div>";
-  try {
-    const url = await filesRepo.signedUrl(f.storagePath, SIGNED_DOC_S);
-    if (!url) throw new Error("No link for this file.");
-    if (state.active !== i) return;
-    stage.innerHTML = "";
-    const img = document.createElement("img");
-    img.alt = f.name;
-    img.src = url;
-    stage.appendChild(img);
-  } catch (e) {
-    stage.innerHTML = '<div class="bl-smsg" style="color:var(--err)">' + h(errorText(e)) + "</div>";
-  }
+  bar.appendChild(b);
+  return b;
 }
 
-async function openFile(f) {
-  const w = window.open("", "_blank");
-  try {
-    const url = await filesRepo.signedUrl(f.storagePath, SIGNED_DOC_S);
-    if (!url) throw new Error("No link for this file.");
-    if (w) w.location.href = url; else location.href = url;
-  } catch (e) {
-    if (w) w.close();
-    toast(errorText(e), "error");
+/* Put a file on screen (js/pages/file-viewer.js): an image in place, a PDF in its own tab, a file on the office
+   computers named; under it what the file is, and - for a money editor - what can be done with it. */
+async function show(i) {
+  const f = state.files[i];
+  if (!f) return;
+  state.active = i;
+  state.activeId = f.id;
+  document.querySelectorAll("[data-f]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.getAttribute("data-f")) === i)));
+  const stage = document.getElementById("blStage"), bar = document.getElementById("blViewBar");
+  if (!stage || !bar) return;
+  bar.textContent = "";
+  bar.appendChild(document.createTextNode(f.name + (f.size ? " · " + fmtSize(f.size) : "") + " · " + f.label));
+  if (kindOf(f) !== "local") barButton(bar, "Open in a new tab ↗", "blOpen", () => openFile(f));
+  if (editsPaper()) {
+    if (f.role === "document" && kindOf(f) !== "local") barButton(bar, "Replace…", "blReplace", () => replaceDocument(f));
+    if (f.role === "extra") barButton(bar, "Make this the bill's document", "blMakeDoc", () => makeDocument(f));
+    if (f.role !== "document") barButton(bar, "Remove", "blRemove", () => removeFile(f));
   }
+  await showIn(stage, f, { errorText, onOpen: openFile });
+}
+
+function openFile(f) {
+  return openTab(f, (e) => toast(errorText(e), "error"));
+}
+
+/* ── the paperwork's writes ──────────────────────────────────────────── */
+
+function sayFile(text, bad) {
+  const n = document.getElementById("blFileMsg");
+  if (!n) { if (text) toast(text, bad ? "error" : "info"); return; }
+  n.textContent = text || "";
+  n.className = "bl-msg" + (bad ? " err" : "");
+}
+
+/** Yes when the bill is not approved, or the person agrees that a new document withdraws the approval. */
+async function agreeWithdraw(b) {
+  if (!withdrawsApproval(b)) return true;
+  return confirmBox(WITHDRAW_TEXT, { title: "This bill is approved", okText: "Change the document" });
+}
+
+/* The paperwork card's controls: the file-drop (several at once, drop, paste - heard on the card, never on document),
+   the Replace and add-to-a-payment pickers, the queue's lines for this bill. */
+function wirePaper(hasDoc) {
+  const host = document.getElementById("blDrop");
+  if (host) {
+    state.drop = mountFileDrop(host, {
+      label: hasDoc ? "Add files to this bill: paste, drop or choose (PDFs or photos)"
+        : "Attach the invoice: paste, drop or choose (a PDF or photos) — the first becomes the bill's document",
+      onFiles: (list) => addFiles(list),
+      pasteOn: document.getElementById("blPaper") || undefined,
+    });
+  }
+  const rin = document.getElementById("blReplaceIn");
+  if (rin) rin.addEventListener("change", () => { const f = rin.files && rin.files[0]; rin.value = ""; if (f) replaceWith(f); });
+  const pin = document.getElementById("blPayIn");
+  if (pin) pin.addEventListener("change", () => { const list = Array.from(pin.files || []); pin.value = ""; addPaymentFiles(state.payFor, list); });
+  document.querySelectorAll("[data-payfile]").forEach((b) => b.addEventListener("click", () => {
+    state.payFor = b.getAttribute("data-payfile");
+    if (pin) pin.click();
+  }));
+  paintQueue();
+}
+
+/* Files for the bill: when it has no document, the first PDF or picture becomes it (refused before any byte moves on
+   a bill whose document cannot change; asked first on an approved one), the rest are extras. */
+async function addFiles(list) {
+  const b = state.data.bill;
+  const hasDoc = state.files.some((f) => f.role === "document");
+  let tag = "";
+  if (!hasDoc) {
+    const p = documentProblem(b);
+    if (p) { sayFile(p, true); return; }
+    if (!(await agreeWithdraw(b))) return;
+    tag = withdrawsApproval(b) ? "document!" : "document";
+  }
+  const first = list[0];
+  const res = await queueAll(list, uploads.enqueue, (f) => ({ projectId: b.projectId, kind: "bill", billId: b.id, tag: f === first ? tag : "" }));
+  queued(res);
+}
+
+async function addPaymentFiles(paymentId, list) {
+  const b = state.data.bill;
+  const p = (state.data.payments || []).find((x) => String(x.id) === String(paymentId));
+  if (!p || !list.length) return;
+  const bad = list.map((f) => acceptable(f)).find(Boolean);
+  if (bad) { sayFile(bad, true); return; }
+  const res = await queueAll(list, uploads.enqueue, () => ({ projectId: b.projectId, kind: "payment", billId: b.id, paymentId: p.id }));
+  queued(res);
+}
+
+function queued(res) {
+  if (res.failed.length) sayFile(errorText(res.failed[0].error), true);
+  else sayFile(res.queued === 1 ? "The file is on its way." : res.queued + " files are on their way.");
+  uploads.drain();
+}
+
+/* "Replace…": refused before any byte moves when the document cannot change; the new file is queued with the tag
+   "replace:<the old document's id>" ("!" when the person agreed to withdraw the approval). */
+function replaceDocument(f) {
+  const p = documentProblem(state.data.bill);
+  if (p) { sayFile(p, true); return; }
+  state.replacing = f;
+  const rin = document.getElementById("blReplaceIn");
+  if (rin) rin.click();
+}
+
+async function replaceWith(file) {
+  const b = state.data.bill;
+  const old = state.replacing;
+  state.replacing = null;
+  if (!old) return;
+  const bad = acceptable(file);
+  if (bad) { sayFile(bad, true); return; }
+  if (!(await agreeWithdraw(b))) return;
+  const tag = (withdrawsApproval(b) ? "replace!:" : "replace:") + old.id;
+  const res = await queueAll([file], uploads.enqueue, () => ({ projectId: b.projectId, kind: "bill", billId: b.id, tag }));
+  queued(res);
+}
+
+/* "Make this the bill's document": only re-points (the old document stays as an extra). */
+async function makeDocument(f) {
+  const b = state.data.bill;
+  const p = documentProblem(b);
+  if (p) { sayFile(p, true); return; }
+  if (!(await agreeWithdraw(b))) return;
+  await link(f.id, true, null);
+}
+
+/* "Remove": an extra or a payment's file (a soft delete; the database keeps the history). Never the document. */
+async function removeFile(f) {
+  if (f.role === "document") return;
+  if (!(await confirmBox("Take “" + f.name + "” off this bill? It is kept in the history; an admin can bring it back.",
+    { title: "Remove the file", okText: "Remove", danger: true }))) return;
+  try {
+    await filesRepo.removeFile({ id: f.id, version: f.version });
+    toast("Removed: " + f.name, "ok");
+  } catch (e) {
+    sayFile(errorText(e), true);
+  }
+  await load();
+}
+
+/* The bill points at `fileId` (one write at a time); a replaced document is then removed. */
+function link(fileId, agreed, oldId) {
+  state.chain = state.chain.then(async () => {
+    try {
+      await books.setDocument(state.data.bill, fileId, { withdraw: !!agreed });
+      toast(oldId != null ? "The document is replaced." : "That file is now the bill's document.", "ok");
+    } catch (e) {
+      const conflict = e && (e.code === "PT409" || e.status === 409);
+      sayFile(conflict ? "The bill was approved or changed meanwhile: the file is kept as another file of the bill. Look at it again, then make it the document."
+        : errorText(e), true);
+      await load();
+      return;
+    }
+    if (oldId != null) {
+      try { await filesRepo.removeFile({ id: oldId }); } catch (e) { sayFile("The new document is in place; the old one stays as another file: " + errorText(e), true); }
+    }
+    await load();
+    const i = state.files.findIndex((f) => String(f.id) === String(fileId));
+    if (i !== -1) show(i);
+  });
+  return state.chain;
+}
+
+/* the queue's lines for this bill, and what to do when one of its files has landed */
+function paintQueue() {
+  const box = document.getElementById("blQueue");
+  if (!box) return;
+  box.textContent = "";
+  state.queue.forEach((it) => {
+    const line = document.createElement("div");
+    line.className = "bl-qi" + (it.state === "failed" ? " bad" : "");
+    line.textContent = (it.state === "failed" ? "⚠ " : "⏳ ") + it.name + " — " + uploads.itemLabel(it, navigator.onLine !== false);
+    if (it.state === "failed") {
+      const again = document.createElement("button");
+      again.type = "button";
+      again.className = "bl-link";
+      again.textContent = "Try again";
+      again.addEventListener("click", () => uploads.retryAll());
+      const off = document.createElement("button");
+      off.type = "button";
+      off.className = "bl-link";
+      off.textContent = "Take it off";
+      off.addEventListener("click", () => uploads.remove(it.id));
+      line.appendChild(document.createTextNode(" "));
+      line.appendChild(again);
+      line.appendChild(document.createTextNode(" · "));
+      line.appendChild(off);
+    }
+    box.appendChild(line);
+  });
+}
+
+function landed(item, row) {
+  const tag = String(item.tag || "");
+  if (row && row.id != null && /^document!?$/.test(tag)) return link(row.id, tag === "document!", null);
+  const m = /^replace(!?):(\d+)$/.exec(tag);
+  if (row && row.id != null && m) return link(row.id, m[1] === "!", m[2]);
+  return load();
+}
+
+function watchQueue() {
+  if (state.watching) return;
+  state.watching = true;
+  uploads.onProgress((items, evt) => {
+    state.queue = items.filter((i) => String(i.billId) === BID);
+    paintQueue();
+    if (evt && evt.type === "done" && evt.item && String(evt.item.billId) === BID) landed(evt.item, evt.row);
+  });
+  uploads.drain();
 }
 
 async function pickMethod(title, message, current) {
@@ -272,6 +486,7 @@ async function load() {
     state.data = await books.loadBill(BID, state.me);
     if (state.active >= state.data.files.length) state.active = 0;
     render();
+    if (editsPaper()) watchQueue();
   } catch (e) {
     document.getElementById("blRoot").innerHTML = '<div class="bl-card" style="color:var(--err)">' + h(errorText(e)) +
       '</div><a class="bl-secondary" href="dashboard.html" style="max-width:320px">Back to the home page</a>';

@@ -14,8 +14,11 @@
    (map/ledger.js canTag: an admin, or a manager or accountant with financials — the database refuses anyone
    else), in expense-dialog.js, fetched when first used. There is no delete: a wrong cost is corrected, or a
    negative credit added. A receipt goes through the upload queue (kept on this device until it is up; its
-   progress shows in the row). Reconciled and the employee are kept on Expenses & receipts (ledger.html).
-   Receipts (files.cost_id) open in a new tab.
+   progress shows in the row). Several at once (the Books program, release A; js/pages/file-drop.js): ＋📎 picks
+   several, a file dropped on a row attaches to that cost, and with a row selected (clicked) Ctrl+V attaches the
+   pasted screenshot to it - the paste is heard on this tab's table only, never on the page. Reconciled and the
+   employee are kept on Expenses & receipts (ledger.html). Receipts (files.cost_id) open in the viewer
+   (js/pages/file-viewer.js: a picture in place, "N of M"; a PDF in its own tab).
 
    Loaded only for people with the financials switch (project.js imports it on demand). */
 
@@ -25,9 +28,11 @@ import { ledgerCsvRows, csvText, canTag, cardLabel } from "../map/ledger.js";
 import { ymd } from "../map/pacific.js";
 import * as uploads from "./uploads.js";
 import { RECEIPT_ACCEPT } from "../map/cost-form.js";
+import { rowDrops } from "./file-drop.js";
+import { openViewer } from "./file-viewer.js";
 
 let host = null, seq = 0, timer = null, qTimer = null;
-const st = { ctx: null, rows: null, f: EF.defaults(), view: [], queue: [], attachFor: null, unqueue: null };
+const st = { ctx: null, rows: null, f: EF.defaults(), view: [], queue: [], attachFor: null, unqueue: null, drops: null, dropsOn: null };
 /** the cost dialog and the receipt step (money code: fetched when first used) */
 const dialog = () => import("./expense-dialog.js");
 
@@ -48,6 +53,13 @@ export function render(ctx, el) {
   host.addEventListener("change", onChange);
   host.addEventListener("input", onInput);
   load();
+  // a money editor's rows take dropped and pasted receipts (heard on this tab's pane, never on the page)
+  if (canTag(ctx.me) && st.dropsOn !== host) {
+    if (st.drops) st.drops();
+    st.drops = rowDrops(host, "tr[data-drop]", function (row, files) { attachTo(row.getAttribute("data-drop"), files); },
+      function (text) { ctx.toast(text, "error"); });
+    st.dropsOn = host;
+  }
   if (canTag(ctx.me) && !st.unqueue) {
     // receipts on their way (the upload queue, kind receipt): their progress in the row; one landed: read again
     st.unqueue = true;
@@ -140,12 +152,13 @@ function paint() {
     '<button class="pj-btn pj-btn-sm" id="exCsv" type="button" title="Download what you see as a spreadsheet">⤓ CSV</button>' +
     '<a class="pj-btn pj-btn-sm" href="' + esc(ledgerHref) + '" title="Paid with, reconciled, employees and receipts across every job">Expenses &amp; receipts →</a>' +
     (canTag(ctx.me) ? '<button class="pj-btn pj-btn-sm pj-btn-primary" id="exAdd" type="button">＋ Add expense</button>' +
-      '<input type="file" id="exAttachIn" accept="' + RECEIPT_ACCEPT + '" hidden>' : "") +
+      '<input type="file" id="exAttachIn" accept="' + RECEIPT_ACCEPT + '" multiple hidden>' : "") +
     "</div>";
   const note = '<p class="pjm-note">Costs can be added here or in DCR Desktop 2 (the project\'s Money tab). Costs have no delete: correct one, ' +
     "or add a negative credit. Cost is materials, subcontractors and labour; " +
     "equipment and other rows are listed on their own. Vendor bills and client invoices are on the Payments tab." +
-    (canTag(ctx.me) ? " Reconciled and the employee are kept on Expenses &amp; receipts." : "") + "</p>";
+    (canTag(ctx.me) ? " Reconciled and the employee are kept on Expenses &amp; receipts. Receipts: ＋📎 on a row (several at once), drop files on a row, " +
+      "or click a row and press Ctrl+V to paste a screenshot." : "") + "</p>";
 
   if (!all.length) {
     host.innerHTML = bar + note + '<div class="pj-empty">No expense records for this project.' +
@@ -180,7 +193,7 @@ function paint() {
       grp.rows.length + " record" + (grp.rows.length === 1 ? "" : "s") + "</span></td></tr>";
     grp.rows.forEach((r) => {
       const desc = EF.stripML(EF.descOf(r));
-      body += "<tr>" +
+      body += (editor ? '<tr data-drop="' + esc(r.id) + '" tabindex="0" title="Drop receipts here, or click and press Ctrl+V">' : "<tr>") +
         '<td class="dt">' + esc(EF.fmtDay(r.date)) + "</td>" +
         "<td>" + esc(desc) + (r.kind !== "material" ? ' <span class="lg-kind">' + esc(r.kindLabel) + "</span>" : "") +
           (r.vendor && r.description ? '<span class="vd">' + esc(r.vendor) + "</span>" : "") +
@@ -222,7 +235,7 @@ function paint() {
 function onChange(e) {
   const t = e.target, f = st.f;
   if (!t || !t.id) return;
-  if (t.id === "exAttachIn") { const file = t.files && t.files[0]; t.value = ""; attachPicked(file); return; }
+  if (t.id === "exAttachIn") { const files = Array.from(t.files || []); t.value = ""; attachPicked(files); return; }
   if (t.id === "exGroup") { f.group = t.value; paint(); }
   else if (t.id === "exRange") {
     f.range = t.value;
@@ -273,7 +286,7 @@ function onClick(e) {
   } else if (t.hasAttribute("data-receipt")) {
     const [rid, i] = t.getAttribute("data-receipt").split(":");
     const r = (st.rows || []).find((x) => String(x.id) === rid);
-    openReceipt(r && r.receipts[Number(i)]);
+    if (r && r.receipts && r.receipts.length) openViewer(r.receipts, Number(i), { errorText: st.ctx.errorText });
   } else if (t.id === "exAdd") {
     openDialog(null);
   } else if (t.hasAttribute("data-edit")) {
@@ -294,28 +307,21 @@ async function openDialog(costId) {
   try {
     const m = await dialog();
     const vendors = (st.rows || []).map((r) => r.vendor).filter(Boolean);
-    await m.openCostDialog(ctx, { costId: costId === null ? undefined : costId, vendors, onSaved: function () { reload(); } });
+    const row = costId === null ? null : (st.rows || []).find((r) => String(r.id) === String(costId));
+    await m.openCostDialog(ctx, { costId: costId === null ? undefined : costId, vendors, receipts: row ? row.receipts || [] : [],
+      onSaved: function () { reload(); } });
   } catch (e) { ctx.toast(ctx.errorText(e), "error"); }
 }
 
-async function attachPicked(file) {
+async function attachPicked(files) {
   const id = st.attachFor;
   st.attachFor = null;
-  if (!file || !id) return;
-  try { const m = await dialog(); await m.attachReceipt(st.ctx, id, file); } catch (e) { st.ctx.toast(st.ctx.errorText(e), "error"); }
+  if (!files || !files.length || !id) return;
+  await attachTo(id, files);
 }
 
-/* A new tab opened on the click itself (a pop-up blocker allows it), then sent to the signed URL (120 s). */
-async function openReceipt(fl) {
-  if (!fl) return;
-  if (fl.storage === "local") { st.ctx.toast("This receipt is on the office computers.", "info"); return; }
-  const w = window.open("", "_blank");
-  try {
-    const url = await repo.receiptUrl(fl, 120, false);
-    if (!url) throw new Error("No link for this file.");
-    if (w) { try { w.opener = null; } catch (x) { /* */ } w.location.href = url; } else location.href = url;
-  } catch (err) {
-    if (w) w.close();
-    st.ctx.toast(st.ctx.errorText(err), "error");
-  }
+/* receipts for the cost `id` (picked, dropped on its row, or pasted on it): the upload queue, kind receipt */
+async function attachTo(id, files) {
+  if (!id || !files || !files.length) return;
+  try { const m = await dialog(); await m.attachReceipts(st.ctx, id, files); } catch (e) { st.ctx.toast(st.ctx.errorText(e), "error"); }
 }

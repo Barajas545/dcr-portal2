@@ -400,6 +400,16 @@
     let ext = null;               // M6: tools/fake/p6.js, handed this engine's internals below
     const exts = [];              // the later phases' extensions (NS.extInstall), handed the same internals
     const extFor = (table) => (ext && ext.tables.has(table) ? ext : exts.find((x) => x.tables && x.tables.has(table))) || null;
+    // a later phase's rules on the core files table (tools/fake/p8-files.js, the Books program's money files): the first
+    // extension whose hook answers decides (fileHook(name, ...args) -> its answer, or undefined)
+    const fileHook = (name, ...args) => {
+      for (const x of exts) {
+        if (typeof x[name] !== "function") continue;
+        const v = x[name](...args);
+        if (v !== undefined && v !== null && v !== false) return v;
+      }
+      return undefined;
+    };
 
     const nowIso = () => clock().toISOString();
     const today = () => companyDay(clock());
@@ -1032,6 +1042,8 @@
       if (r.storage_path && rows.files.some((f) => f.preview_path === r.storage_path)) {
         throw rule("23514", "that object is another file's preview");
       }
+      // a money file (tools/fake/p8-files.js): never a version - its own row, its name made unique by the extension
+      if (fileHook("filesBeforeInsert", w, r, { quiet: !!quiet })) { r.previous_id = null; r.version_no = 1; return; }
       // the version chain: same project, folder, sub-folder, links and name (any case)
       const same = rows.files.filter((f) => !f.deleted_at && f.project_id === Number(r.project_id) && f.folder === r.folder &&
         String(f.subpath || "").toLowerCase() === String(r.subpath || "").toLowerCase() &&
@@ -1182,6 +1194,7 @@
         if (!JOURNAL_CATS.includes(r.category)) throw rule("23514", 'new row for relation "journal_entries" violates check constraint "journal_entries_category_check"');
       }
       if (table === "files") {
+        fileHook("filesGuardUpdate", w, old, r, patch, { quiet: !!quiet });                         // p8-files.js: payment_id, the guard
         for (const k of ["project_id", "folder", "storage_path", "storage"]) {
           if (k in patch && patch[k] !== old[k]) throw deny("a file keeps its project, folder and object");
         }
@@ -1233,6 +1246,7 @@
       // is written), and what follows the stamp (P5a: an estimate's items go with it, its log line)
       const x = extFor(table);
       if (x && x.beforeSoftDelete) x.beforeSoftDelete(w, table, old);
+      if (table === "files") fileHook("filesBeforeRemove", w, old);            // p8-files.js: the bill's guarded document
       const r = clone(old);
       r.deleted_at = nowIso();
       auditUpdate(w, table, r, old);
@@ -1327,7 +1341,7 @@
       switch (table) {
         case "projects": return canEdit(w, "projects");
         case "journal_entries": return canEdit(w, "all_journal") || (canEdit(w, "journal") && r.created_by === w.uid);
-        case "files": return canEdit(w, "all_files") || (canEdit(w, "files") && r.created_by === w.uid);
+        case "files": return canEdit(w, "all_files") || (canEdit(w, "files") && r.created_by === w.uid) || !!fileHook("filesCanDelete", w, r);
         case "contacts": return canEdit(w, "contacts");
         case "activity": return r.kind === "note" && (r.created_by === w.uid || w.admin);
         case "tasks": return canEdit(w, "tasks") || r.created_by === w.uid;

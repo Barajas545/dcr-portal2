@@ -29,9 +29,11 @@
                                      payee (<= 200) and memo (<= 100); the database refuses more than the approved
                                      amount still owed (acceptance check 2) and any other way of paying;
    * markTold(payment, how)          rpc payment_told(p_id, p_how, p_version) (M6): phone, in person, email or text;
-                                     how = null clears it. A payment once told cannot be deleted (M5b's guard). */
+                                     how = null clears it. A payment once told cannot be deleted (M5b's guard);
+   * setDocument(bill, fileId, o)    the bill's document (bills.document_file_id, a versioned PATCH): the bill page's
+                                     "Make this the bill's document" and "Replace..." (the Books program, release A). */
 
-import { db, must, idOf, notFound, forbidden, pageAll } from "./_db.js";
+import { db, must, idOf, notFound, forbidden, pageAll, versioned } from "./_db.js";
 import { nameBook } from "./people.js";
 import { buildDesk, approvalsQueue, toBill, toPayment, seesBooks, canApprove, canMoney, cleanRef, MEMO_MAX, PAYEE_MAX, CHECK_NUMBER_MAX,
   APPROVAL_NOTE_MAX, dayOf } from "../map/books.js";
@@ -51,7 +53,9 @@ export const INVOICE_COLS = "id, project_id, number, invoice_date, due_date, des
   "qbo_ref, deleted_at, version, invoice_lines(amount), client_payments(amount, paid_date)";
 export const PROJECT_COLS = "id, number, name, address, city, client_name";
 export const CONTACT_COLS = "id, name, company, email, phone, deleted_at";
-export const FILE_COLS = "id, project_id, bill_id, folder, name, storage, storage_path, size, mime, created_at";
+// a payment's files (payment_id, 20261030000100_money_files), the small preview (preview_path) and the version (a file is
+// removed at the version shown)
+export const FILE_COLS = "id, project_id, bill_id, payment_id, folder, name, storage, storage_path, preview_path, size, mime, created_at, version";
 
 function noBooks() {
   const e = forbidden();
@@ -145,7 +149,8 @@ export async function loadBill(id, me) {
     contact: contactRows && contactRows[0] ? contactRows[0] : null,
     files: files.map((f) => ({ id: f.id, name: f.name || "", mime: f.mime || "", size: f.size == null ? null : Number(f.size),
       cloud: (f.storage || "cloud") === "cloud", storagePath: f.storage_path || null, primary: String(f.id) === String(row.document_file_id),
-      createdAt: f.created_at || null })),
+      createdAt: f.created_at || null, billId: f.bill_id == null ? null : f.bill_id, paymentId: f.payment_id == null ? null : f.payment_id,
+      previewPath: f.preview_path || null, version: f.version == null ? null : Number(f.version) })),
     can: { approve: canApprove(me), pay: canMoney(me) },
   };
 }
@@ -229,6 +234,24 @@ export async function recordPayment(bill, f) {
   if (f.paidDate && /^\d{4}-\d{2}-\d{2}$/.test(String(f.paidDate))) row.paid_date = String(f.paidDate);
   const made = must(await c.from("payments").insert(row).select(PAYMENT_COLS)) || [];
   return made[0] ? toPayment(made[0]) : null;
+}
+
+/** The bill's document: bills.document_file_id = fileId (a live file of the bill's project - the bills trigger refuses
+    anything else, 23514), a versioned PATCH of that one column, like projects.setThumbnail. The database withdraws an
+    approval when the document changes, and refuses the change once the bill is paid or marked entered in QuickBooks
+    (23514, its own sentence). When someone else changed the bill meanwhile (PT409) it is sent once more at their
+    version - unless the bill was approved meanwhile and the person did not agree to withdraw an approval
+    (opts.withdraw): then the conflict is answered as it is. -> the bill's row as the database has it. */
+export async function setDocument(bill, fileId, opts) {
+  const o = opts || {};
+  const patch = { document_file_id: fileId === null || fileId === undefined ? null : idOf(fileId) };
+  try {
+    return await versioned("bills", idOf(bill.id), bill.version, patch, BILL_COLS);
+  } catch (e) {
+    if (!(e && e.code === "PT409" && e.current)) throw e;
+    if (e.current.approved_at && !o.withdraw) throw e;
+    return versioned("bills", idOf(bill.id), e.current.version, patch, BILL_COLS);
+  }
 }
 
 /** Mark a check / cash payment told (how: email | phone | text | in person), or clear it (how = null). */

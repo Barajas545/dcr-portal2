@@ -4,29 +4,36 @@
 
    * openCostDialog(ctx, {costId?, vendors, onSaved}) — Kind (labour for a new cost), Date, Description, Vendor /
      who (this project's vendors offered), Hours and Rate (labour), Amount (negative for a return or a credit;
-     filled and locked when hours × rate decide it), Estimate line, Paid with, the COST total, and a receipt (a photo,
-     a scan or a PDF, at most 25 MB). The rules and the words are map/cost-form.js (Desktop 2's). A new cost is ONE
+     filled and locked when hours × rate decide it), Estimate line, Paid with, the COST total, and its receipts -
+     several at once (the Books program, release A: js/pages/file-drop.js - choose, drop, paste a screenshot; photos,
+     scans or PDFs, at most 25 MB each, 20 at a time; the paste is heard on this dialog, never on the page). An edit
+     lists the cost's receipts (opts.receipts: the Expenses tab's row) - look at one, or take a wrong one off (a soft
+     delete: any money editor, I4). The rules and the words are map/cost-form.js (Desktop 2's). A new cost is ONE
      insert (an answer that never arrived: "may have been saved", and this dialog sends nothing more); an edit sends
      only what changed, at the version read (someone else's change meanwhile: theirs is shown). The estimate line
      of an edit is sent only when the person changed the select (map/cost-form.js payload, lineShown): the cost's
      own line is always offered, even an archived estimate's, and no select (no lines, a read that failed) sends
      none. There is no delete: a wrong cost is corrected, or a negative credit added.
-   * attachReceipt(ctx, costId, file) — the upload queue (custody on this device first): kind receipt, the cost's
-     id, f/{project}/receipts/… (a money editor's), the camera's own name ("IMG_4412.jpg") replaced by the queue's
-     "Receipt <time>".
+   * attachReceipt(ctx, costId, file) / attachReceipts(ctx, costId, files, projectId?) — the upload queue (custody on
+     this device first): kind receipt, the cost's id, f/{project}/receipts/… (a money editor's); a paste or the
+     camera's own name ("IMG_4412.jpg") replaced by the queue's "Receipt <time>[-n]", a real name kept (the database
+     makes a clash "name (2)").
    The database decides who may (costs RLS, t01_money_writer: an admin, or a manager or accountant with financials);
    the tab shows the buttons only to them (map/ledger.js canTag). Browser-only module. */
 
 import * as repo from "../repo/ledger.js";
+import * as filesRepo from "../repo/files.js";
 import * as uploads from "./uploads.js";
 import { KINDS, KIND_LABELS, CARDS, money } from "../map/ledger.js";
-import { validate, payload, columns, costValue, byTheHour, genericName, receiptProblem, RECEIPT_ACCEPT } from "../map/cost-form.js";
+import { validate, payload, columns, costValue, byTheHour, receiptProblem } from "../map/cost-form.js";
 import { ymd } from "../map/pacific.js";
+import { mountFileDrop, queueAll } from "./file-drop.js";
+import { openViewer } from "./file-viewer.js";
 
 const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LOST = "The answer didn't arrive: the cost may have been saved. Close this and check the list before adding it again.";
 
-const st = { ctx: null, before: null, busy: false, lost: false, lines: [], lineShown: undefined, onSaved: null, host: null };
+const st = { ctx: null, before: null, busy: false, lost: false, lines: [], lineShown: undefined, onSaved: null, host: null, drop: null, receipts: [] };
 
 function $(id) { return document.getElementById(id); }
 
@@ -47,9 +54,63 @@ function host() {
 }
 
 function close() {
+  if (st.drop) { st.drop.destroy(); st.drop = null; }
   const h = $("exModal");
   if (h) { h.classList.remove("open"); h.innerHTML = ""; }
   st.before = null;
+  st.receipts = [];
+}
+
+/* An edit's receipts: each name opens the viewer; ✕ takes a wrong one off (a soft delete, after a question). */
+function drawHave() {
+  const box = $("cfHave");
+  if (!box) return;
+  box.textContent = "";
+  if (!st.receipts.length) return;
+  const head = document.createElement("div");
+  head.className = "pj-sub";
+  head.textContent = st.receipts.length === 1 ? "Its receipt:" : "Its " + st.receipts.length + " receipts:";
+  box.appendChild(head);
+  st.receipts.forEach((f, i) => {
+    const line = document.createElement("div");
+    line.className = "fd-have";
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "lg-r on";
+    b.setAttribute("data-have", String(i));
+    b.textContent = "📎 " + f.name;
+    b.title = "Look at " + f.name;
+    line.appendChild(b);
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "lg-r on";
+    x.setAttribute("data-unhave", String(i));
+    x.textContent = "✕";
+    x.title = "Take this receipt off the cost";
+    x.setAttribute("aria-label", "Take " + f.name + " off this cost");
+    line.appendChild(x);
+    box.appendChild(line);
+  });
+}
+
+async function onHave(e) {
+  const t = e.target && e.target.closest ? e.target.closest("[data-have], [data-unhave]") : null;
+  if (!t || st.busy) return;
+  if (t.hasAttribute("data-have")) { openViewer(st.receipts, Number(t.getAttribute("data-have")), { errorText: st.ctx.errorText }); return; }
+  const f = st.receipts[Number(t.getAttribute("data-unhave"))];
+  if (!f) return;
+  const ask = st.ctx.confirm || ((m) => Promise.resolve(window.confirm(m)));
+  if (!(await ask("Take the receipt “" + f.name + "” off this cost? It is kept in the history; an admin can bring it back.",
+    { title: "Remove the receipt", okText: "Remove", danger: true }))) return;
+  try {
+    await filesRepo.removeFile({ id: f.id, version: f.version });
+    st.receipts = st.receipts.filter((x) => x !== f);
+    drawHave();
+    st.ctx.toast("Receipt removed.", "ok");
+    if (st.onSaved && st.before) st.onSaved(st.before);
+  } catch (err) {
+    say(st.ctx.errorText(err));
+  }
 }
 
 function form() {
@@ -121,13 +182,17 @@ function draw(editing, vendors, hasLine) {
       lines.map((l) => '<option value="' + esc(l.id) + '">' + esc(l.label) + "</option>").join("") + "</select></div>" : "") +
     '<div class="pj-f full"><label for="cfCard">Paid with</label><select id="cfCard">' + CARDS.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.label) + "</option>").join("") +
       "</select></div>" +
-    '<div class="pj-f full"><label for="cfFile">Receipt (optional: a photo, a scan or a PDF)</label><input id="cfFile" type="file" accept="' + RECEIPT_ACCEPT + '"></div>' +
+    '<div class="pj-f full"><span class="pj-sub" style="font-weight:600">Receipts (optional: photos, scans or PDFs — several at once)</span>' +
+      '<div id="cfHave"></div><div id="cfFiles"></div></div>' +
     '</div><div style="display:flex;align-items:baseline;gap:10px;margin-top:12px"><span class="pj-sub" style="font-weight:700;letter-spacing:.06em">COST</span>' +
     '<span class="pj-sub" id="cfBasis" style="flex:1"></span><b id="cfTotal" style="font-size:18px">$0.00</b></div>' +
     '<div class="pj-msg err" id="cfMsg" role="alert"></div>' +
     '<div class="pj-modal-actions"><button class="pj-btn" id="cfCancel" type="button">Cancel</button>' +
     '<button class="pj-btn pj-btn-primary" id="cfSave" type="submit">' + (editing ? "Save changes" : "Add cost") + "</button></div></form></div>";
   h.classList.add("open");
+  // the receipts: one picker (several at once, drop, paste - heard on this dialog only)
+  st.drop = mountFileDrop($("cfFiles"), { label: editing ? "Add receipts: drop, paste or choose" : "Receipts: drop, paste or choose" });
+  $("cfHave").addEventListener("click", onHave);
   $("cfCancel").addEventListener("click", () => { if (!st.busy) close(); });
   $("cfForm").addEventListener("submit", (e) => { e.preventDefault(); save(); });
   $("cfForm").addEventListener("input", update);
@@ -149,8 +214,8 @@ async function save() {
   const f = form();
   const errs = validate(f, editing);
   if (errs) { say(errs.cost_date || errs.hours || errs.rate || errs.amount || errs.description || errs.card); return; }
-  const file = $("cfFile") && $("cfFile").files && $("cfFile").files[0];
-  if (file) { const p = receiptProblem(file); if (p) { say(p); return; } }
+  const files = st.drop ? st.drop.files() : [];
+  if (st.drop && st.drop.busy()) { say("Still reading the clipboard: try again in a moment."); return; }
   const ctx = st.ctx;
   lock(true);
   say("");
@@ -176,29 +241,36 @@ async function save() {
     return;
   }
   lock(false);
+  const onSaved = st.onSaved;
   close();
   ctx.toast(editing ? "Cost saved." : "Cost added.", "ok");
-  if (file && saved && saved.id != null) await attachReceipt(ctx, saved.id, file);
-  if (st.onSaved) st.onSaved(saved);
+  if (files.length && saved && saved.id != null) await attachReceipts(ctx, saved.id, files);
+  if (onSaved) onSaved(saved);
 }
 
 /** Hand a receipt to the upload queue for the cost `costId` (the bytes are kept on this device until they are up). */
 export async function attachReceipt(ctx, costId, file) {
-  const p = receiptProblem(file);
-  if (p) { ctx.toast(p, "error"); return false; }
-  try {
-    await uploads.enqueue({ projectId: ctx.pid, file, kind: "receipt", costId, name: genericName(file.name) ? undefined : file.name });
-    ctx.toast("Receipt on its way.", "info");
-    return true;
-  } catch (e) {
-    ctx.toast(ctx.errorText(e), "error");
-    return false;
-  }
+  return (await attachReceipts(ctx, costId, [file])) === 1;
 }
 
-/** opts: {costId (an edit) | nothing (a new cost), vendors: [names], onSaved(row)} */
+/** Hand receipts to the upload queue for the cost `costId` (of the project `projectId`, else ctx.pid) -> how many were
+    queued. Each is checked first (a photo, a scan or a PDF, at most 25 MB); one refused never stops the others. */
+export async function attachReceipts(ctx, costId, files, projectId) {
+  const list = Array.from(files || []).filter(Boolean);
+  const bad = list.map((f) => [f, receiptProblem(f)]).filter((x) => x[1]);
+  const good = list.filter((f) => !receiptProblem(f));
+  const pid = projectId === undefined || projectId === null ? ctx.pid : projectId;
+  const res = await queueAll(good, uploads.enqueue, () => ({ projectId: pid, kind: "receipt", costId }));
+  const problems = bad.map((x) => (x[0].name ? x[0].name + ": " : "") + x[1]).concat(res.failed.map((x) => ctx.errorText(x.error)));
+  if (problems.length) ctx.toast(problems[0] + (problems.length > 1 ? " (and " + (problems.length - 1) + " more)" : ""), "error");
+  if (res.queued) ctx.toast(res.queued === 1 ? "Receipt on its way." : res.queued + " receipts on their way.", "info");
+  return res.queued;
+}
+
+/** opts: {costId (an edit) | nothing (a new cost), vendors: [names], receipts: [the cost's receipts] (an edit), onSaved(row)} */
 export async function openCostDialog(ctx, opts) {
   const o = opts || {};
+  if (st.drop) { st.drop.destroy(); st.drop = null; }
   st.ctx = ctx;
   st.onSaved = o.onSaved || null;
   st.lost = false;
@@ -217,6 +289,8 @@ export async function openCostDialog(ctx, opts) {
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   draw(!!row, vendors, line !== null);
   st.before = row;
+  st.receipts = row ? (o.receipts || []).slice() : [];
+  drawHave();
   fill(row);
   setTimeout(() => { const n = $(row ? "cfDesc" : "cfKind"); if (n) n.focus(); }, 0);
 }
