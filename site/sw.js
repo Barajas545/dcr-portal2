@@ -36,7 +36,10 @@
    saved plans themselves live in the site's private file system (js/plan-library.js), never in this cache; no
    plans_list answer or download link is ever kept here. The library's project pictures (owner 2026-10-27) keep
    "dcr-portal2-v3" the same way: their module joins the list; the pictures themselves live in IndexedDB
-   (js/plan-pictures.js), never here - Storage is never cached. */
+   (js/plan-pictures.js), never here - Storage is never cached. The contact pictures (the Books program, release A3) keep
+   "dcr-portal2-v3" the same way: Search draws them, so the avatar and its signing module join the list (no money code:
+   the contact card, which changes a contact, is fetched when it is opened and stays out of it, as the money pages do);
+   the pictures themselves are signed Storage addresses, never kept here. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
@@ -73,6 +76,8 @@ const SHELL = [
   // the Plans Library (owner 2026-10-26): it opens with no signal
   "plans-library.html", "js/pages/plans-library.js", "js/plan-library.js", "js/plan-library-worker.js", "js/plan-handoff.js",
   "js/map/plan-library.js", "js/plan-pictures.js",
+  // the contacts' pictures (Books release A3): Search draws them
+  "js/pages/avatar.js", "js/repo/contacts.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

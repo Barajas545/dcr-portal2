@@ -25,10 +25,14 @@
    * not ready - and who it is on: waiting for an approval (only an admin or a manager with approve; an accountant
      NEVER approves - the bill page shows them no approve button) or for the paperwork;
    * already entered: Undo (rpc unmark_bills_entered / unmark_invoices_entered).
+   * the payees' pictures (Books release A3, pages/avatar.js): the bill's own vendor contact's picture, or initials,
+     before the payee; a contact editor's opens the contact card (its picture, phone and e-mail), as does [Add phone /
+     e-mail] when nobody can be reached - the desk is read again after a save.
 
    Only with the financials switch: anyone else is told so and sent home before anything is read. */
 
-import { boot, esc, toast, confirmBox, errorText, store, D } from "./shell.js";
+import { boot, esc, toast, confirmBox, errorText, store, D, can as allowed } from "./shell.js";
+import { avatarHtml, paintAvatars, openCard } from "./avatar.js";
 import * as books from "../repo/books.js";
 import * as filesRepo from "../repo/files.js";
 import {
@@ -216,6 +220,16 @@ function jump(id) {
 
 function kindTag(b) { return b.kindLabel ? '<span class="kind">' + h(b.kindLabel) + "</span>" : ""; }
 
+/* The payee with the bill's own vendor contact's picture (or initials) before it: a contact editor's opens the card. */
+function vendorContact(x) {
+  return x && x.vendorContactId != null && state.d && state.d.links ? state.d.links.contacts.get(String(x.vendorContactId)) || null : null;
+}
+function payeeHtml(x, words, shown) {
+  if (!words) return h(shown);
+  return '<span class="av-name">' + avatarHtml(vendorContact(x), { size: 28, name: words, edit: allowed(state.me, "contacts") }) +
+    '<span class="av-t">' + h(words) + "</span></span>";
+}
+
 function billRow(b, opts) {
   const o = opts || {};
   const late = o.entered ? "" : lateText(b.lateBy);
@@ -311,7 +325,7 @@ function pile(c, can, which) {
   rows.forEach((b) => {
     const open = String(state.openCheck) === String(b.id);
     s += '<tr class="ck-row" data-open="' + h(b.id) + '" tabindex="0" aria-expanded="' + open + '">' +
-      '<td><div class="ck-payee">' + h(b.payee || "(no payee on file)") + "</div>" +
+      '<td><div class="ck-payee">' + payeeHtml(b, b.payee, "(no payee on file)") + "</div>" +
         '<div class="ck-for">' + h(b.memo || b.projectLabel || "") + (b.partial ? '<span class="ck-part">part paid</span>' : "") + "</div></td>" +
       '<td class="hide-sm">' + methodChip(b.payMethod) + "</td>" +
       '<td class="num"><b>' + money(b.owed) + "</b>" + (b.partial ? '<div class="ck-for">of ' + money(b.approvedFor) + "</div>" : "") + "</td>" +
@@ -403,7 +417,7 @@ function checksToTell(c, can) {
   if (!c.toTell.length) return s + '<div class="ac-none">Everyone with a check or cash waiting has been told.</div></div>';
   c.toTell.forEach((t) => {
     const k = state.tell[t.paymentId] || {};
-    s += '<div class="ck-tell"><div class="top"><div><span class="ck-payee">' + h(t.payee || "(no payee)") + "</span>" +
+    s += '<div class="ck-tell"><div class="top"><div><span class="ck-payee">' + payeeHtml(t, t.payee, "(no payee)") + "</span>" +
       '<div class="ck-for">' + (t.isCash ? "Cash" + (t.checkNumber ? " · " + h(t.checkNumber) : "") : "Check #" + h(t.checkNumber)) +
         " · " + h(day(t.writtenDate)) + '<span class="ck-method' + (t.isCash ? " cash" : "") + '">' + (t.isCash ? "cash" : "check") + "</span></div>" +
       '<div class="ck-for">' + h(t.projectLabel) + "</div></div>" +
@@ -414,8 +428,11 @@ function checksToTell(c, can) {
     }
     const w = k.contact || {};
     if (!w.email && !w.phone) {
+      const vc = vendorContact(t);
       s += '<div class="ck-how none">No email or phone on file for them.</div><div class="ck-none-note">The payment is ready and waiting. ' +
-        "Add a contact in DCR Desktop 2, or tell them next time they call.</div>";
+        (vc && !vc.deleted_at && allowed(state.me, "contacts") ? "Add their phone or e-mail here, or tell them next time they call.</div>" +
+          '<div class="ck-acts"><button type="button" class="ac-b" data-reach="' + h(vc.id) + '">Add phone / e-mail</button></div>'
+          : "Add a contact in DCR Desktop 2, or tell them next time they call.</div>");
     } else {
       s += '<div class="ck-how ' + (w.needsConfirming ? "guess" : "certain") + '">' + h(w.why || "") + "</div>" +
         '<div class="ck-none-note">' + (w.email ? "Email: " + h(w.email) : "") + (w.email && w.phone ? " · " : "") + (w.phone ? "Phone: " + h(w.phone) : "") + "</div>";
@@ -756,15 +773,12 @@ function wireChecks() {
   box.querySelectorAll(".ck-panel").forEach((p) => p.addEventListener("click", (e) => e.stopPropagation()));
 
   box.querySelectorAll("[data-load]").forEach((btn) => btn.addEventListener("click", () => {
-    const pid = btn.getAttribute("data-load");
-    const t = state.d.checks.toTell.find((x) => String(x.paymentId) === String(pid));
-    if (!t) return;
-    const contact = resolvePayee(t, state.d.links);
-    /* THIS payment's message, never the bill's balance: the amount on a pick-up notice is one piece of paper. */
-    const message = pickupMessage({ company: contact.company || t.vendorCompany, payee: t.payee, amount: t.amount, checkNumber: t.checkNumber,
-      projectLabel: t.projectLabel, invoiceNumber: t.invoiceNumber, isCash: t.isCash, from: company() });
-    state.tell[pid] = { loaded: true, contact, message };
-    render();
+    if (tellFor(btn.getAttribute("data-load"))) render();
+  }));
+  // the payees' pictures; the card from a picture or from [Add phone / e-mail] (Books release A3)
+  paintAvatars(box, { me: state.me, onSaved: contactSaved });
+  box.querySelectorAll("[data-reach]").forEach((btn) => btn.addEventListener("click", () => {
+    openCard(btn.getAttribute("data-reach"), { me: state.me, onSaved: contactSaved }).catch((e) => toast(errorText(e), "error"));
   }));
   box.querySelectorAll("[data-mail]").forEach((a) => a.addEventListener("click", (e) => {
     e.preventDefault();
@@ -849,6 +863,35 @@ async function doWriteCheck() {
   state.refused = null;
   toast((DONE_WORD[method] || "Check #" + number) + " recorded.", "ok");
   await load();
+}
+
+/** How to reach the payee of payment `pid`, and THIS payment's message -> whether it was found. */
+function tellFor(pid) {
+  const t = state.d && state.d.checks.toTell.find((x) => String(x.paymentId) === String(pid));
+  if (!t) return false;
+  const contact = resolvePayee(t, state.d.links);
+  /* THIS payment's message, never the bill's balance: the amount on a pick-up notice is one piece of paper. */
+  const message = pickupMessage({ company: contact.company || t.vendorCompany, payee: t.payee, amount: t.amount, checkNumber: t.checkNumber,
+    projectLabel: t.projectLabel, invoiceNumber: t.invoiceNumber, isCash: t.isCash, from: company() });
+  state.tell[pid] = { loaded: true, contact, message };
+  return true;
+}
+
+/* A contact's picture, phone or e-mail was saved from the card: the desk is read again, and the payees already looked
+   up are looked up again (a phone just added is offered at once). */
+let reloading = null;
+function contactSaved() {
+  if (reloading) return reloading;
+  const open = Object.keys(state.tell).filter((k) => state.tell[k] && state.tell[k].loaded);
+  reloading = (async () => {
+    try {
+      await load();
+      if (!state.d) return;
+      open.forEach((k) => { if (!tellFor(k)) delete state.tell[k]; });
+      if (open.length) render();
+    } finally { reloading = null; }
+  })();
+  return reloading;
 }
 
 async function load() {

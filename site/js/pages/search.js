@@ -7,13 +7,16 @@
    .takeoff file gets 📐 beside it, opening takeoff-web at its number (js/pages/plan-buttons.js, one
    plans_for call for the projects shown; everyone who sees the project sees it; nothing when the
    broker does not answer). For the people who see prices 📐 opens the project's plan files (open, or save on this
-   device: the Plans Library), and this page keeps the saved ones up to date (keepPlansFresh). */
+   device: the Plans Library), and this page keeps the saved ones up to date (keepPlansFresh). A contact shows its
+   picture, or its initials (Books release A3: pages/avatar.js); a contact editor's opens the contact card (its picture,
+   phone and e-mail). */
 
-import { boot, el, esc, errorText, qs, setQs, maskFor, seesPrices } from "./shell.js";
+import { boot, el, esc, errorText, qs, setQs, maskFor, seesPrices, can } from "./shell.js";
 import * as searchRepo from "../repo/search.js";
 import * as projectsRepo from "../repo/projects.js";
 import * as filesRepo from "../repo/files.js";
 import { paintPlans, keepPlansFresh } from "./plan-buttons.js";
+import { avatarHtml, paintAvatars } from "./avatar.js";
 
 let timer = null, seq = 0, numbers = {}, list = [], listReady = null, me = null, mask = function (t) { return t; };
 
@@ -40,8 +43,13 @@ function itemHtml(it) {
   const contact = [];
   if (it.email) contact.push('<a href="mailto:' + esc(it.email) + '">' + esc(it.email) + "</a>");
   if (it.phone) contact.push('<a href="tel:' + esc(String(it.phone).replace(/[^\d+]/g, "")) + '">' + esc(it.phone) + "</a>");
-  return '<div class="se-item"><div class="se-title">' + esc(it.title) + "</div>" +
-    (it.sub || contact.length ? '<div class="se-sub">' + [esc(it.sub || "")].concat(contact).filter(Boolean).join(" · ") + "</div>" : "") + "</div>";
+  const words = '<div class="se-title">' + esc(it.title) + "</div>" +
+    (it.sub || contact.length ? '<div class="se-sub">' + [esc(it.sub || "")].concat(contact).filter(Boolean).join(" · ") + "</div>" : "");
+  if (it.contact) {
+    return '<div class="se-item se-contact">' + avatarHtml(it.contact, { size: 40, edit: can(me, "contacts") }) +
+      '<span class="se-txt">' + words + "</span></div>";
+  }
+  return '<div class="se-item">' + words + "</div>";
 }
 
 async function paintThumbs(my) {
@@ -88,6 +96,8 @@ async function run(q) {
     }).join("");
     paintThumbs(my);
     paintPlans(el("seResults"), me, function () { return my === seq; });
+    // the contacts' pictures (initials until they are signed); a contact editor's opens the card, then searches again
+    paintAvatars(el("seResults"), { me: me, onSaved: function () { setTimeout(function () { run(el("seInput").value.trim()); }, 0); } });
   } catch (e) {
     if (my !== seq) return;
     el("seNote").textContent = "";

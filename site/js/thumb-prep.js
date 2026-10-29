@@ -10,10 +10,14 @@
                               first HEAD_BYTES (a large XMP, ICC or Photoshop block) is walked on segment by segment,
                               and a HEIC whose meta box lies further on (after its image data) box by box, with small
                               reads at most SCAN_BYTES into the file;
-   * fitSize(w, h)            the size it is drawn at (never larger than it was);
+   * fitSize(w, h, maxSide)   the size it is drawn at (never larger than it was; maxSide: MAX_SIDE when not given);
+   * squareCrop(w, h)         the centre square of a w x h picture (the shorter side): {sx, sy, side};
    * looksLikeSvg(head)       an SVG or XML text, whatever its name and type say;
    * outputFor(mime, alpha)   {mime, ext}: image/png + .png only for a PNG, WebP or GIF with transparency;
-   * prepare(file)            -> {blob, mime, ext, width, height}, or throws a sentence (err.message).
+   * prepare(file, opts)      -> {blob, mime, ext, width, height}, or throws a sentence (err.message). opts (the
+                              defaults are the project picture's, unchanged): maxSide (MAX_SIDE) and square (false).
+                              square: true is a contact picture (the Books plan §4.2, Desktop 2's prepare_square):
+                              the centre square, drawn at exactly maxSide x maxSide, always a JPEG, flattened on white.
    Browser-only for prepare (createImageBitmap, canvas); the rest is pure (node tests import it). */
 
 export const MAX_SIDE = 800;
@@ -139,11 +143,19 @@ export async function sizeOf(file, head) {
   return null;
 }
 
-/** The size a w × h picture is drawn at: at most MAX_SIDE on the longer side, never enlarged. */
-export function fitSize(w, h) {
+/** The size a w × h picture is drawn at: at most maxSide (MAX_SIDE) on the longer side, never enlarged. */
+export function fitSize(w, h, maxSide) {
   const W = Math.max(1, Math.round(Number(w) || 0)), H = Math.max(1, Math.round(Number(h) || 0));
-  const scale = Math.min(1, MAX_SIDE / Math.max(W, H));
+  const side = Number(maxSide) > 0 ? Number(maxSide) : MAX_SIDE;
+  const scale = Math.min(1, side / Math.max(W, H));
   return { width: Math.max(1, Math.round(W * scale)), height: Math.max(1, Math.round(H * scale)) };
+}
+
+/** The centre square of a w × h picture (cover: the shorter side), in the picture's own pixels. */
+export function squareCrop(w, h) {
+  const W = Math.max(1, Math.round(Number(w) || 0)), H = Math.max(1, Math.round(Number(h) || 0));
+  const side = Math.min(W, H);
+  return { sx: Math.floor((W - side) / 2), sy: Math.floor((H - side) / 2), side };
 }
 
 /** Text that is an SVG (or any XML), whatever the file says it is. */
@@ -195,14 +207,19 @@ function encode(canvas, mime) {
   return new Promise((resolve) => canvas.toBlob(resolve, mime, JPEG_QUALITY));
 }
 
-/** The picture to upload: {blob, mime, ext, width, height}. Throws a sentence for anything it will not take. */
-export async function prepare(file) {
+/** The picture to upload: {blob, mime, ext, width, height}. Throws a sentence for anything it will not take.
+    opts: {maxSide, square} (see the header; without them: the project picture, as before). */
+export async function prepare(file, opts) {
+  const o = opts || {};
+  const square = o.square === true;
+  const maxSide = Number(o.maxSide) > 0 ? Math.round(Number(o.maxSide)) : MAX_SIDE;
+  const what = square ? "a contact picture" : "the project picture";
   if (!file || !file.size) throw bad("That file is empty.");
   if (file.size > MAX_BYTES) throw bad("That picture is larger than 40 MB: pick a smaller one.");
   const type = String(file.type || "").toLowerCase();
-  if (type === "image/svg+xml" || /\.svgz?$/i.test(nameOf(file))) throw bad("SVG drawings can't be the project picture: use a photo (JPEG, PNG, WebP or HEIC).");
+  if (type === "image/svg+xml" || /\.svgz?$/i.test(nameOf(file))) throw bad("SVG drawings can't be " + what + ": use a photo (JPEG, PNG, WebP or HEIC).");
   const head = await headOf(file);
-  if (looksLikeSvg(new TextDecoder().decode(head.slice(0, 2048)))) throw bad("SVG drawings can't be the project picture: use a photo (JPEG, PNG, WebP or HEIC).");
+  if (looksLikeSvg(new TextDecoder().decode(head.slice(0, 2048)))) throw bad("SVG drawings can't be " + what + ": use a photo (JPEG, PNG, WebP or HEIC).");
   const size = await sizeOf(file, head);
   if (!size) throw bad("That file is not a picture DCR can use: pick a JPEG, PNG, WebP, GIF or HEIC photo.");
   if (size.width * size.height > MAX_PIXELS) throw bad("That picture is too large (more than 60 megapixels): pick a smaller one.");
@@ -213,19 +230,27 @@ export async function prepare(file) {
   }
   const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
   if (!sw || !sh || sw * sh > MAX_PIXELS) { if (src.close) src.close(); throw bad("That picture is too large (more than 60 megapixels): pick a smaller one."); }
-  const fit = fitSize(sw, sh);
+  const fit = square ? { width: maxSide, height: maxSide } : fitSize(sw, sh, maxSide);
   const canvas = canvasOf(fit.width, fit.height);
   const g = canvas.getContext("2d");
-  g.drawImage(src, 0, 0, fit.width, fit.height);
+  if (square) {
+    // the centre square, on white (a JPEG has no transparency: a see-through corner becomes white, not black)
+    const c = squareCrop(sw, sh);
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, fit.width, fit.height);
+    g.drawImage(src, c.sx, c.sy, c.side, c.side, 0, 0, fit.width, fit.height);
+  } else {
+    g.drawImage(src, 0, 0, fit.width, fit.height);
+  }
   if (src.close) src.close();
   let alpha = false;
-  if (size.type === "image/png" || size.type === "image/webp" || size.type === "image/gif") {
+  if (!square && (size.type === "image/png" || size.type === "image/webp" || size.type === "image/gif")) {
     const px = g.getImageData(0, 0, fit.width, fit.height).data;
     for (let i = 3; i < px.length; i += 4) if (px[i] < 255) { alpha = true; break; }
   }
   const out = outputFor(size.type, alpha);
   let target = canvas;
-  if (out.mime === "image/jpeg" && size.type !== "image/jpeg" && size.type !== "image/heic") {
+  if (!square && out.mime === "image/jpeg" && size.type !== "image/jpeg" && size.type !== "image/heic") {
     // a JPEG has no transparency: a see-through corner of a PNG becomes white, not black
     target = canvasOf(fit.width, fit.height);
     const t = target.getContext("2d");

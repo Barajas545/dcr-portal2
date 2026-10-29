@@ -2076,6 +2076,11 @@ section = "The Books, release A: the money files - a bill's document and extras,
 // ===========================================================================================
 await (await import("./schema-check-p8-files.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "Books release A3: contact pictures and a contact's reach (repo/contacts.js, migration 20261030000200_contacts_pictures_vendors)";
+// ===========================================================================================
+await (await import("./schema-check-p8-contacts.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

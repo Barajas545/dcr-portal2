@@ -79,6 +79,7 @@ const EDIT = {
   files: ["admin", "manager", "accountant", "lead", "field"],
   all_files: ["admin", "manager"],
   location: ["admin", "manager", "accountant", "lead", "field"],     // set_project_location: any active non-viewer
+  contacts: ["admin", "manager", "accountant"],                      // app.can_edit('contacts'): a picture, a phone, an e-mail
 };
 
 /* The areas a person's switch decides (migration 20261028000100_estimator.sql, M5b): they only hide buttons, the
