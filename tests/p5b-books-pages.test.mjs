@@ -68,7 +68,9 @@ test("Q13: the CSV is built in the browser (BOM, CRLF, the formula guard) - no Q
 });
 
 test("the CSS takes the tables out of styles.css's one-line clipped cells (phones never scroll sideways)", () => {
-  const h = site("accounting.html");
+  // the Books' look moved out of accounting.html into css/books.css (the Books program, release A), shared by every Books page
+  assert.ok(site("accounting.html").includes('<link rel="stylesheet" href="css/books.css" />') && !/<style>/.test(site("accounting.html")), "accounting.html links css/books.css");
+  const h = site("accounting.html") + site("css/books.css");
   assert.match(h, /\.ac-t th, \.ac-t td \{ white-space: normal; max-width: none; overflow: visible; text-overflow: clip; \}/);
   assert.match(h, /@media \(max-width: 560px\) \{\s*table\.ac-t \{ table-layout: fixed; \}/);
   assert.ok(!/class="msg"/.test(site("js/pages/bill.js")), "styles.css hides .msg until shown");
@@ -76,7 +78,7 @@ test("the CSS takes the tables out of styles.css's one-line clipped cells (phone
 
 test("review fix: the open check panel spans the columns shown (a phone hides How - a colspan of 4 added an empty column) and The Books names the real rule, never a 'money switch'", () => {
   const acc = code(site("js/pages/accounting.js"));
-  const page = site("accounting.html");
+  const page = site("accounting.html") + site("css/books.css");
   assert.ok(acc.includes("<td class=\"ck-cell\" colspan=\"' + panelSpan() + '\">"), "the panel cell's span is worked out");
   assert.ok(acc.includes('const NARROW = "(max-width: 560px)";') && acc.includes("matchMedia(NARROW).matches ? 3 : 4"), "3 on a phone, 4 on a desk");
   assert.ok(page.includes("@media (max-width: 560px)") && page.includes(".ac-t .hide-sm { display: none; }"), "the page hides How at the same width");

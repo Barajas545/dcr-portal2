@@ -214,6 +214,8 @@ async function main() {
         // the project's money tabs
         "accounting.html", "bill.html?id=1", "ledger.html", "report-expenses.html?id=268", "project.html?id=268&tab=expenses",
         "project.html?id=268&tab=payments",
+        // the Books program, release A: the check register
+        "books-checks.html",
         // P5c: the office lists
         "leads.html", "vehicles.html", "vehicles.html?id=1", "marketing.html",
         // P5c sales (Q10: the admin holds the Sales estimates switch): the hub, a saved estimate on its last step's
@@ -242,7 +244,7 @@ async function main() {
       // send them home: what is checked is every page as it was drawn)
       const seen5b = [];
       for (const path of ["accounting.html", "bill.html?id=1", "ledger.html", "report-expenses.html?id=268", "project.html?id=268&tab=expenses",
-        "project.html?id=268&tab=payments"]) {
+        "project.html?id=268&tab=payments", "books-checks.html"]) {
         await le.goto(base + "/" + path, 1800);
         const t = await le.eval("document.documentElement.outerHTML");
         if (/\$\s?\d/.test(t)) seen5b.push(path + ": " + ((t.match(/.{0,30}\$\s?\d.{0,12}/) || [""])[0]));

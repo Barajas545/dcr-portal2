@@ -103,7 +103,10 @@ export async function run(h) {
   await check("P5b books: the names the pages use - books_desk's columns, the markers, the payments' columns, the RPCs' arguments", async () => {
     for (const c of books.DESK_COLS.split(",").map((x) => x.trim())) ok(catalog.tables.books_desk.cols[c], "books_desk." + c);
     for (const c of books.BILL_COLS.split(",").map((x) => x.trim())) ok(catalog.tables.bills.cols[c], "bills." + c);
-    for (const c of books.PAYMENT_COLS.split(",").map((x) => x.trim())) ok(catalog.tables.payments.cols[c], "payments." + c);
+    // the payments' check register stamps (the Books program, release A) once the database has them; before it, the
+    // columns the page asks again with (repo/books.js paymentRows)
+    const payCols = catalog.tables.payments.cols.voided_at ? books.PAYMENT_COLS : books.PAYMENT_COLS_BEFORE;
+    for (const c of payCols.split(",").map((x) => x.trim())) ok(catalog.tables.payments.cols[c], "payments." + c);
     for (const c of ["qbo_entered_at", "qbo_entered_by", "qbo_ref", "sent_date", "status"]) ok(catalog.tables.invoices.cols[c], "invoices." + c);
     const args = (f) => (catalog.functions[f] || []).map((x) => x.args.map((a) => a.name));
     same(args("approve_bill"), [["id", "pay_method", "version", "note"]], "approve_bill");

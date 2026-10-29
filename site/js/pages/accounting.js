@@ -9,9 +9,11 @@
      (bills to key in -> on the books, invoices to key in -> on the books);
    * what needs doing: one line each, with the money, in the order it makes sense to do it;
    * bills to pay: one queue, each row saying how the approver authorised it (check, cash, either); a row opens the
-     check desk - payee (<= 200) and memo (<= 100) prefilled, the amount capped at the approved amount still owed
-     (the database refuses more: acceptance check 2), the check number, the documents behind it, what is already
-     paid - and records the payment (money editors: admin, or a manager / accountant with financials);
+     check desk (js/pages/pay-panel.js, the Books program's release A) - payee (<= 200) and memo (<= 100) prefilled,
+     the amount capped at the approved amount still owed (the database refuses more: acceptance check 2), the check
+     number prefilled from the register's next one, the date written on it, the payment's files (a photo of the check,
+     a pasted screenshot of the transfer), the documents behind it, what is already paid - and records the payment
+     (money editors: admin, or a manager / accountant with financials);
    * pay by bank transfer or card (owner decision 2026-10-21): the bills approved to be paid by bank transfer (ACH or
      wire) or by card, on a list of their own with the same panel - no check number (the bank's or the card's
      confirmation instead, optional) and nobody to tell (only a check or cash is picked up);
@@ -34,13 +36,12 @@
 import { boot, esc, toast, confirmBox, errorText, store, D, can as allowed } from "./shell.js";
 import { avatarHtml, paintAvatars, openCard } from "./avatar.js";
 import * as books from "../repo/books.js";
-import * as filesRepo from "../repo/files.js";
+import * as panel from "./pay-panel.js";
 import {
-  fmtMoney, plural, daysLate, payMethodWords, paymentLabel, parseAmount, amountAllowed, resolvePayee, pickupMessage, toCsv,
-  BILL_COLUMNS, INVOICE_COLUMNS, csvName, cleanRef, refusedLines, MEMO_MAX, PAYEE_MAX, CHECK_NUMBER_MAX, REF_MAX, TOLD_HOWS,
-  billHref, seesBooks, refField,
+  fmtMoney, plural, daysLate, resolvePayee, pickupMessage, toCsv,
+  BILL_COLUMNS, INVOICE_COLUMNS, csvName, cleanRef, refusedLines, REF_MAX, TOLD_HOWS,
+  billHref, seesBooks,
 } from "../map/books.js";
-import { SIGNED_DOC_S } from "../map/files.js";
 import { fmtDay } from "../map/pacific.js";
 
 const VIEW_KEY = "dcr2_books_view";
@@ -286,18 +287,8 @@ function refusedBox(which) {
 
 /* ── checks ── */
 
-/* a bill's pay method (check | cash | both | transfer | card) or one payment's method (check | cash | ach | wire | card) */
-const METHOD_CHIP = { check: ["check", "check"], cash: ["cash", "cash"], both: ["either", "check or cash"], transfer: ["transfer", "bank transfer"],
-  card: ["card", "card"], ach: ["transfer", "ACH"], wire: ["transfer", "wire"] };
-function methodChip(m) {
-  const x = METHOD_CHIP[m];
-  return x ? '<span class="ck-method ' + h(x[0]) + '">' + h(x[1]) + "</span>" : '<span class="ck-method none">not set</span>';
-}
-/* the panel's "how are you paying this one?" buttons, and what the record button says */
-const HOW_LABEL = { check: "By check", cash: "In cash", ach: "By ACH", wire: "By wire", card: "By card" };
-const WRITE_LABEL = { check: "✓ Record the check", cash: "✓ Record the cash payment", ach: "✓ Record the ACH transfer",
-  wire: "✓ Record the wire transfer", card: "✓ Record the card payment" };
-const DONE_WORD = { cash: "Cash payment", ach: "ACH transfer", wire: "Wire transfer", card: "Card payment" };
+/* a bill's pay method or one payment's method, as a chip (js/pages/pay-panel.js) */
+const methodChip = panel.methodChip;
 
 const PILES = {
   pay: { key: "toPay", id: "secPay", title: "Bills to pay", act: "Pay",
@@ -336,78 +327,9 @@ function pile(c, can, which) {
   return s + "</tbody></table></div>";
 }
 
-/* The panel: what to write on the check, and everything it is written against. */
+/* The panel: what to write on the check, and everything it is written against (js/pages/pay-panel.js). */
 function checkPanel(b, can, which) {
-  const d = state.detail;
-  if (!d || String(d.bill.id) !== String(b.id)) return '<div class="ck-panel"><div class="ac-none">Loading the paperwork…</div></div>';
-  if (which === "decide") {
-    return '<div class="ck-panel"><div class="ac-note">This bill was approved for ' + money(b.approvedFor) + ", but nobody recorded how to " +
-      "pay it — by check, in cash, by bank transfer or by card. A manager or admin sets that on the bill — it is an authorisation, not a bookkeeping choice." +
-      '</div><div class="ck-acts"><a class="ac-b" href="' + h(billHref(b.id)) + '">Open the bill &rarr;</a><button type="button" class="ac-b" id="ckClose">Close</button></div></div>';
-  }
-  const allowed = b.allowed || [];
-  const sent = which === "send";
-  // the reference field as the method picked asks for it (one allowed: that one; none picked yet: by the bill's pile)
-  const rf = refField(allowed.length === 1 ? allowed[0] : "", allowed);
-  let s = '<div class="ck-panel" id="ckPanel">';
-  s += '<div class="ck-grid">' +
-    '<div class="ck-f"><label for="ckPayee">' + (sent ? "Paid to" : "Make it out to") + '</label><input id="ckPayee" class="big" value="' + h(b.payee) + '" maxlength="' + PAYEE_MAX + '">' +
-      (b.payeeNote ? '<div class="sub warn">' + h(b.payeeNote) + "</div>"
-        : b.payeePerson && b.payeePerson !== b.payee ? '<div class="sub">Their contact person: ' + h(b.payeePerson) + ".</div>" : "") + "</div>" +
-    '<div class="ck-f"><label for="ckAmount">Amount</label><input id="ckAmount" class="big" inputmode="decimal" value="' + h(Number(b.owed).toFixed(2)) + '">' +
-      '<div class="sub">' + (b.alreadyPaid > 0 ? money(b.alreadyPaid) + " already paid of " + money(b.approvedFor) + " approved."
-        : "Approved for " + money(b.approvedFor) + ".") + "</div></div>" +
-    '<div class="ck-f"><label for="ckNumber" id="ckRefLab">' + h(rf.label) + '</label><input id="ckNumber" placeholder="' + h(rf.placeholder) + '" maxlength="' + CHECK_NUMBER_MAX + '">' +
-      '<div class="sub" id="ckRefSub">' + h(rf.sub) + "</div></div></div>" +
-    (allowed.length > 1
-      ? '<div class="ck-f" style="margin-bottom:14px"><span class="lab">' + (sent ? "How did the bank send it?" : "How are you paying this one?") +
-        '</span><div class="ck-methods" id="ckHow">' +
-        allowed.map((m) => '<button type="button" class="ck-mbtn" data-how="' + h(m) + '" aria-pressed="false">' + h(HOW_LABEL[m] || m) + "</button>").join("") +
-        '</div><div class="sub">' + (sent ? "Approved as a bank transfer: ACH or wire, whichever the bank sent. Each payment is recorded separately."
-          : "Approved either way. Pay part of it now and the rest the other way if that suits — each payment is recorded separately.") + "</div></div>"
-      : '<input type="hidden" id="ckHowFixed" value="' + h(allowed[0] || "") + '">' +
-        (sent ? '<div class="ck-f" style="margin-bottom:14px"><span class="lab">How</span><div>' + methodChip(allowed[0]) +
-          ' <span class="sub">Approved to be paid ' + h(payMethodWords(b.payMethod)) + ".</span></div></div>" : "")) +
-    '<div class="ck-f" style="margin-bottom:14px"><label for="ckMemo">Memo — what the payment is for</label><input id="ckMemo" value="' + h(b.memo) +
-      '" maxlength="' + MEMO_MAX + '"></div>';
-
-  s += '<div class="ck-docs"><h4>What you are paying against</h4>';
-  if (d.quote) {
-    s += '<div class="ck-commit"><b>' + h(d.quote.kind) + "</b> — " + h(d.quote.vendor || b.vendor) +
-      (d.quote.amount !== null && d.quote.amount !== undefined ? " · " + money(d.quote.amount) : "") +
-      (d.quote.status ? " · " + h(d.quote.status) : "") + '<div class="ck-for">This bill names this ' + h(d.quote.kind.toLowerCase()) + ".</div></div>";
-  }
-  if (d.files.length) {
-    d.files.forEach((f, i) => {
-      s += '<div class="ck-doc">' + (f.cloud && f.storagePath
-        ? '<button type="button" class="lnk" data-doc="' + i + '">' + h(f.name) + "</button>"
-        : '<span class="nm">' + h(f.name) + "</span>") +
-        '<span class="tag">' + (f.primary ? "the bill's document" : "attached to the bill") + (f.cloud ? "" : " · on the office computers") + "</span></div>";
-    });
-    // images are shown here; a PDF opens in its own tab (the page's policy lets no other site's file into a frame)
-    if (d.files.some((f) => isImage(f) && f.cloud && f.storagePath)) s += '<div class="ck-viewer" id="ckViewer">Pick a picture to look at it here.</div>';
-    else s += '<div class="ck-none-note">A PDF opens in its own tab.</div>';
-  } else {
-    s += '<div class="ck-none-note">No files are attached to this bill.</div>';
-  }
-  s += '<div style="margin-top:10px"><a class="ac-b" href="' + h(billHref(b.id)) + '">Open the full bill screen &rarr;</a></div></div>';
-
-  const written = d.payments || [];
-  if (written.length) {
-    const paid = written.reduce((n, w) => n + w.amount, 0);
-    s += '<div class="ck-docs"><h4>Already paid on this bill</h4>';
-    written.forEach((w) => {
-      const ref = w.method === "check" ? (w.checkNumber ? " #" + w.checkNumber : "") : w.reference ? " · " + w.reference : "";
-      s += '<div class="ck-doc"><span class="nm">' + h(paymentLabel(w.method) + ref) + " · " + money(w.amount) +
-        "</span>" + methodChip(w.method) + '<span class="tag">' + h(day(w.paidDate)) +
-        (w.collectable ? (w.toldAt ? " · told " + h(w.toldHow) + " " + h(day(w.toldDay)) : " · not told yet") : "") + "</span></div>";
-    });
-    s += '<div class="ck-doc"><span class="nm">' + money(paid) + " paid · " + money(b.owed) + " still owed</span></div></div>";
-  }
-  s += '<div class="ck-acts">' +
-    (can.pay ? '<button type="button" class="btn-accept" id="ckWrite">&#10003; Record the payment</button>' : "") +
-    '<button type="button" class="ac-b" id="ckClose">Close</button><span class="ac-msg" id="ckMsg"></span></div>';
-  return s + "</div>";
+  return panel.checkPanel(b, can, which, { detail: state.detail, me: state.me, today: state.d && state.d.today });
 }
 
 /* ── telling them it is ready ── */
@@ -480,6 +402,7 @@ function todoBlock(d) {
 
 function render() {
   const d = state.d, can = d.can || {};
+  panel.snapshot();          // the open panel's typed values and picked files outlive the redraw
   summary(d);
   let s = todoBlock(d);
   s += pile(d.checks, can, "pay");
@@ -680,76 +603,27 @@ async function doUnmark(which, id) {
 
 /* ── the check desk ── */
 
-function chosenMethod() {
-  const fixed = document.getElementById("ckHowFixed");
-  if (fixed) return fixed.value || "";
-  const on = document.querySelector("#ckHow [data-how][aria-pressed='true']");
-  return on ? on.getAttribute("data-how") : "";
-}
-
-/* the methods the open panel offers (its buttons, or the one fixed method) */
-function panelMethods() {
-  const fixed = document.getElementById("ckHowFixed");
-  if (fixed) return fixed.value ? [fixed.value] : [];
-  return Array.from(document.querySelectorAll("#ckHow [data-how]")).map((x) => x.getAttribute("data-how"));
-}
-
-function paintMethod() {
-  const m = chosenMethod();
-  const lab = document.getElementById("ckRefLab"), sub = document.getElementById("ckRefSub"), num = document.getElementById("ckNumber");
-  if (!lab) return;
-  const rf = refField(m, panelMethods());
-  lab.textContent = rf.label;
-  if (sub) sub.textContent = rf.sub;
-  if (num) num.placeholder = rf.placeholder;
-  const go = document.getElementById("ckWrite");
-  if (go) {
-    go.textContent = WRITE_LABEL[m] || "✓ Record the payment";
-    go.disabled = !m;
+/* the open bill, as the pile shows it (the check desk or the "Pay by bank transfer or card" list) */
+function openBill() {
+  const c = state.d && state.d.checks;
+  if (!c || state.openCheck == null) return null;
+  for (const which of ["pay", "send", "decide"]) {
+    const b = (c[PILES[which].key] || []).find((x) => String(x.id) === String(state.openCheck));
+    if (b) return { b, which };
   }
-}
-
-function isImage(f) { return /^image\/(jpeg|png|gif|webp)$/i.test(f.mime || "") || /\.(jpe?g|png|gif|webp)$/i.test(f.name || ""); }
-
-async function showDoc(i) {
-  const d = state.detail;
-  const f = d && d.files[i];
-  const box = document.getElementById("ckViewer");
-  const image = !!f && isImage(f) && !!box;
-  if (!f) return;
-  if (box) box.textContent = "Opening…";
-  const w = image ? null : window.open("", "_blank");
-  try {
-    const url = await filesRepo.signedUrl(f.storagePath, SIGNED_DOC_S);
-    if (!url) throw new Error("No link for this file.");
-    if (image) {
-      box.innerHTML = "";
-      const img = document.createElement("img");
-      img.alt = f.name;
-      img.src = url;
-      box.appendChild(img);
-    } else {
-      if (w) w.location.href = url; else location.href = url;
-      if (box) box.textContent = f.name + " opened in a new tab.";
-    }
-  } catch (e) {
-    if (w) w.close();
-    if (box) box.textContent = errorText(e); else toast(errorText(e), "error");
-  }
+  return null;
 }
 
 function wireChecks() {
   const box = document.getElementById("acBody");
-  box.querySelectorAll("[data-doc]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); showDoc(Number(b.getAttribute("data-doc"))); }));
-  box.querySelectorAll("#ckHow [data-how]").forEach((b) => b.addEventListener("click", (e) => {
-    e.stopPropagation();
-    box.querySelectorAll("#ckHow [data-how]").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
-    paintMethod();
-  }));
-  paintMethod();
+  // the open panel (js/pages/pay-panel.js): its controls, the payment's files, recording it
+  const open = openBill();
+  panel.wirePanel(box, { bill: open ? open.b : null, which: open ? open.which : "", me: state.me, today: state.d.today, detail: state.detail,
+    onClose: () => { state.openCheck = null; state.detail = null; render(); },
+    onDone: async () => { state.openCheck = null; state.detail = null; state.refused = null; await load(); } });
   const openRow = async (tr) => {
     const id = tr.getAttribute("data-open");
-    if (String(state.openCheck) === String(id)) { state.openCheck = null; state.detail = null; render(); return; }
+    if (String(state.openCheck) === String(id)) { panel.resetPanel(); state.openCheck = null; state.detail = null; render(); return; }
     state.openCheck = id; state.detail = null; render();
     try {
       state.detail = await books.loadBill(id, state.me);
@@ -765,12 +639,6 @@ function wireChecks() {
     tr.addEventListener("click", () => openRow(tr));
     tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openRow(tr); } });
   });
-  const close = document.getElementById("ckClose");
-  if (close) close.addEventListener("click", (e) => { e.stopPropagation(); state.openCheck = null; state.detail = null; render(); });
-  const write = document.getElementById("ckWrite");
-  if (write) write.addEventListener("click", (e) => { e.stopPropagation(); doWriteCheck(); });
-  // the panel sits inside the row's table: a click in it must not close it
-  box.querySelectorAll(".ck-panel").forEach((p) => p.addEventListener("click", (e) => e.stopPropagation()));
 
   box.querySelectorAll("[data-load]").forEach((btn) => btn.addEventListener("click", () => {
     if (tellFor(btn.getAttribute("data-load"))) render();
@@ -820,49 +688,6 @@ function wireChecks() {
     toast("Marked told (" + how + ").", "ok");
     await load();
   }));
-}
-
-async function doWriteCheck() {
-  const msg = document.getElementById("ckMsg");
-  const b = state.d.checks.toPay.concat(state.d.checks.toSend).find((x) => String(x.id) === String(state.openCheck));
-  if (!b || state.busy) return;
-  const payee = (document.getElementById("ckPayee").value || "").trim();
-  const amount = parseAmount(document.getElementById("ckAmount").value);
-  const number = (document.getElementById("ckNumber").value || "").trim();
-  const memo = (document.getElementById("ckMemo").value || "").trim();
-  const method = chosenMethod();
-  const cash = method === "cash";
-  const allowed = amountAllowed(amount, b.owed);
-  const bad = !method ? (b.pile === "transfer_card" ? "Say whether the bank sent it by ACH or by wire." : "Say whether this is by check or in cash.")
-    : !number && method === "check" ? "Enter the check number."
-      : !Number.isFinite(amount) ? "That is not an amount. Type it like 4500.00."
-        : !allowed.ok ? allowed.reason : "";
-  if (bad) { msg.textContent = bad; msg.className = "ac-msg err"; return; }
-  const what = method === "check" ? "check #" + number + " for " + money(amount)
-    : (cash ? "a cash payment" : method === "card" ? "a card payment" : method === "ach" ? "an ACH transfer" : "a wire transfer") + " of " + money(amount) +
-      (!cash && number ? " (" + number + ")" : "");
-  const sure = await confirmBox("Record " + what + " to " + (payee || b.payee || "the vendor") + "?", { okText: "Record it" });
-  if (!sure) return;
-  state.busy = true;
-  const go = document.getElementById("ckWrite");
-  if (go) go.disabled = true;
-  msg.className = "ac-msg";
-  msg.textContent = "Recording…";
-  try {
-    await books.recordPayment(b, { amount: allowed.amount, method, checkNumber: number, payee: payee || b.payee, memo: memo || b.memo });
-  } catch (e) {
-    state.busy = false;
-    if (go) go.disabled = false;
-    msg.textContent = errorText(e);
-    msg.className = "ac-msg err";
-    return;
-  }
-  state.busy = false;
-  state.openCheck = null;
-  state.detail = null;
-  state.refused = null;
-  toast((DONE_WORD[method] || "Check #" + number) + " recorded.", "ok");
-  await load();
 }
 
 /** How to reach the payee of payment `pid`, and THIS payment's message -> whether it was found. */
@@ -936,6 +761,8 @@ async function start() {
     if (state.mq.addEventListener) state.mq.addEventListener("change", respan); else if (state.mq.addListener) state.mq.addListener(respan);
   }
   window.addEventListener("resize", respan);
+  // the payment files still on their way (js/pages/pay-panel.js: the durable upload queue's lines)
+  panel.watchQueue(document.getElementById("ckQueue")).catch(() => {});
   await load();
 }
 

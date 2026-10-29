@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Check register</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/books.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="ac" id="rgRoot">
+      <nav class="ac-tabs" aria-label="The office's money pages">
+        <a href="accounting.html">The Books</a>
+        <a href="books-checks.html" aria-current="page">Checks</a>
+        <a href="ledger.html">Expenses &amp; receipts</a>
+      </nav>
+      <div class="rg-print-head" id="rgPrintHead"></div>
+      <div class="ac-head">
+        <h2>Check register</h2>
+        <span class="who" id="rgGreeting"></span>
+      </div>
+      <p class="ac-lead rg-noprint">
+        Every check written, voided or spoiled, one line per check. Mark a check picked up when the payee collects it,
+        and cleared when it shows on the bank statement. A missing number is flagged: spoil the blank, or find the check.
+        QuickBooks stays the official books.
+      </p>
+      <div id="rgBody"><div class="ac-none">Loading…</div></div>
+    </main>
+    <script type="module" src="js/pages/books-checks.js"></script>
+  </body>
+</html>

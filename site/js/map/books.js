@@ -18,6 +18,8 @@
    * checkCap / amountAllowed / parseAmount               how much may still be paid (the FROZEN approved amount minus
                                                           what is paid - the database's payment trigger is the gate);
    * suggestPayee / suggestMemo / pickupMessage / resolvePayee   what goes on the check and who is told;
+   * payDateBounds / payDateProblem                       the date written on a payment: the company's today - 400
+                                                          days to today + 31 (the Books program, release A; I11);
    * csvCell / toCsv / BILL_COLUMNS / INVOICE_COLUMNS     the QuickBooks hand-off (Q13: a MANUAL CSV): every cell
                                                           quoted, a formula-looking cell made text, a BOM, CRLF;
    * approvalsQueue(bills, ctx)                           the home page's "waiting for approval" card (approvers);
@@ -273,7 +275,9 @@ export function toBill(row, ctx) {
   return b;
 }
 
-/** A payment (to a vendor, against a bill). */
+/** A payment (to a vendor, against a bill). The check register's stamps (20261030000300_check_register: voided,
+    picked up, cleared - system code's only) come along when the database has them; a voided payment is never live:
+    it counts in no sum and nobody is told about it. */
 export function toPayment(row) {
   return {
     id: row.id,
@@ -293,7 +297,38 @@ export function toPayment(row) {
     toldHow: txt(row.pickup_told_how),
     // only a check or cash is picked up (and its payee told); a transfer or a card payment never is
     collectable: ["check", "cash"].includes(txt(row.method).toLowerCase()),
+    voidedAt: row.voided_at || null,
+    voidReason: txt(row.void_reason),
+    voided: !!row.voided_at,
+    live: !row.voided_at,
+    pickedUpAt: row.picked_up_at || null,
+    pickedUpDay: dayOf(row.picked_up_at),
+    pickedUpNote: txt(row.picked_up_note),
+    clearedOn: dayOf(row.cleared_on),
   };
+}
+
+/* The day written on a payment (I11; t01_payments_client): between the company's today - 400 days and today + 31 - a
+   post-dated check happens; the database refuses anything else (22023). */
+export const PAY_DAYS_BACK = 400;
+export const PAY_DAYS_AHEAD = 31;
+function addDayKey(k, n) {
+  const d = new Date(Date.UTC(+k.slice(0, 4), +k.slice(5, 7) - 1, +k.slice(8, 10) + n));
+  return d.toISOString().slice(0, 10);
+}
+/** {min, max} of the payment date picker, both "YYYY-MM-DD", from the company's `today`. */
+export function payDateBounds(today) {
+  const t = dayOf(today) || ymd(new Date());
+  return { min: addDayKey(t, -PAY_DAYS_BACK), max: addDayKey(t, PAY_DAYS_AHEAD), today: t };
+}
+/** "" when `day` may be written on a payment today, else the sentence. */
+export function payDateProblem(day, today) {
+  const d = dayOf(day);
+  const b = payDateBounds(today);
+  if (!DAY_RE.test(d)) return "Pick the date on the check (or the day it was sent).";
+  if (d < b.min) return "A payment can be dated at most " + PAY_DAYS_BACK + " days back (" + shortDay(b.min) + ", " + b.min.slice(0, 4) + ").";
+  if (d > b.max) return "A payment can be dated at most " + PAY_DAYS_AHEAD + " days ahead (" + shortDay(b.max) + ", " + b.max.slice(0, 4) + ").";
+  return "";
 }
 
 /** An invoice we sent (money in): amount = its lines, paid = its client payments. */
@@ -429,8 +464,8 @@ export function suggestMemo(b) {
 
 /** The checks and cash still to hand over (toPay: the check desk), the bank transfers and card payments still to send
     (toSend: the "Pay by bank transfer or card" list - no check number, nobody to tell), the approved bills nobody said
-    how to pay (toDecide), and who has not been told about a check or cash (toTell): {toPay, toSend, toDecide, toTell,
-    totals}. */
+    how to pay (toDecide), and who has not been told about a check or cash (toTell - never a voided payment, nor one
+    already picked up: the check register's stamps): {toPay, toSend, toDecide, toTell, totals}. */
 export function deskChecks(bills, payments) {
   const toPay = [], toSend = [], toDecide = [], toTell = [];
   const byBill = new Map();
@@ -454,7 +489,8 @@ export function deskChecks(bills, payments) {
       else toPay.push(entry);
     }
     for (const p of byBill.get(String(b.id)) || []) {
-      if (!p.collectable || p.toldAt) continue;
+      // a check or cash nobody was told about - never a voided one, nor one already picked up (the check register)
+      if (!p.collectable || p.toldAt || p.voided || p.pickedUpAt) continue;
       toTell.push({
         paymentId: p.id, version: p.version, billId: b.id, projectId: b.projectId, projectLabel: b.projectLabel,
         amount: p.amount, method: p.method, isCash: p.method === "cash",
@@ -650,7 +686,8 @@ export function buildDesk(rows, ctx) {
   (R.desk || []).forEach((r) => { const d = deskRow(r); if (d) desk.set(d.billId, d); });
   const payments = (R.payments || []).map(toPayment);
   const paid = new Map();
-  payments.forEach((p) => paid.set(String(p.billId), round(num(paid.get(String(p.billId))) + p.amount)));
+  // live payments only: a voided one is paid against no bill (books_desk's paid_total, which wins, says the same)
+  payments.forEach((p) => { if (p.live) paid.set(String(p.billId), round(num(paid.get(String(p.billId))) + p.amount)); });
   const ctx2 = { nameOf: c.nameOf, projects, contacts, paid, desk, today };
   const all = (R.bills || []).filter((r) => !r.deleted_at).map((r) => toBill(r, ctx2));
   const live = all.filter((b) => b.live);

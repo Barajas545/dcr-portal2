@@ -76,7 +76,9 @@
       estimate_item_id: null, quote_id: null, document_file_id: null, void: null, approved_by: null, approved_at: null, approved_amount: null,
       pay_method: null, approval_note: null, qbo_entered_at: null, qbo_entered_by: null, qbo_ref: null, created_at: null, created_by: null,
       updated_at: null, version: null, paid_total: null, payments_count: null, to_tell: null, owed: null, documented: null, state: null,
-      reason: null, pay_state: null, late_by: null, pay_pile: null } },
+      reason: null, pay_state: null, late_by: null, pay_pile: null,
+      // the Books program, release A (20261030000300_check_register): at the END
+      voided_count: null, at_office: null, last_paid_date: null } },
     pk: { books_desk: "id" },
     uuid: [],
     noAudit: ["books_desk"],
@@ -98,7 +100,13 @@
     const moneyEditor = (w) => w.active && (w.admin || ((w.role === "manager" || w.role === "accountant") && w.financials));
     const approver = (w) => w.active && (w.admin || (w.role === "manager" && !!(w.p && w.p.can_approve_payments) && w.financials));
     const billOf = (id) => rows.bills.find((b) => b.id === Number(id)) || null;
-    const paidOn = (id) => r2(rows.payments.filter((p) => p.bill_id === Number(id)).reduce((s, p) => s + Number(p.amount || 0), 0));
+    // the Books program, release A (20261030000300_check_register): a voided payment is paid against no bill - every
+    // sum takes the live ones only; the payments' register rules (void final, the stamps system code's, the date, the
+    // check number used once) are tools/fake/p8-register.js's, called at the triggers' places (NS.p5bPaymentRules)
+    const live = (p) => !p.voided_at;
+    const paidOn = (id) => r2(rows.payments.filter((p) => p.bill_id === Number(id) && live(p)).reduce((s, p) => s + Number(p.amount || 0), 0));
+    const more = (NS.p5bPaymentRules || []).map((mk) => mk(E)).filter(Boolean);
+    const payRule = (name, ...args) => more.forEach((x) => { if (typeof x[name] === "function") x[name](...args); });
     const fileIn = (fid, pid) => fid !== null && fid !== undefined && rows.files.some((f) => f.id === Number(fid) && f.project_id === pid && !f.deleted_at);
     const pt409 = (table, id, version) => new PgErr("PT409", "the " + (table === "bills" ? "bill" : "payment") + " was changed by someone else", 409,
       JSON.stringify({ table, id, version }));
@@ -129,6 +137,7 @@
     function canDelete(w, table, r) {
       if (!moneyEditor(w) || !projectVisible(w, r.project_id)) return false;
       if (table === "payments") {
+        payRule("beforeDelete", w, r);
         // M5b: a payment the payee was told about stays (the record of what they were told)
         if (r.pickup_told_at) throw rule("23514", "the payee was told this payment is ready to pick up: it cannot be deleted (clear the told mark first if they were not told)");
         return true;
@@ -169,7 +178,7 @@
         throw rule("23514", "the bill is approved for " + (b.pay_method === "transfer" ? "bank transfer" : b.pay_method) + " payment");
       }
       if (r.method === "check" && !trim(r.check_number)) throw rule("23514", "a check payment needs the check number");
-      const others = r2(rows.payments.filter((p) => p.bill_id === b.id && (!old || p.id !== old.id)).reduce((s, p) => s + Number(p.amount || 0), 0));
+      const others = r2(rows.payments.filter((p) => p.bill_id === b.id && live(p) && (!old || p.id !== old.id)).reduce((s, p) => s + Number(p.amount || 0), 0));
       if (others + Number(r.amount) > Number(b.approved_amount) + 1e-9) {
         throw Object.assign(rule("23514", "the payments would exceed the approved amount"), { details: "remaining: " + r2(Number(b.approved_amount) - others).toFixed(2) });
       }
@@ -188,9 +197,11 @@
         if (QBO.some((k) => set(r, k))) throw deny("an invoice is marked entered with mark_invoices_entered()");
       } else if (table === "payments") {
         if (PICKUP.some((k) => set(r, k))) throw deny("a payment is marked told by DCR Agents 2 or the books (payment_told), not by an update");
+        payRule("beforeInsert", w, r);
         tidyPayment(r);
         if (!r.paid_date) r.paid_date = today();
         payGate(r, null);
+        payRule("checkNumber", w, r, null);
       }
     }
     function guardUpdate(w, table, old, r) {
@@ -215,6 +226,7 @@
         if (QBO.some((k) => JSON.stringify(r[k]) !== JSON.stringify(old[k]))) throw deny("the QuickBooks mark changes only through mark_invoices_entered() / unmark_invoices_entered()");
       } else if (table === "payments") {
         if (r.bill_id !== old.bill_id) throw rule("23514", "a payment cannot move to another bill");
+        payRule("guardUpdate", w, old, r);
         if (PICKUP.some((k) => JSON.stringify(r[k]) !== JSON.stringify(old[k]))) throw deny("a payment is marked told by DCR Agents 2 or the books (payment_told), not by an update");
         tidyPayment(r);
         // M5b review fix (t01_payments_client): a told payment keeps what the payee was told
@@ -222,6 +234,7 @@
           throw rule("23514", "the payee was told about this payment: clear the told mark first (and tell them again) before changing its amount, method, check number, reference or payee");
         }
         payGate(r, old);
+        payRule("checkNumber", w, r, old);
       }
     }
 
@@ -231,7 +244,8 @@
       const todayK = today();
       const utc = (k) => Date.UTC(+k.slice(0, 4), +k.slice(5, 7) - 1, +k.slice(8, 10));
       return rows.bills.filter((b) => !b.deleted_at && projectVisible(w, b.project_id)).map((b) => {
-        const pays = rows.payments.filter((p) => p.bill_id === b.id);
+        const all = rows.payments.filter((p) => p.bill_id === b.id);
+        const pays = all.filter(live);
         const paid = r2(pays.reduce((n, p) => n + Number(p.amount || 0), 0));
         const pr = rows.projects.find((p) => p.id === b.project_id) || {};
         const documented = fileIn(b.document_file_id, b.project_id);
@@ -247,13 +261,16 @@
           project_number: pr.number || null, project_name: pr.name || null,
           project_label: [pr.number, pr.name].map((x) => String(x || "").trim()).filter(Boolean).join(" \u2014 "),
           paid_total: paid, payments_count: pays.length,
-          to_tell: pays.filter((p) => (p.method === "check" || p.method === "cash") && !p.pickup_told_at).length,
+          to_tell: pays.filter((p) => (p.method === "check" || p.method === "cash") && !p.pickup_told_at && !p.picked_up_at).length,
           owed: b.void ? 0 : b.approved_at ? r2(Math.max(Number(b.approved_amount) - paid, 0)) : r2(Math.max(amount - paid, 0)),
           documented, state, reason,
           pay_state: b.void ? "void" : !b.approved_at ? "unapproved" : paid >= Number(b.approved_amount) ? "paid" : paid > 0 ? "part_paid" : "to_pay",
           late_by: b.due_date ? Math.round((utc(todayK) - utc(String(b.due_date))) / 86400000) : null,
           pay_pile: b.void || !b.approved_at ? null : ["transfer", "card"].includes(b.pay_method) ? "transfer_card"
             : ["check", "cash", "both"].includes(b.pay_method) ? "check_desk" : null,
+          voided_count: all.length - pays.length,
+          at_office: pays.filter((p) => (p.method === "check" || p.method === "cash") && p.pickup_told_at && !p.picked_up_at && !p.cleared_on).length,
+          last_paid_date: pays.reduce((m, p) => (!m || String(p.paid_date) > m ? String(p.paid_date) : m), null),
         });
       });
     }
@@ -390,6 +407,7 @@
           const b = p ? billOf(p.bill_id) : null;
           if (!p || !b || b.deleted_at || b.void || !projectVisible(w, p.project_id)) throw notFound("payment");
           if (Number(p.version) !== Number(a.p_version)) throw pt409("payments", p.id, p.version);
+          payRule("told", w, p, how);
           // M5b: a mark is made on a check or cash only, and cleared on any payment
           if (how !== null && !["check", "cash"].includes(p.method)) throw rule("22023", "only a check or cash is picked up in person");
           const shape = (x, already) => Object.assign({ ok: true, toldAt: x.pickup_told_at, toldDate: x.pickup_told_at ? companyDay(new Date(x.pickup_told_at)) : null,

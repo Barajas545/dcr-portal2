@@ -2081,6 +2081,11 @@ section = "Books release A3: contact pictures and a contact's reach (repo/contac
 // ===========================================================================================
 await (await import("./schema-check-p8-contacts.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "The Books, release A: the check register and the payment panel - void, picked up, cleared, spoiled blanks, a check number used once, the next number, the date (repo/checks.js, repo/books.js, migration 20261030000300_check_register)";
+// ===========================================================================================
+await (await import("./schema-check-p8-register.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

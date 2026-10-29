@@ -26,12 +26,17 @@
                                      bills are marked; the rest come back in refused[] with the reason);
    * recordPayment(bill, f)          a payments row (money editors): the method the approver allowed (a check, cash, ACH,
                                      wire or a card), a check's number - any other method's confirmation or reference -,
-                                     payee (<= 200) and memo (<= 100); the database refuses more than the approved
-                                     amount still owed (acceptance check 2) and any other way of paying;
+                                     payee (<= 200), memo (<= 100) and the date written on it (f.paidDate: today - 400
+                                     to today + 31, else 22023); the database refuses more than the approved amount
+                                     still owed (acceptance check 2), any other way of paying, and a check number
+                                     already used (23505, its own sentence: map/checks.js clashText);
    * markTold(payment, how)          rpc payment_told(p_id, p_how, p_version) (M6): phone, in person, email or text;
                                      how = null clears it. A payment once told cannot be deleted (M5b's guard);
    * setDocument(bill, fileId, o)    the bill's document (bills.document_file_id, a versioned PATCH): the bill page's
-                                     "Make this the bill's document" and "Replace..." (the Books program, release A). */
+                                     "Make this the bill's document" and "Replace..." (the Books program, release A).
+   The payments are read with the check register's stamps (PAYMENT_COLS: voided, picked up, cleared - the Books
+   program, release A) and, on a database without them yet, again without them (paymentRows). A voided payment counts
+   in no sum. */
 
 import { db, must, idOf, notFound, forbidden, pageAll, versioned } from "./_db.js";
 import { nameBook } from "./people.js";
@@ -48,8 +53,14 @@ export const BILL_COLS = "id, project_id, estimate_item_id, quote_id, vendor_con
 export const DESK_COLS = "id, project_id, kind, vendor_contact_id, vendor_name, invoice_number, invoice_date, due_date, amount, description, " +
   "estimate_item_id, quote_id, document_file_id, void, approved_by, approved_at, approved_amount, pay_method, approval_note, " +
   "qbo_entered_at, qbo_entered_by, qbo_ref, created_at, created_by, version, paid_total, owed, state, reason, pay_pile";
-export const PAYMENT_COLS = "id, bill_id, project_id, paid_date, amount, method, check_number, reference, notes, payee, memo, " +
+// + the check register's stamps (the Books program, release A; migration 20261030000300_check_register): void, picked
+// up, cleared - written only by void_payment / payment_picked_up / clear_payments. A database without them yet is read
+// again without them (paymentRows), as the published pages did.
+export const PAYMENT_REGISTER_COLS = ["voided_at", "voided_by", "void_reason", "picked_up_at", "picked_up_by", "picked_up_note",
+  "cleared_on", "cleared_at", "cleared_by"];
+export const PAYMENT_COLS_BEFORE = "id, bill_id, project_id, paid_date, amount, method, check_number, reference, notes, payee, memo, " +
   "pickup_told_at, pickup_told_by, pickup_told_how, created_at, created_by, version";
+export const PAYMENT_COLS = PAYMENT_COLS_BEFORE + ", " + PAYMENT_REGISTER_COLS.join(", ");
 export const INVOICE_COLS = "id, project_id, number, invoice_date, due_date, description, status, sent_date, qbo_entered_at, qbo_entered_by, " +
   "qbo_ref, deleted_at, version, invoice_lines(amount), client_payments(amount, paid_date)";
 export const PROJECT_COLS = "id, number, name, address, city, client_name";
@@ -65,6 +76,34 @@ function noBooks() {
   e.message = "The Books need the financials switch. Ask an admin.";
   return e;
 }
+
+/* ── the payments' register columns, or a database without them yet ── */
+
+let noRegisterColumns = false;
+const REGISTER_RE = new RegExp("\\b(" + PAYMENT_REGISTER_COLS.join("|") + ")\\b");
+/** A read or write refused because the payments' register columns are not there yet (42703 / PGRST204 naming one). */
+export function missingRegisterColumn(e) {
+  const code = String((e && e.code) || "");
+  return (code === "42703" || code === "PGRST204") && REGISTER_RE.test(String((e && e.message) || "") + " " + String((e && e.details) || ""));
+}
+/** `cols` without the register's columns. */
+export function withoutRegister(cols) {
+  return String(cols).split(",").map((s) => s.trim()).filter((s) => s && PAYMENT_REGISTER_COLS.indexOf(s) === -1).join(", ");
+}
+/** read(cols) with the payments' register columns; a database without them yet is asked again without them (and
+    remembered for the page). One statement each time: a refused read or insert changed nothing. */
+export async function paymentRows(read, cols) {
+  const want = cols || PAYMENT_COLS;
+  if (!noRegisterColumns) {
+    try { return await read(want); } catch (e) {
+      if (!missingRegisterColumn(e)) throw e;
+      noRegisterColumns = true;
+    }
+  }
+  return read(withoutRegister(want));
+}
+/** Whether this database has the check register (false only after a read found its columns missing). */
+export function registerReady() { return !noRegisterColumns; }
 
 /** rows of `table` whose `col` is one of `ids`, 150 ids a read. */
 async function byIds(c, table, cols, col, ids) {
@@ -89,7 +128,7 @@ export async function loadDesk(me, opts) {
   const [desk, payments, invoices, projects, contacts, quotes, costs, nameOf] = await Promise.all([
     // M5b's view: every bill not deleted with its state, reason, paid_total and owed (the caller's RLS: financials)
     pageAll((cl) => cl.from("books_desk").select(DESK_COLS).order("id", { ascending: true })),
-    pageAll((cl) => cl.from("payments").select(PAYMENT_COLS).order("id", { ascending: true })),
+    paymentRows((cols) => pageAll((cl) => cl.from("payments").select(cols).order("id", { ascending: true }))),
     pageAll((cl) => cl.from("invoices").select(INVOICE_COLS).is("deleted_at", null).order("id", { ascending: true })),
     pageAll((cl) => cl.from("projects").select(PROJECT_COLS).order("id", { ascending: true })),
     readContacts((cols) => pageAll((cl) => cl.from("contacts").select(cols).order("id", { ascending: true })), CONTACT_COLS),
@@ -119,7 +158,7 @@ export async function loadBill(id, me) {
   const row = rows[0];
   const prices = me.role === "admin" || !!me.can_see_prices;
   const [payRows, projRows, contactRows, quoteRows, fileRows, nameOf] = await Promise.all([
-    c.from("payments").select(PAYMENT_COLS).eq("bill_id", bid).order("paid_date", { ascending: false }).then(must),
+    paymentRows(async (cols) => must(await c.from("payments").select(cols).eq("bill_id", bid).order("paid_date", { ascending: false }))),
     c.from("projects").select(PROJECT_COLS).eq("id", row.project_id).then(must),
     row.vendor_contact_id != null
       ? readContacts((cols) => c.from("contacts").select(cols).eq("id", row.vendor_contact_id).then(must), CONTACT_COLS) : Promise.resolve([]),
@@ -139,7 +178,8 @@ export async function loadBill(id, me) {
   const projects = new Map((projRows || []).map((p) => [String(p.id), p]));
   const contacts = new Map((contactRows || []).map((x) => [String(x.id), x]));
   const payments = (payRows || []).map(toPayment);
-  const paid = new Map([[String(row.id), payments.reduce((s, p) => s + p.amount, 0)]]);
+  // live payments only: a voided one is paid against no bill (app.bill_paid_total)
+  const paid = new Map([[String(row.id), payments.reduce((s, p) => s + (p.live ? p.amount : 0), 0)]]);
   const bill = toBill(row, { nameOf, projects, contacts, paid, today: ymd(new Date()) });
   const q = (quoteRows || [])[0] || null;
   const quote = q ? {
@@ -236,7 +276,9 @@ export async function recordPayment(bill, f) {
     memo: String(f.memo == null ? "" : f.memo).replace(/\s+/g, " ").trim().slice(0, MEMO_MAX) || null,
   };
   if (f.paidDate && /^\d{4}-\d{2}-\d{2}$/.test(String(f.paidDate))) row.paid_date = String(f.paidDate);
-  const made = must(await c.from("payments").insert(row).select(PAYMENT_COLS)) || [];
+  // one statement: a database without the register's columns refuses the whole insert (nothing is written), and it
+  // is sent again without them
+  const made = (await paymentRows(async (cols) => must(await c.from("payments").insert(row).select(cols)))) || [];
   return made[0] ? toPayment(made[0]) : null;
 }
 
