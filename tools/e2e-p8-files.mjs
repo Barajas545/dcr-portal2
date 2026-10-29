@@ -142,11 +142,14 @@ async function main() {
       const pay = (b) => R.payments.find((p) => p.bill_id === b.id) || {};
       const c = R.costs.find((x) => x.description === "Simpson hangers, nails and straps") || {};
       return { blocked: by("Roof framing package (back order)").id, approved: by("-10% retainage held until the final walk").id,
+        footings: by("Footings and stem wall, phase 1").id, footingsDoc: by("Footings and stem wall, phase 1").document_file_id,
+        partProject: by("Telehandler, one week").project_id, admin: R.profiles.find((p) => p.email === "admin@demo.test").id,
         approvedDoc: by("-10% retainage held until the final walk").document_file_id, entered: by("Porch footings").id,
         part: by("Telehandler, one week").id, partPay: pay(by("Telehandler, one week")).id, cost: c.id, costProject: c.project_id,
         files: R.files.length };
     })()`);
-    check("demo: the bills the walk needs (blocked, approved, entered, part paid) and a cost", J.blocked && J.approved && J.entered && J.part && J.partPay && J.cost, JSON.stringify(J));
+    check("demo: the bills the walk needs (blocked, approved, entered, part paid) and a cost", J.blocked && J.approved && J.entered && J.part && J.partPay && J.cost &&
+      J.footings && J.footingsDoc && J.admin, JSON.stringify(J));
     const fileRows = (expr) => db(acc, "R.files.filter((f) => " + expr + ").map((f) => ({ id: f.id, name: f.name, bill: f.bill_id, pay: f.payment_id, cost: f.cost_id, prev: f.previous_id, v: f.version_no, del: !!f.deleted_at, pv: f.preview_path }))");
 
     /* ── 1. a blocked bill: paste a picture, drop a PDF ─────────────────── */
@@ -205,6 +208,49 @@ async function main() {
       check("the bill page with its paperwork on a phone: no sideways scroll", sw <= 391, sw);
       await bothThemes(acc, "bill_paperwork", "phone");
       await acc.size(1440, 900, false);
+    }, acc);
+
+    /* ── 1b. the races: two batches before the first lands; a bill approved behind the page ── */
+    await attempt("the bill page: the races", async () => {
+      // the waiting bill without its document again (its invoice stays, an extra): what the paste above started from
+      await db(acc, "DCR2Demo.engine.update({ uid: " + JSON.stringify(J.admin) + " }, 'bills', { document_file_id: null }, { filters: [{ col: 'id', op: 'eq', val: " + J.footings + " }] }) && true");
+      await open(acc, "/bill.html?id=" + J.footings, BILL + " && !!document.querySelector('#blDrop .fd')");
+      // the queue held (its Web Lock taken here): both batches are on the device before the first one lands - a slow
+      // phone, or offline with the durable queue
+      await acc.eval("(() => { window.__hold = new Promise((r) => { window.__let = r; }); navigator.locks.request('dcr2-upload-queue', () => { window.__held = true; return window.__hold; }); return true; })()");
+      await acc.until("window.__held === true", 5000);
+      await acc.eval("window.__drop('#blDrop .fd', [window.__pdf('Quarryman final invoice.pdf')])");
+      await acc.until("/on its way/.test(document.getElementById('blFileMsg').textContent)", 8000);
+      await acc.eval("window.__drop('#blDrop .fd', [window.__pdf('Quarryman delivery ticket.pdf')])");
+      const q2 =await (async () => { for (let i = 0; i < 40; i++) { if ((await queued(acc)) === 2) return 2; await sleep(150); } return queued(acc); })();
+      check("two batches waiting on the device", q2 === 2, q2);
+      await acc.eval("(async () => { window.__let(); for (let i = 0; i < 50; i++) { const s = await navigator.locks.query(); if (!s.held.some((l) => l.name === 'dcr2-upload-queue')) break; await new Promise((r) => setTimeout(r, 20)); }" +
+        " window.dispatchEvent(new Event('online')); return true; })()");
+      await acc.until("DCR2Demo.engine.rows.files.filter((f) => f.bill_id === " + J.footings + " && /^Quarryman (final invoice|delivery ticket)\\.pdf$/.test(f.name) && !f.deleted_at).length === 2", 15000);
+      await acc.until("/is kept as another file of this bill: the bill has its document already/.test(document.getElementById('blFileMsg').textContent)", 10000);
+      const b = await db(acc, "R.bills.find((b) => b.id === " + J.footings + ")");
+      const doc = (await fileRows("f.id === " + b.document_file_id))[0];
+      const ticket = (await fileRows("f.bill_id === " + J.footings + " && f.name === 'Quarryman delivery ticket.pdf'"))[0];
+      check("the first file to land is the bill's document; the batch added before it landed stays an extra (the contract §4.1)",
+        doc && doc.name === "Quarryman final invoice.pdf" && ticket && !ticket.del, JSON.stringify({ doc, ticket }));
+      check("the page says so", /“Quarryman delivery ticket\.pdf” is kept as another file/.test(await text(acc, "#blFileMsg")), await text(acc, "#blFileMsg"));
+      // an approver approves the bill behind the page; "Make this the bill's document" on the ticket then asks nothing
+      // (the page still shows it waiting) and must not withdraw that approval
+      await acc.until("Array.from(document.querySelectorAll('[data-f][data-role=extra]')).some((x) => /delivery ticket\\.pdf$/.test(x.textContent))", 8000);
+      const v = await db(acc, "R.bills.find((b) => b.id === " + J.footings + ").version");
+      await db(acc, "DCR2Demo.engine.rpc({ uid: " + JSON.stringify(J.admin) + " }, 'approve_bill', { id: " + J.footings + ", pay_method: 'check', version: " + v + ", note: null }) && true");
+      check("approved behind the page", !!(await db(acc, "R.bills.find((b) => b.id === " + J.footings + ").approved_at")) &&
+        (await text(acc, "#blState")) === "AWAITING APPROVAL");
+      await acc.eval("Array.from(document.querySelectorAll('[data-f][data-role=extra]')).find((x) => /delivery ticket\\.pdf$/.test(x.textContent)).click(); true");
+      await acc.until("!!document.getElementById('blMakeDoc')", 5000);
+      await acc.eval("document.getElementById('blMakeDoc').click(); true");
+      await acc.until("/approved or changed meanwhile/.test(document.getElementById('blFileMsg').textContent)", 8000);
+      const asked = await acc.eval(modalOpen);
+      const after = await db(acc, "R.bills.find((b) => b.id === " + J.footings + ")");
+      check("a bill approved meanwhile: refused and said (\"approved or changed meanwhile\"), the approval and the document kept",
+        !asked && after.approved_at && after.document_file_id === doc.id, JSON.stringify({ asked, approved: after.approved_at, doc: after.document_file_id }));
+      await acc.until("(document.getElementById('blState') || {}).textContent === 'APPROVED'", 6000);
+      check("the page shows the bill as it is now: approved", true);
     }, acc);
 
     /* ── 2. entered: refused before upload; approved: asked, then replaced ── */
@@ -274,6 +320,25 @@ async function main() {
         rs.length === 3 && new Set(rs.map((f) => f.name)).size === 3 && rs.some((f) => /^Receipt .+\.png$/.test(f.name)) && rs.every((f) => f.prev === null), JSON.stringify(rs));
       await acc.until("!!document.querySelector('[data-receipt=\"" + cid + ":2\"]')", 10000);
       check("the Expenses tab shows the three", true);
+      // ✎ Edit: something typed, a receipt looked at, Esc - the viewer closes, the dialog and what was typed stay
+      await acc.eval("document.querySelector('[data-edit=\"" + cid + "\"]').click(); true");
+      await acc.until("!!document.querySelector('#exModal.open [data-have]')", 8000);
+      await acc.eval("(() => { const n = document.getElementById('cfDesc'); n.value = 'Made-up: typed, not saved'; n.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
+      await acc.eval("document.querySelector('#exModal [data-have]').click(); true");
+      await acc.until("!!document.getElementById('fvView') && !document.getElementById('fvView').hidden", 5000);
+      await sleep(150);
+      const esc = async () => {
+        await acc.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+        await acc.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+        await sleep(250);
+      };
+      await esc();
+      const kept = await acc.eval("({ viewer: document.getElementById('fvView').hidden, dialog: document.getElementById('exModal').classList.contains('open'), desc: (document.getElementById('cfDesc') || {}).value || null })");
+      check("Esc in the receipt viewer over the cost dialog closes the viewer only (what was typed stays)",
+        kept.viewer === true && kept.dialog === true && kept.desc === "Made-up: typed, not saved", JSON.stringify(kept));
+      await esc();
+      check("the next Esc closes the dialog (nothing saved)", !(await acc.eval("document.getElementById('exModal').classList.contains('open')")) &&
+        !(await db(acc, "R.costs.some((c) => c.description === 'Made-up: typed, not saved')")));
       // a file dropped on another row attaches to that cost
       await acc.eval("window.__drop('tr[data-drop=\"" + J.cost + "\"]', [window.__pdf('Hangers credit memo.pdf')])");
       await acc.until("DCR2Demo.engine.rows.files.some((f) => f.cost_id === " + J.cost + " && f.name === 'Hangers credit memo.pdf')", 15000);
@@ -309,6 +374,31 @@ async function main() {
       check("the ledger on a phone: no sideways scroll", (await acc.eval("document.documentElement.scrollWidth")) <= 391);
       await shoot(acc, "ledger_rows", "phone", false, false);
       await acc.size(1440, 900, false);
+    }, acc);
+
+    /* ── 5b. a voided payment (phase 4: the check register's Void) on the bill page and the project's Payments tab ── */
+    await attempt("a voided payment is shown as void and paid against nothing", async () => {
+      // made-up: the part payment voided through the database's own path (an admin's switch on, void_payment, the switch
+      // off again - tools/e2e-p8-register.mjs walks the register's buttons for it)
+      const A = "{ uid: " + JSON.stringify(J.admin) + " }";
+      const sw = (on) => db(acc, "DCR2Demo.engine.update(" + A + ", 'settings', { payments_void_enabled: " + on + " }, { filters: [{ col: 'id', op: 'eq', val: 1 }] }) && true");
+      await sw(true);
+      await db(acc, "DCR2Demo.engine.rpc(" + A + ", 'void_payment', { p_id: " + J.partPay + ", p_reason: 'Made-up: slip written twice', p_version: R.payments.find((p) => p.id === " +
+        J.partPay + ").version }) && true");
+      await sw(false);
+      check("voided (the switch off again)", !!(await db(acc, "R.payments.find((p) => p.id === " + J.partPay + ").voided_at")) &&
+        (await db(acc, "R.settings[0].payments_void_enabled")) === false);
+      await open(acc, "/bill.html?id=" + J.part, BILL + " && !!document.querySelector('.bl-pay')");
+      const pay = await text(acc, ".bl-pay");
+      const head = await text(acc, ".bl-amt");
+      check("the bill page: \"Paid on this bill\" lists it as Void with its reason, no amount; the header owes the whole bill",
+        /Void/.test(pay) && /Made-up: slip written twice/.test(pay) && !/\$400\.00/.test(pay) && /nothing paid yet/.test(head), JSON.stringify({ pay, head }));
+      await open(acc, "/project.html?id=" + J.partProject + "&tab=payments", "!!document.querySelector('.pjm-tbl')");
+      const row = await acc.eval("(() => { const r = Array.from(document.querySelectorAll('.pjm-tbl tr.pay')).find((tr) => /Made-up: slip written twice/.test(tr.innerText)); return r ? r.innerText : ''; })()");
+      const bill = await acc.eval("(() => { const r = Array.from(document.querySelectorAll('.pjm-tbl tr')).find((tr) => /Hillside Equipment Rental/.test(tr.innerText) && !tr.classList.contains('pay')); return r ? r.innerText : ''; })()");
+      check("the project's Payments tab: the voided payment says Void (no amount); the bill is owed again, not paid",
+        /Void/.test(row) && !/400\.00/.test(row) && /1,200\.00[\s\S]*1,200\.00/.test(bill) && !/Paid\b/.test(bill.replace(/Part paid/, "")), JSON.stringify({ row, bill }));
+      await bothThemes(acc, "payments_void", "desktop", false);
     }, acc);
 
     /* ── 6. no security-policy violation, no console error ─────────────── */

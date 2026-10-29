@@ -62,11 +62,16 @@ export function billState(b, paid, today) {
   return cents(paid) > 0 ? PART_PAID : APPROVED;
 }
 
-/** A bill row (with its embedded `payments`) -> the tab's bill: paid, owed, state, its payments in order. */
+/** A voided payment (the check register's Void, migration 20261030000300): kept in the list, marked, counted nowhere. */
+export function isVoidPayment(p) { return !!(p && p.voided_at); }
+
+/** A bill row (with its embedded `payments`) -> the tab's bill: paid, owed, state, its payments in order (a voided one
+    stays listed with voided: true, and counts in no sum - Desktop 2.25's decorate_bill, app.bill_paid_total). */
 export function decorateBill(b, today) {
   const pays = (Array.isArray(b && b.payments) ? b.payments : []).slice().sort((p, q) =>
-    (day(p.paid_date) < day(q.paid_date) ? -1 : day(p.paid_date) > day(q.paid_date) ? 1 : (Number(p.id) || 0) - (Number(q.id) || 0)));
-  const paid = pays.reduce((s, p) => s + cents(p.amount), 0) / 100;
+    (day(p.paid_date) < day(q.paid_date) ? -1 : day(p.paid_date) > day(q.paid_date) ? 1 : (Number(p.id) || 0) - (Number(q.id) || 0)))
+    .map((p) => Object.assign({}, p, { voided: isVoidPayment(p) }));
+  const paid = pays.reduce((s, p) => (p.voided ? s : s + cents(p.amount)), 0) / 100;
   const approved = isApproved(b);
   const voided = !!(b && b.void);
   const owed = approved && !voided ? Math.max(0, cents(b.approved_amount) - Math.round(paid * 100)) / 100 : 0;

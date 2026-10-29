@@ -56,9 +56,15 @@ import { toLedgerRow, CARDS, hoursByEmployee, lineLabel } from "../map/ledger.js
 export const COST_COLS = "id, project_id, estimate_item_id, cost_date, kind, description, vendor, amount, hours, rate, " +
   "card, card_by, card_at, reconciled_by, reconciled_at, employee_id, employee_source, version";
 export const RECEIPT_COLS = "id, project_id, cost_id, previous_id, folder, name, storage, storage_path, preview_path, mime, size, created_at, deleted_at";
-export const BILL_COLS = "id, project_id, estimate_item_id, kind, vendor_name, invoice_number, invoice_date, due_date, amount, description, " +
-  "document_file_id, void, approved_at, approved_amount, pay_method, deleted_at, version, " +
-  "payments(id, bill_id, paid_date, amount, method, check_number, reference, payee, memo, pickup_told_at, pickup_told_by, pickup_told_how)";
+// a bill's payments carry the check register's void (the Books program, release A; migration 20261030000300): a voided
+// payment is listed as void and paid against nothing (map/payments.js decorateBill). A database without the columns yet
+// is read again without them (BILL_COLS_BEFORE), as before.
+export const PAYMENT_EMBED_COLS = "id, bill_id, paid_date, amount, method, check_number, reference, payee, memo, pickup_told_at, pickup_told_by, pickup_told_how";
+export const PAYMENT_VOID_COLS = ["voided_at", "void_reason"];
+const BILL_ROW_COLS = "id, project_id, estimate_item_id, kind, vendor_name, invoice_number, invoice_date, due_date, amount, description, " +
+  "document_file_id, void, approved_at, approved_amount, pay_method, deleted_at, version, ";
+export const BILL_COLS = BILL_ROW_COLS + "payments(" + PAYMENT_EMBED_COLS + ", " + PAYMENT_VOID_COLS.join(", ") + ")";
+export const BILL_COLS_BEFORE = BILL_ROW_COLS + "payments(" + PAYMENT_EMBED_COLS + ")";
 export const INVOICE_COLS = "id, project_id, number, invoice_date, due_date, description, status, sent_date, deleted_at, " +
   "invoice_lines(amount), client_payments(id, paid_date, amount, method, reference)";
 export const EMPLOYEE_COLS = "id, full_name, active";
@@ -163,12 +169,25 @@ export async function projectExpenses(projectId, opts) {
   return costs.map((r) => toLedgerRow(r, ctx));
 }
 
-/** One project's bills (with payments) and invoices (with lines and client payments). */
+/** A read refused because the payments' void columns are not there yet (42703 / PGRST204 naming one). */
+export function missingVoidColumn(e) {
+  const code = String((e && e.code) || "");
+  return (code === "42703" || code === "PGRST204") && /\b(voided_at|void_reason)\b/.test(String((e && e.message) || "") + " " + String((e && e.details) || ""));
+}
+/** read(cols) with the void columns; a database without them yet is asked again with `before`. */
+export async function withVoids(read, cols, before) {
+  try { return await read(cols); } catch (e) {
+    if (!missingVoidColumn(e)) throw e;
+  }
+  return read(before);
+}
+
+/** One project's bills (with payments: a voided one carries voided_at) and invoices (with lines and client payments). */
 export async function projectPayments(projectId) {
   const c = await db();
   const pid = idOf(projectId);
   const [bills, invoices] = await Promise.all([
-    c.from("bills").select(BILL_COLS).eq("project_id", pid).order("id", { ascending: true }).then(must),
+    withVoids((cols) => c.from("bills").select(cols).eq("project_id", pid).order("id", { ascending: true }).then(must), BILL_COLS, BILL_COLS_BEFORE),
     c.from("invoices").select(INVOICE_COLS).eq("project_id", pid).order("invoice_date", { ascending: false }).then(must),
   ]);
   return { bills: (bills || []).filter((b) => !b.deleted_at), invoices: (invoices || []).filter((i) => !i.deleted_at) };

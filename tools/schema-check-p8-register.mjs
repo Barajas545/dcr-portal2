@@ -217,7 +217,18 @@ export async function run(h) {
     const after = await one("select version from public.payments where id = $1", [J.post.id]);
     const upd = await client.from("payments").update({ memo: "x" }).eq("id", J.post.id).eq("version", after.version).select("id");
     same(upd.error && upd.error.code, "23514", "a void is frozen");
+    // the Portal's other money screens read the void too (release A review): the project's Payments tab, the bill page,
+    // the Progress Chart's money tiles - live payments only, the voided one listed as void
+    const ledger = await site("repo/ledger.js");
+    const P5 = await site("map/payments.js");
+    const tab = P5.decorateBill((await ledger.projectPayments(pid)).bills.find((b) => b.id === J.b3.id), today);
+    same([tab.paid, tab.payments.filter((x) => x.voided).map((x) => x.void_reason)], [1, ["Lost in the mail"]], "the Payments tab: the void in no sum, listed as void");
+    const page = await books.loadBill(J.b3.id, await me("accountant"));
+    same([page.bill.paid, page.payments.filter((x) => x.live === false).length], [1, 1], "the bill page: paid live only, the void listed");
     await as("admin");
+    const pm = await site("repo/pm.js");
+    const tiles = (await pm.load(pid, await me("admin"))).payload.bills.find((b) => b.id === J.b3.id);
+    same([tiles.paid, tiles.owed], [1, 899], "the Progress Chart's tiles: owed again but for the live TEST- check");
     const s2 = await checks.voidSwitch();
     await checks.setVoidEnabled(false, s2.version);
   });

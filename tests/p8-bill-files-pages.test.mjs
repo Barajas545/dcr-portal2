@@ -257,7 +257,7 @@ test("the bill page: the paperwork for money editors only, the Remove never on t
   assert.ok(add.indexOf("agreeWithdraw(") < add.indexOf("queueAll("), "the approved bill: asked before the queue");
   assert.match(js, /return confirmBox\(WITHDRAW_TEXT, \{ title: "This bill is approved", okText: "Change the document" \}\);/);
   // the link after the upload: the queue's tag; a replaced document removed after the bill points at the new one
-  assert.match(js, /if \(row && row\.id != null && \/\^document!\?\$\/\.test\(tag\)\) return link\(row\.id, tag === "document!", null\);/);
+  assert.match(js, /if \(row && row\.id != null && \/\^document!\?\$\/\.test\(tag\)\) return link\(row\.id, tag === "document!", null, true, row\.name \|\| item\.name\);/);
   const link = js.slice(js.indexOf("function link("));
   assert.ok(link.indexOf("books.setDocument(") < link.indexOf("filesRepo.removeFile({ id: oldId })"), "point first, then remove the old one");
   // nothing approves here that did not before, and the approve button is still the approvers'
@@ -270,6 +270,176 @@ test("the bill page: the paperwork for money editors only, the Remove never on t
   // the files' look: the page's wording points at the web now
   assert.match(js, /attach it here \(or in DCR Desktop 2\)/);
   assert.ok(!/It cannot be approved until one is \(in DCR Desktop 2\)/.test(js));
+});
+
+/* ── review fixes (release A): races and the void, read from the source and run over the demo database ── */
+
+test("\"Make this the bill's document\" withdraws an approval only when the person was asked: a bill approved after the page was drawn is refused (PT409), the approval kept", { skip }, async () => {
+  const js = code(read("js/pages/bill.js"));
+  const mk = js.slice(js.indexOf("async function makeDocument("), js.indexOf("async function removeFile("));
+  assert.match(mk, /if \(!\(await agreeWithdraw\(b\)\)\) return;\s+await link\(f\.id, withdrawsApproval\(b\), null\);/, "withdraw = what the person was asked");
+  assert.ok(!/link\(f\.id, true/.test(mk), "never a literal yes");
+  // what that call does when an approver approves meanwhile (the bill on screen still says "waiting")
+  await setup();
+  as("accountant");
+  const b = billOf("Footings and stem wall, phase 1");
+  const { q, done } = queueAs("accountant");
+  await q.enqueue({ projectId: b.project_id, file: fileNamed("Quarryman corrected.pdf", "application/pdf"), kind: "bill", billId: b.id, name: "Quarryman corrected.pdf", takenAt: WHEN });
+  await q.drain();
+  const shown = (await books.loadBill(b.id, me("accountant"))).bill;
+  assert.equal(shown.approved, false);
+  E.rpc({ uid: uid("admin") }, "approve_bill", { id: b.id, pay_method: "check", version: E.rows.bills.find((x) => x.id === b.id).version, note: null });
+  assert.ok(E.rows.bills.find((x) => x.id === b.id).approved_at, "approved behind the page");
+  await refused(() => books.setDocument(shown, done[0].row.id, { withdraw: withdrawsApproval(shown) }), "PT409");
+  const now = E.rows.bills.find((x) => x.id === b.id);
+  assert.ok(now.approved_at, "the approval is kept");
+  assert.equal(now.document_file_id, b.document_file_id, "the document is the one the approver saw");
+});
+
+test("the first file to land is the bill's document: a later batch queued before it landed stays an extra (checked inside the one-at-a-time chain); two Replace… in a row end on the newest", () => {
+  const js = code(read("js/pages/bill.js"));
+  const link = js.slice(js.indexOf("function link("), js.indexOf("function paintQueue("));
+  const guard = link.indexOf("if (onlyIfNone) {");
+  assert.ok(guard !== -1 && guard < link.indexOf("books.setDocument("), "the guard runs before the bill is pointed at the file");
+  assert.ok(link.indexOf("state.chain = state.chain.then(") < guard, "inside the chain: after the file before it has been linked and the page read again");
+  assert.match(link.slice(guard), /^if \(onlyIfNone\) \{\s+await load\(\);\s+if \(state\.data\.bill\.documentFileId != null\) \{[\s\S]*?return;/, "read again; a document already there wins");
+  assert.match(js, /return link\(row\.id, tag === "document!", null, true, /, "a \"document\" tag links only while the bill has none");
+  assert.match(js, /return link\(row\.id, m\[1\] === "!", m\[2\]\);/, "a replace is not that guard");
+  // a replace removes the old document only while it is still the bill's document
+  assert.match(link, /const replaces = oldId != null && String\(state\.data\.bill\.documentFileId\) === String\(oldId\);/);
+  assert.match(link, /if \(replaces\) \{\s+try \{ await filesRepo\.removeFile\(\{ id: oldId \}\);/);
+  // the words of a refused link are written after the page is drawn again (a redraw would wipe them)
+  const caught = link.slice(link.indexOf("} catch (e) {"));
+  assert.ok(caught.indexOf("await load();") < caught.indexOf("sayFile(conflict"), "load, then say");
+});
+
+test("the bill page lists a voided payment as Void with its reason (no amount), and only live payments settle how it is paid", { skip }, async () => {
+  const js = code(read("js/pages/bill.js"));
+  assert.match(js, /const livePays = \(d\.payments \|\| \[\]\)\.filter\(\(p\) => p\.live !== false\);/);
+  assert.match(js, /if \(can\.approve && !livePays\.length\) \{/);
+  assert.match(js, /\} else if \(can\.approve && livePays\.length\) \{/);
+  assert.ok(!/d\.payments\.length\) \{/.test(js.slice(js.indexOf("const livePays"), js.indexOf("if (d.payments.length) {"))), "no raw count left in the decision");
+  assert.match(js, /\(p\.live === false\s+\? '<\/span><span><b class="bl-void">Void<\/b>' \+ \(p\.voidReason \? '<br><span class="t">' \+ h\(p\.voidReason\) \+ "<\/span>" : ""\)/);
+  // what loadBill answers for a voided check (the demo database with the check register's columns)
+  await setup();
+  as("accountant");
+  const b = billOf("Telehandler, one week");
+  const pay = E.rows.payments.find((p) => p.bill_id === b.id);
+  Object.assign(pay, { voided_at: "2026-10-18T17:00:00Z", voided_by: uid("admin"), void_reason: "Made-up: written to the wrong payee" });
+  const d = await books.loadBill(b.id, me("accountant"));
+  const p = d.payments.find((x) => x.id === pay.id);
+  assert.deepEqual([p.live, p.voided, p.voidReason], [false, true, "Made-up: written to the wrong payee"]);
+  assert.equal(d.bill.paid, 0, "paid against nothing");
+});
+
+/* a small DOM for js/pages/file-viewer.js (node has none): elements with children and ids, and document's keydown
+   listeners run as a browser runs them - the capture phase first, then the bubble phase */
+function tinyDom() {
+  const listeners = [];
+  function el(tag) {
+    const n = { tagName: String(tag).toUpperCase(), children: [], style: {}, className: "", id: "", hidden: false, attrs: {}, _t: "",
+      appendChild(c) { this.children.push(c); return c; }, setAttribute(k, v) { this.attrs[k] = String(v); },
+      getAttribute(k) { return this.attrs[k] === undefined ? null : this.attrs[k]; }, addEventListener() {}, focus() { doc.activeElement = this; } };
+    Object.defineProperty(n, "textContent", { get() { return this._t + this.children.map((c) => c.textContent || "").join(""); },
+      set(v) { this._t = String(v); this.children = []; } });
+    return n;
+  }
+  const find = (n, id) => { if (!n || !n.children) return null; if (n.id === id) return n; for (const c of n.children) { const x = find(c, id); if (x) return x; } return null; };
+  const doc = {
+    createElement: el, createTextNode: (t) => ({ textContent: String(t) }), head: el("head"), body: el("body"), documentElement: el("html"), activeElement: null,
+    getElementById: (id) => find(doc.head, id) || find(doc.body, id),
+    addEventListener(type, fn, capture) { listeners.push({ type, fn, capture: capture === true || !!(capture && capture.capture) }); },
+    key(key) {
+      let stopped = false, now = false;
+      const ev = { key, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { stopped = true; },
+        stopImmediatePropagation() { stopped = true; now = true; } };
+      for (const phase of [true, false]) {
+        for (const l of listeners.filter((x) => x.type === "keydown" && x.capture === phase)) { if (now) break; l.fn(ev); }
+        if (stopped) break;
+      }
+      return ev;
+    },
+  };
+  return doc;
+}
+const settle = () => new Promise((r) => setImmediate(r));
+async function withDom(fn) {
+  const had = { document: globalThis.document, window: globalThis.window };
+  const doc = tinyDom();
+  globalThis.document = doc;
+  try { return await fn(doc); } finally {
+    if (had.document === undefined) delete globalThis.document; else globalThis.document = had.document;
+    if (had.window === undefined) delete globalThis.window; else globalThis.window = had.window;
+    useClient(null);
+  }
+}
+
+test("showIn: the last file asked for wins - a picture whose signed link answers late never covers the file picked after it", async () => {
+  const { showIn } = await import("../site/js/pages/file-viewer.js");
+  await withDom(async (doc) => {
+    const answer = {};
+    useClient({ storage: { from: () => ({ createSignedUrl: (path) => new Promise((res) => { answer[path] = (url) => res({ data: { signedUrl: url }, error: null }); }) }) } });
+    const A = { id: 1, name: "made-up extra.png", storagePath: "f/9/receipts/" + "a".repeat(32) + "/extra.png" };
+    const B = { id: 2, name: "made-up doc.png", storagePath: "f/9/receipts/" + "b".repeat(32) + "/doc.png" };
+    const stage = doc.createElement("div");
+    const a = showIn(stage, A);
+    const b = showIn(stage, B);
+    await settle();
+    answer[B.storagePath]("https://x.example/b");
+    await b;
+    answer[A.storagePath]("https://x.example/a");
+    await a;
+    const imgs = stage.children.filter((c) => c.tagName === "IMG");
+    assert.deepEqual(imgs.map((i) => [i.src, i.alt]), [["https://x.example/b", "made-up doc.png"]], "the stage shows the file picked last");
+    // a picture, then a PDF (drawn at once): the picture's late link is dropped
+    const A2 = { id: 3, name: "made-up photo.jpg", storagePath: "f/9/receipts/" + "c".repeat(32) + "/photo.jpg" };
+    const C = { id: 4, name: "made-up invoice.pdf", storagePath: "f/9/receipts/" + "d".repeat(32) + "/invoice.pdf" };
+    const a2 = showIn(stage, A2);
+    await settle();
+    await showIn(stage, C);
+    answer[A2.storagePath]("https://x.example/a2");
+    await a2;
+    assert.ok(!stage.children.some((c) => c.tagName === "IMG"), "no picture over the PDF's words");
+    assert.match(stage.textContent, /made-up invoice\.pdf/);
+  });
+});
+
+test("openTab answers whether the file was sent to its tab (a refused link: false, the tab closed, onError told)", async () => {
+  const { openTab } = await import("../site/js/pages/file-viewer.js");
+  await withDom(async () => {
+    const tabs = [];
+    globalThis.window = { open: () => { const w = { closed: false, close() { this.closed = true; }, location: {} }; tabs.push(w); return w; } };
+    let fail = true;
+    useClient({ storage: { from: () => ({ createSignedUrl: async (path) => (fail ? { data: null, error: { message: "JWT expired", status: 401 } } : { data: { signedUrl: "https://x.example/" + path }, error: null }) }) } });
+    const f = { id: 5, name: "Telehandler rental.pdf", storagePath: "f/9/receipts/" + "e".repeat(32) + "/Telehandler_rental.pdf" };
+    const said = [];
+    assert.equal(await openTab(f, (e) => said.push(e.message)), false);
+    assert.deepEqual([tabs[0].closed, said], [true, ["JWT expired"]]);
+    fail = false;
+    assert.equal(await openTab(f, (e) => said.push(e.message)), true);
+    assert.equal(tabs[1].location.href, "https://x.example/" + f.storagePath);
+    assert.equal(await openTab({ id: 6, name: "on the office computers.pdf", cloud: false, storagePath: "x" }, (e) => said.push(e.message)), false);
+    assert.match(said[1], /on the office computers/);
+  });
+});
+
+test("the viewer's Esc closes the viewer only: a dialog under it (the expense dialog closes on Esc) never hears that key", async () => {
+  const { openViewer } = await import("../site/js/pages/file-viewer.js");
+  await withDom(async (doc) => {
+    let dialogClosed = 0;
+    // the expense dialog's own listener (js/pages/expense-dialog.js), heard on document and set up before the viewer's
+    doc.addEventListener("keydown", (e) => { if (e.key === "Escape") dialogClosed++; });
+    openViewer([{ id: 7, name: "Yard receipt.pdf", storagePath: "f/9/receipts/" + "f".repeat(32) + "/Yard_receipt.pdf" }], 0, {});
+    await new Promise((r) => setTimeout(r, 5));               // the viewer puts the focus on its ✕
+    const host = doc.getElementById("fvView");
+    assert.equal(host.hidden, false);
+    const ev = doc.key("Escape");
+    assert.equal(host.hidden, true, "the viewer closed");
+    assert.equal(ev.defaultPrevented, true);
+    assert.equal(dialogClosed, 0, "the dialog stays open, with what was typed in it");
+    doc.key("Escape");
+    assert.equal(dialogClosed, 1, "the next Esc is the dialog's");
+  });
 });
 
 test("several receipts: the expense dialog's file-drop, the Expenses tab's and the ledger's rows (＋📎 several, drop, Ctrl+V on a selected row)", () => {

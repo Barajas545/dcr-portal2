@@ -32,12 +32,26 @@ export const QUOTE_PRICE_EMBED = "prices:quote_prices(amount, document_url, note
 export const ESTIMATE_COLS = "id, project_id, number, kind, co_number, name, status, group_order, archived_at, deleted_at";
 export const TASK_COLS = "id, project_id, estimate_item_id, title, description, category, priority, assigned_to, status, created_at, completed_at";
 export const FILE_COLS = "id, project_id, estimate_item_id, folder, name, storage, storage_path, size, created_at, modified_at";
-export const BILL_COLS = "id, project_id, estimate_item_id, quote_id, vendor_name, invoice_number, invoice_date, due_date, amount, " +
-  "description, document_file_id, void, approved_by, approved_at, approved_amount, pay_method, deleted_at, payments(amount)";
+// a bill's payments with the check register's void (the Books program, release A; migration 20261030000300): a voided
+// payment is paid against nothing (map/pm.js toBill). A database without the column yet: read again without it.
+const BILL_ROW_COLS = "id, project_id, estimate_item_id, quote_id, vendor_name, invoice_number, invoice_date, due_date, amount, " +
+  "description, document_file_id, void, approved_by, approved_at, approved_amount, pay_method, deleted_at, ";
+export const BILL_COLS = BILL_ROW_COLS + "payments(amount, voided_at)";
+export const BILL_COLS_BEFORE = BILL_ROW_COLS + "payments(amount)";
 export const INVOICE_COLS = "id, project_id, number, status, invoice_date, sent_date, due_date, deleted_at, " +
   "invoice_lines(estimate_id, amount), client_payments(amount)";
 export const COST_COLS = "id, project_id, estimate_item_id, cost_date, kind, description, vendor, amount";
 const IDS_PER_READ = 150;
+
+/** read(cols) with the payments' void column; a database without it yet (42703 / PGRST204 naming it) is asked again
+    with `before`. */
+export async function withVoids(read, cols, before) {
+  try { return await read(cols); } catch (e) {
+    const code = String((e && e.code) || "");
+    if (!((code === "42703" || code === "PGRST204") && /\bvoided_at\b/.test(String((e && e.message) || "") + " " + String((e && e.details) || "")))) throw e;
+  }
+  return read(before);
+}
 
 /** rows of `table` whose `col` is one of `ids`, 150 ids a read (a URL stays short) */
 async function byIds(c, table, cols, col, ids) {
@@ -78,7 +92,7 @@ export async function load(projectId, me, opts) {
     // "priced" for everyone (the same yes / no); the total only with prices - never a money column otherwise
     c.from("estimate_item_totals").select(prices ? "item_id, priced, total" : "item_id, priced").eq("project_id", pid).then(must),
     money ? Promise.all([
-      c.from("bills").select(BILL_COLS).eq("project_id", pid).order("due_date", { ascending: true }).then(must),
+      withVoids((cols) => c.from("bills").select(cols).eq("project_id", pid).order("due_date", { ascending: true }).then(must), BILL_COLS, BILL_COLS_BEFORE),
       c.from("invoices").select(INVOICE_COLS).eq("project_id", pid).order("invoice_date", { ascending: false }).then(must),
       c.from("costs").select(COST_COLS).eq("project_id", pid).order("cost_date", { ascending: false }).range(0, 1999).then(must),
       // M5a's roll-up (financials; committed needs prices too): an error here is shown, not drawn as "no commitments"

@@ -195,6 +195,20 @@ test("gates (UI only): the ledger with financials; tag, reconcile and confirm fo
   assert.equal(L.canTag(me("viewer", true)), false, "a viewer with the switch reads, never writes");
 });
 
+test("a voided payment (the check register's Void) is listed, marked, and paid against nothing: the bill is owed again (app.bill_paid_total, Desktop 2.25)", () => {
+  const T = "2026-10-21";
+  const bill = { id: 9, amount: 1000, void: false, document_file_id: 5, approved_at: "2026-10-01T00:00:00Z", approved_amount: 1000, pay_method: "check", due_date: null,
+    payments: [{ id: 41, amount: 1000, paid_date: "2026-10-05", method: "check", check_number: "1043", voided_at: "2026-10-06T17:00:00Z", void_reason: "Made-up: wrong payee" }] };
+  const d = P.decorateBill(bill, T);
+  assert.deepEqual([d.paid, d.owed, d.state], [0, 1000, "approved"], "a sole voided check: owed again, never \"Paid\"");
+  assert.deepEqual(d.payments.map((p) => [p.id, p.voided, p.void_reason]), [[41, true, "Made-up: wrong payee"]], "still listed, marked");
+  const two = P.decorateBill(Object.assign({}, bill, { payments: bill.payments.concat([{ id: 42, amount: 1000, paid_date: "2026-10-07", method: "check", check_number: "1044" }]) }), T);
+  assert.deepEqual([two.paid, two.owed, two.state], [1000, 0, "paid"], "the replacement check pays it");
+  assert.equal(P.billTotals([d, two]).paid, 1000, "the totals: live payments only");
+  assert.equal(P.isVoidPayment({ voided_at: null }), false);
+  assert.equal(P.decorateBill(Object.assign({}, bill, { payments: [{ id: 43, amount: 400, paid_date: "2026-10-05" }] }), T).payments[0].voided, false, "a row read before the column: live");
+});
+
 test("bill states are DCR Desktop 2's (money_logic.bill_state): void, needs document, waiting, approved, part paid, paid, overdue", () => {
   const T = "2026-10-21";
   const b = (f) => Object.assign({ id: 1, amount: 100, void: false, document_file_id: null, approved_at: null, approved_amount: null, due_date: null, payments: [] }, f);

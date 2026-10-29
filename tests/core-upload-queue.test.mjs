@@ -410,6 +410,45 @@ test("money kinds: the row carries bill_id (and payment_id), the queue asks no n
   assert.ok(rec.nameTaken > 0, "photos: nameTaken as before");
 });
 
+test("money kinds next to a tab still on the code before them (e66a89f, the same store and lock): a bill's or a payment's file is kept as \"m:<user>\" - the old drain leaves it waiting (it would insert it as a receipt of nothing), this queue drains it with its links", async () => {
+  const user = F.PEOPLE.find((p) => p.key === "accountant").id;
+  const w = world({ user });
+  const rec = moneyDb();
+  w.db = rec.db;
+  w.net.down = true;                                          // held on the device
+  const q = w.queue();
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(100, "application/pdf"), kind: "bill", billId: 77, name: "INV-7001.pdf", tag: "document", takenAt: WHEN });
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(110, "image/jpeg"), kind: "payment", billId: 77, paymentId: 501, name: "Check 1043.jpg", takenAt: WHEN });
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(120, "image/jpeg"), kind: "receipt", costId: 41, name: "Yard.jpg", takenAt: WHEN });
+  const photo = await q.enqueue({ projectId: w.sandbox.id, file: blob(130), kind: "photo", name: "North.jpg", takenAt: WHEN });
+  await q.drain();                                            // settled: nothing went up
+  const kept =Array.from(w.store.values()).sort((a, b) => a.added - b.added || a.size - b.size);
+  assert.deepEqual(kept.map((r) => [r.kind, r.owner]), [["bill", "m:" + user], ["payment", "m:" + user], ["receipt", user], ["photo", user]]);
+  // e66a89f's runOnce, word for word: (await d.store.all()).filter(isItem), then
+  // all.filter((r) => r.owner === who && r.state !== "failed" && ready(r) && !removed.has(r.id))
+  const oldIsItem = (r) => r && !String(r.id).startsWith("entry:");
+  const oldMine = kept.filter(oldIsItem).filter((r) => r.owner === user && r.state !== "failed");
+  assert.deepEqual(oldMine.map((r) => r.kind), ["receipt", "photo"], "the old drain never takes a bill's or a payment's file");
+  // another account signed in on this device never takes them either
+  const other = world({ user: F.PEOPLE.find((p) => p.key === "admin").id, engine: w.engine, store: w.store });
+  const orec = moneyDb();
+  other.db = orec.db;
+  await other.queue().drain();
+  assert.equal(orec.rows.length, 0, "not the admin's");
+  // this queue drains them, with their bill and payment
+  await q.remove(photo);
+  w.net.down = false;
+  await q.retryAll();                                         // the connection is back
+  assert.deepEqual(rec.rows.map((r) => [r.name, r.bill_id, r.payment_id, r.cost_id]), [
+    ["INV-7001.pdf", 77, undefined, undefined], ["Check 1043.jpg", 77, 501, undefined], ["Yard.jpg", undefined, undefined, 41]]);
+  assert.equal(w.store.size, 0);
+  // a record kept with the plain owner (before this rule) still drains
+  w.store.set("1-old", Object.assign({}, kept[0], { id: "1-old", owner: user, key: kept[0].key.replace(/\/[0-9a-f]{32}\//, "/" + "b".repeat(32) + "/"), state: "waiting", stage: "object", sent: 0, tries: 0, waitUntil: 0 }));
+  await q.drain();
+  assert.equal(rec.rows.length, 4);
+  assert.equal(rec.rows[3].bill_id, 77);
+});
+
 test("money kinds: custody refuses a bill's file without its bill, a payment's file without its payment, a cost on either", async () => {
   const w = world();
   const q = w.queue();

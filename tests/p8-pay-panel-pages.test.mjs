@@ -67,6 +67,35 @@ test("CSS: the Books' look moved out of accounting.html into css/books.css, shar
     "money pages stay out of the offline cache");
 });
 
+test("CSS: the register's printed page is its own - the print rules that take the sections' frame off name the register's root, so The Books (accounting.html) prints as before", () => {
+  const css = read("css/books.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  // every @media print block, with its nested rules
+  const blocks = [];
+  for (let at = css.indexOf("@media print"); at !== -1; at = css.indexOf("@media print", at + 1)) {
+    let i = css.indexOf("{", at) + 1, depth = 1;
+    const start = i;
+    for (; i < css.length && depth; i++) { if (css[i] === "{") depth++; else if (css[i] === "}") depth--; }
+    blocks.push(css.slice(start, i - 1));
+  }
+  assert.ok(blocks.length >= 2, "The Books' print rule and the register's");
+  const selectors = blocks.flatMap((b) => (b.match(/[^{}]+(?=\{)/g) || []).flatMap((s) => s.split(",").map((x) => x.trim())));
+  for (const s of selectors) {
+    // a rule that changes .ac or .ac-sec (both pages have them) must be scoped to the register page
+    if (/(^|[\s>+~])\.ac(-sec)?(?![-\w])/.test(s) && !/\.ac-(view|tabs|b)\b/.test(s)) assert.match(s, /#rgRoot\b/, "unscoped print rule: " + s);
+  }
+  assert.ok(selectors.includes("#rgRoot.ac") && selectors.includes("#rgRoot .ac-sec"), selectors.join(" | "));
+  assert.match(read("books-checks.html"), /<main class="ac" id="rgRoot">/);
+  assert.ok(!/id="rgRoot"/.test(read("accounting.html")), "The Books' root is not the register's");
+});
+
+test("the panel's viewer box says \"opened in a new tab\" only when the file was sent there; a refused link keeps its words", () => {
+  const pp = code(read("js/pages/pay-panel.js"));
+  const sd = pp.slice(pp.indexOf("async function showDoc("), pp.indexOf("export function wirePanel("));
+  assert.match(sd, /const sent = await openTab\(f, \(e\) => \{ if \(box\) box\.textContent = errorText\(e\); else toast\(errorText\(e\), "error"\); \}\);/);
+  assert.match(sd, /if \(box && sent\) box\.textContent = f\.name \+ " opened in a new tab\.";/);
+  assert.ok(!/\n\s*if \(box\) box\.textContent = f\.name \+ " opened in a new tab\."/.test(sd), "never written over the error");
+});
+
 test("the register page: refused before anything is read; write controls only for money editors; Void only while the switch is on; the switch an admin's", () => {
   const js = code(read("js/pages/books-checks.js"));
   assert.match(js, /if \(!seesBooks\(me\)\) \{[^]*?location\.replace\("dashboard\.html"\);\s*return;/);

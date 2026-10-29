@@ -97,10 +97,12 @@ function paint(got) {
       "<td>" + open + "</td></tr>";
     b.payments.forEach((p) => {
       const told = toldText(p, fmtDay);
+      // a voided payment (the check register's Void): listed as void with its reason, no amount, counted nowhere
       billRows += '<tr class="pay"><td colspan="3">' + esc(paymentText(p, fmtDay)) +
         (p.payee ? " · to " + esc(p.payee) : "") + (p.memo ? " · memo “" + esc(p.memo) + "”" : "") +
-        (pickupPayment(p) ? '<span class="vd">' + esc(told || "Not told it is ready yet") + "</span>" : "") +
-        '</td><td class="num" colspan="3">' + esc(money(p.amount)) + "</td><td></td><td></td></tr>";
+        (p.voided ? '<span class="vd">' + esc("Void" + (p.void_reason ? " · " + p.void_reason : "")) + "</span>"
+          : pickupPayment(p) ? '<span class="vd">' + esc(told || "Not told it is ready yet") + "</span>" : "") +
+        '</td><td class="num" colspan="3">' + (p.voided ? chip("Void", "muted") : esc(money(p.amount))) + "</td><td></td><td></td></tr>";
     });
   });
   const billsHtml = '<div class="pjm-h"><h3>Money out — vendor bills</h3><span class="pj-sub">' +

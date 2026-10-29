@@ -140,18 +140,21 @@ export async function urlFor(f, preview) {
   return sign(preview && x.preview ? x.preview : x.path);
 }
 
-/** Open the file in a new tab (the tab is opened on the click itself, then sent on). */
+/** Open the file in a new tab (the tab is opened on the click itself, then sent on) -> true once it was sent there,
+    false when it could not be (onError was told why: a caller writes "opened" only on true). */
 export async function openTab(f, onError) {
   const x = fileOf(f);
-  if (x.local || !x.path) { if (onError) onError(new Error("This file is on the office computers: open it there.")); return; }
+  if (x.local || !x.path) { if (onError) onError(new Error("This file is on the office computers: open it there.")); return false; }
   const w = window.open("", "_blank");
   try {
     const url = await urlFor(x, false);
     if (!url) throw new Error("No link for this file.");
     if (w) { try { w.opener = null; } catch (e) { /* */ } w.location.href = url; } else location.href = url;
+    return true;
   } catch (e) {
     if (w) w.close();
     if (onError) onError(e);
+    return false;
   }
 }
 
@@ -165,8 +168,11 @@ function message(stage, bold, rest, button) {
   return m;
 }
 
-/** Put a file on `stage`. o: {errorText(e), onOpen(file) (the Open button; default openTab)} -> resolves when shown. */
+/** Put a file on `stage`. o: {errorText(e), onOpen(file) (the Open button; default openTab)} -> resolves when shown.
+    The last file asked for wins: a picture whose signed link answers after another file was put on the same stage is
+    dropped (each call takes the stage's turn first, so a PDF's or an office file's words also make it stale). */
 export async function showIn(stage, f, opts) {
+  const turn = (stage._fvTurn = (stage._fvTurn || 0) + 1);
   const o = opts || {};
   ensureStyle();
   const x = fileOf(f);
@@ -185,6 +191,7 @@ export async function showIn(stage, f, opts) {
   message(stage, "", "Opening " + x.name + "…");
   try {
     const url = await urlFor(x, false);
+    if (stage._fvTurn !== turn) return;              // another file was put here meanwhile
     if (!url) throw new Error("No link for this file.");
     stage.textContent = "";
     const img = node("img");
@@ -192,6 +199,7 @@ export async function showIn(stage, f, opts) {
     img.src = url;
     stage.appendChild(img);
   } catch (e) {
+    if (stage._fvTurn !== turn) return;
     message(stage, x.name, err(e)).style.color = "var(--danger, #c8371f)";
   }
 }
@@ -226,12 +234,14 @@ function viewer() {
   open.addEventListener("click", () => openTab(view.files[view.at], view.opts.onError));
   close.addEventListener("click", closeViewer);
   host.addEventListener("click", (e) => { if (e.target === host) closeViewer(); });
+  // heard first (the capture phase) and an Esc kept to the viewer: a dialog under it (the expense dialog closes on Esc
+  // too, and would throw away what was typed) never hears the key that closed the viewer
   document.addEventListener("keydown", (e) => {
     if (host.hidden) return;
-    if (e.key === "Escape") { e.preventDefault(); closeViewer(); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeViewer(); }
     else if (e.key === "ArrowLeft") go(view.at - 1);
     else if (e.key === "ArrowRight") go(view.at + 1);
-  });
+  }, true);
   view.el = host;
   return host;
 }

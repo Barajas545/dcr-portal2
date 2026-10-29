@@ -297,8 +297,9 @@ table.ac-t { width: 100%; border-collapse: collapse; font-size: 13px; table-layo
 @media print {
   .rg-noprint, .rg-filters, .rg-bar, .rg-void, .rg-t .c-pick, .rg-t .c-acts, .rg-t td.pick, .rg-t td.acts-c, .rg-t .av, .rg-files { display: none !important; }
   .rg-print-head { display: block; font-size: 13px; font-weight: 700; margin: 0 0 8px; color: #000; }
-  .ac { max-width: none; padding: 0; }
-  .ac-sec { box-shadow: none; border: 0; padding: 0; }
+  /* the register's own page only (books-checks.html's root): The Books (accounting.html) prints as it always did */
+  #rgRoot.ac { max-width: none; padding: 0; }
+  #rgRoot .ac-sec { box-shadow: none; border: 0; padding: 0; }
   .rg-t tr.rg-month { break-before: page; page-break-before: always; }
   .rg-t tr.rg-month.first { break-before: auto; page-break-before: auto; }
   .rg-t tr { break-inside: avoid; page-break-inside: avoid; }

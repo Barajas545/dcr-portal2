@@ -334,6 +334,15 @@ test("the chart for someone with prices and financials: every tile, amounts in t
   assert.match(svg, /data-pm="lane:i100:B4"/);
 });
 
+test("the money tiles: a voided payment (the check register's Void) is paid against nothing - the bill is owed again", () => {
+  const b = M.toBill({ id: 60, vendor_name: "Made-up Framing", amount: 1000, approved_at: "2026-10-01T17:00:00Z", approved_amount: 1000,
+    payments: [{ amount: 1000, voided_at: "2026-10-06T17:00:00Z" }, { amount: 250, voided_at: null }, { amount: 100 }] }, { nameOf });
+  assert.deepEqual([b.paid, b.owed], [350, 650]);
+  const all = M.toPayload(rows({ bills: [{ id: 61, amount: 500, approved_at: "2026-10-01T17:00:00Z", approved_amount: 500, document_file_id: 3,
+    payments: [{ amount: 500, voided_at: "2026-10-06T17:00:00Z" }] }] }), everything);
+  assert.deepEqual([all.bills[0].paid, all.bills[0].owed], [0, 500]);
+});
+
 test("the quote chase clock runs from the last follow-up, on the company day; a declined or received quote is answered", () => {
   const base = M.toPayload(rows(), everything);
   const lane = (m) => m.lanes.find((l) => l.itemId === 102);

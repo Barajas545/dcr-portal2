@@ -74,6 +74,8 @@ function render() {
   const was = state.activeId == null ? -1 : files.findIndex((f) => String(f.id) === String(state.activeId));
   state.active = was !== -1 ? was : state.active < files.length ? state.active : 0;
   const waiting = !b.approved;
+  // a voided payment (the check register's Void) is paid against nothing: listed as void, counted nowhere
+  const livePays = (d.payments || []).filter((p) => p.live !== false);
   const lateDue = (b.lateBy || 0) > 0;
   const stateCls = b.void ? "void" : waiting ? "wait" : "ok";
   const stateText = b.void ? "VOID" : waiting ? "AWAITING APPROVAL" : "APPROVED";
@@ -141,9 +143,9 @@ function render() {
       s += '<div class="bl-why" style="margin-top:8px">Nobody recorded how this is paid (by check, in cash, by bank transfer or by card), so the accountant cannot pay it.' +
         (can.approve ? "" : " Ask a manager or admin to set it.") + "</div>";
     }
-    if (can.approve && !d.payments.length) {
+    if (can.approve && !livePays.length) {
       s += '<div style="margin-top:10px"><button type="button" class="bl-secondary" id="blHow">' + (b.payMethod ? "Change how to pay" : "Say how to pay") + "</button></div>";
-    } else if (can.approve && d.payments.length) {
+    } else if (can.approve && livePays.length) {
       s += '<div class="bl-msg">A payment is recorded, so how it is paid is settled.</div>';
     }
   } else if (!can.approve) {
@@ -165,8 +167,10 @@ function render() {
       (p.payee ? '<br><span class="t">to ' + h(p.payee) + "</span>" : "") +
       (ofPay(p).length ? '<br><span class="t">&#128181; ' + ofPay(p).map((f) => '<button type="button" class="bl-link" data-show="' + h(f.id) + '">' + h(f.name) + "</button>").join(", ") + "</span>" : "") +
       (edit ? '<br><button type="button" class="bl-link" data-payfile="' + h(p.id) + '">＋ Add a file (a photo of the check, a confirmation)</button>' : "") +
-      "</span><span><b>" + money(p.amount) + "</b>" +
-      (p.collectable ? '<br><span class="t">' + (p.toldAt ? "told " + h(p.toldHow) + " " + h(day(p.toldDay)) : "not told yet") + "</span>" : "") +
+      (p.live === false
+        ? '</span><span><b class="bl-void">Void</b>' + (p.voidReason ? '<br><span class="t">' + h(p.voidReason) + "</span>" : "")
+        : "</span><span><b>" + money(p.amount) + "</b>" +
+          (p.collectable ? '<br><span class="t">' + (p.toldAt ? "told " + h(p.toldHow) + " " + h(day(p.toldDay)) : "not told yet") + "</span>" : "")) +
       "</span></div>").join("") + "</div>";
   }
 
@@ -323,13 +327,15 @@ async function replaceWith(file) {
   queued(res);
 }
 
-/* "Make this the bill's document": only re-points (the old document stays as an extra). */
+/* "Make this the bill's document": only re-points (the old document stays as an extra). The approval is withdrawn only
+   when the person was asked and said yes: a bill approved after the page was drawn answers PT409 (link() says so and
+   shows it again), never a silent withdrawal. */
 async function makeDocument(f) {
   const b = state.data.bill;
   const p = documentProblem(b);
   if (p) { sayFile(p, true); return; }
   if (!(await agreeWithdraw(b))) return;
-  await link(f.id, true, null);
+  await link(f.id, withdrawsApproval(b), null);
 }
 
 /* "Remove": an extra or a payment's file (a soft delete; the database keeps the history). Never the document. */
@@ -346,23 +352,37 @@ async function removeFile(f) {
   await load();
 }
 
-/* The bill points at `fileId` (one write at a time); a replaced document is then removed. */
-function link(fileId, agreed, oldId) {
+/* The bill points at `fileId` (one write at a time); a replaced document is then removed. onlyIfNone (a file queued
+   as "the first becomes the document"): only while the bill still has no document, read again inside the chain - the
+   first file to land wins, a later batch queued before it landed stays an extra (the contract §4.1). A replace whose
+   document an earlier replace already took off (two Replace… in a row) points the bill at the newest file and leaves
+   the earlier replacement an extra. The page is drawn again before its words are written (a redraw would wipe them). */
+function link(fileId, agreed, oldId, onlyIfNone, name) {
   state.chain = state.chain.then(async () => {
+    if (onlyIfNone) {
+      await load();
+      if (state.data.bill.documentFileId != null) {
+        if (name) sayFile("“" + name + "” is kept as another file of this bill: the bill has its document already.");
+        return;
+      }
+    }
+    const replaces = oldId != null && String(state.data.bill.documentFileId) === String(oldId);
     try {
       await books.setDocument(state.data.bill, fileId, { withdraw: !!agreed });
       toast(oldId != null ? "The document is replaced." : "That file is now the bill's document.", "ok");
     } catch (e) {
       const conflict = e && (e.code === "PT409" || e.status === 409);
+      await load();
       sayFile(conflict ? "The bill was approved or changed meanwhile: the file is kept as another file of the bill. Look at it again, then make it the document."
         : errorText(e), true);
-      await load();
       return;
     }
-    if (oldId != null) {
-      try { await filesRepo.removeFile({ id: oldId }); } catch (e) { sayFile("The new document is in place; the old one stays as another file: " + errorText(e), true); }
+    let left = "";
+    if (replaces) {
+      try { await filesRepo.removeFile({ id: oldId }); } catch (e) { left = "The new document is in place; the old one stays as another file: " + errorText(e); }
     }
     await load();
+    if (left) sayFile(left, true);
     const i = state.files.findIndex((f) => String(f.id) === String(fileId));
     if (i !== -1) show(i);
   });
@@ -400,7 +420,7 @@ function paintQueue() {
 
 function landed(item, row) {
   const tag = String(item.tag || "");
-  if (row && row.id != null && /^document!?$/.test(tag)) return link(row.id, tag === "document!", null);
+  if (row && row.id != null && /^document!?$/.test(tag)) return link(row.id, tag === "document!", null, true, row.name || item.name);
   const m = /^replace(!?):(\d+)$/.exec(tag);
   if (row && row.id != null && m) return link(row.id, m[1] === "!", m[2]);
   return load();

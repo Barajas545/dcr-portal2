@@ -261,8 +261,9 @@ async function showDoc(i, detail) {
   if (!f) return;
   const box = document.getElementById("ckViewer");
   if (isImage(f) && box) { await showIn(box, f, { errorText, onOpen: (x) => openTab(x, (e) => toast(errorText(e), "error")) }); return; }
-  await openTab(f, (e) => { if (box) box.textContent = errorText(e); else toast(errorText(e), "error"); });
-  if (box) box.textContent = f.name + " opened in a new tab.";
+  // "opened" only when it was: a refused link (a sign-in run out, no connection) keeps its words in the box
+  const sent = await openTab(f, (e) => { if (box) box.textContent = errorText(e); else toast(errorText(e), "error"); });
+  if (box && sent) box.textContent = f.name + " opened in a new tab.";
 }
 
 /** Wire the open panel inside `box`. ctx: {bill (the deskChecks entry), which, me, today, detail, onClose(),

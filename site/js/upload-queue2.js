@@ -262,6 +262,16 @@ function parseBody(res) {
 
 const isItem = (r) => r && !String(r.id).startsWith("entry:");
 
+/* Whose record it is. The queue's store, its version and its lock are the ones the code before the Books program
+   (e66a89f) uses, and a tab opened before a publish keeps running that code: it drains every record whose owner is
+   exactly the sign-in, and its row knows no bill_id / payment_id - a bill's or a payment's file would go in as a plain
+   receipt of nothing. So those two kinds carry the owner as "m:<user id>": the old code leaves them waiting (a reload
+   brings this code), this code takes both forms. A new object store would need a new database version, which an open
+   old tab blocks (this tab would then fall back to memory: not durable). */
+export const OWNER_MONEY = "m:";
+export function ownerFor(kind, who) { return (kind === "bill" || kind === "payment" ? OWNER_MONEY : "") + who; }
+export function ownedBy(r, who) { return !!who && (r.owner === who || r.owner === OWNER_MONEY + who); }
+
 /** A queue over injected parts (the tests use memory and a fake Storage; the page uses
     IndexedDB, XMLHttpRequest and supabase-js):
       store   {put(rec), del(id), all()}             durable custody
@@ -366,9 +376,12 @@ export function createQueue(parts) {
       for (let n = 2; taken.has(name.toLowerCase()) && n < 999; n++) name = displayName(kind, file, takenAt, n);
     }
     const projectId = /^\d+$/.test(String(opt.projectId)) ? Number(opt.projectId) : opt.projectId;
+    const who = opt.owner || d.owner() || null;
     const rec = {
       id: String(d.now()) + "-" + Math.random().toString(36).slice(2, 8),
-      owner: opt.owner || d.owner() || null,
+      // a bill's or a payment's file is marked "m:" (OWNER_MONEY): a tab still on the code before them (e66a89f) drains
+      // only records whose owner IS the sign-in, so it leaves these waiting instead of inserting them as unlinked receipts
+      owner: who === null ? null : ownerFor(kind, who),
       projectId: String(opt.projectId), projectKey: projectId,
       kind, folder: place.folder, subpath: place.subpath,
       journalEntryId: opt.journalEntryId ?? null, pendingEntry: opt.pendingEntry || null,
@@ -603,7 +616,7 @@ export function createQueue(parts) {
       if (!who) return;                                  // nobody signed in: wait for them
       const now = d.now();
       const all = (await d.store.all()).filter(isItem);
-      const mine = all.filter((r) => r.owner === who && r.state !== "failed" && ready(r) && !removed.has(r.id));
+      const mine = all.filter((r) => ownedBy(r, who) && r.state !== "failed" && ready(r) && !removed.has(r.id));
       const due = mine.filter((r) => !(r.waitUntil > now) && r.state !== "held")
         .sort((a, b) => a.added - b.added);
       // held records (waiting for their journal entry) are looked at again when an entry is bound

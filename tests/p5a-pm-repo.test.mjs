@@ -102,6 +102,27 @@ test("admin and accountant: the money tables and the commitments roll-up (over-b
   }
 });
 
+test("the money tiles read each payment's void: a voided check is paid against nothing; a database without the column is read again without it", { skip }, async () => {
+  assert.match(pm.BILL_COLS, /payments\(amount, voided_at\)$/);
+  assert.match(pm.BILL_COLS_BEFORE, /payments\(amount\)$/);
+  const { e, me } = await as("accountant");
+  const sb = sandbox(e);
+  const b = e.rows.bills.find((x) => x.project_id === sb.id && !x.void && x.approved_at && e.rows.payments.some((p) => p.bill_id === x.id));
+  const before = (await pm.load(sb.id, me)).payload.bills.find((x) => x.id === b.id);
+  const pays = e.rows.payments.filter((p) => p.bill_id === b.id);
+  pays.forEach((p) => Object.assign(p, { voided_at: new Date().toISOString(), voided_by: me.id, void_reason: "Made-up: written twice" }));
+  const after = (await pm.load(sb.id, me)).payload.bills.find((x) => x.id === b.id);
+  assert.ok(before.paid > 0, "paid before");
+  assert.deepEqual([after.paid, after.owed], [0, Math.round(Number(b.amount) * 100) / 100], "owed again once its checks are voided");
+  const asked = [];
+  const got = await pm.withVoids(async (cols) => {
+    asked.push(cols);
+    if (/voided_at/.test(cols)) throw Object.assign(new Error("column payments_1.voided_at does not exist"), { code: "42703" });
+    return [{ id: 1 }];
+  }, pm.BILL_COLS, pm.BILL_COLS_BEFORE);
+  assert.deepEqual([got, asked], [[{ id: 1 }], [pm.BILL_COLS, pm.BILL_COLS_BEFORE]]);
+});
+
 test("item flags: a lead sets, changes and clears one - by and at are the database's, one amount-free log line each", { skip }, async () => {
   const { e, me, uid } = await as("lead");
   const pid = sandbox(e).id;

@@ -170,6 +170,27 @@ test("a project's Expenses: its own cost rows only; its Payments: bills with the
   assert.ok(inv.length >= 2 && inv.some((i) => i.paid > 0));
 });
 
+test("a project's Payments know a voided payment (voided_at, void_reason): owed again, listed as void; a database without the columns is read again without them", { skip }, async () => {
+  assert.ok(repo.BILL_COLS.includes("voided_at") && repo.BILL_COLS.includes("void_reason") && !repo.BILL_COLS_BEFORE.includes("voided_at"));
+  const { e } = await as("accountant");
+  const paidBill = e.rows.bills.find((b) => b.description === "Porch footings");
+  const pay = e.rows.payments.find((p) => p.bill_id === paidBill.id);
+  Object.assign(pay, { voided_at: new Date().toISOString(), voided_by: e.rows.profiles.find((p) => p.role === "admin").id, void_reason: "Made-up: written to the wrong payee" });
+  const got = await repo.projectPayments(paidBill.project_id);
+  const d = decorateBill(got.bills.find((b) => b.id === paidBill.id), today());
+  assert.deepEqual([d.paid, d.owed > 0, d.state === "paid"], [0, true, false], "the Payments tab: owed again");
+  assert.deepEqual(d.payments.filter((p) => p.voided).map((p) => [p.id, p.void_reason]), [[pay.id, "Made-up: written to the wrong payee"]]);
+  // before migration 20261030000300: 42703 naming the column -> the same read without it
+  const asked = [];
+  const old = await repo.withVoids(async (cols) => {
+    asked.push(cols);
+    if (/voided_at/.test(cols)) throw Object.assign(new Error("column payments_1.voided_at does not exist"), { code: "42703" });
+    return [{ id: 1 }];
+  }, repo.BILL_COLS, repo.BILL_COLS_BEFORE);
+  assert.deepEqual([old, asked], [[{ id: 1 }], [repo.BILL_COLS, repo.BILL_COLS_BEFORE]]);
+  await assert.rejects(repo.withVoids(async () => { throw Object.assign(new Error("permission denied"), { code: "42501" }); }, "a", "b"), /permission denied/, "anything else is said");
+});
+
 test("the RPCs are called with M5b's argument names (the demo refuses any other, as PostgREST would)", { skip }, async () => {
   assert.deepEqual(Object.keys(repo.RPC.tag.args([1], "cash")), ["p_ids", "p_card"]);
   assert.deepEqual(Object.keys(repo.RPC.reconcile.args([1], true)), ["p_ids", "p_on"]);

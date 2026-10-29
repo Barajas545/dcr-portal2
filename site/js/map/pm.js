@@ -212,7 +212,8 @@ export function toBill(row, ctx) {
   const c = ctx || {};
   const nameOf = c.nameOf || function () { return ""; };
   const amount = num(row.amount);
-  const paid = (row.payments || []).reduce(function (s, p) { return s + num(p.amount); }, 0);
+  // live payments only: a voided one (the check register's Void) is paid against nothing (app.bill_paid_total)
+  const paid = (row.payments || []).reduce(function (s, p) { return p && p.voided_at ? s : s + num(p.amount); }, 0);
   const approved = !!row.approved_at;
   return {
     id: row.id, itemId: row.estimate_item_id == null ? null : row.estimate_item_id,
