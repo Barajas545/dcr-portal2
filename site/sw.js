@@ -39,7 +39,10 @@
    (js/plan-pictures.js), never here - Storage is never cached. The contact pictures (the Books program, release A3) keep
    "dcr-portal2-v3" the same way: Search draws them, so the avatar and its signing module join the list (no money code:
    the contact card, which changes a contact, is fetched when it is opened and stays out of it, as the money pages do);
-   the pictures themselves are signed Storage addresses, never kept here. */
+   the pictures themselves are signed Storage addresses, never kept here. The Accounting page (the Books program, release
+   B: books-home.html and its money-message modules - the ask and tell panels, the template editor) stays OUT of the
+   list, as every money page does: Home only names it (its card) and reads its "N to do" through a dynamic import, so no
+   money code is ever kept ahead on a crew phone; the list and "dcr-portal2-v3" are unchanged. */
 const CACHE = "dcr-portal2-v3";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:

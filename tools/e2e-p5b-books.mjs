@@ -146,7 +146,9 @@ async function main() {
         await p.until("document.querySelectorAll('.hm-card').length > 2", 8000);
         if (APPROVES[role]) await p.until("!!document.getElementById('hmApprovalsCard')", 8000).catch(() => null); else await sleep(1200);
         const home = await p.eval("({ cards: Array.from(document.querySelectorAll('.hm-card .tt')).map(n => n.childNodes[0].textContent), ap: !!document.getElementById('hmApprovalsCard'), apText: (document.getElementById('hmApprovals') || {}).innerText || '', h: document.getElementById('hmSections').innerHTML + (document.getElementById('hmApprovals') || {}).innerHTML })");
-        check(role + ": home - The Books card " + (BOOKS[role] ? "shown" : "not shown"), home.cards.includes("The Books") === !!BOOKS[role], home.cards.join("|"));
+        // the Books program, release B: the Accounting card first, The Books its advanced mode
+        check(role + ": home - the Accounting and The Books (advanced) cards " + (BOOKS[role] ? "shown" : "not shown"),
+          home.cards.includes("The Books (advanced)") === !!BOOKS[role] && home.cards.includes("Accounting") === !!BOOKS[role], home.cards.join("|"));
         check(role + ": home - the approvals card " + (APPROVES[role] ? "shown (bills waiting, with amounts and Open links)" : "not shown"),
           home.ap === !!APPROVES[role] && (!APPROVES[role] || (/waiting for approval/.test(home.apText) && AMOUNT.test(home.apText) && /needs the invoice attached/.test(home.apText))), home.apText.slice(0, 200));
         if (!BOOKS[role]) check(role + ": home - no amount on the page", !AMOUNT.test(home.h), (home.h.match(/.{40}\$\s?\d.{20}/) || [""])[0]);

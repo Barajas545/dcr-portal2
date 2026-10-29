@@ -170,7 +170,7 @@ async function main() {
         if (APPROVES[role]) await p.until("!!document.getElementById('hmApprovalsCard')", 10000); else await sleep(1500);
         const home = await p.eval("({ cards: Array.from(document.querySelectorAll('.hm-card .tt')).map(n => n.childNodes[0].textContent), ap: !!document.getElementById('hmApprovalsCard'), apText: (document.getElementById('hmApprovals') || {}).innerText || '', h: document.getElementById('hmSections').innerHTML })");
         check(role + ": home - The Books card " + (FIN[role] ? "shown" : "not shown") + "; the approvals card " + (APPROVES[role] ? "shown (bills waiting, with amounts)" : "not shown"),
-          home.cards.includes("The Books") === !!FIN[role] && home.ap === !!APPROVES[role] && (!APPROVES[role] || (/waiting for approval/.test(home.apText) && AMOUNT.test(home.apText))),
+          home.cards.includes("The Books (advanced)") === !!FIN[role] && home.cards.includes("Accounting") === !!FIN[role] && home.ap === !!APPROVES[role] && (!APPROVES[role] || (/waiting for approval/.test(home.apText) && AMOUNT.test(home.apText))),
           home.cards.join("|") + " / " + home.apText.slice(0, 160));
         if (!FIN[role]) check(role + ": home - no amount on the page", !AMOUNT.test(home.h + home.apText));
         if (APPROVES[role] && role === "approver") await four(p, "home_approvals_approver", false);

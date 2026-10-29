@@ -4,7 +4,7 @@
    One attempt per press: Supabase allows 30 sign-ins per 5 minutes per address, and the office PCs
    share the same address. */
 import { signIn, session, me, signOut, isNetworkError, forgetSavedPlans, storedUserId } from "../sb.js";
-import { safeNext, scrubbedSearch, errorText, company, companyInfo } from "../common2.js";
+import { safeNext, scrubbedSearch, errorText, company, companyInfo, landingFor, markLanded } from "../common2.js";
 import "../install.js";
 
 const $ = (id) => document.getElementById(id);
@@ -13,10 +13,16 @@ function rawNext() {
   const m = /[?&]next=([^&]+)/.exec(location.search);
   return m ? m[1] : "";
 }
-const next = safeNext(rawNext());
-const nextAfterPassword = (p) => (p && p.must_change_password
-  ? "change-password.html?next=" + encodeURIComponent(next)
-  : next);
+// an explicit ?next= wins (a task link, a bill link: safeNext, unchanged); without one, the person's landing (the Books
+// program, release B: an accountant with financials -> the Accounting page; everyone else -> Home). Either way this
+// session has landed, so Home does not send them on again (common2.js bounceFor).
+const asked = rawNext() && safeNext(rawNext(), "-") !== "-" ? safeNext(rawNext()) : "";   // a ?next= safeNext refuses: none
+const next = asked || "dashboard.html";
+const go = (p) => asked || landingFor(p);
+const nextAfterPassword = (p) => {
+  markLanded();
+  return p && p.must_change_password ? "change-password.html?next=" + encodeURIComponent(go(p)) : go(p);
+};
 
 function showError(text) {
   const err = $("err");

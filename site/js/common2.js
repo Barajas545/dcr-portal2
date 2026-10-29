@@ -397,6 +397,37 @@ export function safeNext(raw, fallback) {
   return next;
 }
 
+/** Where a person lands after signing in when no ?next= says otherwise (the Books program, release B, I29; owner
+    decision 1): an active accountant with the financials switch goes to the Accounting page, everyone else to Home.
+    An explicit ?next= always wins (safeNext, unchanged): a task link, a bill link. Pure (tests/core-auth.test.mjs). */
+export function landingFor(p) {
+  return p && p.active !== false && p.role === "accountant" && p.can_see_financials ? "books-home.html" : "dashboard.html";
+}
+
+/* The installed app opens dashboard.html (manifest.json start_url), not the sign-in page: Home sends the person to
+   their landing ONCE per browser session (sessionStorage "dcr2_landed"), and the sign-in page and the Accounting page
+   mark the session landed, so Home and the brand link open the real Home from then on. A browser that refuses the
+   storage falls back to "only when this site did not send them here" (document.referrer). */
+export const LANDED_KEY = "dcr2_landed";
+/** Mark this browser session landed (never throws). */
+export function markLanded() {
+  try { if (typeof sessionStorage !== "undefined") sessionStorage.setItem(LANDED_KEY, "1"); } catch (e) { /* the referrer decides */ }
+}
+/** Where Home should send `p` once - their landing - or "" (stay). Marks the session landed when it answers a page. */
+export function bounceFor(p, referrer) {
+  const go = landingFor(p);
+  if (go === "dashboard.html") return "";
+  try {
+    if (sessionStorage.getItem(LANDED_KEY)) return "";
+    sessionStorage.setItem(LANDED_KEY, "1");
+    return go;
+  } catch (e) {
+    let here = "";
+    try { here = location.origin; } catch (x) { here = ""; }
+    return here && String(referrer || "").indexOf(here + "/") === 0 ? "" : go;
+  }
+}
+
 /** The sign-in page's query without anything a native form submit could have put there (an e-mail
     address, a password): only ?next= and ?inactive= are kept. "" when nothing is left. */
 export function scrubbedSearch(search) {
@@ -733,6 +764,8 @@ export function navItems(p) {
     { key: "capture", href: "capture.html", text: "Site Photos", show: role !== "viewer" },
     { key: "timesheet", href: "timesheet.html", text: "Time Sheet" },
     { key: "teamsheets", href: "timesheet-manager.html", text: "Team Sheets", show: ["admin", "manager", "accountant", "lead"].indexOf(role) !== -1 },
+    // the Books program, release B: the one doorway to the money pages - whoever sees the Books (the Home card's gate)
+    { key: "books", href: "books-home.html", text: "Accounting", show: role === "admin" || !!(p && p.can_see_financials) },
     { key: "settings", href: "settings.html", text: "Settings" },
   ].filter((i) => i.show !== false);
 }

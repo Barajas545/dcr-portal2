@@ -81,3 +81,56 @@ test("profile shape: name falls back to the e-mail; admins hold every switch", (
   assert.equal(shapeProfile({ id: "u3", email: "y", role: "field", active: false }).active, false);
   assert.equal(shapeProfile(null), null);
 });
+
+// The Books program, release B (I29): where a person lands after signing in, when no ?next= says otherwise - an
+// accountant with financials on the Accounting page, everyone else on Home; an explicit ?next= always wins (safeNext,
+// unchanged); the installed app (it opens Home) sends the accountant there ONCE per browser session.
+test("landingFor: an active accountant with financials -> books-home.html; anyone else -> dashboard.html; safeNext unchanged", async () => {
+  const { landingFor, safeNext, bounceFor, markLanded, LANDED_KEY, navItems } = await import("../site/js/common2.js");
+  assert.equal(landingFor({ role: "accountant", active: true, can_see_financials: true }), "books-home.html");
+  for (const p of [{ role: "accountant", active: true, can_see_financials: false }, { role: "accountant", active: false, can_see_financials: true },
+    { role: "admin", active: true, can_see_financials: true }, { role: "manager", active: true, can_see_financials: true, can_approve_payments: true },
+    { role: "lead", active: true, can_see_financials: true }, null, undefined]) {
+    assert.equal(landingFor(p), "dashboard.html", JSON.stringify(p));
+  }
+  // an explicit next is as it always was
+  assert.equal(safeNext("my-tasks.html%3Ftask%3D12"), "my-tasks.html?task=12");
+  assert.equal(safeNext("bill.html?id=4"), "bill.html?id=4");
+  assert.equal(safeNext("https://evil.example/x"), "dashboard.html");
+  assert.equal(safeNext("index.html"), "dashboard.html");
+  assert.equal(safeNext("", "-"), "-");
+  // once per session (sessionStorage), and a browser that refuses it: only when this site did not send them
+  const mem = new Map();
+  globalThis.sessionStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  const acc = { role: "accountant", active: true, can_see_financials: true };
+  try {
+    assert.equal(bounceFor({ role: "admin", active: true }, ""), "", "Home stays Home for an admin");
+    assert.equal(bounceFor(acc, ""), "books-home.html", "the first Home of the session");
+    assert.equal(bounceFor(acc, ""), "", "then Home stays Home");
+    mem.clear();
+    markLanded();
+    assert.equal(mem.get(LANDED_KEY), "1");
+    assert.equal(bounceFor(acc, ""), "", "the sign-in page or the Accounting page marked it");
+    globalThis.sessionStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+    globalThis.location = { origin: "https://portal.example.test" };
+    assert.equal(bounceFor(acc, "https://portal.example.test/books-home.html"), "", "storage refused: sent here by this site - stay");
+    assert.equal(bounceFor(acc, ""), "books-home.html", "storage refused: opened from outside - go");
+  } finally {
+    delete globalThis.sessionStorage;
+    delete globalThis.location;
+  }
+  // the top bar's one doorway to the money pages: whoever sees the Books
+  const has = (p) => navItems(p).some((i) => i.key === "books" && i.href === "books-home.html" && i.text === "Accounting");
+  assert.ok(has({ role: "admin" }) && has({ role: "accountant", can_see_financials: true }) && has({ role: "manager", can_see_financials: true }));
+  assert.ok(!has({ role: "accountant", can_see_financials: false }) && !has({ role: "lead" }) && !has({ role: "field" }) && !has({ role: "viewer" }));
+});
+
+test("the sign-in page: an explicit ?next= wins, else the person's landing; either way the session is marked landed", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../site/js/shell/index.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(src, /const asked = rawNext\(\) && safeNext\(rawNext\(\), "-"\) !== "-" \? safeNext\(rawNext\(\)\) : "";/);
+  assert.match(src, /const go = \(p\) => asked \|\| landingFor\(p\);/);
+  assert.match(src, /const nextAfterPassword = \(p\) => \{\n  markLanded\(\);\n  return p && p\.must_change_password \? "change-password\.html\?next=" \+ encodeURIComponent\(go\(p\)\) : go\(p\);/);
+  const dash = readFileSync(new URL("../site/js/shell/dashboard.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(dash, /const landing = bounceFor\(p, [^)]*\);\n  if \(landing\) \{ location\.replace\(landing\); return; \}/);
+});

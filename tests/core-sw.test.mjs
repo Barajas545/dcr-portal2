@@ -212,3 +212,13 @@ test("sw: install keeps supabase-js itself (the address js/sb.js loads)", async 
   assert.ok(r.responded && r.out && r.out.url === want, "used first, offline too");
   assert.equal(w.net.calls.length, calls, "no second download");
 });
+
+test("sw: the Accounting page and its money-message modules stay OUT of the offline list (the Books program, release B; S13)", () => {
+  const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(SRC)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
+  for (const f of ["books-home.html", "js/pages/books-home.js", "js/pages/ask-approval.js", "js/pages/tell-payee.js", "js/pages/money-templates.js",
+    "js/pages/books-nav.js", "js/repo/books-home.js", "js/repo/money-messages.js", "js/map/books-home.js", "js/map/money-messages.js",
+    "accounting.html", "js/pages/accounting.js", "js/repo/books.js", "js/map/books.js"]) {
+    assert.ok(!shell.includes(f), f + " is not precached");
+  }
+  assert.equal(CACHE, "dcr-portal2-v3", "the cache name is unchanged");
+});

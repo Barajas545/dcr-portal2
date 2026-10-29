@@ -2086,6 +2086,11 @@ section = "The Books, release A: the check register and the payment panel - void
 // ===========================================================================================
 await (await import("./schema-check-p8-register.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "The Books, release B part 2a: the Accounting page and the money messages - ask to approve, tell a payee, texts by hand, the templates, the reminder PC (repo/money-messages.js, repo/books-home.js, migration 20261030000400_money_messages)";
+// ===========================================================================================
+await (await import("./schema-check-p8-books.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

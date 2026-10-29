@@ -27,8 +27,12 @@
    map/plans.js plansCardFor), opening the takeoff app's plans (takeoff-web #plans: the Plans Archive and the plans kept
    on that device) in a new tab - a link only, nothing is asked of the database or the broker for it. The Plans
    Library (owner 2026-10-26), for the same people: the plan files saved on this device (plans-library.html); this page
-   keeps them up to date (pages/plan-buttons.js keepPlansFresh). */
-import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday } from "../common2.js";
+   keeps them up to date (pages/plan-buttons.js keepPlansFresh).
+   The Books program, release B: the Accounting card (books-home.html) first in Office for whoever sees the Books, with
+   its "N to do" (counts only, a dynamic import of repo/books-home.js); The Books is "The Books (advanced)"; the approvals
+   card says who asked about each bill ("asked by Casey · 2 h ago", money_messages); the installed app's Home sends an
+   accountant with financials to the Accounting page once per browser session (common2.js bounceFor). */
+import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday, bounceFor } from "../common2.js";
 import { PLANS_HOME, plansCardFor, planFilesFor } from "../map/plans.js";
 import { keepPlansFresh } from "../pages/plan-buttons.js";
 import { crewOf } from "../repo/employees.js";
@@ -103,10 +107,13 @@ export function cardsFor(p, opts) {
     { href: "vehicles.html", ic: "🚚", tt: "Vehicles", id: "hmVehicles",
       ds: role === "admin" || role === "manager" ? "Fleet board: oil changes, services due, history." : "The trucks: oil changes and services due, and each one's history." },
   ] });
-  /* P5b: the accountant's desk - the financials switch (bills, payments and invoices are refused without it) */
+  /* P5b: the accountant's desk - the financials switch (bills, payments and invoices are refused without it); the Books
+     program, release B: the simple Accounting page first (its "N to do" badge: counts only), The Books its advanced mode */
   if (role === "admin" || p.can_see_financials) {
     sections.push({ label: "Office", cards: [
-      { href: "accounting.html", ic: "📒", tt: "The Books", id: "hmBooks",
+      { href: "books-home.html", ic: "🧾", tt: "Accounting", id: "hmAccounting",
+        ds: "Today's money: approvals to chase, checks to write, who to tell, paid this month." },
+      { href: "accounting.html", ic: "📒", tt: "The Books (advanced)", id: "hmBooks",
         ds: "What is ready to enter in QuickBooks, the checks to write and who to tell, and what is already in." },
       /* P5c: what subcontractors send through the public form (submit.html) - the money editors review it (M5c) */
       { href: "submissions.html", ic: "📥", tt: "Sub submissions", id: "hmSubs",
@@ -224,6 +231,19 @@ async function listBadges() {
   }
 }
 
+/** The Books program, release B: the Accounting card's "N to do" (approvals waiting or blocked, checks to write, payees
+    to tell - counts only), read through DYNAMIC imports (repo/books-home.js, map/books-home.js): a crew phone never
+    loads the money code. Nothing to do, no access, an older database or offline: no badge. */
+async function accountingBadge(p) {
+  if (!$("hmAccounting")) return;
+  try {
+    const [repo, map] = await Promise.all([import("../repo/books-home.js"), import("../map/books-home.js")]);
+    const counts = await repo.loadCounts(p);
+    const text = counts ? map.todoBadge(counts) : "";
+    cardBadge("hmAccounting", text ? { cls: "warn", text, title: "Approvals to chase, checks to write and payees to tell" } : null);
+  } catch (e) { /* no badge */ }
+}
+
 /** P5c (Q10): the Sales Estimates card for someone holding the Sales estimates switch. The switch is read on its own
     (repo/sales.js salesAccess, through a dynamic import: a crew phone loads it only here); no switch, M5c not deployed
     yet or offline: no card. */
@@ -237,6 +257,7 @@ async function salesCard(p, homeOpts) {
     myTasksBadge();
     myAssistantBadge();
     listBadges();
+    accountingBadge(p);
   } catch (e) { /* no card */ }
 }
 
@@ -295,7 +316,8 @@ async function approvalsCard(p) {
       b.invoiceNumber ? el("span", { class: "meta no" }, " #" + b.invoiceNumber) : null,
       el("div", { class: "meta" }, (b.projectLabel || "") + (b.dueText ? " · due " + b.dueText : "")),
       b.late ? el("span", { class: "late" }, "OVERDUE ") : null,
-      b.hasDocument ? null : el("span", { class: "nodoc" }, "needs the invoice attached")),
+      b.hasDocument ? null : el("span", { class: "nodoc" }, "needs the invoice attached"),
+      el("div", { class: "meta asked", "data-asked": String(b.id) })),
     el("td", { class: "amt" }, money(b.amount)),
     el("td", { class: "amt" }, el("a", { class: "go", href: M.billHref(b.id) }, "Open →"))));
   slot.innerHTML = "";
@@ -305,10 +327,34 @@ async function approvalsCard(p) {
     el("table", null, el("tbody", null, rows)),
     d.count > AP_MAX ? el("div", { class: "more" }, "and " + (d.count - AP_MAX) + " more… (The Books lists them all)") : null));
   slot.hidden = false;
+  askedByLines(p, d.queue.slice(0, AP_MAX).map((b) => b.id));
+}
+
+/** The Books program, release B: "asked by Casey · 2 h ago" under each bill of the approvals card - the latest ask
+    about it (money_messages, readable with financials: every approver has them), read through a DYNAMIC import. Any
+    failure (an older database, offline) leaves the rows as they are. */
+async function askedByLines(p, ids) {
+  if (!ids.length) return;
+  let byBill, M;
+  try {
+    const [repo, map] = await Promise.all([import("../repo/books-home.js"), import("../map/money-messages.js")]);
+    M = map;
+    byBill = await repo.askedBy(p, ids);
+  } catch (e) { return; }
+  document.querySelectorAll("#hmApprovalsCard [data-asked]").forEach((n) => {
+    const a = byBill.get(n.getAttribute("data-asked"));
+    if (!a) return;
+    const first = String(a.byName || "").split(" ")[0] || "someone";
+    n.textContent = "asked by " + first + (a.at ? " · " + M.agoWords(a.at, new Date()) : "");
+  });
 }
 
 async function start() {
   const p = await requireAuth();
+  // the installed app opens Home: an accountant with financials is sent to the Accounting page ONCE per browser session
+  // (the Books program, release B, I29); Home from there, and the brand link, stay on Home
+  const landing = bounceFor(p, typeof document !== "undefined" ? document.referrer : "");
+  if (landing) { location.replace(landing); return; }
   const wide = window.matchMedia && window.matchMedia("(min-width: 761px) and (pointer: fine)").matches;
   topbar("home", { presence: wide });
   $("hmGreeting").textContent = "Welcome, " + String(p.name || "").split(" ")[0].split("@")[0];
@@ -329,6 +375,7 @@ async function start() {
   if (p.role === "admin") agentsLine();
   approvalsCard(p);
   listBadges();
+  accountingBadge(p);
   notes();
   mountSwitch("pushSlot");
   // journal entries written with no signal are created (the app may have been killed since), then

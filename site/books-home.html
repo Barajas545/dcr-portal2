@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Accounting</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/books.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="ac bh" id="bhRoot">
+      <div class="ac-head bh-head">
+        <h2>Accounting</h2>
+        <span class="who" id="bhGreeting"></span>
+        <span class="grow"></span>
+        <button type="button" class="ac-b" id="bhTemplates" hidden>Message templates</button>
+        <a class="bh-adv" id="bhAdvTop" href="accounting.html">Advanced mode — the Books &rarr;</a>
+      </div>
+      <p class="ac-lead">
+        Today's money: the bills to chase for an approval, the checks to write, who to tell their check is ready, and
+        what was paid in the last 30 days. E-mails go out by themselves from the reminder PC; a text opens on your phone.
+        No message ever carries an amount. QuickBooks stays the official books.
+      </p>
+      <div class="ck-queue" id="ckQueue" role="status" hidden></div>
+      <div id="bhBody"><div class="ac-none">Loading…</div></div>
+      <div class="bh-end"><a class="bh-adv" id="bhAdvFoot" href="accounting.html">Advanced mode — the Books &rarr;</a></div>
+    </main>
+    <script type="module" src="js/pages/books-home.js"></script>
+  </body>
+</html>

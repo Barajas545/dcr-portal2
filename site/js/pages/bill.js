@@ -32,6 +32,10 @@
          document of an approved, paid or entered bill anyway.
      A file name is data: every name is put on the page with textContent or h(). A refused upload keeps the database's
      sentence on its line ("this kind of file can't be attached to money: save it as a PDF or a picture").
+   * Ask to approve (the Books program, release B; design-portal §6.5): for a money editor who does not approve, on a
+     documented bill that waits for an approval (or for how to pay it) - js/pages/ask-approval.js, the shared dialog -
+     with the last ask under it ("Asked Avery · e-mail ✓ sent Oct 28 10:44 AM", money_messages). Asking approves
+     nothing: the approver approves here, signed in.
    Editing a bill stays in DCR Desktop 2 (Q12): an edit of an approved bill's amount clears the approval there.
 
    Only with the financials switch: anyone else is told so and sent home before anything is read. */
@@ -42,9 +46,12 @@ import * as filesRepo from "../repo/files.js";
 import * as uploads from "./uploads.js";
 import { fmtMoney, payMethodWords, paymentLabel, isPayMethod, PAY_METHODS, seesBooks, canApprove, APPROVAL_NOTE_MAX } from "../map/books.js";
 import { fmtSize } from "../map/files.js";
-import { fmtDay } from "../map/pacific.js";
+import { fmtDay, ymd } from "../map/pacific.js";
 import { mountFileDrop, queueAll, acceptable, ACCEPT } from "./file-drop.js";
 import { paperwork, showIn, openTab, documentProblem, withdrawsApproval, landingProblem, WITHDRAW_TEXT, kindOf } from "./file-viewer.js";
+import { openAsk } from "./ask-approval.js";
+import * as moneyMessages from "../repo/money-messages.js";
+import { lastAsked, lastAskedText } from "../map/books-home.js";
 
 const h = esc;
 const money = fmtMoney;
@@ -142,6 +149,7 @@ function render() {
     if (!b.payMethod) {
       s += '<div class="bl-why" style="margin-top:8px">Nobody recorded how this is paid (by check, in cash, by bank transfer or by card), so the accountant cannot pay it.' +
         (can.approve ? "" : " Ask a manager or admin to set it.") + "</div>";
+      if (askable(b, can, hasDoc)) s += askBox();
     }
     if (can.approve && !livePays.length) {
       s += '<div style="margin-top:10px"><button type="button" class="bl-secondary" id="blHow">' + (b.payMethod ? "Change how to pay" : "Say how to pay") + "</button></div>";
@@ -151,6 +159,7 @@ function render() {
   } else if (!can.approve) {
     s += '<div class="bl-why" id="blNoApprove">Only an admin, or a manager with approve authority, can sign this off.' +
       (state.me && state.me.role === "accountant" ? " The accountant pays it once it is approved." : "") + "</div>";
+    if (askable(b, can, hasDoc)) s += askBox();
   } else if (!hasDoc) {
     // a LIVE document (the paperwork), never the bare pointer: a removed document leaves it behind, and approve_bill
     // refuses that bill
@@ -195,8 +204,31 @@ function render() {
   if (edit) wirePaper(hasDoc);
   const how = document.getElementById("blHow");
   if (how) how.addEventListener("click", setPayMethod);
+  const askBtn = document.getElementById("blAsk");
+  if (askBtn) {
+    askBtn.addEventListener("click", () => openAsk({ bills: [b], me: state.me, today: ymd(new Date()), onDone: () => load() }));
+    paintAsked(b.id);
+  }
   const go = document.getElementById("blGo");
   if (go) go.addEventListener("click", approve);
+}
+
+/* Ask to approve: a money editor who does not approve, a live documented bill that waits for an approval or for how to
+   pay it (the database judges again: ask_for_approval) */
+function askable(b, can, hasDoc) {
+  return !!(can && can.pay && !can.approve && !b.void && !b.deleted && hasDoc && (!b.approved || !b.payMethod));
+}
+function askBox() {
+  return '<div class="bl-ask" style="margin-top:10px"><button type="button" class="bl-secondary" id="blAsk">Ask to approve</button>' +
+    '<div class="bl-msg" id="blAsked" role="status"></div></div>';
+}
+/* the last ask about this bill (money_messages; an older database: nothing said) */
+async function paintAsked(id) {
+  let list = null;
+  try { list = await moneyMessages.messages(state.me, { days: 45, kind: "approval_request" }); } catch (e) { list = null; }
+  const n = document.getElementById("blAsked");
+  if (!n || !list) return;
+  n.textContent = "Last asked: " + lastAskedText(lastAsked(id, list)).replace(/^Asked /, "").replace(/^Not asked yet$/, "not yet");
 }
 
 function barButton(bar, text, id, fn) {
