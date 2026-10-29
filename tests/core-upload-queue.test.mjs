@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import "../tools/fake/engine.js";
 import "../tools/fake/seed.js";
-import { createQueue, CHUNK, MIB, FILE_SOURCE } from "../site/js/upload-queue2.js";
+import { createQueue, CHUNK, MIB, FILE_SOURCE, placeFor, displayName, MONEY_KINDS } from "../site/js/upload-queue2.js";
 
 const F = globalThis.DCR2Fake;
 const NOW = new Date("2026-10-19T18:00:00Z");        // 11 am PDT, Monday
@@ -339,4 +339,87 @@ test("Part 3 options: keepName keeps the name in its place (the database makes i
   const kept = Array.from(w.store.values()).find((r) => r.kind === "receipt");
   assert.deepEqual([kept.folder, kept.subpath, kept.costId], ["receipts", "", 41]);
   assert.match(kept.key, new RegExp("^f/" + w.sandbox.id + "/receipts/[0-9a-f]{32}/Receipt 2026-10-19 10\\.30\\.12\\.jpg$"));
+});
+
+/* ── the Books program, release A: the money kinds bill and payment (contract §4.1, migration 20261030000100) ── */
+
+/** A recording database for the queue: every row it is asked to insert, every nameTaken; it answers the name the real
+    one would on a clash ("x (2)" - the database's own rule; the queue never bumps a money file's name itself). */
+function moneyDb(taken) {
+  const t = { rows: [], nameTaken: 0, names: new Set((taken || []).map((n) => n.toLowerCase())) };
+  t.db = {
+    findByPath: async () => null,
+    nameTaken: async () => { t.nameTaken++; return true; },
+    insert: async (row) => {
+      let name = row.name;
+      if (t.names.has(name.toLowerCase())) name = name.replace(/(\.[^.]+)?$/, (ext) => " (2)" + ext);
+      t.names.add(name.toLowerCase());
+      t.rows.push(row);
+      return Object.assign({ id: 9000 + t.rows.length }, row, { name });
+    },
+  };
+  return t;
+}
+
+test("money kinds: placeFor, f/ keys and the names - \"Bill <time>\", \"Payment <time>\" (-n for a second in the same second)", async () => {
+  assert.deepEqual(placeFor("bill", { folder: "photos", subpath: "x" }, WHEN), { folder: "receipts", subpath: "" });
+  assert.deepEqual(placeFor("payment", {}, WHEN), { folder: "receipts", subpath: "" });
+  assert.deepEqual(MONEY_KINDS, ["receipt", "bill", "payment"]);
+  assert.equal(displayName("bill", { name: "image.png", type: "image/png" }, WHEN, 1), "Bill 2026-10-19 10.30.12.png");
+  assert.equal(displayName("payment", { name: "IMG_1.jpg", type: "image/jpeg" }, WHEN, 2), "Payment 2026-10-19 10.30.12-2.jpg");
+  const w = world({ user: F.PEOPLE.find((p) => p.key === "accountant").id });
+  const rec = moneyDb();
+  w.db = rec.db;
+  w.net.down = true;                                          // held on the device: the items as kept
+  const q = w.queue();
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(100, "image/png"), kind: "bill", billId: "77", tag: "document", takenAt: WHEN });
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(120, "image/png"), kind: "bill", billId: 77, takenAt: WHEN });
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(130, "image/jpeg"), kind: "payment", billId: 77, paymentId: "501", takenAt: WHEN });
+  const items = await q.list();
+  assert.deepEqual(items.map((i) => [i.kind, i.folder, i.subpath, i.billId, i.paymentId, i.tag, i.name]), [
+    ["bill", "receipts", "", 77, null, "document", "Bill 2026-10-19 10.30.12.png"],
+    ["bill", "receipts", "", 77, null, "", "Bill 2026-10-19 10.30.12-2.png"],
+    ["payment", "receipts", "", 77, 501, "", "Payment 2026-10-19 10.30.12.jpg"],
+  ]);
+  for (const r of w.store.values()) assert.match(r.key, new RegExp("^f/" + w.sandbox.id + "/receipts/[0-9a-f]{32}/[A-Za-z0-9._ ()-]{1,120}$"), "the money-file key shape (t14)");
+});
+
+test("money kinds: the row carries bill_id (and payment_id), the queue asks no nameTaken, and the done event carries the database's name", async () => {
+  const w = world({ user: F.PEOPLE.find((p) => p.key === "accountant").id });
+  const rec = moneyDb(["INV-4101.pdf"]);
+  w.db = rec.db;
+  const q = w.queue();
+  const done = [];
+  q.onProgress((items, evt) => { if (evt && evt.type === "done") done.push(evt); });
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(500, "application/pdf"), kind: "bill", billId: 77, name: "INV-4101.pdf", takenAt: WHEN });
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(600, "image/jpeg"), kind: "payment", billId: 77, paymentId: 501, name: "Check 1043.jpg", takenAt: WHEN });
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(700, "image/jpeg"), kind: "receipt", costId: 41, name: "Yard.jpg", takenAt: WHEN });
+  await q.drain();
+  assert.equal(rec.nameTaken, 0, "a money file's name is the database's to make unique (never \"INV-4101-2.pdf\")");
+  assert.deepEqual(rec.rows.map((r) => [r.folder, r.bill_id, r.payment_id, r.cost_id, r.name]), [
+    ["receipts", 77, undefined, undefined, "INV-4101.pdf"],
+    ["receipts", 77, 501, undefined, "Check 1043.jpg"],
+    ["receipts", undefined, undefined, 41, "Yard.jpg"],
+  ]);
+  assert.deepEqual(done.map((e) => [e.item.kind, e.item.billId, e.item.paymentId, e.row.name]), [
+    ["bill", 77, null, "INV-4101 (2).pdf"], ["payment", 77, 501, "Check 1043.jpg"], ["receipt", null, null, "Yard.jpg"]]);
+  assert.equal(w.store.size, 0);
+  // a photo still takes the next free name itself (not a money file)
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(800), kind: "photo", name: "North.jpg", takenAt: WHEN });
+  await q.drain();
+  assert.ok(rec.nameTaken > 0, "photos: nameTaken as before");
+});
+
+test("money kinds: custody refuses a bill's file without its bill, a payment's file without its payment, a cost on either", async () => {
+  const w = world();
+  const q = w.queue();
+  await assert.rejects(q.enqueue({ projectId: w.sandbox.id, file: blob(10), kind: "bill" }), /A bill's file belongs to its bill/);
+  await assert.rejects(q.enqueue({ projectId: w.sandbox.id, file: blob(10), kind: "payment", billId: 7 }), /A payment's file belongs to its payment/);
+  await assert.rejects(q.enqueue({ projectId: w.sandbox.id, file: blob(10), kind: "payment", paymentId: 9 }), /A bill's file belongs to its bill/);
+  await assert.rejects(q.enqueue({ projectId: w.sandbox.id, file: blob(10), kind: "bill", billId: 7, costId: 41 }), /not a cost's receipt/);
+  // a photo never carries a bill or a payment, whatever is passed
+  w.net.down = true;
+  await q.enqueue({ projectId: w.sandbox.id, file: blob(10), kind: "photo", billId: 7, paymentId: 9, takenAt: WHEN });
+  const it = (await q.list())[0];
+  assert.deepEqual([it.billId, it.paymentId], [null, null]);
 });

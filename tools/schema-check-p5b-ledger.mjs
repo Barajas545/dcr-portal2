@@ -68,7 +68,7 @@ export async function run(h) {
   J.r1 = (await one(`insert into public.files (project_id, folder, name, storage_path, mime, size, cost_id)
      values ($1, 'receipts', 'yard receipt.jpg', $2, 'image/jpeg', 1000, $3) returning id`, [J.project.id, "f/" + J.project.id + "/receipts/" + leaf(1) + "/yard receipt.jpg", J.mat])).id;
   J.r2 = (await one(`insert into public.files (project_id, folder, name, storage_path, mime, size, cost_id)
-     values ($1, 'receipts', 'yard receipt.jpg', $2, 'image/jpeg', 1200, $3) returning id, previous_id`, [J.project.id, "f/" + J.project.id + "/receipts/" + leaf(2) + "/yard receipt.jpg", J.mat]));
+     values ($1, 'receipts', 'yard receipt.jpg', $2, 'image/jpeg', 1200, $3) returning id, previous_id, name`, [J.project.id, "f/" + J.project.id + "/receipts/" + leaf(2) + "/yard receipt.jpg", J.mat]));
   J.r3 = (await one(`insert into public.files (project_id, folder, name, storage_path, mime, size, cost_id)
      values ($1, 'receipts', 'roofer invoice.pdf', $2, 'application/pdf', 900, $3) returning id`, [J.project.id, "f/" + J.project.id + "/receipts/" + leaf(3) + "/roofer invoice.pdf", J.sub])).id;
   J.doc = (await one(`insert into public.files (project_id, folder, name, storage_path, mime, size)
@@ -83,7 +83,7 @@ export async function run(h) {
   await sql("insert into public.client_payments (invoice_id, amount, method) values ($1, 1000, 'check')", [J.inv]);
   const actCount = async () => Number((await one("select count(*) as n from public.activity where project_id = $1", [J.project.id])).n);
 
-  await check("P5b ledger: the accountant reads every cost with its line, kind columns, the database's inferred employee and its receipts (files.cost_id, the newest version)", async () => {
+  await check("P5b ledger: the accountant reads every cost with its line, kind columns, the database's inferred employee and its receipts (files.cost_id: the newest version, or with the money files every one)", async () => {
     await as("accountant");
     rec.length = 0;
     const got = await repo.loadLedger();
@@ -92,8 +92,16 @@ export async function run(h) {
     const lab = mine.find((r) => r.id === J.lab);
     same([lab.amount, lab.labor, lab.cost, lab.employeeName, lab.employeeSource], [200, 200, 200, "Quill Ledgerton", "inferred"], "labour: hours x rate, the inferred crew member");
     const mat = mine.find((r) => r.id === J.mat);
-    same([mat.group, mat.receipts.length, Number(mat.receipts[0].id)], ["Roof — Rafters", 1, Number(J.r2.id)], "the line; one receipt (the replaced version dropped)");
-    same(Number(J.r2.previous_id), Number(J.r1), "the second upload of the same name for the same cost is a new version of the first");
+    if (catalog.tables.files.cols.payment_id) {
+      // the Books program's money files (20261030000100): a money file is never a version - the second upload of the
+      // same name for the same cost is its own row, "yard receipt (2).jpg", and both are the cost's receipts, oldest first
+      same([mat.group, mat.receipts.length, mat.receipts.map((f) => Number(f.id))], ["Roof — Rafters", 2, [Number(J.r1), Number(J.r2.id)]],
+        "the line; both receipts, oldest first");
+      same([J.r2.previous_id, J.r2.name, mat.receipts[1].name], [null, "yard receipt (2).jpg", "yard receipt (2).jpg"], "a sibling, named by the database");
+    } else {
+      same([mat.group, mat.receipts.length, Number(mat.receipts[0].id)], ["Roof — Rafters", 1, Number(J.r2.id)], "the line; one receipt (the replaced version dropped)");
+      same(Number(J.r2.previous_id), Number(J.r1), "the second upload of the same name for the same cost is a new version of the first");
+    }
     const eq = mine.find((r) => r.id === J.eq);
     same([eq.cost, eq.other], [0, 120], "equipment: listed, not in cost");
     same(mine.every((r) => r.card === "untagged"), true, "the column's default: untagged");

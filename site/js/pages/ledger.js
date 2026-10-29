@@ -15,7 +15,12 @@
    * "Paid with", reconciled and the employee are written through M5b's RPCs (tag_costs, reconcile_costs,
      confirm_cost_employee), which the database allows to an admin, or a manager or accountant with
      financials; rows a write could not change are said, never dropped;
-   * the CSV is built here, from exactly the rows on screen, with the formula guard, a BOM and CRLF.
+   * the CSV is built here, from exactly the rows on screen, with the formula guard, a BOM and CRLF;
+   * receipts are added here too (the Books program, release A; design-portal §6.6), by the same money editors (map/ledger.js
+     canTag): ＋📎 on a row picks several, files dropped on a row attach to that cost, and with a row selected (clicked)
+     Ctrl+V attaches a pasted screenshot to it - the paste is heard on the table only, never on the page
+     (js/pages/file-drop.js rowDrops). Each goes through the durable upload queue (kind receipt, the row's cost and job);
+     its progress shows in the row, and the row's receipts and the "without a receipt" count read again when it lands.
 
    Who: the financials switch (app.can_financials — costs are read with it). Anyone else is told so and the
    page asks the database for nothing. */
@@ -26,10 +31,12 @@ import {
   ledgerView, PERIODS, DIMENSIONS, CARDS, cardLabel, money, seesLedger, canTag, billedOut, ledgerCsvRows, csvText, stampDay,
 } from "../map/ledger.js";
 import { ymd, fmtDay } from "../map/pacific.js";
+import * as uploads from "./uploads.js";
+import { rowDrops, queueAll, pictureOrPdf } from "./file-drop.js";
 
 const state = {
   me: null, can: { tag: false }, data: null, view: null, period: "30", group: "none", q: "", zero: false,
-  picked: {}, busy: false, hours: {}, today: ymd(new Date()),
+  picked: {}, busy: false, hours: {}, today: ymd(new Date()), queue: [], attachFor: null,
 };
 
 function day(v) { const s = String(v || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? fmtDay(s) : ""; }
@@ -118,10 +125,13 @@ function whoCell(r) {
 }
 function receiptCell(r) {
   const n = (r.receipts || []).length;
-  if (!n) return '<span class="lg-r none" title="No receipt is linked to this row">–</span>';
+  // a money editor adds receipts to the row (＋📎, a drop, a paste) and sees the ones on their way
+  const add = state.can.tag ? '<button type="button" class="lg-rq" data-rq="' + esc(r.id) + '" title=""></button>' +
+    '<button type="button" class="lg-r on" data-attach="' + esc(r.id) + '" title="Add receipts (or drop them on the row)" aria-label="Add receipts to this row">＋&#128206;</button>' : "";
+  if (!n) return '<span class="lg-r none" title="No receipt is linked to this row">–</span>' + add;
   return '<button type="button" class="lg-r on" data-row="' + esc(r.id) + '" aria-label="' + esc(plural(n, "receipt") + " — open") + '" title="' +
     esc(r.receipts.map(function (f) { return f.name; }).join("\n")) + (n > 1 ? "\n" + n + " files — click to open them" : "\nClick to open") + '">&#128206;' +
-    (n > 1 ? '<sup class="lg-rn">' + n + "</sup>" : "") + "</button>";
+    (n > 1 ? '<sup class="lg-rn">' + n + "</sup>" : "") + "</button>" + add;
 }
 function cardCell(r) {
   if (!state.can.tag) return esc(r.card === "untagged" ? "" : cardLabel(r.card));
@@ -138,7 +148,8 @@ function recCell(r) {
 function row(r) {
   const kind = r.kind === "material" ? "" : '<span class="lg-kind">' + esc(r.kindLabel) + "</span>";
   const basis = r.kind === "labor" && r.hours && r.rate ? '<span class="vd">' + esc(r.hours + " h × " + money(r.rate)) + "</span>" : "";
-  return "<tr" + (r.amount ? "" : ' class="zero"') + ">" +
+  return "<tr" + (r.amount ? "" : ' class="zero"') +
+    (state.can.tag ? ' data-drop="' + esc(r.id) + '" tabindex="0" title="Drop receipts on this row, or click it and press Ctrl+V"' : "") + ">" +
     (state.can.tag ? '<td class="ctr"><input type="checkbox" data-pick="' + esc(r.id) + '"' + (state.picked[r.id] ? " checked" : "") +
       ' aria-label="Pick this row"></td>' : "") +
     '<td class="dt">' + esc(day(r.date) || "no date") + "</td>" +
@@ -180,6 +191,7 @@ function render() {
   hours();
   bulk();
   wire();
+  paintQueue();
   setQs("period", state.period === "30" ? "" : state.period);
   setQs("group", state.group === "none" ? "" : state.group);
   setQs("q", state.q);
@@ -265,7 +277,50 @@ function wire() {
   document.querySelectorAll("[data-confirm]").forEach(function (a) {
     a.addEventListener("click", function () { confirmWho(rowById(a.getAttribute("data-confirm"))); });
   });
+  document.querySelectorAll("[data-attach]").forEach(function (b) {
+    b.addEventListener("click", function () { state.attachFor = b.getAttribute("data-attach"); el("lgAttachIn").click(); });
+  });
+  document.querySelectorAll("[data-rq]").forEach(function (b) {
+    b.addEventListener("click", function () { if (b.classList.contains("bad")) uploads.retryAll(); });
+  });
   wireReceipts();
+}
+
+/* ── receipts added here (the upload queue, kind receipt) ─────────────────────────────────────────── */
+async function attachTo(id, files) {
+  const r = rowById(id);
+  const list = Array.prototype.slice.call(files || []).filter(Boolean);
+  if (!r || !list.length) return;
+  const bad = list.map(pictureOrPdf).filter(Boolean);
+  const good = list.filter(function (f) { return !pictureOrPdf(f); });
+  const res = await queueAll(good, uploads.enqueue, function () { return { projectId: r.projectId, kind: "receipt", costId: r.id }; });
+  const problems = bad.concat(res.failed.map(function (x) { return errorText(x.error); }));
+  if (problems.length) toast(problems[0] + (problems.length > 1 ? " (and " + (problems.length - 1) + " more)" : ""), "error");
+  if (res.queued) toast((res.queued === 1 ? "Receipt on its way" : res.queued + " receipts on their way") + " — " + (r.description || r.vendor || r.kindLabel) + ".", "info");
+}
+
+/* the receipts still on their way, in their row's cell */
+function paintQueue() {
+  document.querySelectorAll("[data-rq]").forEach(function (n) {
+    const mine = state.queue.filter(function (i) { return String(i.costId) === n.getAttribute("data-rq"); });
+    if (!mine.length) { n.textContent = ""; n.title = ""; n.classList.remove("bad"); return; }
+    const failed = mine.filter(function (i) { return i.state === "failed"; });
+    n.textContent = failed.length ? "⚠" : "⏳" + (mine.length === 1 ? " " + uploads.itemLabel(mine[0], navigator.onLine !== false) : " " + mine.length);
+    n.title = failed.length ? (failed[0].error || "The receipt did not go up") + " — click to try again" : "A receipt is on its way";
+    n.classList.toggle("bad", failed.length > 0);
+  });
+}
+
+function watchQueue() {
+  uploads.onProgress(function (items, evt) {
+    state.queue = items.filter(function (i) { return i.kind === "receipt" && i.costId !== null; });
+    paintQueue();
+    if (evt && evt.type === "done" && evt.item && evt.item.costId !== null && evt.item.costId !== undefined) {
+      clearTimeout(liveTimer);
+      liveTimer = setTimeout(function () { if (!state.busy) load(); }, 500);
+    }
+  });
+  uploads.drain();
 }
 
 async function confirmWho(r) {
@@ -523,6 +578,18 @@ async function init() {
     qTimer = setTimeout(function () { state.q = el("lgQ").value.trim(); refresh(); }, 250);
   });
   el("lgCsv").addEventListener("click", exportCsv);
+  if (state.can.tag) {
+    el("lgAttachIn").addEventListener("change", function () {
+      const files = Array.prototype.slice.call(el("lgAttachIn").files || []);
+      el("lgAttachIn").value = "";
+      const id = state.attachFor;
+      state.attachFor = null;
+      if (id) attachTo(id, files);
+    });
+    rowDrops(el("lgBody"), "tr[data-drop]", function (row, files) { attachTo(row.getAttribute("data-drop"), files); },
+      function (text) { toast(text, "error"); });
+    watchQueue();
+  }
   await load();
   startLive();
 }

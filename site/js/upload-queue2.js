@@ -16,21 +16,29 @@
    - images also get a <= 320 px JPEG preview uploaded next to the original (files.preview_path);
    - once the object is complete, the files row is inserted: photos -> folder "photos", sub-folder
      the day taken; journal -> "journal" with journal_entry_id, sub-folder the entry's day; voice
-     and text notes -> "documents"/"Site Notes"; receipts (a cost's, D13) -> "receipts" with cost_id,
-     no sub-folder, under f/{project}/receipts/… (financial: a money editor's); caption ->
-     files.description; source "portal2".
+     and text notes -> "documents"/"Site Notes"; the money files (the Books program's contract §4.1,
+     migration 20261030000100_money_files) -> "receipts", no sub-folder, under f/{project}/receipts/…
+     (financial: a money editor's): a receipt (a cost's, D13) with cost_id, a bill's file (its document or
+     an extra) with bill_id, a payment's file (a photo of the check, a transfer confirmation) with
+     bill_id = the payment's bill AND payment_id; caption -> files.description; source "portal2".
      Every upload has a sub-folder (one "Files uploaded to …" log line per person, folder and hour)
      and a unique display name ("IMG 2026-10-19 14.30.12-2.jpg"): the same name in the same place
      would become a new VERSION hiding the earlier photo, and iPhones call every capture image.jpg.
-     The name is checked against the project's current files just before the row goes in;
+     The name is checked against the project's current files just before the row goes in - except a
+     money file's: it is never a version (each upload is its own row) and the DATABASE makes its name
+     unique among the record's live files ("INV-4101 (2).pdf", atomically); the row that comes back
+     carries the name to show;
    - records belong to the account that queued them; another account signed in on the same device
      never uploads them under its own name;
    - one tab drains at a time (Web Lock "dcr2-upload-queue").
 
    API: enqueue({projectId, file, kind, caption, takenAt, gps, name?, journalEntryId?, entryDate?,
-   pendingEntry?, folder?, subpath?, tag?, costId?, keepName?, preview?}) -> id once the bytes are safe on
-   this device (costId: a receipt's cost, required for kind "receipt"; keepName: the name as given, even when
-   the place has one already — the database then makes it a new version; preview: false, no small preview);
+   pendingEntry?, folder?, subpath?, tag?, costId?, billId?, paymentId?, keepName?, preview?}) -> id once the
+   bytes are safe on this device (costId: a receipt's cost, required for kind "receipt"; billId: the bill of
+   kind "bill" (its document or an extra) and of kind "payment", whose paymentId is required too; tag: the
+   page's own note on the item, kept with it - the bill page's "document" / "replace:<file id>"; keepName: the
+   name as given, even when the place has one already — the database then makes it a new version; preview:
+   false, no small preview);
    onProgress(cb) -> unsubscribe; drain(); list(); listFor(projectId); remove(id); retryAll();
    bindEntry(localKey, entryId); durable(); online().                                            */
 
@@ -96,9 +104,10 @@ export function newUid() {
   return s;
 }
 
-/** {p|f}/{project_id}/{folder}/{uuid}/{ascii_slug(name)}: f/ for receipts (financial files: the files check
-    and the Storage policy want them there, and only a money editor writes one), p/ for everything else
-    (Portal 2 never uploads a bill's document). */
+/** {p|f}/{project_id}/{folder}/{uuid}/{ascii_slug(name)}: f/ for the receipts folder - every money file: a
+    cost's receipt, a bill's document or extra, a payment's file (financial files: the files check and the
+    Storage policy want them there, and only a money editor writes one) -, p/ for everything else. A money
+    file's key is exactly what the database's t14_files_money_shape takes: 32 hex characters, then the slug. */
 export function objectKey(projectId, folder, name, uid) {
   return (folder === "receipts" ? "f" : "p") + "/" + projectId + "/" + folder + "/" + (uid || newUid()) + "/" + asciiSlug(name);
 }
@@ -143,7 +152,10 @@ export function stamp(when) {
   return day + " " + get("hour").replace("24", "00") + "." + get("minute") + "." + get("second");
 }
 
-const PREFIX = { photo: "IMG ", video: "VID ", voice: "Voice note ", note: "Note ", journal: "IMG ", document: "Document ", receipt: "Receipt " };
+const PREFIX = { photo: "IMG ", video: "VID ", voice: "Voice note ", note: "Note ", journal: "IMG ", document: "Document ", receipt: "Receipt ",
+  bill: "Bill ", payment: "Payment " };
+/** The money kinds: the receipts folder, f/ keys, the database's own unique names (never a version). */
+export const MONEY_KINDS = Object.freeze(["receipt", "bill", "payment"]);
 
 /** The display name of an upload: "IMG 2026-10-19 14.30.12-2.jpg" (n > 1 adds "-n"). */
 export function displayName(kind, file, when, n) {
@@ -163,6 +175,7 @@ export function bumpName(name, n) {
 export function placeFor(kind, o, takenAt) {
   const opt = o || {};
   if (kind === "receipt") return { folder: "receipts", subpath: opt.subpath ? String(opt.subpath) : "" };   // Desktop 2: none
+  if (kind === "bill" || kind === "payment") return { folder: "receipts", subpath: "" };   // Desktop 2's bill files: receipts + bill_id
   if (opt.folder) return { folder: opt.folder, subpath: opt.subpath !== undefined ? String(opt.subpath) : companyDay(takenAt) };
   if (kind === "journal") return { folder: "journal", subpath: opt.subpath || opt.entryDate || companyDay(takenAt) };
   if (kind === "voice" || kind === "note" || kind === "document") return { folder: "documents", subpath: opt.subpath || "Site Notes" };
@@ -285,6 +298,7 @@ export function createQueue(parts) {
       state: r.state || "waiting", stage: r.stage, error: r.error || "", tries: r.tries || 0, added: r.added,
       caption: r.caption || "", takenAt: r.takenAt, journalEntryId: r.journalEntryId ?? null,
       pendingEntry: r.pendingEntry || null, tag: r.tag || "", mime: r.mime, costId: r.costId ?? null,
+      billId: r.billId ?? null, paymentId: r.paymentId ?? null,
     };
   }
 
@@ -323,10 +337,22 @@ export function createQueue(parts) {
     }
     const mime = String(opt.mime || file.type || guessMime(file.name));
     const kind = opt.kind || (mime.indexOf("video/") === 0 ? "video" : mime.indexOf("audio/") === 0 ? "voice" : "photo");
-    const costId = opt.costId === undefined || opt.costId === null || opt.costId === "" ? null
-      : (/^\d+$/.test(String(opt.costId)) ? Number(opt.costId) : opt.costId);
+    const idIn = (v) => (v === undefined || v === null || v === "" ? null : (/^\d+$/.test(String(v)) ? Number(v) : v));
+    const costId = idIn(opt.costId);
+    // a bill's or a payment's file names its bill (a payment's: the payment's own bill, and the payment)
+    const billId = kind === "bill" || kind === "payment" ? idIn(opt.billId) : null;
+    const paymentId = kind === "payment" ? idIn(opt.paymentId) : null;
     if (kind === "receipt" && costId === null) {
       throw qerr("A receipt belongs to a cost.", { code: "local_rule", kind: "validation", fatal: true });
+    }
+    if ((kind === "bill" || kind === "payment") && billId === null) {
+      throw qerr("A bill's file belongs to its bill.", { code: "local_rule", kind: "validation", fatal: true });
+    }
+    if (kind === "payment" && paymentId === null) {
+      throw qerr("A payment's file belongs to its payment.", { code: "local_rule", kind: "validation", fatal: true });
+    }
+    if ((kind === "bill" || kind === "payment") && costId !== null) {
+      throw qerr("A bill's or a payment's file is not a cost's receipt.", { code: "local_rule", kind: "validation", fatal: true });
     }
     const when = opt.takenAt ? new Date(opt.takenAt) : new Date(d.now());
     const takenAt = isNaN(when.getTime()) ? new Date(d.now()).toISOString() : when.toISOString();
@@ -347,7 +373,7 @@ export function createQueue(parts) {
       kind, folder: place.folder, subpath: place.subpath,
       journalEntryId: opt.journalEntryId ?? null, pendingEntry: opt.pendingEntry || null,
       name, mime, size: file.size, blob: file, preview: null, caption: String(opt.caption || ""),
-      takenAt, gps: opt.gps || null, tag: opt.tag || "", costId, keepName: !!opt.keepName,
+      takenAt, gps: opt.gps || null, tag: opt.tag || "", costId, billId, paymentId, keepName: !!opt.keepName,
       key: objectKey(projectId, place.folder, name, d.uid()), previewKey: null,
       tus: null, sent: 0, stage: "object", state: "waiting", error: "", tries: 0, waitUntil: 0,
       added: d.now(), ready: false,
@@ -530,9 +556,14 @@ export function createQueue(parts) {
     if (existing) return existing;                       // an earlier attempt's answer was lost
     const place = { project_id: r.projectKey ?? r.projectId, folder: r.folder, subpath: r.subpath, journal_entry_id: entryId ?? null };
     if (r.costId !== null && r.costId !== undefined) place.cost_id = r.costId;
+    if (r.billId !== null && r.billId !== undefined) place.bill_id = r.billId;
+    if (r.paymentId !== null && r.paymentId !== undefined) place.payment_id = r.paymentId;
     let name = r.name;
-    // keepName: the same name in the same place on purpose (a new version of it); else a free name
-    if (!r.keepName) for (let n = 2; n < 60 && await d.db.nameTaken(place, name); n++) name = bumpName(r.name, n);
+    // a money file (a cost's, a bill's or a payment's) is never a version: the database makes its name unique among
+    // the record's live files ("INV-4101 (2).pdf") under one lock, and the row it answers carries that name. Anything
+    // else - keepName: the same name in the same place on purpose (a new version of it); else a free name
+    const money = place.cost_id !== undefined || place.bill_id !== undefined || place.payment_id !== undefined;
+    if (!r.keepName && !money) for (let n = 2; n < 60 && await d.db.nameTaken(place, name); n++) name = bumpName(r.name, n);
     const row = Object.assign({}, place, {
       name, storage_path: r.key, size: r.size, mime: r.mime,
       description: r.caption ? r.caption : null, preview_path: r.previewKey || null, source: FILE_SOURCE,
@@ -743,8 +774,11 @@ export function filesDb(client) {
         .ilike("subpath", likeExact(place.subpath || "")).ilike("name", likeExact(name)).limit(1);
       q = place.journal_entry_id === null || place.journal_entry_id === undefined
         ? q.is("journal_entry_id", null) : q.eq("journal_entry_id", place.journal_entry_id);
-      // a receipt's name is its cost's: the same name for two costs is two receipts (M5b's version chain)
+      // a money file's name is its record's: the same name on two costs, bills or payments is two files (the queue
+      // itself leaves a money file's name to the database: 20261030000100_money_files makes it unique)
       if (place.cost_id !== null && place.cost_id !== undefined) q = q.eq("cost_id", place.cost_id);
+      if (place.bill_id !== null && place.bill_id !== undefined) q = q.eq("bill_id", place.bill_id);
+      if (place.payment_id !== null && place.payment_id !== undefined) q = q.eq("payment_id", place.payment_id);
       const { data, error, status } = await q;
       if (error) { error.status = status; throw error; }
       return !!(data && data.length);

@@ -31,7 +31,9 @@ const FAKE_DIR = resolve(HERE, "fake");
 // p5c-sales.js - the sales switch, the comps, the saved sales estimates, the materials library and sales-media;
 // Part 3: p7-web.js after them - the Estimator and OneDrive upload switches, admin_set_profile and the estimator)
 // Part 4: p7-onedrive.js - the OneDrive broker's stand-in and the owner's OneDrive behind it, for the Files tab)
-const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "p7-web.js", "p7-onedrive.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
+// The Books program, release A: p8-files.js after p5b-books.js - the money files (payment_id, no version for a money
+// file but "name (2)", its safe shape, money editors remove, the bill's guarded document)
+const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "p7-web.js", "p7-onedrive.js", "p8-files.js", "engine.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.DCR2_DEV_PORT || process.env.PORT || 8792);
 const DEMO = !process.argv.includes("--no-demo");

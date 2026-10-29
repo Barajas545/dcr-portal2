@@ -7,6 +7,9 @@
    and puts it in its place by kind:
      photo / video -> photos/<the day>        journal -> journal/<the entry's day> (+ its entry)
      voice / note  -> documents/Site Notes   receipt -> receipts (+ its cost; f/…: a money editor's)
+     bill          -> receipts (+ its bill)  payment -> receipts (+ the payment's bill and the payment)
+   A money file (receipt, bill, payment) is never a version of another: the database names a clash "x (2)" and the
+   "done" event's row carries the name it gave.
    A journal picture taken before its entry exists (offline) is queued with pendingEntry = a local
    key and released by bindEntry(key, entryId) once the entry is saved.
 
@@ -36,6 +39,9 @@ export function progressItems(x) {
       journalEntryId: it.journalEntryId == null ? null : it.journalEntryId,
       pendingEntry: it.pendingEntry || null, size: it.size || 0, kind: it.kind || "",
       costId: it.costId == null ? null : it.costId,
+      billId: it.billId == null ? null : it.billId,
+      paymentId: it.paymentId == null ? null : it.paymentId,
+      tag: it.tag ? String(it.tag) : "",
     };
   });
 }
@@ -76,8 +82,9 @@ async function need() {
 
 /** Hand one file to the queue -> its queue id once the bytes are safe on this device.
     job: {projectId, file, kind, caption, takenAt, gps, journalEntryId, entryDate, pendingEntry, name, costId,
-    keepName, preview, folder, subpath} (costId: a receipt's cost; keepName: the name as given; preview: false for
-    no small copy; folder / subpath: another place than the kind's) */
+    billId, paymentId, tag, keepName, preview, folder, subpath} (costId: a receipt's cost; billId: a bill's file's
+    bill, and a payment's file's bill with paymentId its payment; tag: the page's own note on the item; keepName:
+    the name as given; preview: false for no small copy; folder / subpath: another place than the kind's) */
 export async function enqueue(job) {
   const q = await need();
   return q.enqueue(queueOptions(job));
@@ -92,6 +99,9 @@ export function queueOptions(job) {
   if (job.entryDate) o.entryDate = job.entryDate;
   if (job.pendingEntry) o.pendingEntry = job.pendingEntry;
   if (job.costId != null) o.costId = job.costId;
+  if (job.billId != null) o.billId = job.billId;
+  if (job.paymentId != null) o.paymentId = job.paymentId;
+  if (job.tag) o.tag = String(job.tag);
   if (job.keepName) o.keepName = true;
   if (job.preview === false) o.preview = false;
   if (job.folder) o.folder = job.folder;
