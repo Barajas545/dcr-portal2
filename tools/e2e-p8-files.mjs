@@ -17,6 +17,8 @@
      Replace… queued on a waiting bill (nothing asked) that an approver approves before it lands, the page opened again:
      the file stays an extra, the approval, the document and the old file kept, and the page says so;
    - a payment's file on a part-paid bill (kind payment: the payment's bill and the payment), labelled on the page;
+   - a waiting bill whose document was removed (the pointer left behind), as the demo admin: the bill page offers no
+     Approve and asks for the invoice, and the home page's approvals card counts it among those that need it;
    - the expense dialog with 3 receipts at once (picked, pasted on the dialog, dropped), each its own row with a distinct
      name; on an edit, an Esc in the receipt viewer or on the "Remove the receipt" question over the dialog answers that
      one only (the dialog and what was typed stay); the ledger: a PDF dropped on a row and a screenshot pasted on a selected row attach to that cost;
@@ -449,6 +451,35 @@ async function main() {
       check("the project's Payments tab: the voided payment says Void (no amount); the bill is owed again, not paid",
         /Void/.test(row) && !/400\.00/.test(row) && /1,200\.00[\s\S]*1,200\.00/.test(bill) && !/Paid\b/.test(bill.replace(/Part paid/, "")), JSON.stringify({ row, bill }));
       await bothThemes(acc, "payments_void", "desktop", false);
+    }, acc);
+
+    /* ── 5c. a removed document is no document: the approver's bill page and home card ── */
+    await attempt("a removed document: no Approve, the invoice asked for", async () => {
+      const adm = await newPage(cdp, "admin", OUT); pages.push(adm);
+      await adm.size(1440, 900, false);
+      await signIn(adm, "admin");
+      const card = "!!document.getElementById('hmApprovalsCard')";
+      const need = async () => { const m = /(\d+) still need the invoice attached/.exec(await text(adm, "#hmApprovalsCard .sub")); return m ? Number(m[1]) : 0; };
+      await open(adm, "/dashboard.html", card);
+      const n0 = await need();
+      await open(adm, "/bill.html?id=" + J.blocked, BILL);
+      check("the waiting bill with its document: Approve offered", await adm.eval("!!document.getElementById('blGo')"));
+      // its document removed (unapproved and unpaid, the database lets it go: Desktop's Files page, an old tab) - the
+      // pointer stays behind
+      const b = await db(acc, "R.bills.find((b) => b.id === " + J.blocked + ")");
+      const doc = await db(acc, "R.files.find((f) => f.id === " + b.document_file_id + ")");
+      await db(acc, "DCR2Demo.engine.rpc({ uid: R.profiles.find((p) => p.email === 'accountant@demo.test').id }, 'soft_delete', { tbl: 'files', id: " + doc.id +
+        ", version: " + doc.version + " }) && true");
+      const now = await db(acc, "({ ptr: R.bills.find((b) => b.id === " + J.blocked + ").document_file_id, del: !!R.files.find((f) => f.id === " + doc.id + ").deleted_at })");
+      check("the document removed, its pointer left behind", now.ptr === doc.id && now.del, JSON.stringify(now));
+      await open(adm, "/bill.html?id=" + J.blocked, BILL);
+      const dec = await adm.eval("({ go: !!document.getElementById('blGo'), text: document.getElementById('blDecision').innerText, docs: document.querySelectorAll('[data-f][data-role=document]').length })");
+      check("the approver's bill page: no Approve, \"Attach the invoice first\" (the live paperwork, never the bare pointer)",
+        !dec.go && /Attach the invoice first/.test(dec.text) && dec.docs === 0, JSON.stringify(dec));
+      await bothThemes(adm, "bill_removed_document", "desktop", false);
+      await open(adm, "/dashboard.html", card);
+      const n1 = await need();
+      check("the home page's approvals card: one more bill still needs the invoice attached", n1 === n0 + 1, JSON.stringify({ n0, n1 }));
     }, acc);
 
     /* ── 6. no security-policy violation, no console error ─────────────── */

@@ -151,7 +151,9 @@ function render() {
   } else if (!can.approve) {
     s += '<div class="bl-why" id="blNoApprove">Only an admin, or a manager with approve authority, can sign this off.' +
       (state.me && state.me.role === "accountant" ? " The accountant pays it once it is approved." : "") + "</div>";
-  } else if (!b.hasDocument) {
+  } else if (!hasDoc) {
+    // a LIVE document (the paperwork), never the bare pointer: a removed document leaves it behind, and approve_bill
+    // refuses that bill
     s += '<div class="bl-why">Attach the invoice first (in the paperwork here, or in DCR Desktop 2) — an approved payment needs the paperwork behind it.</div>';
   } else {
     s += '<input class="bl-note" id="blNote" type="text" maxlength="' + APPROVAL_NOTE_MAX + '" placeholder="Note (optional)" aria-label="Approval note">' +

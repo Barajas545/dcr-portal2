@@ -50,8 +50,10 @@ test("bill kinds: the database's words (M5b) and older spellings read the same",
 });
 
 test("piles: ready, entered, waiting, blocked - and the database's own state (books_desk) wins", () => {
+  // books_desk's rows say whether the document is a live file (documented): what loadDesk reads
+  const view = (r) => Object.assign({ documented: r.document_file_id != null }, r);
   const rows = [approved({ id: 1 }), bill({ id: 2 }), bill({ id: 3, document_file_id: null }), approved({ id: 4, qbo_entered_at: "2026-10-10T17:00:00Z",
-    qbo_entered_by: "u-acc", qbo_ref: "QB-1" }), bill({ id: 5, void: true }), bill({ id: 6, amount: 0 })];
+    qbo_entered_by: "u-acc", qbo_ref: "QB-1" }), bill({ id: 5, void: true }), bill({ id: 6, amount: 0 })].map(view);
   const d = M.buildDesk({ bills: rows, projects, contacts }, { today: TODAY, nameOf });
   assert.deepEqual(d.ready.map((b) => b.id), [1]);
   assert.deepEqual(d.waiting.map((b) => b.id), [2]);
@@ -278,12 +280,42 @@ test("the pick-up message is about ONE payment: its own amount and number, never
 
 test("the approvals card: waiting bills across projects (not void, not deleted, an amount), the paperwork said, overdue said", () => {
   const q = M.approvalsQueue([bill({ id: 1, due_date: "2026-10-01" }), bill({ id: 2, document_file_id: null, due_date: "2026-11-01" }), approved({ id: 3 }),
-    bill({ id: 4, void: true }), bill({ id: 5, deleted_at: "2026-10-02T00:00:00Z" }), bill({ id: 6, amount: 0 })], { projects, today: TODAY });
+    bill({ id: 4, void: true }), bill({ id: 5, deleted_at: "2026-10-02T00:00:00Z" }), bill({ id: 6, amount: 0 })], { projects, today: TODAY, files: [{ id: 5 }] });
   assert.equal(q.count, 2);
   assert.equal(q.amount, 2000);
   assert.equal(q.missingDocument, 1);
   assert.deepEqual(q.queue.map((b) => [b.id, b.late, b.hasDocument, b.dueText]), [[1, true, true, "Oct 1"], [2, false, false, "Nov 1"]]);
   assert.equal(M.billHref(5), "bill.html?id=5");
+});
+
+test("a removed document is no document (its pointer left behind): blocked, \"No invoice attached\", the approvals card says it needs the invoice", () => {
+  // the bill page's bill (loadBill: toBill with the live files it read)
+  const gone = M.toBill(bill({}), { files: [{ id: 7 }], today: TODAY });
+  assert.deepEqual([gone.hasDocument, gone.state, gone.reason], [false, "blocked", "No invoice attached, so it cannot be approved."]);
+  assert.equal(gone.documentFileId, 5, "the pointer is still there - and counts for nothing");
+  const kept = M.toBill(bill({}), { files: [{ id: 5 }, { id: 7 }], today: TODAY });
+  assert.deepEqual([kept.hasDocument, kept.state], [true, "waiting"]);
+  // The Books (books_desk rows): the view's documented, its state and reason
+  const desk = [Object.assign(bill({ id: 1 }), { documented: false, state: "blocked", reason: "No invoice attached, so it cannot be approved." }),
+    Object.assign(bill({ id: 2, document_file_id: 6 }), { documented: true, state: "waiting" })];
+  const d = M.buildDesk({ bills: desk, desk, projects, contacts }, { today: TODAY });
+  assert.deepEqual(d.blocked.map((b) => [b.id, b.hasDocument]), [[1, false]]);
+  assert.deepEqual(d.waiting.map((b) => [b.id, b.hasDocument]), [[2, true]]);
+  // the home page's card (approvals(): the bills, and their documents looked up among the live files)
+  const q = M.approvalsQueue([bill({ id: 1, due_date: "2026-10-01" }), bill({ id: 2, document_file_id: 6, due_date: "2026-10-02" }),
+    bill({ id: 3, document_file_id: null, due_date: "2026-10-03" })], { projects, today: TODAY, files: [{ id: 6 }] });
+  assert.equal(q.missingDocument, 2, "the removed one and the one never attached");
+  assert.deepEqual(q.queue.map((b) => [b.id, b.hasDocument]), [[1, false], [2, true], [3, false]]);
+  // hasLiveDocument: the database's answer (books_desk.documented) wins; else the pointer must name a LIVE file read with the bill
+  assert.equal(M.hasLiveDocument(bill({}), [{ id: 5 }]), true, "the document among the live files");
+  assert.equal(M.hasLiveDocument(bill({}), ["5"]), true, "or their ids");
+  assert.equal(M.hasLiveDocument(bill({}), [{ id: 7 }]), false, "a pointer to a removed file");
+  assert.equal(M.hasLiveDocument(bill({}), []), false, "nothing to judge it by: never the bare pointer");
+  assert.equal(M.hasLiveDocument(bill({}), undefined), false);
+  assert.equal(M.hasLiveDocument(bill({ document_file_id: null }), [{ id: 5 }]), false);
+  assert.equal(M.hasLiveDocument(Object.assign(bill({}), { documented: false }), [{ id: 5 }]), false, "the view's answer wins");
+  assert.equal(M.hasLiveDocument(bill({}), [], true), true, "the desk row's answer");
+  assert.equal(M.hasLiveDocument(bill({}), [{ id: 5 }], false), false);
 });
 
 test("refused[] in the accountant's words (mark_bills_entered / mark_invoices_entered answer {id, reason})", () => {

@@ -10,6 +10,8 @@
                         An accountant NEVER approves (the owner's standing rule; approve_bill refuses them);
    * billState / blockedReason / byUrgency / daysLate   which pile a bill is in and why (old qbo.js);
    * toBill / toInvoice / toPayment                       rows -> the shapes the pages draw;
+   * hasLiveDocument(row, files, documented)              whether a bill has its document: a LIVE file, never the bare
+                                                          bills.document_file_id (a removed document leaves it behind);
    * PAY_METHODS / allowedMethods / payPile / payMethodWords / paymentLabel   how an approved bill is paid: check, cash,
                                                           either, a bank transfer (ACH or wire) or a card (owner
                                                           decision 2026-10-21) - the approver's choice binds;
@@ -186,7 +188,9 @@ function byIdMap(rows, key) {
   return m;
 }
 
-/** One row of the books_desk view (M5b) in a known shape, whatever its column names: {billId, state, paid, owed, pile}. */
+/** One row of the books_desk view (M5b) in a known shape, whatever its column names: {billId, state, paid, owed, pile,
+    documented}. documented: the view's own answer (the document is a live file of the bill's project), null when the
+    row does not say. */
 export function deskRow(r) {
   if (!r) return null;
   const pick = (keys) => { for (const k of keys) if (r[k] !== undefined) return r[k]; return undefined; };
@@ -201,11 +205,27 @@ export function deskRow(r) {
     paid: paid === undefined || paid === null ? null : num(paid),
     owed: owed === undefined || owed === null ? null : num(owed),
     pile: txt(pick(["pay_pile", "pile"])).toLowerCase() || null,
+    documented: typeof r.documented === "boolean" ? r.documented : null,
   };
 }
 
+/** Whether a bill has its document: bills.document_file_id names a LIVE file. A removed document leaves the pointer
+    behind, and the database counts no such bill as documented (books_desk.documented, approve_bill, mark_bills_entered:
+    app.file_in_project). The database's own answer wins (`documented`, else the row's own - a books_desk row carries
+    it); else the pointer must name one of `files`, the live files read with the bill (current_files rows, or their
+    ids: the bill page's paperwork, the same test its landing code makes). Nothing to judge it by: no document - never
+    the bare pointer. */
+export function hasLiveDocument(row, files, documented) {
+  const r = row || {};
+  if (r.document_file_id === null || r.document_file_id === undefined) return false;
+  const said = typeof documented === "boolean" ? documented : r.documented;
+  if (typeof said === "boolean") return said;
+  const doc = String(r.document_file_id);
+  return Array.from(files || []).some((f) => f !== null && f !== undefined && String(typeof f === "object" ? f.id : f) === doc);
+}
+
 /** A bill as the books draw it. ctx: {nameOf, projects (Map id -> row), contacts (Map), paid (Map billId -> sum),
-    desk (Map billId -> deskRow), today}. */
+    desk (Map billId -> deskRow), files (the live files read with the bill: hasLiveDocument), today}. */
 export function toBill(row, ctx) {
   const c = ctx || {};
   const nameOf = c.nameOf || (() => "");
@@ -240,7 +260,8 @@ export function toBill(row, ctx) {
     kind: txt(row.kind),
     kindLabel: kindLabel(row.kind),
     documentFileId: row.document_file_id == null ? null : row.document_file_id,
-    hasDocument: row.document_file_id !== null && row.document_file_id !== undefined,
+    // a LIVE document only (the pointer of a removed one stays behind): blocked, "No invoice attached", no Approve
+    hasDocument: hasLiveDocument(row, c.files, d ? d.documented : null),
     void: row.void === true,
     deleted: !!row.deleted_at,
     approved: approved,
@@ -764,13 +785,15 @@ export function spendGlance(costs, noReceipt, today) {
 
 /* ── the home page's approvals card (approvers only) ───────────────── */
 
-/** Bills waiting for someone to approve them, across every project: {count, amount, missingDocument, queue}. */
+/** Bills waiting for someone to approve them, across every project: {count, amount, missingDocument, queue}. ctx:
+    {projects, today, nameOf, files (the live files the bills' documents were looked up in: hasLiveDocument - a bill
+    whose document was removed needs the invoice attached)}. */
 export function approvalsQueue(rows, ctx) {
   const c = ctx || {};
   const projects = byIdMap(c.projects);
   const today = dayOf(c.today) || ymd(new Date());
   const list = (rows || []).filter((r) => !r.deleted_at && !r.void && !r.approved_at && num(r.amount) > 0)
-    .map((r) => toBill(r, { projects, today, nameOf: c.nameOf }))
+    .map((r) => toBill(r, { projects, today, nameOf: c.nameOf, files: c.files }))
     .sort(byUrgency);
   return {
     today,

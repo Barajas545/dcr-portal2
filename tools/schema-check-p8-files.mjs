@@ -212,6 +212,32 @@ export async function run(h) {
     same((await one("select deleted_at from public.files where id = $1", [J.extra.id])).deleted_at, null, "the extra stays");
   });
 
+  await check("P8 files: a removed document is no document - loadBill, The Books (books_desk.documented) and the approvals card count only a LIVE file, as approve_bill does", async () => {
+    await sql("reset role");
+    const id = await billRow("Made-up Siding Crew", "SC-3", 450);
+    const doc = await docOf(id, 4, "siding crew bill.pdf");
+    await sql("update public.bills set document_file_id = $2 where id = $1", [id, doc]);
+    await as("accountant");
+    same((await books.loadBill(id, await me("accountant"))).bill.hasDocument, true, "documented while its file is live");
+    // an unapproved, unpaid bill: the database lets its document go (t40 guards only an approved, paid or entered one)
+    const v = (await one("select version from public.files where id = $1", [doc])).version;
+    await filesRepo.removeFile({ id: doc, version: v });
+    same(Number((await one("select document_file_id from public.bills where id = $1", [id])).document_file_id), Number(doc), "the pointer stays behind");
+    same((await one("select documented, state from public.books_desk where id = $1", [id])), { documented: false, state: "blocked" }, "the database: not documented");
+    const b = (await books.loadBill(id, await me("accountant"))).bill;
+    same([b.hasDocument, b.state, b.reason], [false, "blocked", "No invoice attached, so it cannot be approved."], "loadBill");
+    const desk = await books.loadDesk(await me("accountant"));
+    const onDesk = desk.blocked.find((x) => String(x.id) === String(id));
+    ok(onDesk && onDesk.hasDocument === false, "The Books: blocked, no document - " + JSON.stringify(onDesk && [onDesk.state, onDesk.hasDocument]));
+    await as("admin");
+    const q = await books.approvals(await me("admin"));
+    const card = q.queue.find((x) => String(x.id) === String(id));
+    ok(card && card.hasDocument === false, "the approvals card: needs the invoice attached - " + JSON.stringify(card));
+    const bill = await one("select version from public.bills where id = $1", [id]);
+    const r = await client.rpc("approve_bill", { id, pay_method: "check", version: bill.version, note: null });
+    ok(r.error, "approve_bill refuses it too: " + JSON.stringify(r.error && [r.error.code, r.error.message]));
+  });
+
   await check("P8 files: drift - the demo database (tools/fake/p8-files.js) has the real files and current_files columns", async () => {
     const harness = path.join(SITE, "..", "tests", "pages-engine.mjs");
     if (!existsSync(harness)) return;

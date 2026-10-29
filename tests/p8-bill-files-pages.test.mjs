@@ -397,6 +397,41 @@ test("a bill whose document was removed (the pointer left behind) takes the firs
   assert.equal(row.document_file_id, done[0].row.id, "the bill is documented again (approve_bill takes it)");
 });
 
+test("a removed document is no document anywhere: the bill page's decision card (no Approve), loadBill, The Books and the home page's approvals card count only a LIVE file", { skip }, async () => {
+  // the page: the decision card asks for the invoice by the paperwork's roles, never by the bare pointer
+  const js = code(read("js/pages/bill.js"));
+  assert.ok(!/\bb\.hasDocument\b|\.bill\.hasDocument\b/.test(js), "no decision on the bill page reads the pointer-based flag");
+  assert.match(js, /\} else if \(!hasDoc\) \{\s+s \+= '<div class="bl-why">Attach the invoice first/, "the decision card: the live paperwork");
+  const render = js.slice(js.indexOf("function render()"), js.indexOf('id="blDecision"'));
+  assert.match(render, /const hasDoc = files\.some\(\(f\) => f\.role === "document"\);/, "hasDoc is the paperwork's document");
+  // over the demo database: a waiting bill whose document was removed (unapproved, unpaid: the database lets it go)
+  await setup();
+  as("accountant");
+  const b = billOf("Concrete pump rental (not estimated)");
+  assert.ok(!b.approved_at && b.document_file_id != null);
+  const before = await books.loadBill(b.id, me("accountant"));
+  assert.equal(before.bill.hasDocument, true, "documented while its file is live");
+  const old = E.rows.files.find((f) => f.id === b.document_file_id);
+  await filesRepo.removeFile({ id: old.id, version: old.version });
+  const d = await books.loadBill(b.id, me("accountant"));
+  assert.equal(String(d.bill.documentFileId), String(old.id), "the pointer stays behind");
+  assert.deepEqual([d.bill.hasDocument, d.bill.state, d.bill.reason], [false, "blocked", "No invoice attached, so it cannot be approved."], "loadBill: no document");
+  assert.ok(!paperwork(d.bill, d.files, d.payments).some((f) => f.role === "document"), "the page's paperwork agrees");
+  const desk = await books.loadDesk(me("accountant"));
+  const onDesk = desk.blocked.find((x) => x.id === b.id);
+  assert.ok(onDesk && onDesk.hasDocument === false && onDesk.reason === "No invoice attached, so it cannot be approved.", "The Books: blocked (books_desk.documented)");
+  as("admin");
+  const q = await books.approvals(me("admin"));
+  const card = q.queue.find((x) => x.id === b.id);
+  assert.ok(card && card.hasDocument === false, "the approvals card: needs the invoice attached");
+  assert.equal(q.missingDocument, q.queue.filter((x) => !x.hasDocument).length);
+  const live = q.queue.filter((x) => x.hasDocument).map((x) => E.rows.bills.find((y) => y.id === x.id));
+  assert.ok(live.length && live.every((x) => E.rows.files.some((f) => f.id === x.document_file_id && !f.deleted_at)), "the others' documents are live files");
+  // what the database says to that bill: no approval without its document
+  await refused(() => E.rpc({ uid: uid("admin") }, "approve_bill", { id: b.id, pay_method: "check", version: E.rows.bills.find((x) => x.id === b.id).version, note: null }),
+    "23514", /attach the bill document/);
+});
+
 test("the bill page lists a voided payment as Void with its reason (no amount), and only live payments settle how it is paid", { skip }, async () => {
   const js = code(read("js/pages/bill.js"));
   assert.match(js, /const livePays = \(d\.payments \|\| \[\]\)\.filter\(\(p\) => p\.live !== false\);/);

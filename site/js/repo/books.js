@@ -13,7 +13,8 @@
                                costs -> map/books.js buildDesk;
    * loadBill(id, me)          one bill, its payments, project, vendor contact, quote (the amount only with the prices
                                switch: quote_prices), the documents (document_file_id and the files linked to it);
-   * approvals(me)             the bills waiting for approval, across every project (approvers only: the card).
+   * approvals(me)             the bills waiting for approval, across every project (approvers only: the card), each
+                               document looked up among the live files (a removed one is no document).
    Writes:
    * approve(bill, method, note)     rpc approve_bill(id, pay_method, version, note): the pay method (check | cash | both |
                                      transfer | card - owner decision 2026-10-21) is REQUIRED, the
@@ -48,11 +49,12 @@ import { ymd } from "../map/pacific.js";
 export const BILL_COLS = "id, project_id, estimate_item_id, quote_id, vendor_contact_id, vendor_name, invoice_number, invoice_date, due_date, " +
   "amount, description, document_file_id, void, approved_by, approved_at, approved_amount, pay_method, approval_note, kind, " +
   "qbo_entered_at, qbo_entered_by, qbo_ref, deleted_at, created_at, created_by, version";
-// books_desk (M5b): the bill's own columns plus the database's paid_total, owed, state, reason and pay_pile (check_desk |
-// transfer_card)
+// books_desk (M5b): the bill's own columns plus the database's paid_total, owed, documented (the document is a LIVE file:
+// a removed one leaves bills.document_file_id behind - map/books.js hasLiveDocument), state, reason and pay_pile
+// (check_desk | transfer_card)
 export const DESK_COLS = "id, project_id, kind, vendor_contact_id, vendor_name, invoice_number, invoice_date, due_date, amount, description, " +
   "estimate_item_id, quote_id, document_file_id, void, approved_by, approved_at, approved_amount, pay_method, approval_note, " +
-  "qbo_entered_at, qbo_entered_by, qbo_ref, created_at, created_by, version, paid_total, owed, state, reason, pay_pile";
+  "qbo_entered_at, qbo_entered_by, qbo_ref, created_at, created_by, version, paid_total, owed, documented, state, reason, pay_pile";
 // + the check register's stamps (the Books program, release A; migration 20261030000300_check_register): void, picked
 // up, cleared - written only by void_payment / payment_picked_up / clear_payments. A database without them yet is read
 // again without them (paymentRows), as the published pages did.
@@ -180,7 +182,8 @@ export async function loadBill(id, me) {
   const payments = (payRows || []).map(toPayment);
   // live payments only: a voided one is paid against no bill (app.bill_paid_total)
   const paid = new Map([[String(row.id), payments.reduce((s, p) => s + (p.live ? p.amount : 0), 0)]]);
-  const bill = toBill(row, { nameOf, projects, contacts, paid, today: ymd(new Date()) });
+  // the document counts only as one of these live files (current_files): a removed one leaves the pointer behind
+  const bill = toBill(row, { nameOf, projects, contacts, paid, files, today: ymd(new Date()) });
   const q = (quoteRows || [])[0] || null;
   const quote = q ? {
     id: q.id, kind: q.kind === "change_order" ? "Change order" : "Quote", status: q.status || "", vendor: q.vendor_name || "",
@@ -208,7 +211,10 @@ export async function approvals(me) {
   const rows = await pageAll((cl) => cl.from("bills").select(BILL_COLS).is("approved_at", null).is("deleted_at", null)
     .eq("void", false).gt("amount", 0).order("due_date", { ascending: true }));
   const projects = rows.length ? await byIds(c, "projects", PROJECT_COLS, "id", rows.map((r) => r.project_id)) : [];
-  return approvalsQueue(rows, { projects, today: ymd(new Date()) });
+  // the documents that are still live files (current_files): a removed one leaves bills.document_file_id behind, and
+  // that bill still needs the invoice attached (approve_bill refuses it)
+  const docs = rows.length ? await byIds(c, "current_files", "id", "id", rows.map((r) => r.document_file_id)) : [];
+  return approvalsQueue(rows, { projects, files: docs, today: ymd(new Date()) });
 }
 
 /* ── writes ───────────────────────────────────────────────────────── */
