@@ -17,31 +17,50 @@
    * pay by bank transfer or card (owner decision 2026-10-21): the bills approved to be paid by bank transfer (ACH or
      wire) or by card, on a list of their own with the same panel - no check number (the bank's or the card's
      confirmation instead, optional) and nobody to tell (only a check or cash is picked up);
-   * written - tell them it is ready: the payee's e-mail / phone (the bill's vendor contact, the quote it is billed
-     against, or a name match in Contacts - a guess is labelled one), the message as a draft in the accountant's own
-     mail, and "Told by email / phone / text / in person" (rpc payment_told, versioned) so DCR Agents 2's check
-     pick-up never tells them twice;
+   * written - tell them it is ready (the Books program, release B: pages/tell-payee.js, shared with the Accounting
+     page): one group per payee - the bill's vendor contact, else (a bill with no contact) the quote's vendor contact or
+     a contact whose company or name IS the payee (never a guess: the database refuses anyone else, I36) -, and the
+     four ways: an e-mail the reminder PC sends by itself (rpc tell_payee: told "(e-mail by DCR Agents 2)" once it has
+     gone), a text from her own phone (the database's number and words, an sms: link, [I sent it]), a call, in person;
+     then the ones told and waiting at the office, [Picked up]; her texts not marked sent; the reminder PC's warning;
+   * paid in the last 30 days (by the date on the check): the date, the payee, the job, how and the number, told /
+     picked up / cleared, 📎 the payment's files then the bill's - the amount and the total only with the prices
+     switch (S4) - and the way to the check register;
    * ready to enter in QuickBooks: the approved bills with their paperwork, a CSV built here in the browser (the
      formula guard, a BOM, CRLF), "Mark entered" (rpc mark_bills_entered: refused[] is shown in full, never a silent
      partial); money in: the invoices sent, their CSV and their own marker (rpc mark_invoices_entered);
    * not ready - and who it is on: waiting for an approval (only an admin or a manager with approve; an accountant
-     NEVER approves - the bill page shows them no approve button) or for the paperwork;
+     NEVER approves - the bill page shows them no approve button) or for the paperwork; a money editor ticks the
+     waiting ones, sees each one's LAST ASK (money_messages) and asks (pages/ask-approval.js: the usual approver ticked,
+     e-mail or a text per person - asking never approves);
    * already entered: Undo (rpc unmark_bills_entered / unmark_invoices_entered).
    * the payees' pictures (Books release A3, pages/avatar.js): the bill's own vendor contact's picture, or initials,
      before the payee; a contact editor's opens the contact card (its picture, phone and e-mail), as does [Add phone /
      e-mail] when nobody can be reached - the desk is read again after a save.
 
+   The page reads what the Accounting page reads (repo/books-home.js loadHome: The Books' own desk - repo/books.js
+   loadDesk - plus the money messages, my texts, the reminder PC's status and the templates; I24), and every 30 s
+   again ONLY while one of my e-mails waits for the reminder PC (I32). The day's work is on the simple page
+   (books-home.html): the tab strip's "← Simple view".
+
    Only with the financials switch: anyone else is told so and sent home before anything is read. */
 
-import { boot, esc, toast, confirmBox, errorText, store, D, can as allowed } from "./shell.js";
-import { avatarHtml, paintAvatars, openCard } from "./avatar.js";
+import { boot, esc, toast, confirmBox, errorText, store, D, can as allowed, seesPrices } from "./shell.js";
+import { avatarHtml, paintAvatars } from "./avatar.js";
 import * as books from "../repo/books.js";
+import * as homeRepo from "../repo/books-home.js";
 import * as panel from "./pay-panel.js";
+import { openSheet, ensureSheetStyle } from "./books-nav.js";
+import { openAsk } from "./ask-approval.js";
+import { groupHtml, waitingHtml, wireTell, textStep } from "./tell-payee.js";
+import { openViewer } from "./file-viewer.js";
 import {
-  fmtMoney, plural, daysLate, resolvePayee, pickupMessage, toCsv,
-  BILL_COLUMNS, INVOICE_COLUMNS, csvName, cleanRef, refusedLines, REF_MAX, TOLD_HOWS,
+  fmtMoney, plural, daysLate, toCsv, shortDay,
+  BILL_COLUMNS, INVOICE_COLUMNS, csvName, cleanRef, refusedLines, REF_MAX,
   billHref, seesBooks,
 } from "../map/books.js";
+import { lastAskedText, paidState } from "../map/books-home.js";
+import { pcWarning } from "../map/money-messages.js";
 import { fmtDay } from "../map/pacific.js";
 
 const VIEW_KEY = "dcr2_books_view";
@@ -54,7 +73,10 @@ function panelSpan() { return window.matchMedia && matchMedia(NARROW).matches ? 
 function respan() { document.querySelectorAll("td.ck-cell").forEach((td) => { td.colSpan = panelSpan(); }); }
 const money = fmtMoney;
 const h = esc;
-const state = { me: null, d: null, picked: {}, pickedInv: {}, openCheck: null, detail: null, tell: {}, refused: null, busy: false, mq: null };
+const POLL_MS = 30000;
+const state = { me: null, d: null, home: null, picked: {}, pickedInv: {}, askPicked: {}, openCheck: null, detail: null, refused: null, busy: false, mq: null,
+  timer: null, loading: null, again: false };
+const prices = () => seesPrices(state.me);
 
 function day(v) {
   const s = fmtDay(v);
@@ -64,7 +86,6 @@ function lateText(n) {
   if (n === null || n === undefined || n <= 0) return "";
   return n === 1 ? "1 day late" : n + " days late";
 }
-function company() { return (D().companyInfo && D().companyInfo.name) || (D().company) || "DCR Framing"; }
 
 /* ── the summary: the picture, or the four tiles ── */
 
@@ -231,17 +252,28 @@ function payeeHtml(x, words, shown) {
     '<span class="av-t">' + h(words) + "</span></span>";
 }
 
+/* the latest ask about a waiting bill (money_messages, through loadHome's buildHome) */
+function askedOf(b) {
+  const w = state.home && state.home.waiting ? state.home.waiting.find((x) => String(x.id) === String(b.id)) : null;
+  return w ? w.lastAsked : null;
+}
+
 function billRow(b, opts) {
   const o = opts || {};
   const late = o.entered ? "" : lateText(b.lateBy);
+  const askable = !!o.ask && allowed(state.me, "money") && b.state === "waiting";
   return "<tr>" +
     (o.pick ? '<td><input type="checkbox" data-pick="' + h(b.id) + '" aria-label="Pick ' + h(b.vendor || "this bill") + '"' +
       (state.picked[b.id] ? " checked" : "") + "></td>" : "") +
+    (o.askPick ? "<td>" + (askable ? '<input type="checkbox" data-askpick="' + h(b.id) + '" aria-label="' + h("Ask about " + (b.vendor || "this bill")) + '"' +
+      (state.askPicked[b.id] ? " checked" : "") + ">" : "") + "</td>" : "") +
     '<td><span class="who">' + h(b.vendor || "(no vendor)") + "</span>" +
       (b.invoiceNumber ? ' <span class="meta">#' + h(b.invoiceNumber) + "</span>" : "") + kindTag(b) +
       '<div class="meta">' + h(b.projectLabel || "(no job)") + (b.dueDate ? " · due " + h(day(b.dueDate)) : "") + "</div>" +
       (late ? '<span class="late">' + h(late) + "</span>" : "") +
       (o.reason && b.reason ? '<div class="reason">' + h(b.reason) + "</div>" : "") +
+      (askable ? '<div class="ac-asked">' + h(lastAskedText(askedOf(b))) + "</div>" +
+        '<div class="ac-actions" style="margin-top:6px"><button type="button" class="ac-b" data-ask="' + h(b.id) + '">Ask to approve</button></div>' : "") +
       (o.entered ? '<div class="meta">entered ' + h(day(b.enteredDay)) + (b.enteredByName ? " by " + h(b.enteredByName) : "") +
         (b.qboRef ? " · " + h(b.qboRef) : "") + "</div>" : "") +
     "</td>" +
@@ -332,47 +364,54 @@ function checkPanel(b, can, which) {
   return panel.checkPanel(b, can, which, { detail: state.detail, me: state.me, today: state.d && state.d.today });
 }
 
-/* ── telling them it is ready ── */
-function checksToTell(c, can) {
-  let s = '<div class="ac-sec" id="secTell"><header><h3>Written — tell them it is ready</h3><span class="hint">The check or cash is ready. ' +
-    "Nobody has told the payee to come and collect it.</span></header>";
-  if (!c.toTell.length) return s + '<div class="ac-none">Everyone with a check or cash waiting has been told.</div></div>';
-  c.toTell.forEach((t) => {
-    const k = state.tell[t.paymentId] || {};
-    s += '<div class="ck-tell"><div class="top"><div><span class="ck-payee">' + payeeHtml(t, t.payee, "(no payee)") + "</span>" +
-      '<div class="ck-for">' + (t.isCash ? "Cash" + (t.checkNumber ? " · " + h(t.checkNumber) : "") : "Check #" + h(t.checkNumber)) +
-        " · " + h(day(t.writtenDate)) + '<span class="ck-method' + (t.isCash ? " cash" : "") + '">' + (t.isCash ? "cash" : "check") + "</span></div>" +
-      '<div class="ck-for">' + h(t.projectLabel) + "</div></div>" +
-      '<div class="ck-payee">' + money(t.amount) + "</div></div>";
-    if (!k.loaded) {
-      s += '<div class="ck-acts"><button type="button" class="ac-b" data-load="' + h(t.paymentId) + '">How do I reach them?</button></div></div>';
-      return;
-    }
-    const w = k.contact || {};
-    if (!w.email && !w.phone) {
-      const vc = vendorContact(t);
-      s += '<div class="ck-how none">No email or phone on file for them.</div><div class="ck-none-note">The payment is ready and waiting. ' +
-        (vc && !vc.deleted_at && allowed(state.me, "contacts") ? "Add their phone or e-mail here, or tell them next time they call.</div>" +
-          '<div class="ck-acts"><button type="button" class="ac-b" data-reach="' + h(vc.id) + '">Add phone / e-mail</button></div>'
-          : "Add a contact in DCR Desktop 2, or tell them next time they call.</div>");
-    } else {
-      s += '<div class="ck-how ' + (w.needsConfirming ? "guess" : "certain") + '">' + h(w.why || "") + "</div>" +
-        '<div class="ck-none-note">' + (w.email ? "Email: " + h(w.email) : "") + (w.email && w.phone ? " · " : "") + (w.phone ? "Phone: " + h(w.phone) : "") + "</div>";
-    }
-    s += '<div class="ck-msg-box">' + h(k.message.body) + '</div><div class="ck-acts">';
-    if (w.email) s += '<a class="btn-accept" data-mail="' + h(t.paymentId) + '" href="#">Open the email</a>';
-    if (w.phone) s += '<a class="ac-b" href="tel:' + h(String(w.phone).replace(/[^0-9+]/g, "")) + '">Call ' + h(w.phone) + "</a>";
-    s += '<button type="button" class="ac-b" data-copy="' + h(t.paymentId) + '">Copy the message</button>';
-    if (can.pay) {
-      TOLD_HOWS.forEach((x) => {
-        if ((x.id === "email" && !w.email) || ((x.id === "phone" || x.id === "text") && !w.phone)) return;
-        s += '<button type="button" class="ac-b go" data-told="' + h(t.paymentId) + '" data-how="' + h(x.id) + '">&#10003; ' + h(x.label) + "</button>";
-      });
-    }
-    s += '<span class="ac-msg" id="tellMsg' + h(t.paymentId) + '"></span></div><div class="ck-none-note" style="margin-top:6px">Portal 2 sends no email ' +
-      "itself — this opens the message in your own email, already written. Press Send there, then mark it here.</div></div>";
-  });
+/* ── telling them it is ready (js/pages/tell-payee.js, the Accounting page's own panels) ── */
+function checksToTell() {
+  const H = state.home || {};
+  const groups = H.tellGroups || [], office = H.atOffice || [], drafts = H.drafts || [];
+  const ctx = { me: state.me, links: state.d && state.d.links, pc: H.pc };
+  let s = '<div class="ac-sec" id="secTell"><header><h3>Written — tell them it is ready</h3><span class="hint">The check or cash is ready at the office. ' +
+    "E-mail them (the reminder PC sends it by itself), text them from your phone, call, or tell them in person — then mark it picked up when they collect it.</span></header>";
+  const warn = pcWarning(H.pc);
+  if (warn && allowed(state.me, "money") && groups.length) s += '<div class="bh-pc sm" id="acPc" role="status">' + h(warn) + "</div>";
+  if (H.ready === false) s += '<div class="ac-note">The money messages are not in the database yet: telling by e-mail or text comes with its update.</div>';
+  if (drafts.length) {
+    s += '<h4 class="bh-sub" id="acDrafts">Texts not marked sent · ' + h(String(drafts.length)) + '</h4><div class="ac-note" style="margin:0 0 6px">Did you send these? Say so, so the log is right.</div>' +
+      '<div id="acDraftList"></div>';
+  }
+  if (!groups.length && !office.length) return s + '<div class="ac-none">Everyone with a check or cash waiting has been told.</div></div>';
+  if (groups.length) {
+    const n = groups.reduce((x, g) => x + g.payments.length, 0);
+    s += '<h4 class="bh-sub" id="acNotTold">Not told yet · ' + h(String(n)) + "</h4>" + groups.map((g) => groupHtml(g, ctx)).join("");
+  }
+  if (office.length) {
+    s += '<h4 class="bh-sub" id="acAtOffice">Told, waiting for pickup · ' + h(String(office.length)) + "</h4>" + office.map((p) => waitingHtml(p, ctx)).join("");
+  }
   return s + "</div>";
+}
+
+/* ── paid in the last 30 days (by the date on the check, Q6): the amounts only with the prices switch (S4) ── */
+const METHOD_WORD = { check: "check", cash: "cash", ach: "ACH", wire: "wire", card: "card", other: "other" };
+export function paidRowHtml(p) {
+  const st = paidState(p);
+  const stCls = p.clearedOn || p.pickedUpAt ? "ok" : p.toldAt ? "told" : "";
+  return '<tr data-paid="' + h(p.id) + '"><td class="meta">' + h(shortDay(p.paidDate)) + "</td>" +
+    "<td>" + payeeHtml(p, p.payee, "(no payee)") +
+      '<div class="meta">' + h(p.projectLabel || "") + "</div>" +
+      '<div class="meta"><span class="ck-method ' + h(p.kind === "transfer" ? "transfer" : p.kind) + '" style="margin-left:0">' + h(METHOD_WORD[p.method] || p.method) + "</span>" +
+        (p.ref ? " " + (p.method === "check" ? "#" : "") + h(p.ref) : "") + ' · <span class="st ' + stCls + '">' + h(st) + "</span></div></td>" +
+    (prices() ? '<td class="num">' + h(money(p.amount)) + "</td>" : "") +
+    '<td class="num">' + (p.fileCount ? '<button type="button" class="lnk" data-files="' + h(p.id) + '" aria-label="' + h(plural(p.fileCount, "file", "files")) + '">&#128206; ' +
+      h(String(p.fileCount)) + "</button>" : "") + "</td></tr>";
+}
+function paid30() {
+  const rows = (state.home && state.home.paid30) || [];
+  let s = '<div class="ac-sec ac-paid" id="secPaid"><header><h3>Paid — last 30 days</h3><span class="hint">By the date on the check: told, picked up, cleared.</span>' +
+    '<span class="grow"></span><span class="hint">' + h(plural(rows.length, "payment", "payments")) + (prices() && rows.length ? " · " + h(money(state.home.paid30Total)) : "") + "</span></header>";
+  if (!rows.length) return s + '<div class="ac-none">Nothing paid in the last 30 days.</div><div class="ac-glance"><a href="books-checks.html">See every check in the check register &rarr;</a></div></div>';
+  s += table(rows, [["Date", 0, "c-st"], ["Paid to", 0]].concat(prices() ? [["Amount", 1]] : [], [["", 1, "c-undo"]]), paidRowHtml);
+  return s + '<div class="ac-glance">' + (prices() ? "<b>" + h(money(state.home.paid30Total)) + "</b> · " : "") + h(plural(rows.length, "payment", "payments")) +
+    ' · <a href="books-checks.html">See every check in the check register &rarr;</a>' +
+    (prices() ? ' · <a href="books-reports.html#months">Payments by month &rarr;</a>' : "") + "</div></div>";
 }
 
 /* ── what needs doing ── */
@@ -408,7 +447,8 @@ function render() {
   s += pile(d.checks, can, "pay");
   s += pile(d.checks, can, "send");
   s += pile(d.checks, can, "decide");
-  s += checksToTell(d.checks, can);
+  s += checksToTell();
+  s += paid30();
 
   // ready to enter (bills)
   s += '<div class="ac-sec" id="secQbo"><header><h3>Ready to enter in QuickBooks</h3><span class="hint">Approved, with the paperwork behind it.</span>' +
@@ -445,11 +485,18 @@ function render() {
   s += '<div class="ac-note">QuickBooks Online does import invoices from CSV natively (Settings &rarr; Import data &rarr; Invoices). ' +
     "Customers must exist there first.</div>" + refusedBox("invoices") + "</div>";
 
-  // not yours to action
+  // not yours to approve: chase it (release B: the asks; asking never approves)
   if (d.waiting.length || d.blocked.length) {
-    s += '<div class="ac-sec" id="secWaiting"><header><h3>Not ready — and who it is on</h3><span class="hint">Nothing here is yours to action; ' +
-      "it is here so you are not waiting on it blind. Only an admin or a manager with approve authority approves a bill.</span></header>";
-    s += table(d.waiting.concat(d.blocked), [["Bill", 0], ["Amount", 1], ["", 1, "c-go"]], (b) => billRow(b, { reason: true }));
+    const asks = allowed(state.me, "money") && d.waiting.length > 0;
+    s += '<div class="ac-sec" id="secWaiting"><header><h3>Not ready — and who it is on</h3><span class="hint">Only an admin or a manager with approve ' +
+      "authority approves a bill." + (asks ? " Tick the ones to chase and ask them: an e-mail the reminder PC sends, or a text from your phone." : " It is here so you are not waiting on it blind.") +
+      "</span></header>";
+    s += table(d.waiting.concat(d.blocked), (asks ? [["", 0, "c-pick"]] : []).concat([["Bill", 0], ["Amount", 1], ["", 1, "c-go"]]),
+      (b) => billRow(b, { reason: true, askPick: asks, ask: asks }));
+    if (asks) {
+      const n = Object.keys(state.askPicked).length;
+      s += '<div class="ac-actions"><button type="button" class="btn-accept" id="acAskSel"' + (n ? "" : " disabled") + ">Ask to approve (" + h(String(n)) + " selected)</button></div>";
+    }
     s += "</div>";
   }
 
@@ -467,6 +514,9 @@ function render() {
   s += refusedBox("undo") + "</div>";
 
   document.getElementById("acBody").innerHTML = s;
+  // my texts not marked sent: the database's number and words, as text (js/pages/tell-payee.js)
+  const list = document.getElementById("acDraftList");
+  if (list && state.home) state.home.drafts.forEach((m) => list.appendChild(textStep(m, { onDone: () => setTimeout(() => load(), 700) })));
   wire();
 }
 
@@ -509,8 +559,33 @@ function wire() {
   if (csv) csv.addEventListener("click", () => download("bills"));
   const csvI = document.getElementById("acCsvInv");
   if (csvI) csvI.addEventListener("click", () => download("invoices"));
+  // asking (js/pages/ask-approval.js: one bill, or the ones ticked)
+  box.querySelectorAll("[data-askpick]").forEach((cb) => cb.addEventListener("change", () => {
+    const id = cb.getAttribute("data-askpick");
+    if (cb.checked) state.askPicked[id] = true; else delete state.askPicked[id];
+    syncAsk();
+  }));
+  box.querySelectorAll("[data-ask]").forEach((b) => b.addEventListener("click", () => { const x = waitingBill(b.getAttribute("data-ask")); if (x) ask([x]); }));
+  const sel = document.getElementById("acAskSel");
+  if (sel) sel.addEventListener("click", () => ask(Object.keys(state.askPicked).map(waitingBill).filter(Boolean)));
+  // paid in the last 30 days: the payment's files, then the bill's
+  box.querySelectorAll("[data-files]").forEach((b) => b.addEventListener("click", () => {
+    const p = ((state.home && state.home.paid30) || []).find((x) => String(x.id) === b.getAttribute("data-files"));
+    if (p && p.files.length) openViewer(p.files, 0, { errorText });
+  }));
   wireChecks();
   syncPick();
+}
+
+function waitingBill(id) { return state.d ? state.d.waiting.find((b) => String(b.id) === String(id)) || null : null; }
+function syncAsk() {
+  const n = Object.keys(state.askPicked).length;
+  const b = document.getElementById("acAskSel");
+  if (b) { b.disabled = !n; b.textContent = "Ask to approve (" + n + " selected)"; }
+}
+function ask(bills) {
+  if (!bills.length) return;
+  openAsk({ bills, me: state.me, templates: state.home && state.home.templates, today: state.d.today, onDone: () => { state.askPicked = {}; load(); } });
 }
 
 function syncPick() {
@@ -640,97 +715,55 @@ function wireChecks() {
     tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openRow(tr); } });
   });
 
-  box.querySelectorAll("[data-load]").forEach((btn) => btn.addEventListener("click", () => {
-    if (tellFor(btn.getAttribute("data-load"))) render();
-  }));
-  // the payees' pictures; the card from a picture or from [Add phone / e-mail] (Books release A3)
+  // the payees' pictures; the card from a picture (Books release A3)
   paintAvatars(box, { me: state.me, onSaved: contactSaved });
-  box.querySelectorAll("[data-reach]").forEach((btn) => btn.addEventListener("click", () => {
-    openCard(btn.getAttribute("data-reach"), { me: state.me, onSaved: contactSaved }).catch((e) => toast(errorText(e), "error"));
-  }));
-  box.querySelectorAll("[data-mail]").forEach((a) => a.addEventListener("click", (e) => {
-    e.preventDefault();
-    const k = state.tell[a.getAttribute("data-mail")] || {};
-    if (!k.contact || !k.contact.email) return;
-    const link = document.createElement("a");
-    link.href = "mailto:" + encodeURIComponent(k.contact.email) + "?subject=" + encodeURIComponent(k.message.subject) + "&body=" + encodeURIComponent(k.message.body);
-    link.style.display = "none";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  }));
-  box.querySelectorAll("[data-copy]").forEach((btn) => btn.addEventListener("click", async () => {
-    const k = state.tell[btn.getAttribute("data-copy")] || {};
-    try {
-      await navigator.clipboard.writeText((k.message && k.message.body) || "");
-      btn.textContent = "Copied";
-      setTimeout(() => { btn.textContent = "Copy the message"; }, 1500);
-    } catch (e) {
-      toast("Could not copy it. Select the message above and copy it by hand.", "error");
-    }
-  }));
-  box.querySelectorAll("[data-told]").forEach((btn) => btn.addEventListener("click", async () => {
-    const pid = btn.getAttribute("data-told");
-    const how = btn.getAttribute("data-how");
-    const t = state.d.checks.toTell.find((x) => String(x.paymentId) === String(pid));
-    if (!t) return;
-    btn.disabled = true;
-    try {
-      await books.markTold(t, how);
-    } catch (e) {
-      btn.disabled = false;
-      toast(errorText(e), "error");
-      if (e && (e.code === "PT409" || e.status === 409)) load();
-      return;
-    }
-    delete state.tell[pid];
-    state.refused = null;
-    toast("Marked told (" + how + ").", "ok");
-    await load();
-  }));
+  // telling (js/pages/tell-payee.js): e-mail by the reminder PC, a text by hand, a call, in person; picked up; and
+  // [Add phone / e-mail] - the page is read again after each
+  const H = state.home || {};
+  wireTell(box, { me: state.me, links: state.d.links, groups: H.tellGroups || [], waiting: H.atOffice || [], today: state.d.today, sheet: openSheet,
+    onChanged: () => { state.refused = null; return load(); } });
 }
 
-/** How to reach the payee of payment `pid`, and THIS payment's message -> whether it was found. */
-function tellFor(pid) {
-  const t = state.d && state.d.checks.toTell.find((x) => String(x.paymentId) === String(pid));
-  if (!t) return false;
-  const contact = resolvePayee(t, state.d.links);
-  /* THIS payment's message, never the bill's balance: the amount on a pick-up notice is one piece of paper. */
-  const message = pickupMessage({ company: contact.company || t.vendorCompany, payee: t.payee, amount: t.amount, checkNumber: t.checkNumber,
-    projectLabel: t.projectLabel, invoiceNumber: t.invoiceNumber, isCash: t.isCash, from: company() });
-  state.tell[pid] = { loaded: true, contact, message };
-  return true;
-}
+/* A contact's picture, phone or e-mail was saved from the card: everything is read again (a phone just added is
+   offered at once). */
+function contactSaved() { return load(); }
 
-/* A contact's picture, phone or e-mail was saved from the card: the desk is read again, and the payees already looked
-   up are looked up again (a phone just added is offered at once). */
-let reloading = null;
-function contactSaved() {
-  if (reloading) return reloading;
-  const open = Object.keys(state.tell).filter((k) => state.tell[k] && state.tell[k].loaded);
-  reloading = (async () => {
-    try {
-      await load();
-      if (!state.d) return;
-      open.forEach((k) => { if (!tellFor(k)) delete state.tell[k]; });
-      if (open.length) render();
-    } finally { reloading = null; }
-  })();
-  return reloading;
+/* every 30 s, only while one of my e-mails waits for the reminder PC (I32); never over an open panel or dialog */
+function schedule() {
+  clearTimeout(state.timer);
+  state.timer = null;
+  if (!state.home || !state.home.waitingEmail) return;
+  state.timer = setTimeout(() => {
+    const sheet = document.getElementById("bhSheet");
+    if (state.openCheck != null || (sheet && !sheet.hidden) || document.visibilityState === "hidden") { schedule(); return; }
+    load();
+  }, POLL_MS);
 }
 
 async function load() {
-  try {
-    state.d = await books.loadDesk(state.me);
-    render();
-  } catch (e) {
-    /* The payload is dropped, not kept: figures from before a failed reload must never be drawn again. */
-    state.d = null;
-    document.getElementById("acBody").innerHTML = '<div class="ac-sec" style="color:var(--err)">' + h(errorText(e)) + "</div>";
-    const cards = document.getElementById("acCards");
-    cards.innerHTML = "";
-    cards.className = "ac-cards";
-  }
+  if (state.loading) { state.again = true; return state.loading; }
+  state.loading = (async () => {
+    try {
+      // The Books' own desk (repo/books.js loadDesk) and the money messages on top (repo/books-home.js loadHome: I24)
+      state.home = await homeRepo.loadHome(state.me);
+      state.d = state.home.desk;
+      Object.keys(state.askPicked).forEach((k) => { if (!waitingBill(k)) delete state.askPicked[k]; });
+      render();
+      schedule();
+    } catch (e) {
+      /* The payload is dropped, not kept: figures from before a failed reload must never be drawn again. */
+      state.d = null;
+      state.home = null;
+      document.getElementById("acBody").innerHTML = '<div class="ac-sec" style="color:var(--err)">' + h(errorText(e)) + "</div>";
+      const cards = document.getElementById("acCards");
+      cards.innerHTML = "";
+      cards.className = "ac-cards";
+    } finally {
+      state.loading = null;
+      if (state.again) { state.again = false; load(); }
+    }
+  })();
+  return state.loading;
 }
 
 async function start() {
@@ -745,6 +778,7 @@ async function start() {
     return;
   }
   document.title = "DCR Portal 2 — The Books";
+  ensureSheetStyle();
   const first = String(me.name || "").split(" ")[0].split("@")[0];
   document.getElementById("acGreeting").textContent = first ? "— " + first : "";
   const g = document.getElementById("acView");
@@ -763,10 +797,11 @@ async function start() {
   window.addEventListener("resize", respan);
   // the payment files still on their way (js/pages/pay-panel.js: the durable upload queue's lines)
   panel.watchQueue(document.getElementById("ckQueue")).catch(() => {});
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.openCheck == null && state.d) load(); });
   await load();
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
 else start();
 
-export const _test = { picture, cardsHtml, render: () => render(), state, panelSpan };
+export const _test = { picture, cardsHtml, render: () => render(), state, panelSpan, checksToTell, paid30, billRow };

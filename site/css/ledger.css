@@ -28,6 +28,9 @@
   color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .lg-tabs a:hover { color: var(--text); }
 .lg-tabs a[aria-current="page"] { color: var(--acc); border-bottom-color: var(--acc); }
+/* the Books pages' one tab strip (the Books program, release B): "← Simple view" in the accent; on a phone the six wrap */
+.lg-tabs a.lg-simple { color: var(--acc); }
+@media (max-width: 560px) { .lg-tabs { flex-wrap: wrap; overflow-x: visible; gap: 0 2px; } .lg-tabs a { padding: 8px 8px; font-size: 13px; } }
 
 /* controls */
 .lg-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }

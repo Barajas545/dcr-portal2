@@ -85,10 +85,28 @@
       .bl-qi.bad { color: var(--err); font-weight: 600; }
       .bl-link { border: 0; background: none; color: var(--acc); font: inherit; font-weight: 600; cursor: pointer; padding: 0; text-align: left; overflow-wrap: anywhere; }
       .bl-link:hover { text-decoration: underline; }
+      /* the Books pages' one tab strip (the Books program, release B): static, the same six links on every Books page */
+      .bl-nav { max-width: 1240px; margin: 12px auto 0; padding: 0 16px; display: flex; flex-wrap: wrap; gap: 2px 4px; border-bottom: 1px solid var(--border); }
+      .bl-nav a { padding: 9px 14px; font-size: 13.5px; font-weight: 600; text-decoration: none; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+      .bl-nav a:hover { color: var(--text); }
+      .bl-nav { --acc:#2f80d8; }
+      @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bl-nav { --acc:#6aa9ec; } }
+      :root[data-theme="dark"] .bl-nav { --acc:#6aa9ec; }
+      .bl-nav a.bl-simple { color: var(--acc); }
+      @media (max-width: 560px) { .bl-nav { padding: 0 10px; } .bl-nav a { padding: 8px 8px; font-size: 13px; } }
+      @media print { .bl-nav { display: none !important; } }
     </style>
   </head>
   <body>
     <div class="topbar" id="dcr2Topbar"></div>
+    <nav class="bl-nav" aria-label="The office's money pages">
+      <a href="books-home.html" class="bl-simple">&larr; Simple view</a>
+      <a href="accounting.html">The Books</a>
+      <a href="books-checks.html">Checks</a>
+      <a href="books-vendors.html">Vendors</a>
+      <a href="books-reports.html">Reports</a>
+      <a href="ledger.html">Expenses &amp; receipts</a>
+    </nav>
     <main class="bl" id="blRoot">
       <div class="bl-card" id="blLoading">Loading the bill…</div>
     </main>

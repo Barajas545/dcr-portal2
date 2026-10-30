@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-/* DCR Portal 2 — the end-to-end walk of the Books program's Accounting page and its messages, release B part 2a (P4),
-   in the DEMO (development only; design-portal §12.4 steps 1-7 and 10).
+/* DCR Portal 2 — the end-to-end walk of the Books program's Accounting page and its messages, release B (P4 and P5),
+   in the DEMO (development only; design-portal §12.4 steps 1-10: 8 and 9 are the Advanced pages of release B part 2b).
 
      node tools/e2e-p8-books.mjs [--out <dir>] [--chrome <path>] [--shots all|none]
 
@@ -22,7 +22,16 @@
    5. Tell: by e-mail (an opt-out on the PC first: "not sent: opted out"; then sent: told by e-mail); by text (sms:
       link, I sent it: told by text); by call (told by phone); in person; Picked up, and Not picked up;
    6. the templates: a text saved; an amount refused in the database's words; reset; a second tab's stale save (PT409);
-   7. Advanced mode: the big button opens The Books;
+   7. Advanced mode: the big button opens The Books - the six tabs, Ask in "Not ready" with the last ask, the shared tell
+      panel, "Paid — last 30 days", the line that says where today's work is; "← Simple view" goes back;
+   8. (release B part 2b, P5; the uploads in depth: e2e-p8-files, e2e-p8-contacts) the bill page's six tabs, an invoice
+      pasted into a blocked bill (it moves to waiting), the contact card from the vendor list (a phone changed);
+   9. the register: the gap flag after a spoiled blank, unspoil, cleared with undo, the admin's void (switch on, void,
+      switch off); the vendor list: we owe / paid this year / last year, the 1099 worksheet on the year's threshold and
+      one typed for the view, red and gold certificates, the details saved, its CSV, a phone's width, the approver's
+      list with no amount; the reports: each one draws a table, the approval log and money history of the walk, the
+      deferred line, print preview (Emulation.setEmulatedMedia print), the CSV (BOM, CRLF, the formula guard), the Bill
+      payments CSV, a phone's width, and the approver refused (no prices) before any read;
    10. everywhere: 390 px with no sideways scroll, desktop, light and dark; no Content-Security-Policy violation and no
       console error; no amount in any money e-mail or text written in the walk (P5 check 5).
    Screenshots (--shots all): books8_<what>_<role>_<light|dark>_<desktop|phone>.png into --out (default: the system temp
@@ -61,6 +70,11 @@ const HELPERS = `(() => {
   window.__set = (id, v) => { const n = document.getElementById(id); n.value = v; n.dispatchEvent(new Event("input", { bubbles: true })); n.dispatchEvent(new Event("change", { bubbles: true })); return true; };
   window.__pc = (o) => DCR2Demo.engine.exts.find((x) => x.name === "p8-books").__dev.reminderPc(o || {});
   window.__group = (words) => Array.from(document.querySelectorAll("[data-group]")).find((x) => x.innerText.indexOf(words) !== -1) || null;
+  if (!window.__blobs) {
+    window.__blobs = [];
+    const make = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (b) => { if (b && /csv/.test(b.type || "")) window.__blobs.push(b); return make(b); };
+  }
   return true;
 })()`;
 
@@ -112,6 +126,14 @@ async function main() {
   const modalOk = (p) => p.eval("(() => { const b = document.querySelector('.dcr-mo.open #dcrMoYes'); if (b) b.click(); return !!b; })()");
   const sheetOpen = "!!document.getElementById('bhSheet') && !document.getElementById('bhSheet').hidden";
   const click = (p, sel) => p.eval("(() => { const b = document.querySelector(" + JSON.stringify(sel) + "); if (b) b.click(); return !!b; })()");
+  // release B part 2b (P5): the register, the vendor list and the reports
+  const REG = "!!document.getElementById('rgTable')";
+  const VEND = "!!document.getElementById('vdList')";
+  // a report is drawn once its answer came (the "Working it out…" placeholder is .rp-busy)
+  const REP = "!!document.getElementById('rpMain') && !document.querySelector('#rpOut .rp-busy') && (!!document.getElementById('rpTable') || !!document.querySelector('#rpOut .ac-none'))";
+  const rgAct = (p, number, what) => p.eval("(() => { const tr = Array.from(document.querySelectorAll('#rgTable tbody tr')).find((x) => { const w = x.querySelector('.who'); return w && w.textContent === '#" + number + "'; }); " +
+    "const b = tr && tr.querySelector('[data-act=\"" + what + "\"]'); if (b) b.click(); return !!b; })()");
+  const csv = (p) => p.eval("(async () => { const b = window.__blobs[window.__blobs.length - 1]; if (!b) return null; const buf = new Uint8Array(await b.arrayBuffer()); return { bom: Array.from(buf.slice(0, 3)).join(','), text: new TextDecoder().decode(buf) }; })()");
 
   async function shoot(p, name, device, dark, full) {
     if (SHOTS === "none") return;
@@ -127,6 +149,21 @@ async function main() {
     if (took) shots.push(took); else check("screenshot " + file, false, "no frame in 25 s");
     await p.call("Emulation.setDeviceMetricsOverride", { width: w, height: device === "phone" ? 844 : 900, deviceScaleFactor: 1, mobile: device === "phone" });
     await p.dark(false);
+  }
+  /* the printed page as the printer gets it (print media, light) */
+  async function printShot(p, name) {
+    if (SHOTS === "none") return;
+    await p.call("Page.bringToFront").catch(() => null);
+    await p.call("Emulation.setEmulatedMedia", { media: "print", features: [{ name: "prefers-color-scheme", value: "light" }] });
+    await p.eval("window.dispatchEvent(new Event('beforeprint')); true");
+    const hgt = await p.eval("Math.max(900, Math.min(4200, document.documentElement.scrollHeight))");
+    await p.call("Emulation.setDeviceMetricsOverride", { width: 1100, height: hgt, deviceScaleFactor: 1, mobile: false });
+    await sleep(450);
+    const file = "books8_" + name + "_print.png";
+    const took = await Promise.race([p.shot(file), sleep(25000).then(() => null)]);
+    if (took) shots.push(took); else check("screenshot " + file, false, "no frame in 25 s");
+    await p.call("Emulation.setEmulatedMedia", { media: "", features: [{ name: "prefers-color-scheme", value: "light" }] });
+    await p.call("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   }
   async function four(p, name, full) {
     await shoot(p, name, "desktop", false, full); await shoot(p, name, "desktop", true, full);
@@ -453,6 +490,196 @@ async function main() {
       await click(acc, "#bhAdvTop");
       await acc.until("location.pathname === '/accounting.html' && !!document.getElementById('secPay')", 15000);
       check("7. the big button opens The Books (accounting.html)", true);
+      // release B part 2b (P5): The Books with the tab strip, the shared tell and ask panels, Paid - last 30 days
+      await acc.until("!!document.getElementById('secPaid') && !!document.getElementById('secTell')", 10000);
+      const tabs = await acc.eval("Array.from(document.querySelectorAll('nav.ac-tabs a')).map((a) => a.textContent.trim() + (a.getAttribute('aria-current') ? '*' : ''))");
+      check("7b. The Books: the six tabs (← Simple view · The Books* · Checks · Vendors · Reports · Expenses & receipts)",
+        JSON.stringify(tabs) === JSON.stringify(["← Simple view", "The Books*", "Checks", "Vendors", "Reports", "Expenses & receipts"]), JSON.stringify(tabs));
+      const acHtml = await acc.eval("document.getElementById('acBody').innerHTML");
+      const acText = await acc.eval("document.getElementById('acBody').innerText");
+      check("7c. The Books: Ask in \"Not ready\" with the last ask, the shared tell panel (e-mail by the reminder PC), \"Paid — last 30 days\"; no \"Portal 2 sends no email\"",
+        /data-ask="/.test(acHtml) && /Asked |Not asked yet/.test(acText) && /data-tell="email"/.test(acHtml) && /Paid — last 30 days/.test(acText) && !/sends no e-?mail/i.test(acText) &&
+        /Today's work is on the simple page/.test(await acc.eval("document.querySelector('.ac-lead').innerText")), acText.slice(0, 200));
+      await four(acc, "books_advanced_accountant", true);
+      await click(acc, "nav.ac-tabs a.ac-simple");
+      await acc.until("location.pathname === '/books-home.html' && " + HOME, 15000);
+      check("7d. \"← Simple view\" goes back to the Accounting page", true);
+    }, acc);
+
+    /* ── 8. step B2 (uploads everywhere: in depth in e2e-p8-files and e2e-p8-contacts) ───────────── */
+    await attempt("8. the bill page and the contact card from the Advanced pages", async () => {
+      const roof = await db(acc, "(R.bills.find((b) => b.description === 'Roof framing package (back order)') || {}).id");
+      await open(acc, "/bill.html?id=" + roof, "!!document.getElementById('blPaper') && !!document.querySelector('#blDrop .fd')");
+      const tabs = await acc.eval("Array.from(document.querySelectorAll('nav.bl-nav a')).map((a) => a.textContent.trim())");
+      check("8a. the bill page carries the six tabs", JSON.stringify(tabs) === JSON.stringify(["← Simple view", "The Books", "Checks", "Vendors", "Reports", "Expenses & receipts"]), JSON.stringify(tabs));
+      await acc.eval("(async () => window.__paste('#blDrop .fd', [await window.__png('Made-up back order invoice')]))()");
+      await acc.until("!!DCR2Demo.engine.rows.bills.find((b) => b.id === " + roof + ").document_file_id", 15000);
+      const st = await acc.eval("DCR2Demo.engine.select({ uid: DCR2Demo.engine.rows.profiles.find((p) => p.email === 'accountant@demo.test').id }, 'books_desk', { columns: 'id, state', filters: [{ col: 'id', op: 'eq', val: " + roof + " }] }).data[0].state");
+      check("8b. an invoice pasted into a blocked bill: its document, and the bill moves to waiting", st === "waiting", st);
+      await shoot(acc, "bill_tabs_accountant", "phone", false, false);
+      // the contact card from the vendor list: the phone changed
+      await open(acc, "/books-vendors.html", VEND);
+      const rose = await db(acc, "R.contacts.find((c) => c.company === 'Rosewell Concrete').id");
+      await acc.eval("document.querySelector('#vdBody button.av[data-av-contact=\"" + rose + "\"]').click(); true");
+      await acc.until("!!document.querySelector('#ccModal.open #ccPhone')", 8000);
+      await acc.eval("document.getElementById('ccPhone').value = '(805) 555-0169'; document.getElementById('ccSave').click(); true");
+      await acc.until("!document.querySelector('#ccModal.open')", 8000);
+      check("8c. the contact card from the vendor list: the phone saved", (await db(acc, "R.contacts.find((c) => c.id === " + rose + ").phone")) === "(805) 555-0169");
+    }, acc);
+
+    /* ── 9. steps B3 and B4: the register, the vendor list, the reports ───────────────────────────── */
+    await attempt("9a. the check register: the gap flag, spoil, cleared with undo, void", async () => {
+      await open(acc, "/books-checks.html", REG);
+      const tabs = await acc.eval("Array.from(document.querySelectorAll('nav.ac-tabs a')).map((a) => a.textContent.trim() + (a.getAttribute('aria-current') ? '*' : ''))");
+      check("9a. the register: the six tabs, Checks marked", JSON.stringify(tabs) === JSON.stringify(["← Simple view", "The Books", "Checks*", "Vendors", "Reports", "Expenses & receipts"]), JSON.stringify(tabs));
+      const next = (await acc.eval("document.getElementById('rgNext').innerText")).match(/#(\d+)/)[1];
+      const skip = String(Number(next) + 1);
+      await acc.eval("document.getElementById('rgSpoil').click(); true");
+      await acc.until(modalOpen, 5000);
+      await acc.eval("document.getElementById('dcrMoF0').value = " + JSON.stringify(skip) + "; document.getElementById('dcrMoF1').value = 'Printed crooked'; true");
+      await modalOk(acc);
+      await acc.until("!document.querySelector('.dcr-mo.open') && /#" + next + " missing — spoil it or find it/.test((document.getElementById('rgGaps') || {}).innerText || '')", 8000);
+      check("9b. a blank spoiled past the next number: the register flags #" + next + " missing", true);
+      await four(acc, "register_gap_accountant", false);
+      await rgAct(acc, skip, "unspoil");
+      await acc.until(modalOpen, 5000);
+      await modalOk(acc);
+      await acc.until("!(Array.from(document.querySelectorAll('#rgTable .who')).some((x) => x.textContent === '#" + skip + "'))", 6000);
+      check("9c. the spoiled mark taken off: the flag goes with it", !new RegExp("#" + next + " missing").test(await acc.eval("(document.getElementById('rgGaps') || {}).innerText || ''")));
+      await acc.eval("Array.from(document.querySelectorAll('#rgTable tbody tr')).find((x) => (x.querySelector('.who') || {}).textContent === '#5309').querySelector('[data-pick]').click(); true");
+      await acc.until("!document.getElementById('rgClear').disabled", 4000);
+      await click(acc, "#rgClear");
+      await acc.until(modalOpen, 5000);
+      await modalOk(acc);
+      await acc.until("!!document.getElementById('rgUndo')", 8000);
+      check("9d. #5309 marked cleared", (await db(acc, "R.payments.find((p) => p.check_number === '5309').cleared_on")) === J.today);
+      await click(acc, "#rgUndo");
+      await acc.until("/Undone/.test((document.querySelector('.rg-done') || {}).textContent || '')", 8000);
+      check("9e. Undo: no longer cleared", !(await db(acc, "R.payments.find((p) => p.check_number === '5309').cleared_on")));
+      await open(ad, "/books-checks.html", REG + " && !!document.getElementById('rgVoidSwitch')");
+      await click(ad, "#rgVoidSwitch");
+      await ad.until(modalOpen, 5000);
+      await modalOk(ad);
+      await ad.until("!!document.querySelector('[data-act=void]')", 8000);
+      await rgAct(ad, "5310", "void");
+      await ad.until(modalOpen, 5000);
+      await ad.eval("document.getElementById('dcrMoF0').value = 'Lost in the mail - a new check is written'; true");
+      await modalOk(ad);
+      await ad.until("!!DCR2Demo.engine.rows.payments.find((x) => x.id === " + J.p5310 + ").voided_at", 8000);
+      await ad.until("Array.from(document.querySelectorAll('#rgTable tbody tr.void .who')).some((x) => x.textContent === '#5310')", 8000);
+      check("9f. the admin turns voiding on and voids #5310: void with its reason", true);
+      await click(ad, "#rgVoidSwitch");
+      await ad.until(modalOpen, 5000);
+      await modalOk(ad);
+      await ad.until("DCR2Demo.engine.rows.settings[0].payments_void_enabled === false", 8000);
+    }, acc);
+
+    await attempt("9g. the vendor list: paid this year, the 1099 worksheet, the certificates' colours, the details, the CSV", async () => {
+      await open(acc, "/books-vendors.html", VEND + " && !!document.getElementById('vd1099Table') && !document.querySelector('#vd1099 .rp-busy')");
+      const t = await acc.eval("document.getElementById('vdBody').innerText");
+      const y = J.today.slice(0, 4);
+      check("9g. vendors: we owe / paid this year / last year; the 1099 worksheet on the year's threshold (" + y + ")",
+        /we owe/i.test(t) && /paid this year/i.test(t) && /last year/i.test(t) && new RegExp("\\$" + (Number(y) <= 2025 ? "600" : "2,000") + " is the default for " + y + " — confirm it with the CPA\\.").test(t) &&
+        /a 1099/.test(t), t.slice(0, 300));
+      const colours = await acc.eval("({ red: document.querySelectorAll('#vdList .vd-f.expired').length, gold: document.querySelectorAll('#vdList .vd-f.soon').length, missing: document.querySelectorAll('#vdList .vd-f.missing').length })");
+      check("9h. the certificates: red once run out, gold within 30 days; a W-9 missing", colours.red >= 1 && colours.gold >= 1 && colours.missing >= 1, JSON.stringify(colours));
+      await four(acc, "vendors_accountant", true);
+      // the threshold, for this view only
+      await acc.eval("window.__set('vdThreshold', '1,000')");
+      await click(acc, "#vd1099Go");
+      await acc.until("/\\$1,000 for this view only/.test(document.getElementById('vd1099Words').innerText) && !!document.getElementById('vd1099Table') && !document.querySelector('#vd1099 .rp-busy')", 8000);
+      check("9i. a threshold typed for this view: shown so, never saved", true);
+      // the details of a vendor
+      const key = await acc.eval("(document.querySelector('#vdList [data-details]') || {}).getAttribute ? document.querySelector('#vdList [data-details]').getAttribute('data-details') : ''");
+      const cid = Number(String(key).slice(1));
+      await click(acc, '#vdList [data-details="' + key + '"]');
+      await acc.until(sheetOpen + " && !!document.getElementById('vdFSave')", 6000);
+      await shoot(acc, "vendor_details_accountant", "desktop", false, false);
+      await acc.eval("document.getElementById('vdF1099').checked = true; window.__set('vdFW9', " + JSON.stringify(J.yesterday) + "); window.__set('vdFIns', " + JSON.stringify(J.today) + "); true");
+      await click(acc, "#vdFSave");
+      await acc.until("!(" + sheetOpen + ") && (DCR2Demo.engine.rows.vendor_profiles.find((v) => v.contact_id === " + cid + ") || {}).w9_received_on === " + JSON.stringify(J.yesterday), 8000);
+      const vp = await db(acc, "R.vendor_profiles.find((v) => v.contact_id === " + cid + ")");
+      check("9j. the details saved (an upsert of vendor_profiles): 1099, the W-9's day, the insurance's", vp.tax_1099 === true && vp.insurance_expires_on === J.today, JSON.stringify(vp));
+      // the CSV
+      await acc.eval("window.__blobs.length = 0; true");
+      await acc.until("!!document.getElementById('vdCsv')", 6000);
+      await click(acc, "#vdCsv");
+      await acc.until("window.__blobs.length === 1", 4000);
+      const c = await csv(acc);
+      const ls = c.text.replace(/^﻿/, "").split("\r\n");
+      check("9k. the vendor CSV: a BOM, CRLF, every cell quoted, the amounts (prices)", c.bom === "239,187,191" && ls[ls.length - 1] === "" && /"Owed","Past Due"/.test(ls[0]) &&
+        ls.slice(1, -1).every((l) => /^"([^"]|"")*"(,"([^"]|"")*")*$/.test(l)) && !/[^\r]\n/.test(c.text), ls[0]);
+      const sw = await phoneWidth(acc, "/books-vendors.html", VEND);
+      check("9l. the vendor list on a phone: no sideways scroll", sw <= 391, sw);
+      // the approver (financials, no prices): the facts, no amount
+      const ap2 = pages.find((p) => p.name === "approver");
+      await open(ap2, "/books-vendors.html", VEND);
+      await ap2.eval("Array.from(document.querySelectorAll('.av img')).forEach((i) => i.remove()); true");
+      const h2 = await html(ap2);
+      check("9m. the demo approver's vendor list: the facts, not one amount (S4), no 1099 worksheet", !AMOUNT.test(h2) && !(await ap2.eval("!!document.getElementById('vd1099Table')")),
+        (h2.match(/.{40}\$\s?\d.{20}/) || [""])[0]);
+      await four(ap2, "vendors_approver", true);
+    }, acc);
+
+    await attempt("9n. the reports: each one, print preview, the CSV (BOM, CRLF, the formula guard); refused without prices", async () => {
+      await open(acc, "/books-reports.html", REP);
+      const seen = {};
+      for (const id of ["aging", "vendors", "1099", "months", "approvals", "history"]) {
+        await click(acc, '#rpBody [data-report="' + id + '"]');
+        await acc.until("document.querySelector('#rpBody [data-report=\"" + id + "\"]').getAttribute('aria-selected') === 'true' && " + REP, 10000);
+        seen[id] = await acc.eval("({ table: !!document.getElementById('rpTable'), text: document.getElementById('rpOut').innerText.slice(0, 2000) })");
+        if (id === "aging" || id === "history") await four(acc, "report_" + id + "_accountant", true);
+      }
+      check("9n. every report draws a table from the database's own answer", Object.values(seen).every((x) => x.table), JSON.stringify(Object.fromEntries(Object.entries(seen).map(([k, v]) => [k, v.table]))));
+      check("9o. the approval log has the walk's asks; the money history its changes", /Avery Admin/.test(seen.approvals.text) && /Payee told|Payment recorded/.test(seen.history.text) && /Payment voided/.test(seen.history.text),
+        seen.approvals.text.slice(0, 160) + " / " + seen.history.text.slice(0, 160));
+      check("9p. AR aging and job profit: one line says they are not here", /Not here yet: money owed to us by age \(AR aging\) and job profit/.test(await acc.eval("document.getElementById('rpDeferred').innerText")));
+      // print preview: the header, no picker, no controls, no buttons
+      await acc.call("Emulation.setEmulatedMedia", { media: "print" });
+      await sleep(250);
+      await acc.eval("window.dispatchEvent(new Event('beforeprint')); true");
+      const pr = await acc.eval("({ head: getComputedStyle(document.getElementById('rpPrintHead')).display, text: document.getElementById('rpPrintHead').innerText, pick: getComputedStyle(document.querySelector('.rp-pick')).display, ctl: getComputedStyle(document.getElementById('rpCtl')).display, btn: getComputedStyle(document.getElementById('rpCsv')).display, top: getComputedStyle(document.getElementById('dcr2Topbar')).display, tabs: getComputedStyle(document.querySelector('nav.ac-tabs')).display })");
+      check("9q. print: \"Money history · <period> · printed <day> by Casey Accounts · N lines\"; no top bar, tabs, picker, controls or buttons",
+        pr.head === "block" && pr.pick === "none" && pr.ctl === "none" && pr.btn === "none" && pr.top === "none" && pr.tabs === "none" &&
+        /^Money history · .+ · printed [A-Z][a-z]{2} \d{1,2}, \d{4} by Casey Accounts · \d+ lines?$/.test(pr.text), JSON.stringify(pr));
+      await acc.call("Emulation.setEmulatedMedia", { media: "" });
+      await printShot(acc, "report_history");
+      // the CSV: a vendor's name a spreadsheet would run as a formula comes out as text
+      const cid = await db(acc, "R.contacts.find((c) => c.company === 'Stonebrook Concrete').id");
+      await acc.eval("(() => { const c = DCR2Demo.engine.rows.contacts.find((x) => x.id === " + cid + "); window.__was = c.company; c.company = '=HYPERLINK(\"http://x.example\",\"Madeup\")'; return true; })()");
+      await click(acc, '#rpBody [data-report="vendors"]');
+      await acc.until("document.querySelector('#rpBody [data-report=\"vendors\"]').getAttribute('aria-selected') === 'true' && !!document.getElementById('rpTable') && /HYPERLINK/.test(document.getElementById('rpTable').innerText)", 10000);
+      await acc.eval("window.__blobs.length = 0; true");
+      await click(acc, "#rpCsv");
+      await acc.until("window.__blobs.length === 1", 4000);
+      const c = await csv(acc);
+      await acc.eval("(() => { DCR2Demo.engine.rows.contacts.find((x) => x.id === " + cid + ").company = window.__was; return true; })()");
+      const ls = c.text.replace(/^﻿/, "").split("\r\n");
+      check("9r. the vendor balances CSV: a BOM, CRLF, every cell quoted, the formula guard",
+        c.bom === "239,187,191" && ls[ls.length - 1] === "" && ls.slice(1, -1).every((l) => /^"([^"]|"")*"(,"([^"]|"")*")*$/.test(l)) &&
+        ls.some((l) => l.indexOf("\"'=HYPERLINK(\"\"http://x.example\"\",\"\"Madeup\"\")\"") === 0) && !/[^\r]\n/.test(c.text), ls.slice(0, 2).join(" / "));
+      // payments by month: the Bill payments CSV, one line a payment
+      await click(acc, '#rpBody [data-report="months"]');
+      await acc.until("document.querySelector('#rpBody [data-report=\"months\"]').getAttribute('aria-selected') === 'true' && !!document.getElementById('rpCsvLines')", 10000);
+      await acc.eval("window.__blobs.length = 0; true");
+      await click(acc, "#rpCsvLines");
+      await acc.until("window.__blobs.length === 1", 6000);
+      const l2 = (await csv(acc)).text.replace(/^﻿/, "").split("\r\n");
+      check("9s. the Bill payments CSV: Date, Vendor, Bill No, Amount, Method, Check No / Ref, Customer/Project, Portal Payment ID - #5309 on it",
+        l2[0] === '"Date","Vendor","Bill No","Amount","Method","Check No / Ref","Customer/Project","Portal Payment ID"' && l2.some((l) => /"Check","5309"/.test(l)), l2.slice(0, 3).join(" / "));
+      const sw = await phoneWidth(acc, "/books-reports.html", REP);
+      check("9t. the reports on a phone: no sideways scroll", sw <= 391, sw);
+      await four(acc, "reports_phone_accountant", false);
+      // the demo approver (financials, no prices): refused before any read, sent back to The Books, no amount on it
+      const ap2 = pages.find((p) => p.name === "approver");
+      await ap2.goto(base + "/books-reports.html", 150);
+      await ap2.until(modalOpen, 10000);
+      const said = await ap2.eval("document.querySelector('.dcr-mo.open').innerText");
+      const h3 = await html(ap2);
+      check("9u. the approver: the reports refused (they need the prices switch) with no amount and no report on the page",
+        /need the prices switch/.test(said) && !AMOUNT.test(h3) && !(await ap2.eval("!!document.getElementById('rpTable')")), said.slice(0, 160));
+      await modalOk(ap2);
+      await ap2.until("location.pathname === '/accounting.html'", 8000);
     }, acc);
 
     /* ── 10. everywhere ───────────────────────────────────────────────── */

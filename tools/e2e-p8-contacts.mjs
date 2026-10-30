@@ -172,16 +172,16 @@ async function main() {
       J.bw = await db(ac, "R.contacts.find(x => x.company === 'Brightwater Concrete').id");
       await ac.eval("(() => { const E = DCR2Demo.engine; const admin = DCR2Demo.people.find(p => p.key === 'admin').id; " +
         "E.update({ uid: admin }, 'contacts', { phone: null, email: null }, { filters: [{ col: 'id', op: 'eq', val: " + J.bw + ", neg: false }], orders: [], foreignLimits: {} }); return true; })()");
-      await open(ac, "/accounting.html", "!!document.getElementById('secTell') && !!document.querySelector('#secTell [data-load]')");
-      const pid = await db(ac, "R.payments.find(p => p.payee === 'Brightwater Concrete' && !p.pickup_told_at).id");
-      await ac.eval("document.querySelector('#secTell [data-load=\"" + pid + "\"]').click(); true");
-      await ac.until("!!document.querySelector('#secTell [data-reach=\"" + J.bw + "\"]')", 6000);
+      // release B (P5): the shared tell panel (js/pages/tell-payee.js) - nobody to reach: [Add phone / e-mail] at once
+      await open(ac, "/accounting.html", "!!document.getElementById('secTell') && !!document.querySelector('#secTell [data-reach=\"" + J.bw + "\"]')");
       check("nobody to reach: [Add phone / e-mail] for a contact editor", true);
       await ac.eval("document.querySelector('#secTell [data-reach=\"" + J.bw + "\"]').click(); true");
       await ac.until(CARD, 8000);
       await ac.eval("document.getElementById('ccPhone').value = '(805) 555-0177'; document.getElementById('ccSave').click(); true");
-      await ac.until("!document.querySelector('#ccModal.open') && /Call \\(805\\) 555-0177/.test(document.getElementById('secTell').innerText)", 10000);
-      check("saved: the tell panel offers the call at once (the desk read again)", true);
+      await ac.until("!document.querySelector('#ccModal.open') && /Phone: \\(805\\) 555-0177/.test(document.getElementById('secTell').innerText)", 10000);
+      const callOn = await ac.eval("(() => { const g = Array.from(document.querySelectorAll('#secTell [data-group]')).find((x) => /Phone: \\(805\\) 555-0177/.test(x.innerText)); " +
+        "const b = g && g.querySelector('[data-tell=\"call\"]'); return !!b && !b.disabled; })()");
+      check("saved: the tell panel offers the call at once (the desk read again)", callOn);
     }, ac);
 
     /* ── 4. Search ── */

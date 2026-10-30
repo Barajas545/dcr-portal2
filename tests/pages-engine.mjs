@@ -18,6 +18,7 @@ const P8_FILES = new URL("../tools/fake/p8-files.js", import.meta.url);       //
 const P8_REGISTER = new URL("../tools/fake/p8-register.js", import.meta.url); // the Books program, release A: the check register (after p5b-books.js)
 const P8_CONTACTS = new URL("../tools/fake/p8-contacts.js", import.meta.url); // Books A3: contact pictures and a contact's reach
 const P8_BOOKS = new URL("../tools/fake/p8-books.js", import.meta.url);       // the Books program, release B: the money messages (after p8-register.js)
+const P8_ADVANCED = new URL("../tools/fake/p8-advanced.js", import.meta.url); // the Books program, release B part 2b: vendors and reports (after p8-books.js)
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
 const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
 const SEED = new URL("../tools/fake/seed.js", import.meta.url);
@@ -41,6 +42,7 @@ export async function loadFake() {
     if (existsSync(P8_FILES)) await import(P8_FILES.href);
     if (existsSync(P8_REGISTER)) await import(P8_REGISTER.href);
     if (existsSync(P8_BOOKS)) await import(P8_BOOKS.href);
+    if (existsSync(P8_ADVANCED)) await import(P8_ADVANCED.href);
     if (existsSync(P8_CONTACTS)) await import(P8_CONTACTS.href);
     await import(ENGINE.href);
     if (existsSync(PC)) await import(PC.href);
@@ -72,6 +74,7 @@ export function clientAs(engine, uid) {
   function Q(t) { this.t = t; this.m = "select"; this.ret = false; this.body = null; this.q = { columns: "*", filters: [], orders: [], foreignLimits: {} }; }
   Q.prototype.select = function (cols) { if (this.m !== "select") this.ret = true; this.q.columns = cols || "*"; return this; };
   Q.prototype.insert = function (v) { this.m = "insert"; this.body = v; return this; };
+  Q.prototype.upsert = function (v, o) { this.m = "insert"; this.body = v; this.up = { upsert: true, onConflict: o && o.onConflict, ignoreDuplicates: !!(o && o.ignoreDuplicates) }; return this; };
   Q.prototype.update = function (v) { this.m = "update"; this.body = v; return this; };
   Q.prototype.delete = function () { this.m = "delete"; return this; };
   ["eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "in"].forEach((op) => {
@@ -92,7 +95,7 @@ export function clientAs(engine, uid) {
     try {
       if (this.m === "select") return { data: clone(engine.select(ctx(), this.t, this.q).data), error: null, status: 200 };
       if (this.m === "insert") {
-        const made = engine.insert(ctx(), this.t, clone(this.body));
+        const made = this.up ? engine.upsert(ctx(), this.t, clone(this.body), this.up) : engine.insert(ctx(), this.t, clone(this.body));
         return { data: this.ret ? clone(this.rowsBy(made)) : null, error: null, status: 201 };
       }
       if (this.m === "delete") {

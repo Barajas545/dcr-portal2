@@ -81,11 +81,14 @@ test("CSS: the register's printed page is its own - the print rules that take th
   const selectors = blocks.flatMap((b) => (b.match(/[^{}]+(?=\{)/g) || []).flatMap((s) => s.split(",").map((x) => x.trim())));
   for (const s of selectors) {
     // a rule that changes .ac or .ac-sec (both pages have them) must be scoped to the register page
-    if (/(^|[\s>+~])\.ac(-sec)?(?![-\w])/.test(s) && !/\.ac-(view|tabs|b)\b/.test(s)) assert.match(s, /#rgRoot\b/, "unscoped print rule: " + s);
+    // (release B: the vendor list's and the reports' own printed pages are scoped to their own roots the same way)
+    if (/(^|[\s>+~])\.ac(-sec)?(?![-\w])/.test(s) && !/\.ac-(view|tabs|b)\b/.test(s)) assert.match(s, /#(rg|vd|rp)Root\b/, "unscoped print rule: " + s);
   }
   assert.ok(selectors.includes("#rgRoot.ac") && selectors.includes("#rgRoot .ac-sec"), selectors.join(" | "));
   assert.match(read("books-checks.html"), /<main class="ac" id="rgRoot">/);
-  assert.ok(!/id="rgRoot"/.test(read("accounting.html")), "The Books' root is not the register's");
+  assert.ok(!/id="(rg|vd|rp)Root"/.test(read("accounting.html")), "The Books' root is not the register's, the vendor list's or the reports'");
+  assert.match(read("books-vendors.html"), /<main class="ac" id="vdRoot">/);
+  assert.match(read("books-reports.html"), /<main class="ac" id="rpRoot">/);
 });
 
 test("the panel's viewer box says \"opened in a new tab\" only when the file was sent there; a refused link keeps its words", () => {

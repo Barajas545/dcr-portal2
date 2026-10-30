@@ -321,18 +321,23 @@ async function main() {
       const pay = await db(ac, "R.payments.find(p => p.bill_id === " + J.waiting + " && p.check_number === '5401')");
       check("accountant: the check is recorded - payee, memo, the method the approver allowed, the full amount",
         pay.payee === "Quarryman Concrete" && pay.memo === f.memo && pay.method === "check" && Number(pay.amount) === Number(f.amount) && pay.created_by === J.accountant, JSON.stringify(pay));
-      await ac.until("!!document.querySelector('#secTell [data-load=\"" + pay.id + "\"]')", 8000);
-      await ac.eval("document.querySelector('#secTell [data-load=\"" + pay.id + "\"]').click(); true");
-      await ac.until("!!document.querySelector('#secTell [data-told=\"" + pay.id + "\"][data-how=\"phone\"]')", 6000);
-      const tell = await ac.eval("document.getElementById('secTell').innerText");
-      check("accountant: how to reach them (the bill's vendor in Contacts) and the message for THIS check", /The bill's vendor in Contacts/.test(tell) && /Check number: 5401/.test(tell) && /@example\.com/.test(tell), tell.slice(0, 400));
+      // release B (P5): the shared tell panel (js/pages/tell-payee.js) - the payee's group, [Call], [✓ Told by phone]
+      const grp = "Array.from(document.querySelectorAll('#secTell [data-group]')).find((x) => /Check #5401\\b/.test(x.innerText))";
+      await ac.until("!!(" + grp + ")", 8000);
+      const key = await ac.eval("(" + grp + ").getAttribute('data-group')");
+      const tell = await ac.eval("(" + grp + ").innerText");
+      check("accountant: how to reach them (the bill's vendor in Contacts) and THIS check (the shared tell panel: e-mail by the reminder PC, a text, a call, in person)",
+        /The bill's vendor in Contacts/.test(tell) && /Check #5401/.test(tell) && /@example\.com/.test(tell) &&
+        (await ac.eval("['email', 'sms', 'call', 'person'].every((k) => !!document.querySelector('#secTell [data-tell=\"' + k + '\"][data-g=' + JSON.stringify(" + JSON.stringify(key) + ") + ']'))")), tell.slice(0, 400));
       if (SHOTS !== "none") {
-        const at = "document.querySelector('#secTell [data-told=\"" + pay.id + "\"]').closest('.ck-tell').scrollIntoView({ block: 'center' }); true";
+        const at = "(" + grp + ").scrollIntoView({ block: 'center' }); true";
         await ac.eval(at); await shoot(ac, "tell_accountant", "desktop", false, false);
         await ac.size(390, 844, true); await sleep(300); await ac.eval(at); await shoot(ac, "tell_accountant", "phone", false, false);
         await ac.size(1440, 900, false);
       }
-      await ac.eval("document.querySelector('#secTell [data-told=\"" + pay.id + "\"][data-how=\"phone\"]').click(); true");
+      await ac.eval("document.querySelector('#secTell [data-tell=\"call\"][data-g=' + JSON.stringify(" + JSON.stringify(key) + ") + ']').click(); true");
+      await ac.until("Array.from(document.querySelectorAll('#secTell [data-call] button')).some((b) => /Told by phone/.test(b.textContent))", 6000);
+      await ac.eval("Array.from(document.querySelectorAll('#secTell [data-call] button')).find((b) => /Told by phone/.test(b.textContent)).click(); true");
       await ac.until("!!(DCR2Demo.engine.rows.payments.find(p => p.id === " + pay.id + ") || {}).pickup_told_at", 6000);
       const told = await db(ac, "R.payments.find(p => p.id === " + pay.id + ")");
       check("accountant: told by phone (payment_told: by the accountant, how phone)", told.pickup_told_how === "phone" && /Casey/.test(told.pickup_told_by), JSON.stringify(told));
@@ -392,7 +397,8 @@ async function main() {
         !!pay && pay.method === "wire" && pay.check_number === null && pay.reference === "WIRE 7781" && Number(pay.amount) === X.amount && /a wire transfer of/.test(conf),
         JSON.stringify(pay) + " " + conf.slice(0, 160));
       await ac.until("!document.querySelector('#secSend [data-open=\"" + X.id + "\"]')", 8000);
-      check("accountant: paid in full - off the list; nobody to tell about a wire", !(await ac.eval("!!document.querySelector('#secTell [data-load=\"" + pay.id + "\"]')")));
+      check("accountant: paid in full - off the list; nobody to tell about a wire",
+        !(await ac.eval("Array.from(document.querySelectorAll('#secTell [data-group], #secTell [data-wait]')).some((x) => /WIRE 7781|wire/i.test(x.innerText))")));
       // a card bill: nothing to choose
       const C = await db(ac, "(() => { const b = R.bills.find(b => b.pay_method === 'card' && b.approved_at && !R.payments.some(p => p.bill_id === b.id)); return b ? { id: b.id, amount: Number(b.approved_amount) } : null; })()");
       await ac.eval("document.querySelector('#secSend [data-open=\"" + C.id + "\"]').click(); true");

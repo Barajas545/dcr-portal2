@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Vendors</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/books.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="ac" id="vdRoot">
+      <nav class="ac-tabs" aria-label="The office's money pages">
+        <a href="books-home.html" class="ac-simple">&larr; Simple view</a>
+        <a href="accounting.html">The Books</a>
+        <a href="books-checks.html">Checks</a>
+        <a href="books-vendors.html" aria-current="page">Vendors</a>
+        <a href="books-reports.html">Reports</a>
+        <a href="ledger.html">Expenses &amp; receipts</a>
+      </nav>
+      <div class="rg-print-head" id="vdPrintHead"></div>
+      <div class="ac-head">
+        <h2>Vendors</h2>
+        <span class="who" id="vdGreeting"></span>
+      </div>
+      <p class="ac-lead rg-noprint">
+        Everyone we pay: what we owe them and what we paid them this year, whether they get a 1099, and when their W-9,
+        insurance and workers' comp are on file. Dates and flags only — never a tax id: the W-9 itself stays in the office
+        file or QuickBooks. QuickBooks stays the official books.
+      </p>
+      <div id="vdBody"><div class="ac-none">Loading…</div></div>
+    </main>
+    <script type="module" src="js/pages/books-vendors.js"></script>
+  </body>
+</html>

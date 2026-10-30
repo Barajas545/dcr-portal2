@@ -20,6 +20,9 @@
    * filterRegister(rows, f) / monthsOf(rows)   the page's filters: status, month, payee or job, number range;
    * checkColumns(prices)   the Checks CSV (map/books.js toCsv: every cell quoted, the formula guard, a BOM, CRLF) -
                             the amount ONLY with the prices switch (S4: no amount anywhere without it);
+   * PAYMENT_COLUMNS        the Bill payments CSV of the Reports page (release B part 2b): one line a live payment, for
+                            keying in QuickBooks (Date, Vendor, Bill No, Amount, Method, Check No / Ref, Customer/Project,
+                            Portal Payment ID);
    * clashText(e)           the database's own sentence for a check number already used (23505 from
                             t11_payments_check_number, spoil_check), which common2.js would otherwise turn into the
                             generic "already used by another record";
@@ -260,6 +263,21 @@ export function checkColumns(prices) {
   if (prices) cols.splice(4, 0, ["Amount", (r) => (r.kind === "spoiled" || r.writtenAmount == null ? "" : num(r.writtenAmount).toFixed(2))]);
   return Object.freeze(cols);
 }
+
+/* The Bill payments CSV (the Books program, release B part 2b: the Reports page; design-portal §6.4): one line per live
+   payment, for KEYING in QuickBooks (it has no native bill-payment import) - a row from map/books-reports.js
+   toPaymentLine. It carries amounts, so it is offered only with the prices switch (the Reports page needs it). */
+const PAY_METHOD_CSV = { check: "Check", cash: "Cash", ach: "ACH", wire: "Wire", card: "Card", other: "Other" };
+export const PAYMENT_COLUMNS = Object.freeze([
+  ["Date", (r) => r.paidDate || ""],
+  ["Vendor", (r) => r.vendor || r.payee || ""],
+  ["Bill No", (r) => r.invoiceNumber || ""],
+  ["Amount", (r) => (r.amount == null ? "" : num(r.amount).toFixed(2))],
+  ["Method", (r) => PAY_METHOD_CSV[r.method] || r.method || ""],
+  ["Check No / Ref", (r) => r.ref || ""],
+  ["Customer/Project", (r) => r.projectLabel || ""],
+  ["Portal Payment ID", (r) => String(r.id == null ? "" : r.id)],
+]);
 
 /* ── the database's words ──────────────────────────────────────────────── */
 

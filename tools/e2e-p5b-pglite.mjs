@@ -355,12 +355,16 @@ async function main() {
       for (let i = 0; i < 40 && !pay; i++) { pay = await one("select * from public.payments where bill_id = $1 and check_number = '5401'", [J.waiting]); if (!pay) await sleep(250); }
       check("accountant: the check is recorded in the database - payee, memo, the allowed method, the full amount, by the accountant",
         pay && pay.payee === "Madeup Framing LLC" && pay.memo === f.memo && pay.method === "check" && Number(pay.amount) === 3850 && pay.created_by === J.people.accountant, JSON.stringify(pay));
-      await ac.until("!!document.querySelector('#secTell [data-load=\"" + pay.id + "\"]')", 10000);
-      await ac.eval("document.querySelector('#secTell [data-load=\"" + pay.id + "\"]').click(); true");
-      await ac.until("!!document.querySelector('#secTell [data-told=\"" + pay.id + "\"][data-how=\"phone\"]')", 8000);
-      const tell = await ac.eval("document.getElementById('secTell').innerText");
-      check("accountant: how to reach them (the bill's vendor in Contacts) and the message for THIS check", /The bill's vendor in Contacts/.test(tell) && /5401/.test(tell) && /rory@example\.com/.test(tell), tell.slice(0, 400));
-      await ac.eval("document.querySelector('#secTell [data-told=\"" + pay.id + "\"][data-how=\"phone\"]').click(); true");
+      // release B (P5): the shared tell panel (js/pages/tell-payee.js) - the payee's group, [Call], [✓ Told by phone]
+      const grp = "Array.from(document.querySelectorAll('#secTell [data-group]')).find((x) => /Check #5401\\b/.test(x.innerText))";
+      await ac.until("!!(" + grp + ")", 10000);
+      const key = await ac.eval("(" + grp + ").getAttribute('data-group')");
+      const tell = await ac.eval("(" + grp + ").innerText");
+      check("accountant: how to reach them (the bill's vendor in Contacts) and THIS check (the shared tell panel)",
+        /The bill's vendor in Contacts/.test(tell) && /Check #5401/.test(tell) && /rory@example\.com/.test(tell), tell.slice(0, 400));
+      await ac.eval("document.querySelector('#secTell [data-tell=\"call\"][data-g=' + JSON.stringify(" + JSON.stringify(key) + ") + ']').click(); true");
+      await ac.until("Array.from(document.querySelectorAll('#secTell [data-call] button')).some((b) => /Told by phone/.test(b.textContent))", 8000);
+      await ac.eval("Array.from(document.querySelectorAll('#secTell [data-call] button')).find((b) => /Told by phone/.test(b.textContent)).click(); true");
       let told = null;
       for (let i = 0; i < 40; i++) { told = await one("select * from public.payments where id = $1", [pay.id]); if (told.pickup_told_at) break; await sleep(250); }
       check("accountant: told by phone (payment_told: the accountant's name, how phone)", told.pickup_told_how === "phone" && /Ace Accountant/.test(told.pickup_told_by || ""), JSON.stringify(told));
@@ -403,7 +407,7 @@ async function main() {
         pa && pa.method === "ach" && pa.check_number === null && pa.reference === "ACH 0041-7781" && Number(pa.amount) === 1000 && pa.created_by === J.people.accountant, JSON.stringify(pa));
       const desk = await one("select pay_pile, to_tell, owed from public.books_desk where id = $1", [J.wire]);
       check("books_desk: the transfer bill on transfer_card, nobody to tell, 800 still owed", desk.pay_pile === "transfer_card" && desk.to_tell === 0 && Number(desk.owed) === 800, JSON.stringify(desk));
-      await ac.until("!!document.querySelector('#secSend [data-open=\"" + J.wire + "\"]') && !document.querySelector('#secTell [data-load=\"" + pa.id + "\"]')", 10000);
+      await ac.until("!!document.querySelector('#secSend [data-open=\"" + J.wire + "\"]') && !Array.from(document.querySelectorAll('#secTell [data-group], #secTell [data-wait]')).some((x) => /ACH 0041-7781|\\bach\\b/i.test(x.innerText))", 10000);
       const r1 = await repo(ac, "books", "R.recordPayment({ id: " + J.wire + ", projectId: " + J.p2.id + " }, { amount: 10, method: 'card', checkNumber: '' })");
       const r2 = await repo(ac, "books", "R.recordPayment({ id: " + J.wire + ", projectId: " + J.p2.id + " }, { amount: 10, method: 'check', checkNumber: '1' })");
       check("the database refuses a card or a check on the transfer bill, in its words (23514)",

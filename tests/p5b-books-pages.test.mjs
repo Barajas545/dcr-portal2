@@ -88,3 +88,45 @@ test("review fix: the open check panel spans the columns shown (a phone hides Ho
   assert.ok(!/money switch/.test(acc), "no switch that does not exist");
   assert.ok(acc.includes("Only an admin, or a manager or accountant with the financials switch, records payments."));
 });
+
+/* ── the Books program, release B (P5): Advanced mode ── */
+
+test("Advanced mode: ONE tab strip of six links on every Books page (← Simple view · The Books · Checks · Vendors · Reports · Expenses & receipts), static markup, each page marking itself", () => {
+  const want = [["books-home.html", "← Simple view"], ["accounting.html", "The Books"], ["books-checks.html", "Checks"], ["books-vendors.html", "Vendors"],
+    ["books-reports.html", "Reports"], ["ledger.html", "Expenses & receipts"]];
+  const words = (s) => s.replace(/<[^>]+>/g, "").replace(/&larr;/g, "←").replace(/&amp;/g, "&").trim();
+  for (const [page, cls, current] of [["accounting.html", "ac-tabs", "accounting.html"], ["books-checks.html", "ac-tabs", "books-checks.html"],
+    ["books-vendors.html", "ac-tabs", "books-vendors.html"], ["books-reports.html", "ac-tabs", "books-reports.html"], ["ledger.html", "lg-tabs", "ledger.html"],
+    ["bill.html", "bl-nav", null]]) {
+    const html = site(page);
+    const nav = new RegExp('<nav class="' + cls + '" aria-label="The office\'s money pages">([\\s\\S]*?)</nav>').exec(html);
+    assert.ok(nav, page + ": the strip");
+    const links = Array.from(nav[1].matchAll(/<a href="([^"]+)"([^>]*)>([^<]*)<\/a>/g)).map((m) => [m[1], words(m[3]), /aria-current="page"/.test(m[2])]);
+    assert.deepEqual(links.map((l) => [l[0], l[1]]), want, page + ": the six links in order");
+    assert.deepEqual(links.filter((l) => l[2]).map((l) => l[0]), current ? [current] : [], page + ": marks itself");
+    assert.equal((html.match(/aria-label="The office's money pages"/g) || []).length, 1, page + ": one strip");
+  }
+  // the simple page stays simple: no tab strip there, the big Advanced button instead
+  assert.ok(!/aria-label="The office's money pages"/.test(site("books-home.html")));
+  // bill.js redraws its root: the strip sits outside it
+  const bill = site("bill.html");
+  assert.ok(bill.indexOf('class="bl-nav"') < bill.indexOf('id="blRoot"'), "the bill page's strip is outside the root bill.js redraws");
+});
+
+test("Advanced mode: The Books uses the shared tell and ask panels, has \"Paid — last 30 days\", says where today's work is, and never says Portal 2 sends no e-mail", () => {
+  const acc = code(site("js/pages/accounting.js"));
+  const html = site("accounting.html");
+  assert.ok(!/sends no email|sends no e-mail/i.test(acc + html), "the line \"Portal 2 sends no email itself\" is gone");
+  assert.ok(!/mailto:|pickupMessage|resolvePayee|data-told=|data-mail=/.test(acc), "no hand-made e-mail, no own pick-up message");
+  assert.match(acc, /import \{ groupHtml, waitingHtml, wireTell, textStep \} from "\.\/tell-payee\.js";/);
+  assert.match(acc, /import \{ openAsk \} from "\.\/ask-approval\.js";/);
+  assert.match(acc, /state\.home = await homeRepo\.loadHome\(state\.me\);\s*state\.d = state\.home\.desk;/, "The Books' desk plus the money messages (I24)");
+  assert.match(acc, /data-askpick="/);
+  assert.match(acc, /data-ask="' \+ h\(b\.id\) \+ '">Ask to approve<\/button>/);
+  assert.match(acc, /h\(lastAskedText\(askedOf\(b\)\)\)/, "the last ask, escaped");
+  assert.match(acc, /<h3>Paid — last 30 days<\/h3>/);
+  assert.match(acc, /\(prices\(\) \? '<td class="num">' \+ h\(money\(p\.amount\)\) \+ "<\/td>" : ""\)/, "S4: the amount only with prices");
+  assert.match(acc, /<a href="books-checks\.html">See every check in the check register &rarr;<\/a>/);
+  assert.match(html, /Today's work is on the simple page \(<a href="books-home\.html">Accounting<\/a>\)\./);
+  assert.ok(!/\.approve\(|approve_bill|setPayMethod|set_bill_pay_method/.test(acc), "asking never approves");
+});

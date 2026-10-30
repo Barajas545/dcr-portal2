@@ -2091,6 +2091,11 @@ section = "The Books, release B part 2a: the Accounting page and the money messa
 // ===========================================================================================
 await (await import("./schema-check-p8-books.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "The Books, release B part 2b: Advanced mode - the vendor list, the 1099 worksheet and the reports (repo/vendors.js, repo/books-reports.js, migration 20261030000500_books_reports)";
+// ===========================================================================================
+await (await import("./schema-check-p8-advanced.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

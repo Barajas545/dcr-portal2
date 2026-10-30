@@ -116,15 +116,20 @@ test("who sees the card: EDIT.contacts mirrors app.can_edit('contacts') (admin, 
 test("The Books: the payee's picture on the check desk and on the tell list, [Add phone / e-mail] for a contact editor; the desk read again after a save", () => {
   const js = code(read("js/pages/accounting.js"));
   assert.match(js, /'<td><div class="ck-payee">' \+ payeeHtml\(b, b\.payee, "\(no payee on file\)"\) \+ "<\/div>"/);
-  assert.match(js, /<span class="ck-payee">' \+ payeeHtml\(t, t\.payee, "\(no payee\)"\) \+ "<\/span>"/);
   assert.match(js, /function payeeHtml\(x, words, shown\) \{\n\s+if \(!words\) return h\(shown\);/, "no payee: the words alone, escaped");
   assert.match(js, /'<span class="av-t">' \+ h\(words\) \+ "<\/span><\/span>"/);
   assert.match(js, /state\.d\.links\.contacts\.get\(String\(x\.vendorContactId\)\)/, "the bill's OWN vendor contact (I20), never a guessed one");
-  assert.match(js, /vc && !vc\.deleted_at && allowed\(state\.me, "contacts"\)/);
-  assert.match(js, /data-reach="' \+ h\(vc\.id\) \+ '">Add phone \/ e-mail<\/button>/);
   assert.match(js, /paintAvatars\(box, \{ me: state\.me, onSaved: contactSaved \}\);/);
-  assert.match(js, /openCard\(btn\.getAttribute\("data-reach"\), \{ me: state\.me, onSaved: contactSaved \}\)/);
-  assert.match(js, /await load\(\);[\s\S]*?open\.forEach\(\(k\) => \{ if \(!tellFor\(k\)\) delete state\.tell\[k\]; \}\);/, "a phone just added is offered at once");
+  // release B (P5): the tell list is the Accounting page's own (js/pages/tell-payee.js) - its picture, its [Add phone /
+  // e-mail] for a contact editor, and everything read again after a save (a phone just added is offered at once)
+  assert.match(js, /groups\.map\(\(g\) => groupHtml\(g, ctx\)\)/);
+  assert.match(js, /wireTell\(box, \{ me: state\.me, links: state\.d\.links,[^]*?onChanged: \(\) => \{ state\.refused = null; return load\(\); \} \}\);/);
+  assert.match(js, /function contactSaved\(\) \{ return load\(\); \}/);
+  const tp = code(read("js/pages/tell-payee.js"));
+  assert.match(tp, /avatarHtml\(shown, \{ size: 28, name: g\.payee, edit: can\(c\.me, "contacts"\) \}\)/);
+  assert.match(tp, /const edit = !!open && can\(c\.me, "contacts"\);/);
+  assert.match(tp, /data-reach="' \+ h\(open\.id\) \+ '">Add phone \/ e-mail<\/button>/);
+  assert.match(tp, /openCard\(b\.getAttribute\("data-reach"\), \{ me: c\.me, onSaved: changed \}\)/);
   assert.ok(!/\.approve\(|approve_bill/.test(js), "still approves nothing");
 });
 
