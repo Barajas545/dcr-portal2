@@ -15,6 +15,12 @@
      history (template_saved / template_reset).
    * What is typed and not saved is kept per template and channel: over a switch of template, a reset or someone
      else's save of the OTHER channel; closing the sheet with any of it asks first.
+   * Each such draft remembers the version it was typed over, and is saved (or reset) at THAT version: once someone
+     else's save has replaced it, the draft goes and theirs is shown with "Changed by someone else — showing theirs."
+     (on the template shown at once, on another when she switches to it) - a draft never overwrites a save she has
+     not seen.
+   * The templates are read when the sheet opens (the page's copy only when that read fails), never shown from an
+     older copy.
    Every database word is escaped (h) or set as text. */
 
 import { esc, toast, errorText, confirmBox, can } from "./shell.js";
@@ -61,21 +67,26 @@ export function editorHtml(key, list, ctx) {
   return s + "</div>";
 }
 
-/** Open the templates. o: {me, templates (optional), key, onDone()}. */
+/** Open the templates. o: {me, templates (the page's copy of repo/money-messages.js templates(): only when they
+    cannot be read now), key, onDone()}. */
 export async function openTemplates(o) {
   const opt = o || {};
   const edit = can(opt.me, "money");
-  // drafts[key] = {email: {subject, body}, sms: {body}}: typed and not saved yet
-  const st = { key: TEMPLATE_KEYS.indexOf(opt.key) !== -1 ? opt.key : TEMPLATE_KEYS[0], list: opt.templates || null, focus: null, changed: false, drafts: {} };
+  // drafts[key] = {email: {subject, body, version}, sms: {body, version}}: typed and not saved yet, over that version
+  // notes[key + "/" + channel]: said when that template is shown next (a draft of it went: someone else saved it)
+  const st = { key: TEMPLATE_KEYS.indexOf(opt.key) !== -1 ? opt.key : TEMPLATE_KEYS[0], list: null, focus: null, changed: false, drafts: {}, notes: {} };
   const unsaved = () => Object.keys(st.drafts).length > 0;
   const sh = openSheet({ title: "Message templates", wide: true, html: '<div class="ac-none">Loading…</div>',
     onClose: () => { if (st.changed && typeof opt.onDone === "function") opt.onDone(); },
     beforeClose: () => (!unsaved() ? true : confirmBox("What you typed in the message templates is not saved. Close and lose it?",
       { title: "Not saved", okText: "Close without saving" })) });
-  if (!st.list) {
-    try { st.list = await mm.templates(); } catch (e) { sh.body.innerHTML = '<div class="ac-msg err">' + h(errorText(e)) + "</div>"; return; }
-    if (!st.list) { sh.body.innerHTML = '<div class="ac-none">The message templates are not in the database yet.</div>'; return; }
+  // read now, not the page's copy: the boxes show each template as it is stored now, at the version a save is sent at
+  try { st.list = await mm.templates(); } catch (e) {
+    st.list = opt.templates || null;
+    if (!st.list) { if (sh.isOpen()) sh.body.innerHTML = '<div class="ac-msg err">' + h(errorText(e)) + "</div>"; return; }
   }
+  if (!sh.isOpen()) return;
+  if (!st.list) { sh.body.innerHTML = '<div class="ac-none">The message templates are not in the database yet.</div>'; return; }
   const $ = (id) => sh.body.querySelector("#" + id);
   const say = (ch, t, bad) => { const n = $(ch === "email" ? "bhTplMsgE" : "bhTplMsgS"); if (n) { n.textContent = t || ""; n.className = "ac-msg" + (bad ? " err" : t ? " ok" : ""); } };
   const warn = () => {
@@ -88,16 +99,20 @@ export async function openTemplates(o) {
     const n = $("bhTplSmsN");
     if (n) n.textContent = smsCount(($("bhTplSms") || {}).value);
   };
-  /* the shown template's fields against what is stored: what differs is its draft */
+  /* the shown template's fields against what is stored: what differs is its draft, over the version it was first
+     typed over (kept as she types on: never moved to a newer version she has not seen) */
   const norm = (v) => String(v == null ? "" : v).replace(/\r\n?/g, "\n");
   const typed = () => {
     if (!edit || !$("bhTplBody")) return;
     const mail = find(st.list, st.key, "email") || { subject: "", body: "" };
     const text = find(st.list, st.key, "sms") || { body: "" };
+    const prev = st.drafts[st.key] || {};
     const v = { subject: ($("bhTplSubj") || {}).value || "", body: $("bhTplBody").value || "", sms: ($("bhTplSms") || {}).value || "" };
     const d = {};
-    if (norm(v.subject) !== norm(mail.subject) || norm(v.body) !== norm(mail.body)) d.email = { subject: v.subject, body: v.body };
-    if (norm(v.sms) !== norm(text.body)) d.sms = { body: v.sms };
+    if (norm(v.subject) !== norm(mail.subject) || norm(v.body) !== norm(mail.body)) {
+      d.email = { subject: v.subject, body: v.body, version: prev.email ? prev.email.version : mail.version };
+    }
+    if (norm(v.sms) !== norm(text.body)) d.sms = { body: v.sms, version: prev.sms ? prev.sms.version : text.version };
     if (d.email || d.sms) st.drafts[st.key] = d; else delete st.drafts[st.key];
   };
   /* one channel of the shown template is stored (saved, reset) or replaced by someone else's: its draft goes */
@@ -106,6 +121,28 @@ export async function openTemplates(o) {
     if (!d) return;
     delete d[ch];
     if (!d.email && !d.sms) delete st.drafts[st.key];
+  };
+  /* after a fresh read: a draft typed over a version someone else has since replaced goes, on every template, so
+     theirs is shown and never overwritten unseen -> the channels of the shown template whose draft went */
+  const outdated = () => {
+    const shown = [];
+    Object.keys(st.drafts).forEach((k) => {
+      const d = st.drafts[k];
+      ["email", "sms"].forEach((c) => {
+        if (!d[c]) return;
+        const row = find(st.list, k, c);
+        if ((row ? row.version : undefined) === d[c].version) return;
+        delete d[c];
+        if (k === st.key) shown.push(c); else st.notes[k + "/" + c] = CONFLICT;
+      });
+      if (!d.email && !d.sms) delete st.drafts[k];
+    });
+    return shown;
+  };
+  /* the row a save or reset of the shown template is sent with: at the version its draft was typed over */
+  const asTyped = (t, ch) => {
+    const d = st.drafts[st.key];
+    return d && d[ch] && d[ch].version != null && d[ch].version !== t.version ? Object.assign({}, t, { version: d[ch].version }) : t;
   };
   function draw() {
     sh.body.innerHTML = editorHtml(st.key, st.list, { edit });
@@ -131,6 +168,7 @@ export async function openTemplates(o) {
     sh.body.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", () => save(b.getAttribute("data-save"))));
     sh.body.querySelectorAll("[data-reset]").forEach((b) => b.addEventListener("click", () => reset(b.getAttribute("data-reset"))));
     warn();
+    ["email", "sms"].forEach((c) => { const k = st.key + "/" + c; if (st.notes[k]) { say(c, st.notes[k], true); delete st.notes[k]; } });
   }
   const values = (ch) => (ch === "email" ? { subject: ($("bhTplSubj") || {}).value || "", body: ($("bhTplBody") || {}).value || "" }
     : { subject: null, body: ($("bhTplSms") || {}).value || "" });
@@ -157,10 +195,12 @@ export async function openTemplates(o) {
   }
   async function reload(ch, words) {
     typed();
-    try { st.list = await mm.templates(); } catch (e) { /* keep what is shown */ }
-    forget(ch);      // theirs is shown on this channel; the other keeps what she typed
+    try { const fresh = await mm.templates(); if (fresh) st.list = fresh; } catch (e) { /* keep what is shown */ }
+    forget(ch);      // theirs is shown on this channel
+    const gone = outdated();   // and wherever someone else saved over a draft; a draft over what is still stored stays
     draw();
     if (words) say(ch, words, true);
+    gone.forEach((c) => say(c, CONFLICT, true));
   }
   async function save(ch) {
     const t = find(st.list, st.key, ch);
@@ -170,7 +210,7 @@ export async function openTemplates(o) {
     if (bad) { say(ch, bad, true); return; }
     say(ch, "Saving…");
     let r;
-    try { r = await mm.saveTemplate(t, v.subject, v.body); } catch (e) {
+    try { r = await mm.saveTemplate(asTyped(t, ch), v.subject, v.body); } catch (e) {
       if (e && (e.code === "PT409" || e.status === 409)) { await reload(ch, CONFLICT); return; }
       say(ch, messageError(e, errorText), true);
       return;
@@ -189,7 +229,7 @@ export async function openTemplates(o) {
       { title: "Reset to the original", okText: "Reset" });
     if (!sure) return;
     let r;
-    try { r = await mm.resetTemplate(t); } catch (e) {
+    try { r = await mm.resetTemplate(asTyped(t, ch)); } catch (e) {
       if (e && (e.code === "PT409" || e.status === 409)) { await reload(ch, CONFLICT); return; }
       say(ch, messageError(e, errorText), true);
       return;

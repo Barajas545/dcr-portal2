@@ -420,3 +420,114 @@ test("the Call step: its tel: link and \u2713 Told by phone stay open over the p
   page._test.render();
   assert.ok(body.querySelectorAll("[data-call]").every((x) => x.hidden), "no call step open");
 });
+
+/* ── release B review fixes 2 ── */
+
+test("the template editor: a draft is kept only over the version it was typed on - after someone else's save (PT409) theirs is shown and said on EVERY channel and template they replaced, and no draft saves over theirs", { skip }, async () => {
+  const e = await freshEngine();
+  const me = await as(e, "accountant");
+  const admin = await person("admin");
+  const CONFLICT = "Changed by someone else — showing theirs.";
+  const stored = (key, ch) => e.rows.message_templates.find((x) => x.key === key && x.channel === ch);
+  const theySave = (key, ch, subject, body) => {
+    e.rpc({ uid: admin.id }, "save_message_template", { p_key: key, p_channel: ch, p_subject: ch === "email" ? subject : null, p_body: body, p_version: stored(key, ch).version });
+    useClient(clientAs(e, me.id));
+  };
+  await tpl.openTemplates({ me, key: "approval_request" });
+  const s = sheet();
+  await until(() => s.querySelector("#bhTplBody"));
+  const type = (id, v) => { const f = s.querySelector("#" + id); f.value = v; f.dispatchEvent({ type: "input" }); };
+  const msg = (ch) => s.querySelector(ch === "email" ? "#bhTplMsgE" : "#bhTplMsgS").textContent;
+  const saveOf = async (ch) => {
+    s.querySelector('[data-save="' + ch + '"]').click();
+    await until(() => msg(ch) && msg(ch) !== "Saving…");
+    return msg(ch);
+  };
+  // 1. a text and an e-mail typed; an admin saves both meanwhile; her e-mail is refused (PT409)
+  type("bhTplSms", "Hi {{approverFirstName}}, MY TEXT DRAFT.");
+  type("bhTplSubj", "My subject {{billsPhrase}}");
+  theySave("approval_request", "email", "Admin subject {{billsPhrase}}", stored("approval_request", "email").body);
+  theySave("approval_request", "sms", null, "Hi {{approverFirstName}}, ADMIN TEXT.");
+  assert.equal(await saveOf("email"), CONFLICT);
+  assert.equal(s.querySelector("#bhTplSubj").value, "Admin subject {{billsPhrase}}");
+  assert.equal(s.querySelector("#bhTplSms").value, "Hi {{approverFirstName}}, ADMIN TEXT.", "the text shows theirs, not the draft typed over the older one");
+  assert.equal(msg("sms"), CONFLICT, "and says so on the text too");
+  const v1 = stored("approval_request", "sms").version;
+  assert.equal(await saveOf("sms"), "Nothing changed.");
+  assert.deepEqual([stored("approval_request", "sms").body, stored("approval_request", "sms").version], ["Hi {{approverFirstName}}, ADMIN TEXT.", v1], "their text is kept");
+  // 2. the other way round: an e-mail typed; an admin saves both; her text is refused - the e-mail shows theirs too
+  const body1 = s.querySelector("#bhTplBody").value;
+  type("bhTplBody", body1 + " MY E-MAIL LINE.");
+  theySave("approval_request", "email", "Admin subject {{billsPhrase}}", stored("approval_request", "email").body + " ADMIN NEWER.");
+  theySave("approval_request", "sms", null, "Hi {{approverFirstName}}, ADMIN TEXT 2.");
+  type("bhTplSms", "Hi {{approverFirstName}}, mine.");
+  assert.equal(await saveOf("sms"), CONFLICT);
+  assert.equal(s.querySelector("#bhTplSms").value, "Hi {{approverFirstName}}, ADMIN TEXT 2.");
+  assert.ok(/ADMIN NEWER\.$/.test(s.querySelector("#bhTplBody").value) && !/MY E-MAIL LINE/.test(s.querySelector("#bhTplBody").value), "the e-mail shows theirs");
+  assert.equal(msg("email"), CONFLICT, "and says so on the e-mail");
+  const mail2 = stored("approval_request", "email");
+  const mv = mail2.version;
+  assert.equal(await saveOf("email"), "Nothing changed.");
+  assert.ok(/ADMIN NEWER\.$/.test(stored("approval_request", "email").body) && stored("approval_request", "email").version === mv, "their e-mail is kept");
+  // 3. a draft kept on ANOTHER template: check_ready's text typed, then approval_request; an admin saves both
+  //    templates; a PT409 on approval_request - back on check_ready: theirs, said, and a save keeps theirs
+  s.querySelector('[data-key="check_ready"]').click();
+  type("bhTplSms", "Hi {{firstName}}, A typed this text (over the old one).");
+  s.querySelector('[data-key="approval_request"]').click();
+  theySave("check_ready", "sms", null, "Hi {{firstName}}, B saved this text.");
+  theySave("approval_request", "email", "Admin subject 3 {{billsPhrase}}", stored("approval_request", "email").body);
+  type("bhTplSubj", "Another subject {{billsPhrase}}");
+  assert.equal(await saveOf("email"), CONFLICT);
+  s.querySelector('[data-key="check_ready"]').click();
+  assert.equal(s.querySelector("#bhTplSms").value, "Hi {{firstName}}, B saved this text.", "check_ready's text shows theirs");
+  assert.equal(msg("sms"), CONFLICT, "said when that template is shown");
+  assert.equal(msg("email"), "", "its e-mail, which nobody replaced, says nothing");
+  const cv = stored("check_ready", "sms").version;
+  assert.equal(await saveOf("sms"), "Nothing changed.");
+  assert.deepEqual([stored("check_ready", "sms").body, stored("check_ready", "sms").version], ["Hi {{firstName}}, B saved this text.", cv]);
+  // 4. a draft over what is still stored stays (and saves): check_ready's e-mail typed, only its text replaced
+  const ce = s.querySelector("#bhTplBody").value;
+  type("bhTplBody", ce + " KEPT LINE.");
+  theySave("check_ready", "sms", null, "Hi {{firstName}}, B again.");
+  type("bhTplSms", "Hi {{firstName}}, mine again.");
+  assert.equal(await saveOf("sms"), CONFLICT);
+  assert.equal(s.querySelector("#bhTplBody").value, ce + " KEPT LINE.", "the e-mail keeps what was typed");
+  assert.equal(msg("email"), "");
+  assert.match(await saveOf("email"), /^Saved/);
+  assert.equal(stored("check_ready", "email").body, ce + " KEPT LINE.");
+  nav.closeSheet();
+});
+
+test("the template editor opens on the templates as stored NOW (the page's copy only when they cannot be read): her first save is no conflict and keeps her words", { skip }, async () => {
+  const e = await freshEngine();
+  const me = await as(e, "accountant");
+  const d = await homeRepo.loadHome(me);           // the page's copy of the templates
+  const admin = await person("admin");
+  const row = e.rows.message_templates.find((x) => x.key === "cash_ready" && x.channel === "email");
+  const old = row.subject;
+  e.rpc({ uid: admin.id }, "save_message_template", { p_key: "cash_ready", p_channel: "email", p_subject: "NEW subject {{projectLabel}}", p_body: row.body, p_version: row.version });
+  useClient(clientAs(e, me.id));
+  await tpl.openTemplates({ me, templates: d.templates, key: "cash_ready" });     // as books-home.js opens it
+  const s = sheet();
+  await until(() => s.querySelector("#bhTplSubj"));
+  assert.equal(s.querySelector("#bhTplSubj").value, "NEW subject {{projectLabel}}", "read when the sheet opened, not the page's copy");
+  const f = s.querySelector("#bhTplBody");
+  const typedBody = f.value + " MY TYPED LINE.";
+  f.value = typedBody;
+  f.dispatchEvent({ type: "input" });
+  s.querySelector('[data-save="email"]').click();
+  await until(() => /^Saved|someone else/.test(s.querySelector("#bhTplMsgE").textContent));
+  assert.match(s.querySelector("#bhTplMsgE").textContent, /^Saved/);
+  assert.equal(e.rows.message_templates.find((x) => x.key === "cash_ready" && x.channel === "email").body, typedBody, "her line is stored");
+  nav.closeSheet();
+  // the templates cannot be read now: the page's copy is shown
+  const c = clientAs(e, me.id);
+  const from = c.from;
+  c.from = (t) => { if (t === "message_templates") throw new TypeError("Failed to fetch"); return from(t); };
+  useClient(c);
+  await tpl.openTemplates({ me, templates: d.templates, key: "cash_ready" });
+  await until(() => sheet().querySelector("#bhTplSubj"));
+  assert.equal(sheet().querySelector("#bhTplSubj").value, old, "the page's copy");
+  nav.closeSheet();
+  useClient(clientAs(e, me.id));
+});

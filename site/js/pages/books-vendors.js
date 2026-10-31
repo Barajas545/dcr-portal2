@@ -13,7 +13,9 @@
      (pages/contact-card.js, through the avatar or [Phone, e-mail & picture]) for their reach and picture.
    * The 1099 worksheet (books_1099): the year, the threshold the database uses - shown, and editable for this view
      only (never stored) -, what counts (check, cash, transfer, other) and what does not (card, materials), reportable
-     and "needs a W-9". A worksheet, not a filing: confirm with the CPA.
+     and "needs a W-9". A worksheet, not a filing: confirm with the CPA. The rows carry the year they were read for
+     (state.wYear): the sentence and the CSV's name use it; the CSV is off while a read runs, and only the latest
+     Show's answer is drawn.
    WITHOUT the prices switch (S4) no amount is read or shown: the vendors' facts only, and no 1099 worksheet - and the
    same, said so, while the database has no books_vendor_balances yet (release B part 2a on its own). Only with the
    financials switch: anyone else is told so and sent home before anything is read. Every database word is escaped (h)
@@ -30,7 +32,7 @@ import { seesBooks, fmtMoney, toCsv, plural, shortDay } from "../map/books.js";
 import { printLine, csvFile } from "../map/books-reports.js";
 
 const h = esc;
-const state = { me: null, d: null, show: "", q: "", year: null, threshold: null, w: null, wBusy: false, wError: "" };
+const state = { me: null, d: null, show: "", q: "", year: null, threshold: null, w: null, wYear: null, wBusy: false, wError: "", wSeq: 0 };
 // amounts only with the prices switch AND the database's sums read (a database without books_vendor_balances yet: none)
 const prices = () => seesPrices(state.me) && !(state.d && state.d.noSums);
 const NO_SUMS = "What we owe and paid, and the 1099 worksheet, come with the next database update (the Books reports): " +
@@ -93,7 +95,7 @@ function worksheetHtml() {
   const t = state.threshold;
   let s = '<div class="ac-sec vd-1099" id="vd1099"><header><h3>1099 worksheet</h3><span class="hint">Cash basis, by the date on the check. Card payments ' +
     "(on the card company's 1099-K) and materials suppliers' bills don't count. A worksheet, not a filing.</span><span class=\"grow\"></span>" +
-    '<button type="button" class="ac-b rg-noprint" id="vd1099Csv"' + (state.w && state.w.length ? "" : " disabled") + ">&#8615; CSV</button></header>" +
+    '<button type="button" class="ac-b rg-noprint" id="vd1099Csv"' + (state.w && state.w.length && !state.wBusy ? "" : " disabled") + ">&#8615; CSV</button></header>" +
     '<div class="rp-ctl rg-noprint"><label>Year<select id="vdYear">' + years.map((x) => '<option value="' + h(x) + '"' + (x === y ? " selected" : "") + ">" + h(x) + "</option>").join("") +
     '</select></label><label>Threshold<input id="vdThreshold" class="num" inputmode="decimal" placeholder="' + h(fmtMoney(threshold1099(y))) + '" value="' + h(t === null || t === undefined ? "" : t) + '"></label>' +
     '<button type="button" class="ac-b" id="vd1099Go">Show</button></div>' +
@@ -101,10 +103,11 @@ function worksheetHtml() {
   if (state.wError) s += '<div class="ac-msg err" role="status">' + h(state.wError) + "</div>";
   if (state.wBusy) return s + '<div class="ac-none rp-busy" role="status">Working it out…</div></div>';
   if (!state.w) return s + "</div>";
-  if (!state.w.length) return s + '<div class="ac-none">Nobody was paid in ' + h(y) + ".</div></div>";
+  const ry = state.wYear || y;     // the year the rows were read for
+  if (!state.w.length) return s + '<div class="ac-none">Nobody was paid in ' + h(ry) + ".</div></div>";
   const lines = state.w;
   const n = lines.filter((r) => r.reportable).length, need = lines.filter((r) => r.needsW9).length;
-  s += '<div class="rp-sum"><b>' + h(plural(n, "vendor gets", "vendors get")) + " a 1099</b> for " + h(y) +
+  s += '<div class="rp-sum"><b>' + h(plural(n, "vendor gets", "vendors get")) + " a 1099</b> for " + h(ry) +
     (need ? " · " + h(plural(need, "vendor needs", "vendors need")) + " a W-9 first" : "") + "</div>";
   s += '<div class="rp-scroll"><table class="ac-t rp-t" id="vd1099Table"><thead><tr><th>Vendor</th><th class="num">Check</th><th class="num">Cash</th><th class="num">Transfer</th>' +
     '<th class="num">Other</th><th class="num">Counts</th><th class="num">Card · materials</th><th>1099</th></tr></thead><tbody>' +
@@ -126,13 +129,18 @@ async function runWorksheet() {
   const t = inp ? parseThreshold(inp.value) : state.threshold;
   if (Number.isNaN(t)) { state.wError = "Type the threshold as dollars, e.g. 2000."; paintWorksheet(); return; }
   state.year = y; state.threshold = t; state.wError = ""; state.wBusy = true;
+  const seq = ++state.wSeq;
   paintWorksheet();
+  let rows = null, err = "";
   try {
-    state.w = (await reports.worksheet1099(state.me, y, t)).map(to1099);
+    rows = (await reports.worksheet1099(state.me, y, t)).map(to1099);
   } catch (e) {
-    state.w = null;
-    state.wError = errorText(e);
+    err = errorText(e);
   }
+  if (seq !== state.wSeq) return;      // a later Show is on its way: its answer is the one drawn
+  state.w = rows;
+  state.wYear = rows ? y : null;
+  state.wError = err;
   state.wBusy = false;
   paintWorksheet();
 }
@@ -154,7 +162,10 @@ function wireWorksheet() {
   const inp = document.getElementById("vdThreshold");
   if (inp) inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runWorksheet(); } });
   const csv = document.getElementById("vd1099Csv");
-  if (csv) csv.addEventListener("click", () => { if (state.w && state.w.length) download(toCsv(state.w, COLUMNS_1099), csvFile("1099-" + state.year, state.d.today), state.w.length); });
+  if (csv) csv.addEventListener("click", () => {
+    // the rows shown, named for the year they were read for - never while another year is being read
+    if (state.w && state.w.length && !state.wBusy) download(toCsv(state.w, COLUMNS_1099), csvFile("1099-" + (state.wYear || state.year), state.d.today), state.w.length);
+  });
 }
 
 /* ── the page ── */

@@ -410,3 +410,67 @@ test("The Books: the QuickBooks ref typed beside \"Mark entered\" survives the p
     assert.equal(e.rows.bills.find((b) => b.id === b2.id).qbo_ref, "QB batch 18");
   }
 });
+
+/* ── release B review fixes 2 ── */
+
+test("Vendors: the 1099 worksheet's CSV is off while another year is read, and is named for the year its rows were read for; only the latest Show is drawn", { skip }, async () => {
+  const e = await freshEngine();
+  const { me } = await as(e, "accountant");
+  const S = vpage._test.state;
+  Object.assign(S, { me, year: null, threshold: null, w: null, wYear: null, wBusy: false, wError: "" });
+  await vpage._test.load();
+  const body = document.getElementById("vdBody");
+  await until(() => !S.wBusy && body.querySelector("#vd1099Table"));
+  const y = Number(body.querySelector("#vdYear").value);
+  assert.ok(S.w.length > 0 && S.w.every((r) => r.year === y), "this year's rows");
+  // the CSV's link: its file name (the small DOM's <a> has no href to set)
+  const names = [];
+  const make = URL.createObjectURL, mk = document.createElement, add = document.body.appendChild;
+  URL.createObjectURL = () => "blob:made-up";
+  document.createElement = (tag) => (tag === "a" ? { href: "", download: "", click() { names.push(this.download); }, remove() {}, stub: true } : mk.call(document, tag));
+  document.body.appendChild = function (n) { return n && n.stub ? n : add.call(this, n); };
+  // last year's read is held open
+  const cl = await (await import("../site/js/repo/_db.js")).db();
+  const rpc = cl.rpc;
+  const held = [];
+  cl.rpc = (n, a) => (n === "books_1099" && a && a.p_year === y - 1 ? new Promise((res) => { held.push(() => res(rpc(n, a))); }) : rpc(n, a));
+  try {
+    body.querySelector("#vdYear").value = String(y - 1);
+    body.querySelector("#vd1099Go").click();
+    await until(() => held.length === 1);
+    assert.ok(S.wBusy && /Working it out/.test(body.querySelector("#vd1099").textContent));
+    assert.equal(body.querySelector("#vd1099Csv").disabled, true, "the CSV is off while the read runs");
+    body.querySelector("#vd1099Csv").click();
+    assert.deepEqual(names, [], "nothing downloads");
+    // she picks this year again before last year's answer comes: this year's is drawn, and last year's, late, is not
+    body.querySelector("#vdYear").value = String(y);
+    body.querySelector("#vd1099Go").click();
+    await until(() => !S.wBusy && body.querySelector("#vd1099Table"));
+    held.forEach((go) => go());
+    for (let i = 0; i < 10; i++) await tick();
+    assert.ok(S.wYear === y && S.w.every((r) => r.year === y), "the rows are the latest Show's: " + S.wYear);
+    assert.match(body.querySelector(".rp-sum").textContent, new RegExp("for " + y));
+    body.querySelector("#vd1099Csv").click();
+    assert.equal(names.length, 1);
+    assert.ok(names[0].startsWith("dcr-1099-" + y + "-"), "named for the rows' year: " + names[0]);
+    // last year, read to the end: its rows, its name
+    cl.rpc = rpc;
+    body.querySelector("#vdYear").value = String(y - 1);
+    body.querySelector("#vd1099Go").click();
+    await until(() => !S.wBusy && S.wYear === y - 1);
+    if (S.w.length) {
+      body.querySelector("#vd1099Csv").click();
+      assert.ok(names[1].startsWith("dcr-1099-" + (y - 1) + "-") && S.w.every((r) => r.year === y - 1), names.join(","));
+    } else {
+      assert.equal(body.querySelector("#vd1099Csv").disabled, true);
+      assert.match(body.querySelector("#vd1099").textContent, new RegExp("Nobody was paid in " + (y - 1)));
+    }
+  } finally {
+    cl.rpc = rpc;
+    URL.createObjectURL = make;
+    document.createElement = mk;
+    delete document.body.appendChild;
+    if (document.body.appendChild !== add) document.body.appendChild = add;
+    Object.assign(S, { year: null, threshold: null, w: null, wYear: null, wBusy: false, wError: "" });
+  }
+});
