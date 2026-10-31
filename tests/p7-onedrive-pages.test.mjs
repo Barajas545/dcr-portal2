@@ -67,7 +67,11 @@ test("LIVE: the published module has the OneDrive part on since its go-live (202
   const dark = src.replace("export const LIVE = true;", "export const LIVE = false;");
   assert.equal(onedriveLive(dark).replace(/export const LIVE = true;[^\n]*/, "export const LIVE = true;"), src);
   const dev = read("tools/devserve.mjs");
-  assert.match(dev, /"p5c-sales\.js", ("p7-web\.js", )?"p7-onedrive\.js", "engine\.js"/, "the demo's broker before engine.js (after Part 3's p7-web.js)");
+  // the order, not the neighbours: later parts (the Books program's p8-*.js) may sit between the broker and engine.js
+  const parts = JSON.parse(dev.match(/const FAKE_PARTS = (\[[^\]]*\]);/)[1]);
+  const at = (f) => parts.indexOf(f);
+  assert.ok(at("p5c-sales.js") !== -1 && at("p5c-sales.js") < at("p7-onedrive.js") && at("p7-onedrive.js") < at("engine.js") &&
+            (at("p7-web.js") === -1 || at("p7-web.js") < at("p7-onedrive.js")), "the demo's broker before engine.js (after Part 3's p7-web.js)");
   assert.match(dev, /path === "\/js\/repo\/onedrive\.js"\) body = onedriveLive/);
   assert.match(read("tests/pages-engine.mjs"), /p7-onedrive\.js/);
   // the published site never names the demo
