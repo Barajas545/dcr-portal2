@@ -134,3 +134,36 @@ test("the sign-in page: an explicit ?next= wins, else the person's landing; eith
   const dash = readFileSync(new URL("../site/js/shell/dashboard.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   assert.match(dash, /const landing = bounceFor\(p, [^)]*\);\n  if \(landing\) \{ location\.replace\(landing\); return; \}/);
 });
+
+test("signed out on a page: the sign-in page brings them back (?next=) - except bare Home before the session landed, so the installed app's signed-out start still lands the accountant on Accounting (I29)", async () => {
+  const { signInHref, hasLanded, markLanded, LANDED_KEY, safeNext, landingFor } = await import("../site/js/common2.js");
+  // the installed app opens dashboard.html; not kept signed in, every launch starts signed out there
+  assert.equal(signInHref("dashboard.html", false), "index.html", "no ?next=: the sign-in page lands them (landingFor)");
+  assert.equal(signInHref("dashboard.html", true), "index.html?next=dashboard.html", "landed already this session: back to Home");
+  assert.equal(signInHref("dashboard.html?x=1", false), "index.html?next=dashboard.html%3Fx%3D1", "only bare Home");
+  assert.equal(signInHref("bill.html?id=5", false), "index.html?next=bill.html%3Fid%3D5", "a bill link comes back to the bill");
+  assert.equal(signInHref("my-tasks.html?task=12", false), "index.html?next=my-tasks.html%3Ftask%3D12");
+  assert.equal(signInHref("", false), "index.html");
+  // what the sign-in page then does with it (shell/index.js: an explicit ?next= wins, else the landing)
+  const acc = { role: "accountant", active: true, can_see_financials: true };
+  const go = (href) => { const m = /[?&]next=([^&]+)/.exec(href); const n = m && safeNext(m[1], "-") !== "-" ? safeNext(m[1]) : ""; return n || landingFor(acc); };
+  assert.equal(go(signInHref("dashboard.html", false)), "books-home.html", "the accountant, signed out on the installed app: the Accounting page");
+  assert.equal(go(signInHref("dashboard.html", true)), "dashboard.html");
+  assert.equal(go(signInHref("bill.html?id=5", false)), "bill.html?id=5");
+  const mem = new Map();
+  globalThis.sessionStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  try {
+    assert.equal(hasLanded(), false);
+    markLanded();
+    assert.equal(hasLanded(), true);
+    assert.equal(mem.get(LANDED_KEY), "1");
+    globalThis.sessionStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+    assert.equal(hasLanded(), false, "storage refused: not landed (the landing applies)");
+  } finally {
+    delete globalThis.sessionStorage;
+  }
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../site/js/common2.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(src, /function bounceToSignIn\(extra\) \{\n  const to = signInHref\(thisPage\(\), hasLanded\(\)\);/, "requireAuth's bounce goes through signInHref");
+  assert.ok(!/"index\.html\?next=" \+ encodeURIComponent\(thisPage\(\)\)/.test(src), "no bounce builds ?next= from Home unasked");
+});

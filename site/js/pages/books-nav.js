@@ -107,6 +107,8 @@ export const SHEET_CSS =
   "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;cursor:pointer;min-height:30px;}" +
   ".bh-tplc{border-top:1px solid var(--border);margin-top:12px;padding-top:6px;}.bh-tplc h4{margin:6px 0 2px;font-size:13px;}" +
   ".bh-warn{color:var(--danger);font-size:12px;font-weight:600;margin-top:4px;}" +
+  ".bh-dlg .bh-pc{border:1px solid var(--danger);border-radius:10px;background:rgba(200,55,31,.07);padding:8px 10px;margin:0 0 10px;font-size:12.5px;" +
+  "font-weight:600;color:var(--text);line-height:1.45;}" +
   "@media (max-width:560px){.bh-dlg{padding:0;align-items:stretch;}.bh-dlg-card,.bh-dlg-card.wide{max-width:none;max-height:none;height:100%;border-radius:0;border:0;}" +
   ".bh-dlg .bh-foot .btn-accept,.bh-dlg .bh-foot .ac-b{flex:1 1 auto;min-height:44px;}.bh-text .ac-b{flex:1 1 45%;min-height:44px;text-align:center;}" +
   ".bh-ch{padding-left:0;}}";
@@ -120,7 +122,17 @@ export function ensureSheetStyle() {
   (document.head || document.documentElement).appendChild(st);
 }
 
-const S = { host: null, busy: false, onClose: null, last: null, open: false };
+const S = { host: null, busy: false, onClose: null, beforeClose: null, seq: 0, last: null, open: false };
+
+/* A person closing the sheet (the ×, Esc, a click beside the card): its beforeClose() may keep it open - words typed
+   and not saved (the message templates). The sheet's own buttons close it through close(), unasked. */
+function askClose() {
+  if (!S.open || S.busy) return;
+  const ask = S.beforeClose;
+  if (typeof ask !== "function") { closeSheet(); return; }
+  const seq = S.seq;
+  Promise.resolve().then(ask).then((ok) => { if (ok && S.open && S.seq === seq) closeSheet(); }, () => { if (S.open && S.seq === seq) closeSheet(); });
+}
 
 function host() {
   if (S.host && S.host.parentNode) return S.host;
@@ -131,13 +143,13 @@ function host() {
   x.setAttribute("aria-modal", "true");
   x.setAttribute("aria-labelledby", "bhSheetH");
   x.hidden = true;
-  x.addEventListener("click", (e) => { if (e.target === x && !S.busy) closeSheet(); });
+  x.addEventListener("click", (e) => { if (e.target === x && !S.busy) askClose(); });
   x.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || S.busy) return;
     // a question asked over the sheet (DCR2.confirm) answers its own Esc
     if (document.querySelector(".dcr-mo.open")) return;
     if (e.preventDefault) e.preventDefault();
-    closeSheet();
+    askClose();
   });
   document.body.appendChild(x);
   S.host = x;
@@ -154,13 +166,15 @@ export function closeSheet() {
   if (document.body && document.body.classList) document.body.classList.remove("bh-noscroll");
   const fn = S.onClose;
   S.onClose = null;
+  S.beforeClose = null;
   const back = S.last;
   S.last = null;
   try { if (back && back.focus) back.focus(); } catch (e) { /* */ }
   if (typeof fn === "function") { try { fn(); } catch (e) { /* */ } }
 }
 
-/** Open a sheet: o {title, html, wide, onClose} -> {card, body, close, setBusy}. */
+/** Open a sheet: o {title, html, wide, onClose, beforeClose (-> true | a promise of true to let a person close it)} ->
+    {card, body, close, setBusy}. */
 export function openSheet(o) {
   const opt = o || {};
   if (S.open) closeSheet();
@@ -168,6 +182,8 @@ export function openSheet(o) {
   const x = host();
   S.last = document.activeElement;
   S.onClose = opt.onClose || null;
+  S.beforeClose = typeof opt.beforeClose === "function" ? opt.beforeClose : null;
+  S.seq += 1;
   S.open = true;
   S.busy = false;
   x.innerHTML = '<div class="bh-dlg-card' + (opt.wide ? " wide" : "") + '"><div class="bh-dlg-hd"><h3 id="bhSheetH">' + h(opt.title || "") + "</h3>" +
@@ -177,7 +193,7 @@ export function openSheet(o) {
   const card = x.querySelector(".bh-dlg-card");
   const body = x.querySelector("#bhSheetB");
   const closeBtn = x.querySelector("#bhSheetX");
-  if (closeBtn) closeBtn.addEventListener("click", () => { if (!S.busy) closeSheet(); });
+  if (closeBtn) closeBtn.addEventListener("click", () => { if (!S.busy) askClose(); });
   setTimeout(() => {
     const f = x.querySelector("[data-autofocus]") || closeBtn;
     try { if (f && f.focus) f.focus(); } catch (e) { /* */ }

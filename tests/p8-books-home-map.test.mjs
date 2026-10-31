@@ -98,10 +98,10 @@ test("to tell: one group per payee and kind (a check and cash of one payee are t
 });
 
 test("who a pick-up goes to (I20 / I36): the bill's own contact (nothing given), else the quote's vendor, else the payee's exact name - never a loose guess", () => {
-  const contacts = new Map([[7, { id: 7, name: "Sam Madeup", company: "Madeup Concrete", email: "sam@example.com", phone: "(805) 555-0177" }],
-    [9, { id: 9, name: "Walk-in Sub", company: null, email: "walk@example.com", phone: "" }],
-    [10, { id: 10, name: "Quote Person", company: "Quote Co", email: "bad, list@example.com", phone: "(805) 555-0178" }],
-    [11, { id: 11, name: "Walk", company: "Walk-in Subcontracting Inc", email: "w2@example.com", phone: "(805) 555-0179" }]].map(([k, v]) => [String(k), v]));
+  const contacts = new Map([[7, { id: 7, name: "Sam Madeup", company: "Madeup Concrete", kind: "subcontractor", email: "sam@example.com", phone: "(805) 555-0177" }],
+    [9, { id: 9, name: "Walk-in Sub", company: null, kind: "subcontractor", email: "walk@example.com", phone: "" }],
+    [10, { id: 10, name: "Quote Person", company: "Quote Co", kind: "supplier", email: "bad, list@example.com", phone: "(805) 555-0178" }],
+    [11, { id: 11, name: "Walk", company: "Walk-in Subcontracting Inc", kind: "service", email: "w2@example.com", phone: "(805) 555-0179" }]].map(([k, v]) => [String(k), v]));
   const links = { contacts, quotes: new Map([["31", { id: 31, vendor_contact_id: 10 }]]) };
   const own = H.pickupContact({ vendorContactId: 7, first: {} }, links);
   assert.deepEqual([own.source, own.contactId, own.email, own.phone], ["bill", null, "sam@example.com", "(805) 555-0177"], "the bill's own: the database takes it from the bill");
@@ -111,6 +111,40 @@ test("who a pick-up goes to (I20 / I36): the bill's own contact (nothing given),
   assert.deepEqual([name.source, name.contactId, name.phone], ["name", 9, ""], "case and spaces aside, the exact name");
   const none = H.pickupContact({ vendorContactId: null, quoteId: null, first: { payee: "Walk-in" } }, links);
   assert.deepEqual([none.source, none.contactId], ["none", null], "a partial name is never a match (the database refuses anyone else)");
+});
+
+test("who a pick-up goes to, a bill with no contact: only a payee kind (I36) - a same-name client or employee is never the payee", () => {
+  // the demo seed's collision: a client and the sub share a name, and the client has the lower id
+  const contacts = new Map([[2, { id: 2, name: "Rowan Sample", company: null, kind: "client", email: "rowan.client@example.com", phone: "(805) 555-0102" }],
+    [3, { id: 3, name: "Kit Worker", company: "Kit Framing", kind: "employee", email: "kit@example.com", phone: "(805) 555-0103" }],
+    [4, { id: 4, name: "Old Sub", company: "Gone Co", kind: "subcontractor", email: "gone@example.com", phone: "(805) 555-0104", deleted_at: "2026-10-01T00:00:00Z" }],
+    [5, { id: 5, name: "Pat Client", company: "Example Concrete", kind: "Client", email: "pat@example.com", phone: "(805) 555-0105" }],
+    [9, { id: 9, name: "Sam Sub", company: "Example Concrete", kind: "subcontractor", email: "sam@example.com", phone: "(805) 555-0109" }],
+    [40, { id: 40, name: "Rowan Sample", company: null, kind: "subcontractor", email: "rowan.sub@example.com", phone: "(805) 555-0140" }],
+    [41, { id: 41, name: "Quote Client", company: null, kind: "client", email: "qc@example.com", phone: "(805) 555-0141" }],
+    [42, { id: 42, name: "Other Payee", company: null, kind: "other", email: "", phone: "(805) 555-0142" }]].map(([k, v]) => [String(k), v]));
+  const quotes = new Map([["31", { id: 31, vendor_contact_id: 41 }], ["32", { id: 32, vendor_contact_id: 4 }]]);
+  const links = { contacts, quotes };
+  const sub = H.pickupContact({ vendorContactId: null, quoteId: null, first: { payee: "Rowan Sample" } }, links);
+  assert.deepEqual([sub.source, sub.contactId, sub.email, sub.phone], ["name", 40, "rowan.sub@example.com", "(805) 555-0140"], "the sub, not the lower-id client");
+  const co = H.pickupContact({ vendorContactId: null, quoteId: null, first: { payee: "", vendor: "example concrete" } }, links);
+  assert.deepEqual([co.source, co.contactId], ["name", 9], "a company match skips a client at that company (kind case aside)");
+  const emp = H.pickupContact({ vendorContactId: null, quoteId: null, first: { payee: "Kit Worker", vendorCompany: "Kit Framing" } }, links);
+  assert.deepEqual([emp.source, emp.contactId, emp.email, emp.phone], ["none", null, "", ""], "only an employee matches: nobody (never dial or show the employee)");
+  const gone = H.pickupContact({ vendorContactId: null, quoteId: null, first: { payee: "Gone Co" } }, links);
+  assert.deepEqual([gone.source, gone.contactId], ["none", null], "a deleted contact is never the payee");
+  const other = H.pickupContact({ vendorContactId: null, quoteId: null, first: { payee: "other payee" } }, links);
+  assert.deepEqual([other.source, other.contactId], ["name", 42], "kind other is a payee kind");
+  const q = H.pickupContact({ vendorContactId: null, quoteId: 31, first: { payee: "Rowan Sample" } }, links);
+  assert.deepEqual([q.source, q.contactId], ["name", 40], "a quote whose vendor contact is a client falls through to the name tier");
+  const qGone = H.pickupContact({ vendorContactId: null, quoteId: 32, first: { payee: "Nobody Here" } }, links);
+  assert.deepEqual([qGone.source, qGone.contactId], ["none", null], "a deleted quote vendor is nobody");
+  const noKind = new Map([["2", { id: 2, name: "Rowan Sample", company: null, email: "rowan.client@example.com", phone: "(805) 555-0102" }]]);
+  assert.equal(H.pickupContact({ vendorContactId: null, quoteId: null, first: { payee: "Rowan Sample" } }, { contacts: noKind }).source, "none",
+    "a contact read without its kind is never taken for a payee");
+  const own = H.pickupContact({ vendorContactId: 2, first: { payee: "Rowan Sample" } }, links);
+  assert.deepEqual([own.source, own.contactId, own.email], ["bill", null, "rowan.client@example.com"], "the bill's own contact stays, whatever its kind (the database takes it from the bill)");
+  assert.deepEqual(H.PAYEE_KINDS, ["subcontractor", "supplier", "service", "other"], "tell_payee's kinds (20261030000400 c_payee)");
 });
 
 test("lastAsked: the latest ask naming the bill, with each of its recipients; its words; a pick-up's last message", () => {

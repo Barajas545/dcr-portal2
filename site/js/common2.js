@@ -413,6 +413,19 @@ export const LANDED_KEY = "dcr2_landed";
 export function markLanded() {
   try { if (typeof sessionStorage !== "undefined") sessionStorage.setItem(LANDED_KEY, "1"); } catch (e) { /* the referrer decides */ }
 }
+/** Whether this browser session has landed already (markLanded / bounceFor); false when the storage is refused. */
+export function hasLanded() {
+  try { return typeof sessionStorage !== "undefined" && !!sessionStorage.getItem(LANDED_KEY); } catch (e) { return false; }
+}
+/** The sign-in page a signed-out `page` sends the person to: ?next= brings them back there - except bare Home before
+    this browser session has landed (`landed`). The installed app opens dashboard.html (manifest start_url), so every
+    launch without "Keep me signed in" starts signed out on Home; a ?next=dashboard.html would then be an explicit next
+    the sign-in page must obey (I29: "an explicit ?next= still wins") and the person's landing - the accountant's
+    Accounting page - would never happen. Without it the sign-in page lands them, once. Pure (tests/core-auth.test.mjs). */
+export function signInHref(page, landed) {
+  const here = String(page || "dashboard.html");
+  return here === "dashboard.html" && !landed ? "index.html" : "index.html?next=" + encodeURIComponent(here);
+}
 /** Where Home should send `p` once - their landing - or "" (stay). Marks the session landed when it answers a page. */
 export function bounceFor(p, referrer) {
   const go = landingFor(p);
@@ -651,7 +664,8 @@ const hold = () => new Promise(() => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function bounceToSignIn(extra) {
-  location.replace("index.html?next=" + encodeURIComponent(thisPage()) + (extra || ""));
+  const to = signInHref(thisPage(), hasLanded());
+  location.replace(to + (extra ? (to.indexOf("?") === -1 ? "?" : "&") + String(extra).replace(/^[?&]/, "") : ""));
   return hold();
 }
 

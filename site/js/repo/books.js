@@ -67,8 +67,9 @@ export const INVOICE_COLS = "id, project_id, number, invoice_date, due_date, des
   "qbo_ref, deleted_at, version, invoice_lines(amount), client_payments(amount, paid_date)";
 export const PROJECT_COLS = "id, number, name, address, city, client_name";
 // + the contact's picture (Books release A3, migration 20261030000200; a database without it yet: read again without it,
-// initials - repo/contacts.js contactRows) and its version (the contact card's versioned PATCH)
-export const CONTACT_COLS = "id, name, company, email, phone, picture_path, deleted_at, version";
+// initials - repo/contacts.js contactRows), its version (the contact card's versioned PATCH) and its kind (a pick-up
+// message goes only to a payee kind: map/books-home.js pickupContact, I36; contacts.kind is there since 20261007000200)
+export const CONTACT_COLS = "id, name, company, kind, email, phone, picture_path, deleted_at, version";
 // a payment's files (payment_id, 20261030000100_money_files), the small preview (preview_path) and the version (a file is
 // removed at the version shown)
 export const FILE_COLS = "id, project_id, bill_id, payment_id, folder, name, storage, storage_path, preview_path, size, mime, created_at, version";

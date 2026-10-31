@@ -120,11 +120,16 @@ export function tellGroups(toTell, messages) {
   return groups;
 }
 
+/** The contact kinds tell_payee takes for a bill that names no contact (I36): a client or an employee is never a payee. */
+export const PAYEE_KINDS = Object.freeze(["subcontractor", "supplier", "service", "other"]);
+const payeeKind = (c) => !!c && !c.deleted_at && PAYEE_KINDS.indexOf(low(c.kind)) !== -1;
+
 /** Who a group's pick-up message goes to (I20 / I36): the bill's own vendor contact (the database takes it from the
-    bill: nothing is given), else - a bill with no contact (a public-form bill) - the quote's vendor contact, else a
-    contact whose company or name IS the payee or the bill's vendor name (case and spaces aside; never a loose
-    "guess": the database refuses anyone else). -> {contact (a contacts row | null), contactId (what tell_payee is
-    given: null for the bill's own), source: bill | quote | name | none, email, phone}. */
+    bill, whatever its kind: nothing is given), else - a bill with no contact (a public-form bill) - the quote's vendor
+    contact, else a contact whose company or name IS the payee or the bill's vendor name (case and spaces aside; never a
+    loose "guess"), both only of a payee kind (PAYEE_KINDS: the database refuses anyone else, so a client or an employee
+    of the same name is never shown, dialled or picked over the sub). -> {contact (a contacts row | null), contactId
+    (what tell_payee is given: null for the bill's own), source: bill | quote | name | none, email, phone}. */
 export function pickupContact(g, links) {
   const L = links || {};
   const contacts = L.contacts || new Map();
@@ -136,10 +141,10 @@ export function pickupContact(g, links) {
   }
   const q = g.quoteId !== null && g.quoteId !== undefined && L.quotes ? L.quotes.get(String(g.quoteId)) : null;
   const qc = q && q.vendor_contact_id !== null && q.vendor_contact_id !== undefined ? contacts.get(String(q.vendor_contact_id)) : null;
-  if (qc && !qc.deleted_at) return reach(qc, qc.id, "quote");
+  if (payeeKind(qc)) return reach(qc, qc.id, "quote");
   const t = g.first || {};
   const keys = [t.payee, t.vendor, t.vendorCompany].map(low).filter(Boolean);
-  const hit = Array.from(contacts.values()).filter((c) => !c.deleted_at && (keys.indexOf(low(c.company)) !== -1 || keys.indexOf(low(c.name)) !== -1))
+  const hit = Array.from(contacts.values()).filter((c) => payeeKind(c) && (keys.indexOf(low(c.company)) !== -1 || keys.indexOf(low(c.name)) !== -1))
     .sort((a, b) => Number(a.id) - Number(b.id))[0];
   return hit ? reach(hit, hit.id, "name") : reach(null, null, "none");
 }

@@ -9,7 +9,11 @@
 // * the vendor details: saved through the sheet as an upsert at the version shown; someone else's save meanwhile
 //   (PT409) shows theirs; only money editors are offered it;
 // * the 1099 worksheet's threshold is the year's default, and a typed one is sent for that view only (never stored);
-// * S17: vendor, contact, invoice, file and actor names of markup are TEXT on both pages.
+// * S17: vendor, contact, invoice, file and actor names of markup are TEXT on both pages;
+// * the reports' words, print header and CSV name always name the period of the rows shown (a period picked is read);
+// * a database without the reports' functions yet (release B part 2a on its own, or 2b rolled back alone): the vendor
+//   list shows the facts and says the sums come later, a report says it is not in the database yet;
+// * The Books (accounting.html): the QuickBooks ref typed beside "Mark entered" survives the page's redraw.
 // Made-up people and data only.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -28,7 +32,7 @@ const LINK = "<a href=//evil.example>x</a>";
 const NEW = ["js/pages/books-vendors.js", "js/pages/books-reports.js", "js/repo/vendors.js", "js/repo/books-reports.js", "js/map/vendors.js", "js/map/books-reports.js"];
 
 globalThis.Node = class { static [Symbol.hasInstance](x) { return !!x && typeof x.nodeType === "number"; } };
-globalThis.window = { DCR2: common2.DCR2, addEventListener() {}, removeEventListener() {}, matchMedia: null, __VD_TEST__: true, __RP_TEST__: true };
+globalThis.window = { DCR2: common2.DCR2, addEventListener() {}, removeEventListener() {}, matchMedia: null, __VD_TEST__: true, __RP_TEST__: true, __AC_TEST__: true };
 globalThis.document = makeDom("<!doctype html><html><head></head><body><div id=\"vdBody\"></div><div id=\"rpBody\"></div></body></html>");
 const tick = () => new Promise((r) => setTimeout(r, 5));
 async function until(fn, ms) {
@@ -40,6 +44,8 @@ const rpage = await import("../site/js/pages/books-reports.js");
 const nav = await import("../site/js/pages/books-nav.js");
 const vrepo = await import("../site/js/repo/vendors.js");
 const rrepo = await import("../site/js/repo/books-reports.js");
+const apage = await import("../site/js/pages/accounting.js");
+const rmap = await import("../site/js/map/books-reports.js");
 
 /** As `key`: the client over the engine, and the profile the pages are given. A counter of what was asked. */
 async function as(e, key) {
@@ -242,4 +248,165 @@ test("Reports as the accountant: each report reads the database's own function o
   rpage._test.render();
   await rpage._test.run();
   assert.ok(document.getElementById("rpOut").textContent.includes(EVIL), "the actor's name shown as it is");
+});
+
+test("Reports: a period picked is read at once - the rows, their sentence, the print header and the CSV's name all name ONE period; days typed and not shown yet name none", { skip }, async () => {
+  const e = await freshEngine();
+  const { me } = await as(e, "accountant");
+  const S = rpage._test.state;
+  S.me = me;
+  const today = new Date().toISOString().slice(0, 10);
+  const ly = rmap.periodOf("lastyear", today), p30 = rmap.periodOf("30", today);
+  S.today = today; S.asOf = today; S.preset = "lastyear"; S.from = ly.from; S.to = ly.to; S.year = null; S.threshold = null; S.group = ""; S.q = "";
+  if (!document.getElementById("rpPrintHead")) { const ph = document.createElement("div"); ph.id = "rpPrintHead"; document.body.appendChild(ph); }
+  window.print = () => {};
+  // the CSV's link: its file name (the small DOM's <a> has no href to set)
+  const names = [];
+  const make = URL.createObjectURL, mk = document.createElement, add = document.body.appendChild;
+  URL.createObjectURL = () => "blob:made-up";
+  document.createElement = (tag) => (tag === "a" ? { href: "", download: "", click() { names.push(this.download); }, remove() {}, stub: true } : mk.call(document, tag));
+  document.body.appendChild = function (n) { return n && n.stub ? n : add.call(this, n); };
+  try {
+    for (const id of ["approvals", "history"]) {
+      S.report = id; S.rows = null; S.shown = null; S.error = ""; S.preset = "lastyear"; S.from = ly.from; S.to = ly.to;
+      rpage._test.render();
+      await rpage._test.run();
+      // the 30 days picked in Period, and nothing else pressed
+      const sel = document.getElementById("rpPreset");
+      sel.value = "30";
+      sel.dispatchEvent({ type: "change" });
+      await until(() => !S.busy && S.rows && S.shown && S.shown.from === p30.from);
+      const words = rmap.periodWords(p30.from, p30.to);
+      const out = document.getElementById("rpOut").textContent;
+      assert.ok(out.includes(words), id + ": the rows' sentence names the period picked: " + out.slice(0, 120));
+      document.getElementById("rpPrint").click();
+      const head = document.getElementById("rpPrintHead").textContent;
+      assert.ok(head.includes(words) && !head.includes(rmap.periodWords(ly.from, ly.to)), id + ": the print header: " + head);
+      names.length = 0;
+      if (id === "history") assert.ok(!document.getElementById("rpCsv").disabled, "the demo's last 30 days have money changes to save");
+      if (!document.getElementById("rpCsv").disabled) {
+        document.getElementById("rpCsv").click();
+        assert.ok(names.length === 1 && names[0].includes(p30.from + "-to-" + p30.to), id + ": the CSV's name: " + names.join(","));
+      }
+      // days typed in From / To, not shown yet: the shown rows keep naming the period they were read for
+      const from = document.getElementById("rpFrom");
+      from.value = ly.from;
+      from.dispatchEvent({ type: "change" });
+      if (id === "history") { const g = document.getElementById("rpGroup"); g.value = g.querySelectorAll("option")[1].getAttribute("value"); g.dispatchEvent({ type: "change" }); }
+      assert.ok(document.getElementById("rpOut").textContent.includes(words), id + ": still the period read");
+      document.getElementById("rpPrint").click();
+      assert.ok(document.getElementById("rpPrintHead").textContent.includes(words), id + ": the print header still names the period read");
+      S.group = "";
+    }
+  } finally {
+    URL.createObjectURL = make;
+    document.createElement = mk;
+    delete document.body.appendChild;
+    if (document.body.appendChild !== add) document.body.appendChild = add;
+  }
+});
+
+/* As `key` over a database WITHOUT the reports' four functions (20261030000500 not pushed yet, or rolled back alone):
+   PostgREST answers PGRST202 for each. */
+async function asBeforeReports(e, key) {
+  const p = await person(key);
+  const row = e.rows.profiles.find((x) => x.id === p.id);
+  const c = clientAs(e, p.id);
+  const asked = [];
+  const from = c.from, rpc = c.rpc;
+  c.from = (t) => { asked.push(t); return from(t); };
+  c.rpc = (n, a) => {
+    asked.push("rpc:" + n);
+    if (/^books_(ap_aging|vendor_balances|1099|payments_by_month)$/.test(n)) {
+      return Promise.resolve({ data: null, status: 404, error: { code: "PGRST202", message: "Could not find the function public." + n + " in the schema cache", details: "", hint: null } });
+    }
+    return rpc(n, a);
+  };
+  useClient(c);
+  clearPeople();
+  return { me: { id: p.id, name: p.name, role: p.role, active: true, can_see_financials: p.role === "admin" || !!row.can_see_financials,
+    can_see_prices: p.role === "admin" || !!row.can_see_prices, can_approve_payments: !!row.can_approve_payments }, asked };
+}
+
+test("release B part 2a on its own (no reports' functions in the database yet): the vendor list shows the facts and says the sums come later; a report says it is not there yet; the approval log works", { skip }, async () => {
+  const e = await freshEngine();
+  const { me, asked } = await asBeforeReports(e, "accountant");
+  assert.ok(me.can_see_prices, "the accountant sees prices: the sums are asked for");
+  const V = vpage._test.state;
+  V.me = me; V.w = null; V.wError = ""; V.wBusy = false; V.show = ""; V.q = "";
+  await vpage._test.load();
+  const body = document.getElementById("vdBody");
+  assert.ok(V.d && V.d.noSums && !V.d.prices, "the facts only");
+  assert.ok(body.querySelectorAll(".vd-row").length >= 5, "a line per vendor");
+  assert.ok(!AMOUNT.test(body.textContent), "no amount was read, none is shown");
+  assert.match(body.querySelector("#vdNoSums").textContent, /come with the next database update/);
+  assert.ok(!/do not match/.test(body.textContent), "never \"the website and the database do not match\"");
+  assert.ok(asked.includes("rpc:books_vendor_balances") && !asked.includes("rpc:books_1099"), "the worksheet is not asked: " + asked.join(","));
+  assert.match(body.querySelector("#vd1099").textContent, /come with the next database update/);
+  const S = rpage._test.state;
+  S.me = me;
+  const today = new Date().toISOString().slice(0, 10);
+  S.today = today; S.asOf = today; S.from = today.slice(0, 4) + "-01-01"; S.to = today; S.year = Number(today.slice(0, 4)); S.threshold = null; S.group = ""; S.q = "";
+  for (const id of ["aging", "vendors", "1099", "months"]) {
+    S.report = id; S.rows = null; S.shown = null; S.error = "";
+    rpage._test.render();
+    await rpage._test.run();
+    assert.equal(S.error, rrepo.NOT_YET, id);
+    const out = document.getElementById("rpOut").textContent;
+    assert.ok(/not in the database yet/.test(out) && !/do not match/.test(out), id + ": " + out);
+  }
+  for (const id of ["approvals", "history"]) {
+    S.report = id; S.rows = null; S.shown = null; S.error = "";
+    rpage._test.render();
+    await rpage._test.run();
+    assert.equal(S.error, "", id + " works without them");
+    assert.ok(document.getElementById("rpOut").querySelector("#rpTable"), id + ": a table");
+  }
+  // any other refusal is still said as it is
+  assert.equal(rrepo.reportsMissing({ code: "42501" }), false);
+  assert.equal(rrepo.reportsMissing({ code: "PGRST202" }), true);
+  assert.equal(rrepo.reportsMissing({ code: "42883" }), true);
+});
+
+test("The Books: the QuickBooks ref typed beside \"Mark entered\" survives the page's redraw (back from the QuickBooks tab, the 30 s poll) and is the one recorded", { skip }, async () => {
+  const e = await freshEngine();
+  const { me } = await as(e, "accountant");
+  if (!document.getElementById("acBody")) {
+    const host = document.createElement("div");
+    host.innerHTML = '<div class="ac-cards" id="acCards"></div><div class="ck-queue" id="ckQueue" hidden></div><div id="acBody"></div>';
+    document.body.appendChild(host);
+  }
+  const A = apage._test.state;
+  A.me = me; A.picked = {}; A.ref = ""; A.refInv = ""; A.openCheck = null;
+  await apage._test.load();
+  assert.ok(A.d && A.d.ready.length > 0, "bills ready to enter");
+  const bill = A.d.ready[0];
+  let ref = document.getElementById("acRef");
+  ref.focus();
+  ref.value = "QB-7781";
+  ref.dispatchEvent({ type: "input" });
+  document.querySelectorAll("[data-pick]").find((cb) => cb.getAttribute("data-pick") === String(bill.id)).click();
+  assert.equal(document.getElementById("acMark").disabled, false);
+  // she comes back from QuickBooks: the page reads everything again and draws it again
+  await apage._test.load();
+  ref = document.getElementById("acRef");
+  assert.equal(ref.value, "QB-7781", "the ref typed is drawn again");
+  assert.equal(document.activeElement && document.activeElement.id, "acRef", "and keeps the focus");
+  assert.equal(document.getElementById("acMark").disabled, false, "the pick too");
+  common2.DCR2.confirm = async () => true;
+  document.getElementById("acMark").click();
+  await until(() => e.rows.bills.find((b) => b.id === bill.id).qbo_entered_at);
+  await until(() => !A.busy && A.d && !A.d.ready.some((b) => b.id === bill.id));
+  assert.equal(e.rows.bills.find((b) => b.id === bill.id).qbo_ref, "QB-7781", "marked with the ref she typed");
+  assert.equal(A.ref, "", "the ref is done with: never carried into the next batch");
+  assert.equal(document.getElementById("acRef") ? document.getElementById("acRef").value : "", "");
+  // a ref put in the box by a script (no input event) is read at the click, as before
+  if (A.d.ready.length) {
+    const b2 = A.d.ready[0];
+    document.getElementById("acRef").value = "QB batch 18";
+    document.querySelectorAll("[data-pick]").find((cb) => cb.getAttribute("data-pick") === String(b2.id)).click();
+    document.getElementById("acMark").click();
+    await until(() => e.rows.bills.find((b) => b.id === b2.id).qbo_entered_at);
+    assert.equal(e.rows.bills.find((b) => b.id === b2.id).qbo_ref, "QB batch 18");
+  }
 });

@@ -10,7 +10,9 @@
        [Text (by hand)]      rpc tell_payee(…, 'sms'): a draft whose number and body the database answers - [Open the text]
                              (an sms: link, only for an E.164 number), [Copy the text] with the number shown, [I sent it]
                              (rpc money_text_sent: told "text message" at once) and [Not sent];
-       [Call]                the tel: link, then [Told by phone] (rpc payment_told 'phone', each payment);
+       [Call]                the tel: link, then [Told by phone] (rpc payment_told 'phone', each payment) - this step
+                             stays open over the page's redraws (she comes back from the phone's dialer: the page reads
+                             everything again) until the call is recorded or the payee is no longer to tell;
        [In person]           rpc payment_told 'in person'.
      Who it goes to is the database's rule (I20 / I36): the bill's vendor contact; only for a bill with none, the quote's
      vendor contact or a contact whose company or name IS the payee (map/books-home.js pickupContact - never a loose
@@ -196,6 +198,31 @@ export function textStep(msg, opts) {
 
 /* ── the buttons ──────────────────────────────────────────────────────── */
 
+/* The [Call] steps open now, by the group's payments: the page draws everything again when she comes back from the
+   phone's dialer (visibilitychange) or every 30 s while an e-mail waits, and the step she opened must still be there to
+   record the call. One page holds this module, so the set is that page's. */
+const calling = new Set();
+const callKey = (g) => (g.paymentIds || (g.payments || []).map((p) => p.paymentId)).map(String).sort().join(",");
+
+/* the group's call step: the tel: link and [Told by phone], in its [data-call] box -> whether it is drawn */
+function openCall(root, g, who, say, changed) {
+  const box = Array.from(root.querySelectorAll("[data-call]")).find((x) => x.getAttribute("data-call") === g.key);
+  if (!box) return false;
+  box.textContent = "";
+  const tel = telHref(who.phone);
+  if (tel) {
+    const a = el("a", "ac-b", "Call " + who.phone);
+    a.setAttribute("href", tel);
+    box.appendChild(a);
+  }
+  const told = el("button", "ac-b go", "✓ Told by phone");
+  told.setAttribute("type", "button");
+  told.addEventListener("click", () => markAll(g, "phone", told, say, changed));
+  box.appendChild(told);
+  box.hidden = false;
+  return true;
+}
+
 function sayOn(root, attr, key, text, bad) {
   const n = Array.from(root.querySelectorAll("[" + attr + "]")).find((x) => x.getAttribute(attr) === String(key));
   if (!n) { if (text) toast(text, bad ? "error" : "ok"); return; }
@@ -219,20 +246,7 @@ export function wireTell(root, ctx) {
     const who = pickupContact(g, c.links);
     const say = (t, bad) => sayOn(root, "data-tellmsg", g.key, t, bad);
     if (how === "call") {
-      const box = Array.from(root.querySelectorAll("[data-call]")).find((x) => x.getAttribute("data-call") === g.key);
-      if (!box) return;
-      box.textContent = "";
-      const tel = telHref(who.phone);
-      if (tel) {
-        const a = el("a", "ac-b", "Call " + who.phone);
-        a.setAttribute("href", tel);
-        box.appendChild(a);
-      }
-      const told = el("button", "ac-b go", "✓ Told by phone");
-      told.setAttribute("type", "button");
-      told.addEventListener("click", () => markAll(g, "phone", told, say, changed));
-      box.appendChild(told);
-      box.hidden = false;
+      if (openCall(root, g, who, say, changed)) calling.add(callKey(g));
       return;
     }
     if (how === "person") {
@@ -267,6 +281,15 @@ export function wireTell(root, ctx) {
     }
   }));
   root.querySelectorAll("[data-picked]").forEach((b) => b.addEventListener("click", () => pickedUp(b.getAttribute("data-picked"), c, root)));
+  // the call steps open before this redraw are open again (the same payments, still to tell); the rest are forgotten
+  const still = new Set();
+  (c.groups || []).forEach((g) => {
+    const k = callKey(g);
+    if (!calling.has(k)) return;
+    const say = (t, bad) => sayOn(root, "data-tellmsg", g.key, t, bad);
+    if (openCall(root, g, pickupContact(g, c.links), say, changed)) still.add(k);
+  });
+  Array.from(calling).forEach((k) => { if (!still.has(k)) calling.delete(k); });
 }
 
 /* payment_told(how) on every payment of the group (versioned; a PT409 reads everything again) */
@@ -281,6 +304,7 @@ async function markAll(g, how, btn, say, changed) {
       return;
     }
   }
+  calling.delete(callKey(g));
   toast("Marked told (" + how + "): " + plural(n, "payment", "payments") + ".", "ok");
   if (typeof changed === "function") changed();
 }

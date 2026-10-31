@@ -14,7 +14,8 @@
    * The 1099 worksheet (books_1099): the year, the threshold the database uses - shown, and editable for this view
      only (never stored) -, what counts (check, cash, transfer, other) and what does not (card, materials), reportable
      and "needs a W-9". A worksheet, not a filing: confirm with the CPA.
-   WITHOUT the prices switch (S4) no amount is read or shown: the vendors' facts only, and no 1099 worksheet. Only with the
+   WITHOUT the prices switch (S4) no amount is read or shown: the vendors' facts only, and no 1099 worksheet - and the
+   same, said so, while the database has no books_vendor_balances yet (release B part 2a on its own). Only with the
    financials switch: anyone else is told so and sent home before anything is read. Every database word is escaped (h)
    or set as text. Nothing here approves or pays. */
 
@@ -30,7 +31,10 @@ import { printLine, csvFile } from "../map/books-reports.js";
 
 const h = esc;
 const state = { me: null, d: null, show: "", q: "", year: null, threshold: null, w: null, wBusy: false, wError: "" };
-const prices = () => seesPrices(state.me);
+// amounts only with the prices switch AND the database's sums read (a database without books_vendor_balances yet: none)
+const prices = () => seesPrices(state.me) && !(state.d && state.d.noSums);
+const NO_SUMS = "What we owe and paid, and the 1099 worksheet, come with the next database update (the Books reports): " +
+  "until then the list shows each vendor's facts.";
 const money = () => can(state.me, "money");
 const amt = (v) => (prices() ? h(fmtMoney(v)) : "");
 
@@ -81,7 +85,8 @@ function shown() { return filterVendors(state.d.vendors, { show: state.show, q: 
 
 function worksheetHtml() {
   if (!prices()) {
-    return '<div class="ac-sec vd-1099" id="vd1099"><header><h3>1099 worksheet</h3></header><div class="ac-note">The 1099 worksheet carries amounts: it needs the prices switch. Ask an admin.</div></div>';
+    return '<div class="ac-sec vd-1099" id="vd1099"><header><h3>1099 worksheet</h3></header><div class="ac-note">' +
+      (state.d && state.d.noSums ? h(NO_SUMS) : "The 1099 worksheet carries amounts: it needs the prices switch. Ask an admin.") + "</div></div>";
   }
   const years = years1099(state.d.today);
   const y = state.year || years[0];
@@ -161,7 +166,8 @@ export function bodyHtml(d) {
       '<button type="button" data-show="' + h(f.id) + '" aria-pressed="' + (state.show === f.id) + '">' + h(f.label) + "<b>" + h(String(counts[f.id] || 0)) + "</b></button>").join("") + "</div>" +
     '<span class="grow"></span><input type="search" id="vdQ" placeholder="Search a vendor, license or W-9 name" aria-label="Search the vendors" value="' + h(state.q) + '">' +
     '<button type="button" class="ac-b" id="vdCsv">&#8615; CSV</button><button type="button" class="ac-b" id="vdPrint">Print</button></div>' +
-    (prices() ? "" : '<div class="ac-note" style="margin:0 0 8px">Without the prices switch the list shows each vendor\'s facts, never an amount.</div>') +
+    (prices() ? "" : d.noSums ? '<div class="ac-note" id="vdNoSums" style="margin:0 0 8px">' + h(NO_SUMS) + "</div>"
+      : '<div class="ac-note" style="margin:0 0 8px">Without the prices switch the list shows each vendor\'s facts, never an amount.</div>') +
     '<div id="vdListBox">' + listHtml(shown(), d.today) + "</div></div>";
   return s + worksheetHtml() +
     '<div class="ac-note rg-noprint">Insurance and workers\' comp turn <b>gold</b> 30 days before they run out and red once they have. ' +

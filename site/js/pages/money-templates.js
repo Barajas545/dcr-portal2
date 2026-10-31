@@ -13,6 +13,8 @@
      showing theirs." and their text.
    * [Reset to the original]: rpc reset_message_template (the six defaults). Every save and reset is in the money
      history (template_saved / template_reset).
+   * What is typed and not saved is kept per template and channel: over a switch of template, a reset or someone
+     else's save of the OTHER channel; closing the sheet with any of it asks first.
    Every database word is escaped (h) or set as text. */
 
 import { esc, toast, errorText, confirmBox, can } from "./shell.js";
@@ -63,9 +65,13 @@ export function editorHtml(key, list, ctx) {
 export async function openTemplates(o) {
   const opt = o || {};
   const edit = can(opt.me, "money");
-  const st = { key: TEMPLATE_KEYS.indexOf(opt.key) !== -1 ? opt.key : TEMPLATE_KEYS[0], list: opt.templates || null, focus: null, changed: false };
+  // drafts[key] = {email: {subject, body}, sms: {body}}: typed and not saved yet
+  const st = { key: TEMPLATE_KEYS.indexOf(opt.key) !== -1 ? opt.key : TEMPLATE_KEYS[0], list: opt.templates || null, focus: null, changed: false, drafts: {} };
+  const unsaved = () => Object.keys(st.drafts).length > 0;
   const sh = openSheet({ title: "Message templates", wide: true, html: '<div class="ac-none">Loading…</div>',
-    onClose: () => { if (st.changed && typeof opt.onDone === "function") opt.onDone(); } });
+    onClose: () => { if (st.changed && typeof opt.onDone === "function") opt.onDone(); },
+    beforeClose: () => (!unsaved() ? true : confirmBox("What you typed in the message templates is not saved. Close and lose it?",
+      { title: "Not saved", okText: "Close without saving" })) });
   if (!st.list) {
     try { st.list = await mm.templates(); } catch (e) { sh.body.innerHTML = '<div class="ac-msg err">' + h(errorText(e)) + "</div>"; return; }
     if (!st.list) { sh.body.innerHTML = '<div class="ac-none">The message templates are not in the database yet.</div>'; return; }
@@ -82,13 +88,35 @@ export async function openTemplates(o) {
     const n = $("bhTplSmsN");
     if (n) n.textContent = smsCount(($("bhTplSms") || {}).value);
   };
+  /* the shown template's fields against what is stored: what differs is its draft */
+  const norm = (v) => String(v == null ? "" : v).replace(/\r\n?/g, "\n");
+  const typed = () => {
+    if (!edit || !$("bhTplBody")) return;
+    const mail = find(st.list, st.key, "email") || { subject: "", body: "" };
+    const text = find(st.list, st.key, "sms") || { body: "" };
+    const v = { subject: ($("bhTplSubj") || {}).value || "", body: $("bhTplBody").value || "", sms: ($("bhTplSms") || {}).value || "" };
+    const d = {};
+    if (norm(v.subject) !== norm(mail.subject) || norm(v.body) !== norm(mail.body)) d.email = { subject: v.subject, body: v.body };
+    if (norm(v.sms) !== norm(text.body)) d.sms = { body: v.sms };
+    if (d.email || d.sms) st.drafts[st.key] = d; else delete st.drafts[st.key];
+  };
+  /* one channel of the shown template is stored (saved, reset) or replaced by someone else's: its draft goes */
+  const forget = (ch) => {
+    const d = st.drafts[st.key];
+    if (!d) return;
+    delete d[ch];
+    if (!d.email && !d.sms) delete st.drafts[st.key];
+  };
   function draw() {
     sh.body.innerHTML = editorHtml(st.key, st.list, { edit });
-    sh.body.querySelectorAll("[data-key]").forEach((b) => b.addEventListener("click", () => { st.key = b.getAttribute("data-key"); st.focus = null; draw(); }));
+    const d = edit ? st.drafts[st.key] : null;
+    if (d && d.email) { if ($("bhTplSubj")) $("bhTplSubj").value = d.email.subject; if ($("bhTplBody")) $("bhTplBody").value = d.email.body; }
+    if (d && d.sms && $("bhTplSms")) $("bhTplSms").value = d.sms.body;
+    sh.body.querySelectorAll("[data-key]").forEach((b) => b.addEventListener("click", () => { typed(); st.key = b.getAttribute("data-key"); st.focus = null; draw(); }));
     sh.body.querySelectorAll("[data-f]").forEach((f) => {
       f.addEventListener("focus", () => { st.focus = f.id; });
       f.addEventListener("focusin", () => { st.focus = f.id; });
-      f.addEventListener("input", warn);
+      f.addEventListener("input", () => { typed(); warn(); });
     });
     sh.body.querySelectorAll("[data-chip]").forEach((b) => b.addEventListener("click", () => {
       const f = $(st.focus || "bhTplBody");
@@ -96,6 +124,7 @@ export async function openTemplates(o) {
       const r = insertAt(f.value, f.selectionStart, f.selectionEnd, chipText(b.getAttribute("data-chip")));
       f.value = r.text;
       try { f.focus(); f.setSelectionRange(r.at, r.at); } catch (e) { /* */ }
+      typed();
       warn();
     }));
     sh.body.querySelectorAll("[data-prev]").forEach((b) => b.addEventListener("click", () => preview(b.getAttribute("data-prev"))));
@@ -127,7 +156,9 @@ export async function openTemplates(o) {
     }
   }
   async function reload(ch, words) {
+    typed();
     try { st.list = await mm.templates(); } catch (e) { /* keep what is shown */ }
+    forget(ch);      // theirs is shown on this channel; the other keeps what she typed
     draw();
     if (words) say(ch, words, true);
   }
@@ -146,6 +177,8 @@ export async function openTemplates(o) {
     }
     Object.assign(t, r);
     st.changed = true;
+    typed();         // this channel now equals what is stored; the other keeps its draft
+    forget(ch);
     say(ch, r.unchanged ? "Nothing changed." : "Saved: the next " + (ch === "email" ? "e-mail" : "text") + " says this.");
     if (!r.unchanged) toast("Saved: " + TEMPLATE_LABELS[st.key] + " (" + (ch === "email" ? "e-mail" : "text") + ").", "ok");
   }
@@ -163,6 +196,8 @@ export async function openTemplates(o) {
     }
     Object.assign(t, r);
     st.changed = true;
+    typed();
+    forget(ch);      // the original on this channel; the other channel's typed words are drawn again
     draw();
     say(ch, r.unchanged ? "It already says the original." : "Back to the original wording.");
   }

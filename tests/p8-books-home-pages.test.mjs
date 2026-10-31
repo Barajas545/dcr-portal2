@@ -277,3 +277,146 @@ test("the template editor: an amount refused in the database's words; someone el
   assert.match(e.rows.message_templates.find((x) => x.key === "check_ready" && x.channel === "sms").body, /^Hi \{\{firstName\}\}, your check from \{\{company\}\}/);
   nav.closeSheet();
 });
+
+/* ── release B review fixes 1 ── */
+
+test("Ask to approve: the boxes show the template as stored NOW (never the page's older copy); Send sends exactly the text shown and previewed", { skip }, async () => {
+  const e = await freshEngine();
+  const me = await as(e, "accountant");
+  const d = await homeRepo.loadHome(me);       // the page's copy of the templates
+  const bills = d.waiting.filter((b) => b.projectNumber === "A303");
+  const admin = await person("admin");
+  const save = (subject) => {
+    const row = e.rows.message_templates.find((x) => x.key === "approval_request" && x.channel === "email");
+    e.rpc({ uid: admin.id }, "save_message_template", { p_key: "approval_request", p_channel: "email", p_subject: subject, p_body: row.body, p_version: row.version });
+    useClient(clientAs(e, me.id));
+  };
+  // an admin saves a new wording elsewhere after the page read its templates
+  save("Fresh wording: {{billsPhrase}} waiting");
+  await ask.openAsk({ bills, me, templates: d.templates, today: d.today });
+  const s = sheet();
+  await until(() => s.querySelector("#bhAskSubj") && s.querySelector('[data-pick="0"]'));
+  assert.equal(s.querySelector("#bhAskSubj").value, "Fresh wording: {{billsPhrase}} waiting", "read when the dialog opened, not the page's copy");
+  // ... and once more while the dialog is open: what she sees and previews is what goes out
+  save("Newest wording: {{billsPhrase}} waiting");
+  s.querySelector("#bhAskPrev").click();
+  await until(() => !s.querySelector("#bhAskPrevBox").hidden);
+  const shown = s.querySelector("#bhAskPrevBox .bh-prev-s").textContent;
+  assert.match(shown, /^Fresh wording: 2 bills are waiting/);
+  const before = e.rows.notifications_outbox.length;
+  s.querySelector("#bhAskSend").click();
+  await until(() => e.rows.notifications_outbox.length > before);
+  const out = e.rows.notifications_outbox.slice(before);
+  assert.equal(out.length, 1, "one e-mail: the usual approver");
+  assert.equal(out[0].subject, shown, "the subject previewed is the subject sent");
+  assert.equal(e.rows.money_messages.find((m) => m.id === out[0].money_message_id).subject, shown);
+  nav.closeSheet();
+});
+
+test("Ask to approve says when the reminder PC is not taking e-mails - read when the dialog opens, wherever it is opened from (the bill page gives it nothing)", { skip }, async () => {
+  const e = await freshEngine();
+  const me = await as(e, "accountant");
+  const d = await homeRepo.loadHome(me);
+  const bill = d.waiting.find((b) => b.projectNumber === "A303");
+  const dev = e.exts.find((x) => x.name === "p8-books").__dev;
+  for (const [pc, want] of [[{ notTaking: true }, /isn't sending e-mails right now/], [{ paused: true }, /is paused/], [{ seenMinutesAgo: 240 }, /last heard from 4 hours ago/]]) {
+    dev.pcStatus(pc);
+    await ask.openAsk({ bills: [bill], me, today: d.today });     // as bill.js opens it
+    const s = sheet();
+    await until(() => s.querySelector('[data-pick="0"]'));
+    const w = s.querySelector("#bhAskPc");
+    assert.ok(w && want.test(w.textContent) && /Text or call instead/.test(w.textContent), JSON.stringify(pc) + ": " + (w ? w.textContent : "no warning"));
+    assert.ok(s.querySelector(".bh-ask").firstChild === w, "at the top of the dialog");
+    nav.closeSheet();
+  }
+  dev.pcStatus({ seenMinutesAgo: 1 });
+  await ask.openAsk({ bills: [bill], me, today: d.today });
+  await until(() => sheet().querySelector('[data-pick="0"]'));
+  assert.equal(sheet().querySelector("#bhAskPc"), null, "a PC that takes e-mails: no warning");
+  nav.closeSheet();
+  dev.pcStatus(null);
+});
+
+test("the template editor keeps what was typed and not saved: over a switch of template, a reset or someone else's save of the OTHER channel; closing asks first", { skip }, async () => {
+  const e = await freshEngine();
+  const me = await as(e, "accountant");
+  await tpl.openTemplates({ me, key: "approval_request" });
+  const s = sheet();
+  await until(() => s.querySelector("#bhTplBody"));
+  const type = (id, v) => { const f = s.querySelector("#" + id); f.value = v; f.dispatchEvent({ type: "input" }); };
+  const body0 = s.querySelector("#bhTplBody").value;
+  type("bhTplBody", body0 + " MY EDIT");
+  s.querySelector('[data-key="check_ready"]').click();
+  assert.equal(s.querySelector('[data-key="check_ready"]').getAttribute("aria-selected"), "true");
+  assert.ok(!/MY EDIT/.test(s.querySelector("#bhTplBody").value), "the other template shows its own");
+  s.querySelector('[data-key="approval_request"]').click();
+  assert.equal(s.querySelector("#bhTplBody").value, body0 + " MY EDIT", "back on the template: the edit is still there");
+  // the e-mail typed, the text reset to the original: the e-mail keeps its words
+  type("bhTplSubj", "My subject {{billsPhrase}}");
+  common2.DCR2.confirm = async () => true;
+  s.querySelector('[data-reset="sms"]').click();
+  await until(() => /original/.test(s.querySelector("#bhTplMsgS").textContent));
+  assert.equal(s.querySelector("#bhTplSubj").value, "My subject {{billsPhrase}}", "the e-mail's subject survives the text's reset");
+  assert.equal(s.querySelector("#bhTplBody").value, body0 + " MY EDIT", "and its body");
+  // someone else saves the text meanwhile and mine is refused (PT409): theirs on the text, mine still on the e-mail
+  const admin = await person("admin");
+  const row = e.rows.message_templates.find((x) => x.key === "approval_request" && x.channel === "sms");
+  e.rpc({ uid: admin.id }, "save_message_template", { p_key: "approval_request", p_channel: "sms", p_subject: null, p_body: "Hi {{approverFirstName}}, the office wrote this.", p_version: row.version });
+  useClient(clientAs(e, me.id));
+  type("bhTplSms", "Hi {{approverFirstName}}, mine.");
+  s.querySelector('[data-save="sms"]').click();
+  await until(() => /someone else/i.test(s.querySelector("#bhTplMsgS").textContent));
+  assert.equal(s.querySelector("#bhTplSms").value, "Hi {{approverFirstName}}, the office wrote this.");
+  assert.equal(s.querySelector("#bhTplSubj").value, "My subject {{billsPhrase}}", "the e-mail keeps what was typed");
+  // closing with words not saved asks first: No keeps the sheet open, Yes closes it
+  let asked = 0;
+  common2.DCR2.confirm = async () => { asked++; return false; };
+  s.querySelector("#bhSheetX").click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert.ok(asked === 1 && !s.hidden, "asked, and kept open");
+  common2.DCR2.confirm = async () => { asked++; return true; };
+  s.querySelector("#bhSheetX").click();
+  await until(() => s.hidden);
+  assert.equal(asked, 2);
+  // saved: nothing to ask about
+  await tpl.openTemplates({ me, key: "check_ready" });
+  const s2 = sheet();
+  await until(() => s2.querySelector("#bhTplSms"));
+  type("bhTplSms", "Hi {{firstName}}, it is ready at the office.");
+  s2.querySelector('[data-save="sms"]').click();
+  await until(() => /^Saved/.test(s2.querySelector("#bhTplMsgS").textContent));
+  assert.equal(e.rows.message_templates.find((x) => x.key === "check_ready" && x.channel === "sms").body, "Hi {{firstName}}, it is ready at the office.", "saved");
+  s2.querySelector("#bhSheetX").click();
+  await until(() => s2.hidden);
+  assert.equal(asked, 2, "nothing unsaved: closed unasked");
+});
+
+test("the Call step: its tel: link and \u2713 Told by phone stay open over the page's redraw (back from the phone's dialer, the 30 s poll) until the call is recorded", { skip }, async () => {
+  const e = await freshEngine();
+  const me = await as(e, "accountant");
+  page._test.state.me = me;
+  page._test.state.d = await homeRepo.loadHome(me);
+  page._test.render();
+  const body = document.getElementById("bhBody");
+  const btn = body.querySelectorAll('[data-tell="call"]').find((b) => !b.disabled);
+  assert.ok(btn, "a payee with a phone on file");
+  const key = btn.getAttribute("data-g");
+  const box = () => body.querySelectorAll("[data-call]").find((x) => x.getAttribute("data-call") === key) || null;
+  btn.click();
+  await tick();
+  assert.ok(!box().hidden && /\u2713 Told by phone/.test(box().textContent) && box().querySelector('a[href^="tel:"]'), "the call step");
+  // back from the dialer: the page reads everything again and draws it again
+  page._test.state.d = await homeRepo.loadHome(me);
+  page._test.render();
+  assert.ok(box() && !box().hidden && /\u2713 Told by phone/.test(box().textContent) && box().querySelector('a[href^="tel:"]'), "still open after the redraw");
+  const g = page._test.state.d.tellGroups.find((x) => x.key === key);
+  // another group's call box stays shut
+  assert.ok(body.querySelectorAll("[data-call]").filter((x) => x.getAttribute("data-call") !== key).every((x) => x.hidden));
+  box().querySelector("button").click();
+  await until(() => g.payments.every((p) => e.rows.payments.find((x) => x.id === p.paymentId).pickup_told_at));
+  assert.ok(g.payments.every((p) => e.rows.payments.find((x) => x.id === p.paymentId).pickup_told_how === "phone"), "told by phone");
+  // recorded: the step is forgotten - a later redraw opens no call box
+  page._test.state.d = await homeRepo.loadHome(me);
+  page._test.render();
+  assert.ok(body.querySelectorAll("[data-call]").every((x) => x.hidden), "no call step open");
+});

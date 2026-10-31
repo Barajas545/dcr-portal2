@@ -15,7 +15,10 @@
    * approvalLog(me, from, to)      money_messages (approval requests made in the period), the bills they named and
                                     their jobs, and the people's names;
    * moneyHistory(me, from, to)     money_events of the period (newest first, at most HISTORY_MAX), the bills, jobs and
-                                    contacts (a vendor's details, a pick-up's payee) they name. */
+                                    contacts (a vendor's details, a pick-up's payee) they name.
+   A database without the four functions yet (release B part 2a is published and pushed on its own, before 2b's
+   migration): each of them says so in plain words (NOT_YET, reportsMissing), never "the website and the database do
+   not match"; the approval log and the money history (M3 / M4) work without them. */
 
 import { db, must, idOf, forbidden, pageAll } from "./_db.js";
 import { nameBook } from "./people.js";
@@ -30,6 +33,26 @@ export const CONTACT_COLS = "id, name, company";
 export const EVENT_COLS = "id, at, actor_id, actor_name, kind, project_id, bill_id, payment_id, file_id, contact_id, message_id, amount, detail";
 export const HISTORY_MAX = 5000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+export const NOT_YET = "This report is not in the database yet: it comes with the next database update (the Books reports). " +
+  "The approval requests and the money history work already.";
+/** The report functions are not in this database yet (20261030000500_books_reports not pushed, or rolled back alone). */
+export function reportsMissing(e) {
+  const code = String((e && e.code) || "");
+  return code === "PGRST202" || code === "42883";
+}
+function notYet() {
+  const e = new Error(NOT_YET);
+  e.own = true; e.kind = "schema"; e.code = "PGRST202"; e.status = 404;
+  return e;
+}
+/* one of the four report functions, as me; not there yet: NOT_YET */
+async function report(c, name, args) {
+  try { return rowsOf(must(await c.rpc(name, args))); } catch (e) {
+    if (reportsMissing(e)) throw notYet();
+    throw e;
+  }
+}
 
 /** Who may read the reports: the financials AND prices switches (app.books_reader). */
 export function seesReports(me) {
@@ -70,28 +93,28 @@ async function billsAndJobs(c, billIds, projectIds) {
 export async function apAging(me, asOf) {
   if (!seesReports(me)) throw noReports();
   const c = await db();
-  return rowsOf(must(await c.rpc("books_ap_aging", { p_as_of: day(asOf) })));
+  return report(c, "books_ap_aging", { p_as_of: day(asOf) });
 }
 
 export async function vendorBalances(me) {
   if (!seesReports(me)) throw noReports();
   const c = await db();
-  return rowsOf(must(await c.rpc("books_vendor_balances", {})));
+  return report(c, "books_vendor_balances", {});
 }
 
 export async function worksheet1099(me, year, threshold) {
   if (!seesReports(me)) throw noReports();
   const y = Number(year);
   const c = await db();
-  return rowsOf(must(await c.rpc("books_1099", { p_year: Number.isInteger(y) ? y : null,
-    p_threshold: threshold === null || threshold === undefined || threshold === "" ? null : Number(threshold) })));
+  return report(c, "books_1099", { p_year: Number.isInteger(y) ? y : null,
+    p_threshold: threshold === null || threshold === undefined || threshold === "" ? null : Number(threshold) });
 }
 
 export async function paymentsByMonth(me, from, to) {
   if (!seesReports(me)) throw noReports();
   if (!day(from) || !day(to)) throw badDay();
   const c = await db();
-  return rowsOf(must(await c.rpc("books_payments_by_month", { p_from: day(from), p_to: day(to) })));
+  return report(c, "books_payments_by_month", { p_from: day(from), p_to: day(to) });
 }
 
 /* ── plain reads ── */

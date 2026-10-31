@@ -296,7 +296,7 @@ test("search carries the picture (rpc search: picture_path on a contact hit); ma
 
 test("The Books read the contacts with their picture and version (repo/books.js CONTACT_COLS)", { skip }, async () => {
   await setup();
-  assert.equal(books.CONTACT_COLS, "id, name, company, email, phone, picture_path, deleted_at, version");
+  assert.equal(books.CONTACT_COLS, "id, name, company, kind, email, phone, picture_path, deleted_at, version");
   as("accountant");
   const d = await books.loadDesk(me("accountant"));
   const rows = Array.from(d.links.contacts.values());

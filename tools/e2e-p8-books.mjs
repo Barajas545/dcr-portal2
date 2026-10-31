@@ -10,8 +10,9 @@
    Edge headless:
 
    1. landing: the accountant with no ?next lands on the Accounting page; ?next=my-tasks.html still wins; the admin
-      lands on Home; the installed app (a fresh session opening Home, kept signed in) is sent there once, and Home from
-      the page then stays Home;
+      lands on Home; the installed app kept signed in (a fresh session opening Home) is sent there once, and Home from
+      the page then stays Home; the installed app signed out and NOT kept (Home -> the sign-in page with no ?next= ->
+      sign in) lands there too, once;
    2. roles: the admin and the demo approver open it from Home's "Accounting" card (its "N to do"); a manager without
       financials, a lead, field and view-only have no card, and the page itself refuses them with no amount on it;
    3. Ask to approve: two bills of one job ticked, the usual approver ticked for her; an e-mail to one (one outbox row,
@@ -217,6 +218,24 @@ async function main() {
       await shoot(inst, "home_installed_accountant", "phone", false, false);
       // the kept sign-in goes: the other tabs sign in on their own
       await inst.eval("['dcr2-auth','dcr2-auth-profile'].forEach((k) => localStorage.removeItem(k)); true");
+      // the installed app signed out and NOT kept (every launch without "Keep me signed in"; the kept sign-in is gone
+      // now): Home -> the sign-in page with NO ?next= (common2.js signInHref) -> signed in -> the Accounting page; Home
+      // then stays Home for the session
+      const cold = await newPage(cdp, "not-kept", OUT); pages.push(cold);
+      await cold.size(390, 844, true);
+      await cold.goto(base + "/manifest.json", 50);
+      await cold.eval("['dcr2-auth','dcr2-auth-profile'].forEach(k => { localStorage.removeItem(k); sessionStorage.removeItem(k); }); sessionStorage.removeItem('dcr2-auth-mode'); sessionStorage.removeItem('dcr2_landed'); true");
+      await cold.goto(base + "/dashboard.html", 300);
+      await cold.until("location.pathname === '/index.html' && !!document.getElementById('loginForm') && !!window.DCR2Demo && !document.getElementById('loginFields').disabled", 10000);
+      check("1g. the installed app signed out: Home sends her to the sign-in page with no ?next= (Home's own would be explicit)", !/next=/.test(await cold.eval("location.search")), await cold.eval("location.search"));
+      await cold.eval("document.getElementById('email').value='accountant@demo.test';document.getElementById('password').value='demo-password-1';" +
+        "document.getElementById('remember').checked=false;document.getElementById('loginForm').requestSubmit();true");
+      await cold.until("location.pathname === '/books-home.html' && " + HOME, 15000);
+      check("1h. ... signed in, not kept: the Accounting page (I29)", true);
+      await shoot(cold, "landing_not_kept_accountant", "phone", false, false);
+      await cold.goto(base + "/dashboard.html", 300);
+      await sleep(1800);
+      check("1i. Home then stays Home for the session", (await cold.eval("location.pathname")) === "/dashboard.html", await cold.eval("location.pathname"));
     }, acc);
 
     /* ── 2. roles ─────────────────────────────────────────────────────── */

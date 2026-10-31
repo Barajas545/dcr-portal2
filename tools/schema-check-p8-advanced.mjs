@@ -19,6 +19,9 @@
      added meanwhile; a money editor writes (a manager with financials too), a manager without financials and a lead
      are refused; nobody deletes; no tax id column;
    * the approval log and the money history are read for the reports' people only;
+   * release B part 2a on its own (the four report functions not in the schema cache: M5 not pushed yet, or rolled back
+     alone): the vendor list gives the facts (noSums) and no amount, each report says repo/books-reports.js NOT_YET in
+     plain words, and the approval log and the money history still read;
    * drift: the demo database (tools/fake/p8-advanced.js) has the real columns and the functions' arguments.
    Made-up people and jobs only. */
 import path from "node:path";
@@ -270,6 +273,36 @@ export async function run(h) {
     ok(vc.length >= 2, "the changes are in the money history");
     same(vc.map((x) => [x.vendor, x.detail]).slice(-2).reverse(), [["Madeup Aspenmade Framing", "added: 1099, legal name, insurance date, workers' comp exempt, license"],
       ["Madeup Aspenmade Framing", "changed: W-9 date"]], "the database's own detail keys in words, with the vendor (oldest first)");
+  });
+
+  await check("P8 advanced: release B part 2a on its own - the report functions not in the schema cache: the vendor list is the facts (noSums), each report says it is not in the database yet, the approval log and the money history read", async () => {
+    const names = ["books_ap_aging", "books_vendor_balances", "books_1099", "books_payments_by_month"];
+    const kept = {};
+    names.forEach((n) => { kept[n] = F[n]; delete F[n]; });
+    try {
+      await as("accountant");
+      const who = await me("accountant");
+      ok(who.can_see_prices, "the accountant sees prices: the sums are asked for");
+      const d = await vendors.loadVendors(who);
+      ok(d.noSums && !d.prices && d.vendors.some((v) => v.contactId === J.aspen), "the facts, the made-up subcontractor listed");
+      for (const v of d.vendors) ok(!("owed" in v) && !("paidYtd" in v), "no amount in " + v.name);
+      for (const [fn, call] of [["apAging", () => reports.apAging(who, today)], ["vendorBalances", () => reports.vendorBalances(who)],
+        ["worksheet1099", () => reports.worksheet1099(who, year, null)], ["paymentsByMonth", () => reports.paymentsByMonth(who, today.slice(0, 4) + "-01-01", today)]]) {
+        let err = null;
+        try { await call(); } catch (e) { err = e; }
+        ok(err && err.message === reports.NOT_YET && err.own, fn + ": " + (err ? err.code + " " + err.message : "no refusal"));
+      }
+      const log = await reports.approvalLog(who, today.slice(0, 4) + "-01-01", today);
+      ok(Array.isArray(log.messages), "the approval log reads");
+      const hist = await reports.moneyHistory(who, today.slice(0, 4) + "-01-01", today);
+      ok(Array.isArray(hist.events), "the money history reads");
+    } finally {
+      names.forEach((n) => { F[n] = kept[n]; });
+    }
+    // any other refusal is not taken for "not yet"
+    await as("approver");
+    const ap = await me("approver");
+    await refused(() => reports.apAging(ap, today), "42501", "no prices: refused as before");
   });
 
   await check("P8 advanced: drift - the demo database (tools/fake/p8-advanced.js) has the real columns and the report functions' arguments", async () => {

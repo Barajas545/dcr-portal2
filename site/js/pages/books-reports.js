@@ -27,8 +27,9 @@ import { seesBooks, fmtMoney, toCsv, plural, shortDay } from "../map/books.js";
 import { ymd } from "../map/pacific.js";
 
 const h = esc;
+// asOf / from / to / year / threshold: what the controls hold; shown: the same, as they were when the rows were read
 const state = { me: null, today: "", report: "aging", asOf: "", preset: "30", from: "", to: "", year: null, threshold: null, group: "", q: "",
-  rows: null, extra: null, error: "", busy: false, seq: 0 };
+  rows: null, shown: null, extra: null, error: "", busy: false, seq: 0 };
 const m = (v) => h(fmtMoney(v));
 
 /* ── the controls of each report ── */
@@ -56,19 +57,25 @@ function ctlHtml() {
   }
 }
 
+/* The day, period or year the shown rows were read for: what every sentence about them, the print header and the
+   CSV's name say - never a period picked in the controls and not read yet. */
+function shownSpan() { return state.rows && state.shown ? state.shown : state; }
+
 function periodText() {
+  const sp = shownSpan();
   switch (state.report) {
-    case "aging": return "as of " + periodWords(state.asOf, state.asOf);
+    case "aging": return "as of " + periodWords(sp.asOf, sp.asOf);
     case "vendors": return "today, " + periodWords(state.today, state.today);
-    case "1099": return String(state.year || years1099(state.today)[0]) + " · threshold " + fmtMoney(state.threshold === null ? threshold1099(state.year || years1099(state.today)[0]) : state.threshold);
-    default: return periodWords(state.from, state.to);
+    case "1099": return String(sp.year || years1099(state.today)[0]) + " · threshold " + fmtMoney(sp.threshold === null ? threshold1099(sp.year || years1099(state.today)[0]) : sp.threshold);
+    default: return periodWords(sp.from, sp.to);
   }
 }
 
 /* ── the reports' tables ── */
 
 function agingHtml(rows) {
-  if (!rows.length) return '<div class="ac-none">Nothing was owed to a vendor on ' + h(periodWords(state.asOf, state.asOf)) + ".</div>";
+  const sp = shownSpan();
+  if (!rows.length) return '<div class="ac-none">Nothing was owed to a vendor on ' + h(periodWords(sp.asOf, sp.asOf)) + ".</div>";
   const t = agingTotals(rows);
   return '<div class="rp-sum"><b>' + m(t.total) + "</b> owed to " + h(plural(rows.length, "vendor", "vendors")) + " on " + h(plural(t.openBills, "open bill", "open bills")) +
     (t.waiting > 0 ? " · " + m(t.waiting) + " of it still waits for an approval" : "") + ".</div>" +
@@ -99,8 +106,9 @@ function vendorsHtml(rows) {
 }
 
 function w1099Html(rows) {
-  const y = state.year || years1099(state.today)[0];
-  let s = '<div class="vd-words"><b>' + h(thresholdWords(y, state.threshold)) + "</b> For this view only: it is never saved. Card payments and materials suppliers' bills don't count. " +
+  const sp = shownSpan();
+  const y = sp.year || years1099(state.today)[0];
+  let s = '<div class="vd-words"><b>' + h(thresholdWords(y, sp.threshold)) + "</b> For this view only: it is never saved. Card payments and materials suppliers' bills don't count. " +
     "A worksheet, not a filing.</div>";
   if (!rows.length) return s + '<div class="ac-none">Nobody was paid in ' + h(y) + ".</div>";
   const n = rows.filter((r) => r.reportable).length;
@@ -116,10 +124,11 @@ function w1099Html(rows) {
 }
 
 function monthsHtml(rows) {
-  if (!rows.length) return '<div class="ac-none">No payment is dated ' + h(periodWords(state.from, state.to)) + ".</div>";
+  const sp = shownSpan();
+  if (!rows.length) return '<div class="ac-none">No payment is dated ' + h(periodWords(sp.from, sp.to)) + ".</div>";
   const groups = monthTotals(rows);
   const all = groups.reduce((n, g) => n + g.total, 0), count = groups.reduce((n, g) => n + g.payments, 0);
-  let s = '<div class="rp-sum"><b>' + m(all) + "</b> in " + h(plural(count, "payment", "payments")) + " · " + h(periodWords(state.from, state.to)) + ".</div>" +
+  let s = '<div class="rp-sum"><b>' + m(all) + "</b> in " + h(plural(count, "payment", "payments")) + " · " + h(periodWords(sp.from, sp.to)) + ".</div>" +
     '<div class="rp-scroll"><table class="ac-t rp-t" id="rpTable"><thead><tr><th>Method</th><th class="num">Payments</th><th class="num">Total</th>' +
     '<th class="num">Voided</th><th class="num">Cleared</th><th class="num">Not cleared</th></tr></thead><tbody>';
   groups.forEach((g) => {
@@ -135,8 +144,9 @@ function monthsHtml(rows) {
 }
 
 function approvalsHtml(rows) {
-  if (!rows.length) return '<div class="ac-none">Nobody was asked to approve a bill ' + h(periodWords(state.from, state.to)) + ".</div>";
-  return '<div class="rp-sum"><b>' + h(plural(rows.length, "request", "requests")) + "</b> · " + h(periodWords(state.from, state.to)) + ".</div>" +
+  const sp = shownSpan();
+  if (!rows.length) return '<div class="ac-none">Nobody was asked to approve a bill ' + h(periodWords(sp.from, sp.to)) + ".</div>";
+  return '<div class="rp-sum"><b>' + h(plural(rows.length, "request", "requests")) + "</b> · " + h(periodWords(sp.from, sp.to)) + ".</div>" +
     '<div class="rp-scroll"><table class="ac-t rp-t" id="rpTable"><thead><tr><th>Asked</th><th>Who</th><th>How</th><th>Outcome</th><th>Bills</th><th>Approved</th></tr></thead><tbody>' +
     rows.map((r) => "<tr><td>" + h(r.atWords) + '<span class="sub">by ' + h(r.byName || "someone") + "</span></td>" +
       '<td><span class="who">' + h(r.toName) + "</span></td><td>" + h(r.how) + '</td><td class="st ' + h(r.outcomeCls) + '">' + h(r.outcome) + "</td>" +
@@ -146,9 +156,10 @@ function approvalsHtml(rows) {
 }
 
 function historyHtml(rows, capped) {
+  const sp = shownSpan();
   const list = filterEvents(rows, { group: state.group, q: state.q });
-  if (!list.length) return '<div class="ac-none">' + (rows.length ? "None of these." : "Nothing changed " + h(periodWords(state.from, state.to)) + ".") + "</div>";
-  return '<div class="rp-sum"><b>' + h(plural(list.length, "change", "changes")) + "</b> · " + h(periodWords(state.from, state.to)) +
+  if (!list.length) return '<div class="ac-none">' + (rows.length ? "None of these." : "Nothing changed " + h(periodWords(sp.from, sp.to)) + ".") + "</div>";
+  return '<div class="rp-sum"><b>' + h(plural(list.length, "change", "changes")) + "</b> · " + h(periodWords(sp.from, sp.to)) +
     (capped ? " · the newest " + h(String(repo.HISTORY_MAX)) + " only: pick a shorter period" : "") + ".</div>" +
     '<div class="rp-scroll"><table class="ac-t rp-t" id="rpTable"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Bill or vendor</th><th class="num">Amount</th><th>Detail</th></tr></thead><tbody>' +
     list.map((e) => "<tr><td>" + h(e.atWords) + '</td><td>' + h(e.actor) + '</td><td><span class="who">' + h(e.what) + "</span></td>" +
@@ -194,7 +205,7 @@ function paintOut() {
   const out = document.getElementById("rpOut");
   if (out) out.innerHTML = outHtml();
   const csv = document.getElementById("rpCsv");
-  if (csv) csv.disabled = !(state.rows && csvRows().length);
+  if (csv) csv.disabled = state.busy || !(state.rows && csvRows().length);
 }
 
 function render() {
@@ -207,7 +218,8 @@ function render() {
   on("rpPreset", "change", () => {
     const v = document.getElementById("rpPreset").value;
     state.preset = v;
-    if (v !== "custom") { const p = periodOf(v, state.today); state.from = p.from; state.to = p.to; document.getElementById("rpFrom").value = p.from; document.getElementById("rpTo").value = p.to; }
+    // a period picked is shown at once: the rows, their words, the print header and the CSV's name agree
+    if (v !== "custom") { const p = periodOf(v, state.today); state.from = p.from; state.to = p.to; document.getElementById("rpFrom").value = p.from; document.getElementById("rpTo").value = p.to; run(); }
   });
   ["rpFrom", "rpTo"].forEach((id) => on(id, "change", () => { state.preset = "custom"; const s = document.getElementById("rpPreset"); if (s) s.value = "custom"; }));
   on("rpYear", "change", () => { const s = document.getElementById("rpYear"), t = document.getElementById("rpThreshold"); if (t) t.placeholder = fmtMoney(threshold1099(Number(s.value))); });
@@ -235,7 +247,7 @@ function readCtl() {
 function pick(id) {
   if (!REPORTS.some((r) => r.id === id) || id === state.report) return;
   state.report = id;
-  state.rows = null; state.extra = null; state.error = "";
+  state.rows = null; state.shown = null; state.extra = null; state.error = "";
   // payments by month opens on this year, unless the days were picked by hand
   if (id === "months" && state.preset !== "custom") { state.preset = "year"; const y = periodOf("year", state.today); state.from = y.from; state.to = y.to; }
   try { history.replaceState(null, "", "#" + id); } catch (e) { /* */ }
@@ -248,6 +260,9 @@ export async function run() {
   const seq = ++state.seq;
   const me = state.me;
   state.error = "";
+  if (state.report === "1099" && !state.year) state.year = years1099(state.today)[0];
+  // what this read is for: the shown rows' words say it until the next read lands
+  const asked = { asOf: state.asOf, from: state.from, to: state.to, year: state.year, threshold: state.threshold };
   if (state.report === "aging" && !/^\d{4}-\d{2}-\d{2}$/.test(state.asOf)) { state.error = "Pick the day."; state.rows = null; paintOut(); return; }
   if (state.report === "1099" && Number.isNaN(state.threshold)) { state.error = "Type the threshold as dollars, e.g. 2000."; state.rows = null; paintOut(); return; }
   if (["months", "approvals", "history"].indexOf(state.report) !== -1) {
@@ -259,21 +274,17 @@ export async function run() {
   let rows = null, extra = null;
   try {
     switch (state.report) {
-      case "aging": rows = (await repo.apAging(me, state.asOf)).map(toAging); break;
+      case "aging": rows = (await repo.apAging(me, asked.asOf)).map(toAging); break;
       case "vendors": rows = (await repo.vendorBalances(me)).map(toVendor); break;
-      case "1099": {
-        if (!state.year) state.year = years1099(state.today)[0];
-        rows = (await repo.worksheet1099(me, state.year, state.threshold)).map(to1099);
-        break;
-      }
-      case "months": rows = (await repo.paymentsByMonth(me, state.from, state.to)).map(toMonth); break;
+      case "1099": rows = (await repo.worksheet1099(me, asked.year, asked.threshold)).map(to1099); break;
+      case "months": rows = (await repo.paymentsByMonth(me, asked.from, asked.to)).map(toMonth); break;
       case "approvals": {
-        const x = await repo.approvalLog(me, state.from, state.to);
+        const x = await repo.approvalLog(me, asked.from, asked.to);
         rows = approvalRows(x.messages, x);
         break;
       }
       default: {
-        const x = await repo.moneyHistory(me, state.from, state.to);
+        const x = await repo.moneyHistory(me, asked.from, asked.to);
         rows = x.events.map((e) => toEvent(e, x));
         extra = { capped: x.capped };
       }
@@ -289,13 +300,14 @@ export async function run() {
   if (seq !== state.seq) return;
   state.busy = false;
   state.rows = rows;
+  state.shown = asked;
   state.extra = extra;
   paintOut();
 }
 
 function printHead() {
   const head = document.getElementById("rpPrintHead");
-  if (head) head.textContent = printLine(titleOf(), periodText(), state.today, state.me && state.me.name, state.rows ? csvRows().length : undefined);
+  if (head) head.textContent = printLine(titleOf(), periodText(), state.today, state.me && state.me.name, state.rows && !state.busy ? csvRows().length : undefined);
 }
 
 function save(text, name, n) {
@@ -312,9 +324,10 @@ function save(text, name, n) {
 
 function downloadCsv() {
   const rows = csvRows();
-  if (!rows.length) return;
-  const span = state.report === "aging" ? [state.asOf] : state.report === "vendors" || state.report === "1099" ? [state.today] : [state.from, state.to];
-  const name = state.report === "1099" ? "1099-" + (state.year || "") : (REPORTS.find((r) => r.id === state.report) || {}).label || state.report;
+  if (!rows.length || state.busy) return;
+  const sp = shownSpan();
+  const span = state.report === "aging" ? [sp.asOf] : state.report === "vendors" || state.report === "1099" ? [state.today] : [sp.from, sp.to];
+  const name = state.report === "1099" ? "1099-" + (sp.year || "") : (REPORTS.find((r) => r.id === state.report) || {}).label || state.report;
   save(toCsv(rows, COLUMNS[state.report]), csvFile(name, span[0], span[1]), rows.length);
 }
 

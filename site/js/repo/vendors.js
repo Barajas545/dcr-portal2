@@ -9,7 +9,9 @@
                           subcontractor, supplier and service contacts and the vendor_profiles rows - the facts only.
                           Both: the vendor_profiles rows (notes and version, for the edit sheet) and the contacts behind
                           the vendors (their pictures, for the avatars and the contact card) -> {vendors (map/vendors.js),
-                          contacts: Map, prices, today, can};
+                          contacts: Map, prices (amounts were read), noSums, today, can}. A database without
+                          books_vendor_balances yet (release B part 2a pushed on its own, or 2b rolled back alone): the
+                          facts only, as without prices, and noSums: true - the page says the amounts come later;
    * saveProfile(v, fields)   the vendor details, an UPSERT on contact_id for the money editors that never overwrites
                           anyone silently: a vendor with no details yet is inserted (ON CONFLICT DO NOTHING - when
                           somebody added them meanwhile nothing is written and the answer is "changed by someone else",
@@ -19,6 +21,7 @@
 import { db, must, idOf, forbidden, conflict } from "./_db.js";
 import { contactRows } from "./contacts.js";
 import { seesBooks, canMoney } from "../map/books.js";
+import { reportsMissing } from "./books-reports.js";
 import { toVendor, factsVendor, withProfiles, sortVendors, profileBody, profileProblem } from "../map/vendors.js";
 import { ymd } from "../map/pacific.js";
 
@@ -59,12 +62,20 @@ export async function loadVendors(me) {
   const profiles = must(await c.from("vendor_profiles").select(PROFILE_COLS).order("contact_id", { ascending: true })) || [];
   let vendors;
   let contacts;
+  let noSums = false;
   if (prices) {
-    const rows = must(await c.rpc("books_vendor_balances", {})) || [];
-    vendors = (Array.isArray(rows) ? rows : []).map(toVendor);
-    const ids = vendors.map((v) => v.contactId).filter((x) => x !== null);
-    contacts = await contactRows(async (cols) => byIds(c, "contacts", cols, "id", ids), CONTACT_COLS);
-  } else {
+    let rows = null;
+    try { rows = must(await c.rpc("books_vendor_balances", {})) || []; } catch (e) {
+      if (!reportsMissing(e)) throw e;
+      noSums = true;
+    }
+    if (!noSums) {
+      vendors = (Array.isArray(rows) ? rows : []).map(toVendor);
+      const ids = vendors.map((v) => v.contactId).filter((x) => x !== null);
+      contacts = await contactRows(async (cols) => byIds(c, "contacts", cols, "id", ids), CONTACT_COLS);
+    }
+  }
+  if (!prices || noSums) {
     // the facts only: the vendor contacts, and any contact with vendor details
     const kinds = await contactRows(async (cols) => must(await c.from("contacts").select(cols).in("kind", VENDOR_KINDS.slice()).is("deleted_at", null)) || [], CONTACT_COLS);
     const extra = profiles.map((p) => p.contact_id).filter((id) => !kinds.some((k) => String(k.id) === String(id)));
@@ -76,7 +87,7 @@ export async function loadVendors(me) {
   return {
     vendors: sortVendors(withProfiles(vendors, profiles)),
     contacts: new Map((contacts || []).map((k) => [String(k.id), k])),
-    profiles, prices, today,
+    profiles, prices: prices && !noSums, noSums, today,
     can: { money: canMoney(me) },
   };
 }

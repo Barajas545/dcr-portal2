@@ -7,9 +7,13 @@
      (I19: whoever approved this job's latest bill, else this vendor's, else nobody) is ticked for her.
    * How, per person: E-mail (automatic - the reminder PC sends it) when there is an address on file, Text (by hand)
      when there is a mobile number; a channel with nothing on file is off and says so.
-   * The message: the template's text (message_templates), editable for THIS ask only (I17: the database checks the
-     edit by the template's own rules - no amount, no link or address, only its placeholders); [Preview] shows it
-     exactly as it would be stored (rpc preview_message_template - the database renders, never the page).
+   * The message: the template's text (message_templates, read when the dialog opens - never a page's older copy),
+     editable for THIS ask only (I17: the database checks the edit by the template's own rules - no amount, no link or
+     address, only its placeholders); [Preview] shows it exactly as it would be stored (rpc preview_message_template -
+     the database renders, never the page), and Send sends that same text (the boxes, edited or not), so a template
+     saved meanwhile elsewhere never goes out in place of what she saw.
+   * The reminder PC (rpc reminder_pc_status, read when the dialog opens): paused, off or not taking e-mails - said at
+     the top, so she texts or calls instead (risk 1), wherever the dialog was opened from.
    * Send: ONE rpc ask_for_approval(p_bill_ids, p_to [{profile, channel}], p_subject, p_body, p_sms_body). Each e-mail is
      queued (and said so); each text comes back as a draft with its number and body - the hand-text box ([Open the
      text], [Copy the text], [I sent it], [Not sent]: pages/tell-payee.js textStep). A refusal is said in the database's
@@ -21,7 +25,7 @@ import { esc, toast, errorText, can } from "./shell.js";
 import { openSheet } from "./books-nav.js";
 import { textStep } from "./tell-payee.js";
 import * as mm from "../repo/money-messages.js";
-import { LIMITS, CHANNEL_LABELS, lengthProblem, smsCount, messageError, messageStatus, phoneWords } from "../map/money-messages.js";
+import { LIMITS, CHANNEL_LABELS, lengthProblem, smsCount, messageError, messageStatus, phoneWords, pcWarning } from "../map/money-messages.js";
 import { shortDay, daysLate } from "../map/books.js";
 
 const h = esc;
@@ -52,12 +56,14 @@ export function approverHtml(a, i) {
     "</div>" + (none ? '<div class="ac-note">Nothing on file to reach them by: call them, or add their e-mail or phone in DCR Desktop 2.</div>' : "") + "</div>";
 }
 
-/** The dialog's body (see the header). tpl: {email: {subject, body}, sms: {body}}. */
+/** The dialog's body (see the header). tpl: {email: {subject, body}, sms: {body}}; ctx: {today, pc (reminder_pc_status)}. */
 export function askHtml(bills, approvers, tpl, ctx) {
   const c = ctx || {};
   const t = tpl || {};
   const e = t.email || {}, s = t.sms || {};
-  let out = '<div class="bh-ask"><div class="bh-bills"><b>' + h(bills.length === 1 ? "1 bill" : bills.length + " bills") + "</b><ul>" +
+  const warn = pcWarning(c.pc);
+  let out = '<div class="bh-ask">' + (warn ? '<div class="bh-pc sm" id="bhAskPc" role="status">' + h(warn) + "</div>" : "") +
+    '<div class="bh-bills"><b>' + h(bills.length === 1 ? "1 bill" : bills.length + " bills") + "</b><ul>" +
     bills.map((b) => "<li>" + h(billLine(b, c.today)) + "</li>").join("") + "</ul></div>";
   out += '<fieldset class="bh-who"><legend>Who can approve</legend><div class="ac-note" style="margin:0 0 6px">' +
     (approvers.some((a) => a.usual) ? "Ticked: the usual approver for these jobs." : "Nobody is ticked: no usual approver for these jobs yet.") + "</div>";
@@ -98,8 +104,9 @@ export function chosen(root, approvers) {
   return out;
 }
 
-/** Open the dialog. o: {bills (map/books.js bills), me, templates (repo/money-messages.js templates()), today,
-    onDone()} -> a promise of the database's answer once sent (null when nothing was). */
+/** Open the dialog. o: {bills (map/books.js bills), me, templates (the page's copy of repo/money-messages.js
+    templates(): only when they cannot be read now), today, onDone()} -> a promise of the database's answer once sent
+    (null when nothing was). */
 export async function openAsk(o) {
   const opt = o || {};
   if (!can(opt.me, "money")) { toast("Only an admin, or a manager or accountant with financials, asks for an approval.", "error"); return null; }
@@ -108,16 +115,18 @@ export async function openAsk(o) {
   let sent = null;
   const sh = openSheet({ title: "Ask to approve — " + (bills.length === 1 ? "1 bill" : bills.length + " bills"), wide: true,
     html: '<div class="ac-none">Loading who can approve…</div>', onClose: () => { if (sent && typeof opt.onDone === "function") opt.onDone(sent); } });
-  let approvers, templates = opt.templates;
+  // read now, not the page's copy: the boxes show the template as it is stored now, and the reminder PC as it is now
+  let approvers, templates, pc;
   try {
-    [approvers, templates] = await Promise.all([mm.approvers(bills.map((b) => b.id)), templates ? Promise.resolve(templates) : mm.templates().catch(() => null)]);
+    [approvers, templates, pc] = await Promise.all([mm.approvers(bills.map((b) => b.id)), mm.templates().catch(() => null), mm.pcStatus().catch(() => null)]);
   } catch (e) {
     sh.body.innerHTML = '<div class="ac-msg err">' + h(messageError(e, errorText)) + "</div>";
     return null;
   }
   if (!sh.isOpen()) return null;
+  if (!templates) templates = opt.templates || null;
   const tpl = { email: tplOf(templates, "approval_request", "email"), sms: tplOf(templates, "approval_request", "sms") };
-  sh.body.innerHTML = askHtml(bills, approvers, tpl, { today: opt.today });
+  sh.body.innerHTML = askHtml(bills, approvers, tpl, { today: opt.today, pc });
   const $ = (id) => sh.body.querySelector("#" + id);
   const say = (t, bad) => { const n = $("bhAskMsg"); if (n) { n.textContent = t || ""; n.className = "ac-msg" + (bad ? " err" : ""); } };
   const field = (id) => { const n = $(id); return n ? n.value : ""; };
@@ -183,7 +192,10 @@ export async function openAsk(o) {
     say("Sending…");
     let r;
     try {
-      r = await mm.ask(bills.map((b) => b.id), who.map((w) => ({ profile: w.profile, channel: w.channel })), x);
+      // the text in the boxes, edited or not - what Preview showed: a template saved meanwhile never goes out instead
+      // (an empty box - no template could be read - leaves it to the database's stored one)
+      r = await mm.ask(bills.map((b) => b.id), who.map((w) => ({ profile: w.profile, channel: w.channel })),
+        { subject: x.shown.subject, body: x.shown.body, smsBody: x.shown.sms });
     } catch (e) {
       sh.setBusy(false);
       send.disabled = false;

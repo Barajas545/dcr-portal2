@@ -28,7 +28,9 @@
      switch (S4) - and the way to the check register;
    * ready to enter in QuickBooks: the approved bills with their paperwork, a CSV built here in the browser (the
      formula guard, a BOM, CRLF), "Mark entered" (rpc mark_bills_entered: refused[] is shown in full, never a silent
-     partial); money in: the invoices sent, their CSV and their own marker (rpc mark_invoices_entered);
+     partial) with the QuickBooks ref typed beside it - kept on the page's state, so a redraw (back from the QuickBooks
+     tab, the 30 s poll) never empties it; money in: the invoices sent, their CSV and their own marker (rpc
+     mark_invoices_entered);
    * not ready - and who it is on: waiting for an approval (only an admin or a manager with approve; an accountant
      NEVER approves - the bill page shows them no approve button) or for the paperwork; a money editor ticks the
      waiting ones, sees each one's LAST ASK (money_messages) and asks (pages/ask-approval.js: the usual approver ticked,
@@ -74,8 +76,10 @@ function respan() { document.querySelectorAll("td.ck-cell").forEach((td) => { td
 const money = fmtMoney;
 const h = esc;
 const POLL_MS = 30000;
+// ref / refInv: the QuickBooks refs typed beside "Mark entered" (bills / invoices) - drawn again by every render
 const state = { me: null, d: null, home: null, picked: {}, pickedInv: {}, askPicked: {}, openCheck: null, detail: null, refused: null, busy: false, mq: null,
-  timer: null, loading: null, again: false };
+  timer: null, loading: null, again: false, ref: "", refInv: "" };
+const REF_IDS = ["acRef", "acRefInv"];
 const prices = () => seesPrices(state.me);
 
 function day(v) {
@@ -459,7 +463,7 @@ function render() {
     s += table(d.ready, can.mark ? [["", 0, "c-pick"], ["Bill", 0], ["Amount", 1], ["", 1, "c-go"]] : [["Bill", 0], ["Amount", 1], ["", 1, "c-go"]], (b) => billRow(b, { pick: !!can.mark }));
     if (can.mark) {
       s += '<div class="ac-actions"><button type="button" class="ac-b" id="acAll">Select all</button>' +
-        '<input class="ac-ref" id="acRef" placeholder="QuickBooks ref (optional)" maxlength="' + REF_MAX + '" aria-label="QuickBooks reference">' +
+        '<input class="ac-ref" id="acRef" placeholder="QuickBooks ref (optional)" maxlength="' + REF_MAX + '" aria-label="QuickBooks reference" value="' + h(state.ref) + '">' +
         '<button type="button" class="ac-b go" id="acMark" disabled>&#10003; Mark entered</button><span class="hint" id="acCount"></span></div>';
     }
     s += '<div class="ac-note"><b>Before you import:</b> QuickBooks Online only imports bills from a spreadsheet on Advanced (Spreadsheet Sync) or through a ' +
@@ -478,7 +482,7 @@ function render() {
       (iv) => invoiceRow(iv, { pick: !!can.mark }));
     if (can.mark) {
       s += '<div class="ac-actions"><button type="button" class="ac-b" id="acAllInv">Select all</button>' +
-        '<input class="ac-ref" id="acRefInv" placeholder="QuickBooks ref (optional)" maxlength="' + REF_MAX + '" aria-label="QuickBooks reference for the invoices">' +
+        '<input class="ac-ref" id="acRefInv" placeholder="QuickBooks ref (optional)" maxlength="' + REF_MAX + '" aria-label="QuickBooks reference for the invoices" value="' + h(state.refInv) + '">' +
         '<button type="button" class="ac-b go" id="acMarkInv" disabled>&#10003; Mark entered</button><span class="hint" id="acCountInv"></span></div>';
     }
   }
@@ -513,11 +517,16 @@ function render() {
   }
   s += refusedBox("undo") + "</div>";
 
+  // a ref box being typed in keeps its focus and caret over the redraw (its words are on the state)
+  const act = document.activeElement;
+  const typing = act && REF_IDS.indexOf(act.id) !== -1 ? { id: act.id, a: act.selectionStart, b: act.selectionEnd } : null;
   document.getElementById("acBody").innerHTML = s;
   // my texts not marked sent: the database's number and words, as text (js/pages/tell-payee.js)
   const list = document.getElementById("acDraftList");
   if (list && state.home) state.home.drafts.forEach((m) => list.appendChild(textStep(m, { onDone: () => setTimeout(() => load(), 700) })));
   wire();
+  const back = typing ? document.getElementById(typing.id) : null;
+  if (back) { try { back.focus(); back.setSelectionRange(typing.a, typing.b); } catch (e) { /* the caret only */ } }
 }
 
 function wire() {
@@ -549,6 +558,11 @@ function wire() {
     box.querySelectorAll("[data-pickinv]").forEach((cb) => { cb.checked = !!state.pickedInv[cb.getAttribute("data-pickinv")]; });
     syncPick();
   });
+  // the QuickBooks refs live on the state: a redraw draws them again
+  const ref = document.getElementById("acRef");
+  if (ref) ref.addEventListener("input", () => { state.ref = ref.value; });
+  const refInv = document.getElementById("acRefInv");
+  if (refInv) refInv.addEventListener("input", () => { state.refInv = refInv.value; });
   const mark = document.getElementById("acMark");
   if (mark) mark.addEventListener("click", () => doMark("bills"));
   const markInv = document.getElementById("acMarkInv");
@@ -626,12 +640,15 @@ async function doMark(which) {
   const rows = bills ? state.d.ready : state.d.ar.ready;
   const ids = Object.keys(picked);
   if (!ids.length || state.busy) return;
+  const box = document.getElementById(bills ? "acRef" : "acRefInv");
+  if (box) { if (bills) state.ref = box.value; else state.refInv = box.value; }
   const amt = rows.filter((r) => picked[r.id]).reduce((t, r) => t + r.amount, 0);
   const noun = bills ? plural(ids.length, "bill", "bills") : plural(ids.length, "invoice", "invoices");
   const sure = await confirmBox("Mark " + noun + " (" + money(amt) + ") as entered in QuickBooks? This records that you have keyed them — " +
     "it does not send anything to Intuit.", { title: "Mark entered", okText: "Mark entered" });
   if (!sure) return;
-  const ref = cleanRef((document.getElementById(bills ? "acRef" : "acRefInv") || {}).value || "");
+  // the ref as typed (the state: a reload while the question was open drew the page again)
+  const ref = cleanRef((bills ? state.ref : state.refInv) || "");
   const msg = document.getElementById("acMsg");
   state.busy = true;
   syncPick();
@@ -647,7 +664,8 @@ async function doMark(which) {
     return;
   }
   const byId = bills ? state.d.byId : state.d.invoicesById;
-  if (bills) state.picked = {}; else state.pickedInv = {};
+  // marked: the picks and their ref are done with (never carried into the next batch)
+  if (bills) { state.picked = {}; state.ref = ""; } else { state.pickedInv = {}; state.refInv = ""; }
   state.refused = r.refused.length
     ? { which: bills ? "bills" : "invoices", title: r.count + " marked, " + r.refused.length + " not:", lines: refusedLines(r.refused, byId) }
     : null;
@@ -801,7 +819,9 @@ async function start() {
   await load();
 }
 
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
-else start();
+if (typeof document !== "undefined" && typeof window !== "undefined" && document.getElementById && !(window && window.__AC_TEST__)) {
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+  else start();
+}
 
-export const _test = { picture, cardsHtml, render: () => render(), state, panelSpan, checksToTell, paid30, billRow };
+export const _test = { picture, cardsHtml, render: () => render(), state, panelSpan, checksToTell, paid30, billRow, doMark: (w) => doMark(w), load: () => load() };

@@ -216,6 +216,27 @@ export async function run(h) {
     ok(/not this bill's payee/.test(bad.message), bad.message);
   });
 
+  await check("P8 books: I36 on the page - a bill with no contact whose payee a client shares (the client's id the lower): the page picks the sub, never the client, and the database takes the page's pick", async () => {
+    const MH = await site("map/books-home.js");
+    await sql("reset role");
+    // the client first (the lower id), then the sub of the same company
+    const client = (await one("insert into public.contacts (name, company, kind, email, phone) values ('Hal Hilltop', 'Madeup Hilltop Roofing', 'client', 'hal.client@example.com', '(805) 555-0185') returning id")).id;
+    const sub = (await one("insert into public.contacts (name, company, kind, email, phone) values ('Ida Hilltop', 'Madeup Hilltop Roofing', 'subcontractor', 'ida.sub@example.com', '(805) 555-0186') returning id")).id;
+    const hb = await bill(null, "Madeup Hilltop Roofing", "HILL-890", 175, true);
+    const hp = await payment(hb, "TEST-8B4", "Madeup Hilltop Roofing");
+    await as("accountant");
+    const H = await homeRepo.loadHome(await me("accountant"));
+    const g = H.tellGroups.find((x) => x.paymentIds.map(String).includes(String(hp)));
+    ok(g, "the payment is to tell");
+    ok(H.desk.links.contacts.get(String(client)).kind === "client", "the desk reads the contacts' kind (repo/books.js CONTACT_COLS)");
+    const who = MH.pickupContact(g, H.desk.links);
+    same([who.source, who.contactId, who.email], ["name", sub, "ida.sub@example.com"], "the sub, not the lower-id client");
+    const no = await refused(() => mm.tell([hp], "email", { contactId: client }), "22023", "the client is never the payee");
+    ok(/not this bill's payee/.test(no.message), no.message);
+    const m = await mm.tell([hp], "email", { contactId: who.contactId });
+    same(m.messages[0].status, "queued", "the database takes the page's pick");
+  });
+
   await check("P8 books: as the agents account - take answers its very keys (money rows masked); a bill approved first sets its ask aside; sent makes a pick-up told by e-mail; the checks feed stands down meanwhile", async () => {
     // the checks feed stands down while her e-mail about the payment waits (the automatic agent switched on for this)
     await sql("reset role");
