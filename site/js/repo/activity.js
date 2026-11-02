@@ -2,6 +2,10 @@
 
    * forProject(id, {limit, mask})       newest first: 30 for the Board's panel, 300 for a project's
                                          history (Log History, the Log tab);
+   * openTodos(id, {mask})               the project's open to-dos (notes made as to-dos, not ticked off),
+                                         ANY age, oldest first, at most 100 - the Log tab pins them on top
+                                         even when 300 newer lines came after them (DCR Desktop 2.26's
+                                         ActivityRepo.open_todos, OPEN_TODOS_MAX);
    * inWindow(fromISO, toISO, {mask})    every project's lines in [from, to), newest first, at most
                                          800, with projects(number, name) embedded;
    * addNote(projectId, text)            a note (admin, manager, accountant, lead — RLS decides);
@@ -21,6 +25,7 @@ import { nameBook } from "./people.js";
 export const PANEL_LIMIT = 30;
 export const HISTORY_LIMIT = 300;
 export const WINDOW_LIMIT = 800;
+export const OPEN_TODOS_LIMIT = 100;
 
 export async function forProject(projectId, opts) {
   opts = opts || {};
@@ -30,6 +35,18 @@ export async function forProject(projectId, opts) {
     c.from("activity").select("*").eq("project_id", idOf(projectId))
       .order("created_at", { ascending: false }).order("id", { ascending: false })
       .range(0, limit - 1).then(must),
+    nameBook(),
+  ]);
+  return (rows || []).map(function (r) { return toLogLine(r, nameOf, opts.mask); });
+}
+
+export async function openTodos(projectId, opts) {
+  opts = opts || {};
+  const c = await db();
+  const [rows, nameOf] = await Promise.all([
+    c.from("activity").select("*").eq("project_id", idOf(projectId)).eq("kind", "note").is("todo", true).is("done_at", null)
+      .order("created_at", { ascending: true }).order("id", { ascending: true })
+      .range(0, (opts.limit || OPEN_TODOS_LIMIT) - 1).then(must),
     nameBook(),
   ]);
   return (rows || []).map(function (r) { return toLogLine(r, nameOf, opts.mask); });

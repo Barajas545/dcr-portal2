@@ -2,7 +2,7 @@
 // node tests only (tests/pages-*.test.mjs). It is not the demo fake (tools/fake, PORTAL-CORE): it
 // records every call so a test can check exactly what a repo function sent.
 //
-// Supported: from(t).select(cols)/insert(obj)/update(patch) . eq/in/gte/lt/order/range . then;
+// Supported: from(t).select(cols)/insert(obj)/update(patch) . eq/in/gte/lt/is/order/range . then;
 // embeds "prices:project_prices(*)" and "projects(number, name)"; rpc(name, args) through a handler
 // map; storage.from(b).createSignedUrl(s). Versioned updates bump version like t90_audit.
 // Made-up sandbox data only.
@@ -40,6 +40,7 @@ export function makeClient(seed, handlers) {
   Query.prototype.in = function (c, v) { this.filters.push(["in", c, v]); return this; };
   Query.prototype.gte = function (c, v) { this.filters.push(["gte", c, v]); return this; };
   Query.prototype.lt = function (c, v) { this.filters.push(["lt", c, v]); return this; };
+  Query.prototype.is = function (c, v) { this.filters.push(["is", c, v]); return this; };
   Query.prototype.order = function (c, o) { this.orders.push([c, !o || o.ascending !== false]); return this; };
   Query.prototype.range = function (a, b) { this.rangeFrom = a; this.rangeTo = b; return this; };
   Query.prototype.match = function (r) {
@@ -49,6 +50,7 @@ export function makeClient(seed, handlers) {
       if (f[0] === "in") return f[2].map(String).indexOf(String(v)) !== -1;
       if (f[0] === "gte") return String(v) >= String(f[2]);
       if (f[0] === "lt") return String(v) < String(f[2]);
+      if (f[0] === "is") return f[2] === null ? v === null || v === undefined : v === f[2];
       return true;
     });
   };

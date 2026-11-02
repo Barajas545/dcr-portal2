@@ -1,6 +1,7 @@
 // Check-off notes (DCR Desktop 2.26, migration 20261103000100_activity_checkoff; the owner's request of 2026-11-02): the
 // log line's new fields and words (map/activity.js), the box the three log views draw (checkHtml / doneHtml), the
-// to-dos first in the project Log, repo/activity.js setDone (set_note_done; someone else first; a moved version sent
+// to-dos first in the project Log (every open to-do, however old: repo/activity.js openTodos), repo/activity.js
+// setDone (set_note_done; someone else first; a moved version sent
 // once more), the demo database's rules (tools/fake: the trigger and the RPC, as the SQL), the pages' wiring, the
 // service worker's new name and list - and, P4's Portal line, every line of an item name in the title style.
 // Made-up demo data only.
@@ -9,13 +10,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { toLogLine, doneLabel, doneDay, todosFirst, checkHtml, doneHtml, isOpenTodo } from "../site/js/map/activity.js";
+import { toLogLine, doneLabel, doneDay, todosFirst, withTodos, checkHtml, doneHtml, isOpenTodo } from "../site/js/map/activity.js";
 import { makeClient } from "./pages-stub.mjs";
 import { useClient } from "../site/js/repo/_db.js";
 import * as activity from "../site/js/repo/activity.js";
 import { clearPeople } from "../site/js/repo/people.js";
 import { available, freshEngine, person, clientAs } from "./pages-engine.mjs";
 import { itemScreenHtml } from "../site/js/pages/est-render.js";
+import * as projectLog from "../site/js/pages/project-log.js";
 
 const SITE = fileURLToPath(new URL("../site/", import.meta.url));
 const read = (rel) => readFileSync(SITE + rel, "utf8");
@@ -54,6 +56,19 @@ test("todosFirst: the open to-dos on top, oldest first; the rest as they came", 
   assert.deepEqual(todosFirst(lines).map((l) => l.id), [4, 2, 1, 3, 5]);
   assert.ok(isOpenTodo(lines[1]) && !isOpenTodo(lines[4]));
   assert.deepEqual(todosFirst([]), []);
+});
+
+test("withTodos: the open to-dos read on their own join the newest lines once each (by id); the lines there stay as they are", () => {
+  const L = (id, extra) => toLogLine(Object.assign({ id, kind: "note", text: "n" + id, created_at: "2026-11-0" + (id % 9 + 1) + "T10:00:00Z" }, extra), nameOf);
+  const recent = [L(9), L(8, { todo: true }), L(7)];
+  const open = [L(2, { todo: true }), L(8, { todo: true, text: "a copy" })];
+  const all = withTodos(recent, open);
+  assert.deepEqual(all.map((l) => l.id), [9, 8, 7, 2]);
+  assert.equal(all[1].logDescription, "n8", "the line already there is kept");
+  assert.deepEqual(todosFirst(all).map((l) => l.id), [2, 8, 9, 7]);
+  assert.deepEqual(withTodos(null, null), []);
+  assert.deepEqual(withTodos(recent, []).map((l) => l.id), [9, 8, 7]);
+  assert.equal(recent.length, 3, "the lines given are not changed");
 });
 
 test("checkHtml / doneHtml: a button for people who may write notes, a read-only mark for a to-do or a tick, nothing else", () => {
@@ -115,6 +130,27 @@ test("setDone: someone else ticked it first - the line as it is, already; change
   await assert.rejects(activity.setDone({ id: 41, version: 4 }, true, { me: "u-me" }), (e) => e.code === "42501");
 });
 
+test("openTodos: the project's notes made as to-dos and not ticked off - any age, oldest first, at most 100 - masked like every line", async () => {
+  const rows = [
+    { id: 3, project_id: 7, kind: "note", text: "Collect $1,200 deposit", todo: true, done_at: null, created_at: "2025-01-02T10:00:00Z", created_by: "u-ana" },
+    { id: 4, project_id: 7, kind: "note", text: "Done one", todo: true, done_at: "2026-01-01T10:00:00Z", created_at: "2025-01-01T10:00:00Z" },
+    { id: 5, project_id: 7, kind: "note", text: "Plain", todo: false, done_at: null, created_at: "2025-01-01T09:00:00Z" },
+    { id: 6, project_id: 8, kind: "note", text: "Another project", todo: true, done_at: null, created_at: "2025-01-01T08:00:00Z" },
+    { id: 2, project_id: 7, kind: "note", text: "Study drawings", todo: true, done_at: null, created_at: "2024-06-01T10:00:00Z" },
+  ];
+  const c = stub({}, rows);
+  const mask = (t) => t.replace(/\$[\d,]+/g, "(amount hidden)");
+  const open = await activity.openTodos("7", { mask });
+  assert.deepEqual(open.map((l) => l.id), [2, 3]);
+  assert.equal(open[1].logDescription, "Collect (amount hidden) deposit", "masked for people without prices");
+  assert.equal(open[1].logUserName, "Ana Torres");
+  const q = c.calls.find((x) => x.table === "activity");
+  assert.deepEqual(q.filters, [["eq", "project_id", 7], ["eq", "kind", "note"], ["is", "todo", true], ["is", "done_at", null]]);
+  assert.deepEqual(q.orders, [["created_at", true], ["id", true]]);
+  assert.deepEqual(q.range, [0, activity.OPEN_TODOS_LIMIT - 1]);
+  assert.equal(activity.OPEN_TODOS_LIMIT, 100, "as DCR Desktop's OPEN_TODOS_MAX");
+});
+
 /* ── the demo database (the SQL's rules) ─────────────────────────────── */
 test("demo database: anyone who may write notes ticks any note; field, viewer and the agents account are refused; the server stamps the tick", { skip: !available }, async () => {
   const e = await freshEngine(NOW);
@@ -168,10 +204,46 @@ test("the project Log over the demo database: to-dos first, the tick through the
   assert.equal(doneLabel(got, NOW).split(" · ")[1], full.split(" ")[0]);
 });
 
+test("the project Log over the demo database: an open to-do older than the 300 newest lines is still there, on top; ticked off, it drops back out", { skip: !available }, async () => {
+  const e = await freshEngine(NOW);
+  const mgr = await person("manager");
+  clearPeople();
+  useClient(clientAs(e, mgr.id));
+  const sandbox = e.rows.projects.find((p) => p.number === "A267");
+  const [old] = e.insert({ uid: mgr.id }, "activity", { project_id: sandbox.id, kind: "note", text: "Follow up estimate", todo: true });
+  for (let i = 0; i < activity.HISTORY_LIMIT; i++) e.insert({ uid: mgr.id }, "activity", { project_id: sandbox.id, kind: "note", text: "Busy day " + i });
+  const recent = await activity.forProject(sandbox.id, { limit: activity.HISTORY_LIMIT });
+  assert.ok(!recent.some((l) => l.id === old.id), "out of the 300 newest lines");
+  // the Log tab as a phone shows it (a bare stand-in for its list element)
+  const list = { innerHTML: "" };
+  const host = { innerHTML: "", querySelector: (sel) => (sel === "#lgList" ? list : null), addEventListener() {},
+    getAttribute: () => null, setAttribute() {} };
+  const ctx = { pid: sandbox.id, canLog: false, mask: null, me: mgr, esc, errorText: (x) => String(x && x.message), toast() {} };
+  const shown = async () => {
+    for (let i = 0; i < 200 && !/pj-log/.test(list.innerHTML); i++) await new Promise((r) => setTimeout(r, 5));
+    return list.innerHTML.split(/<div class="pj-log(?=[" ])/).slice(1);
+  };
+  projectLog.render(ctx, host);
+  let rows = await shown();
+  const at = rows.findIndex((r) => r.includes("Follow up estimate"));
+  assert.ok(at >= 0 && at < rows.findIndex((r) => r.includes("Busy day")), "on top, with the open to-dos");
+  assert.ok(rows.slice(0, at + 1).every((r) => r.includes('aria-label="To-do"')), "only open to-dos above it");
+  assert.equal(rows.filter((r) => r.includes("Follow up estimate")).length, 1, "once");
+  assert.equal(rows.length, recent.length + 1, "and the 300 newest lines (the to-do one more)");
+  const got = await activity.setDone(toLogLine(old, nameOf), true, { me: mgr.id });
+  assert.equal(got.done, true);
+  list.innerHTML = "";
+  projectLog.render(ctx, host);
+  rows = await shown();
+  assert.ok(!rows.some((r) => r.includes("Follow up estimate")), "ticked off and older than the 300: no longer pinned");
+});
+
 /* ── the pages' wiring and the offline list ──────────────────────────── */
 test("the three log views draw the box and the done line; the Log tab puts the to-dos first; only people who may write notes tick", () => {
   const log = code(read("js/pages/project-log.js"));
   assert.match(log, /todosFirst\(lines\)\.map/);
+  assert.match(log, /activityRepo\.openTodos\(ctx\.pid, \{ mask: ctx\.mask \}\)/, "every open to-do, masked like the rest");
+  assert.match(log, /const lines = withTodos\(recent, open\);/);
   assert.match(log, /checkHtml\(l, esc, ctx\.canLog\)/);
   assert.match(log, /doneHtml\(l, esc\)/);
   assert.match(log, /wireTicks\(host, /);

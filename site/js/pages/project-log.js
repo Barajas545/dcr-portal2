@@ -3,12 +3,13 @@
    their original date and "Juan · old portal"; a long one folds behind "more". Amounts in notes are
    masked for people without the prices switch (on screen only).
    Check-off notes (DCR Desktop 2.26; the owner's request of 2026-11-02): the open to-dos come first (oldest
-   first), then the rest newest first; every note has its box - the same people tick any note off or take the
+   first) - every one, read on its own (repo openTodos, at most 100), so one older than the 300 newest lines
+   stays on top until it is ticked off, as on DCR Desktop -, then the rest newest first; every note has its box - the same people tick any note off or take the
    tick off (note-ticks.js), everyone else sees a to-do's box and a tick - and a ticked note says
    "✓ Done Nov 2 · Cristobal". */
 
 import * as activityRepo from "../repo/activity.js";
-import { foldText, todosFirst, checkHtml, doneHtml } from "../map/activity.js";
+import { foldText, todosFirst, withTodos, checkHtml, doneHtml } from "../map/activity.js";
 import { fmtWhen } from "../map/pacific.js";
 import { wireTicks } from "./note-ticks.js";
 
@@ -53,8 +54,12 @@ async function load(ctx) {
   const my = ++seq;
   const list = host.querySelector("#lgList");
   try {
-    const lines = await activityRepo.forProject(ctx.pid, { limit: activityRepo.HISTORY_LIMIT, mask: ctx.mask });
+    const [recent, open] = await Promise.all([
+      activityRepo.forProject(ctx.pid, { limit: activityRepo.HISTORY_LIMIT, mask: ctx.mask }),
+      activityRepo.openTodos(ctx.pid, { mask: ctx.mask }),
+    ]);
     if (my !== seq) return;
+    const lines = withTodos(recent, open);
     const esc = ctx.esc;
     list.innerHTML = lines.length ? todosFirst(lines).map(function (l) {
       const f = foldText(l.logDescription);

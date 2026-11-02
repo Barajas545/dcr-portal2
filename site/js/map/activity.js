@@ -16,7 +16,8 @@
      todo <- todo (notes only)   done <- done_at set   doneAt <- done_at   doneBy <- done_by
      doneByName <- that person's profile name ("" when unknown or the account was removed)
    doneLabel() is "Done Nov 2 · Cristobal" (the Pacific day; the year when it is not this year);
-   todosFirst() puts the open to-dos on top (oldest first), the rest as they came; checkHtml() /
+   todosFirst() puts the open to-dos on top (oldest first), the rest as they came; withTodos() adds the open
+   to-dos read on their own (any age) to a project's newest lines, each line once; checkHtml() /
    doneHtml() draw the box and the done line the three log views share.
 
    Pure module. */
@@ -83,6 +84,17 @@ export function todosFirst(lines) {
     return x < y ? -1 : x > y ? 1 : Number(a.id) - Number(b.id);
   });
   return open.concat(list.filter(function (l) { return !isOpenTodo(l); }));
+}
+
+/** `lines` and the `todos` missing from them (by id; a line already there stays as it is): the Log tab's
+    300 newest lines and every open to-do, however old. */
+export function withTodos(lines, todos) {
+  const list = (lines || []).slice();
+  const have = new Set(list.map(function (l) { return String(l.id); }));
+  (todos || []).forEach(function (t) {
+    if (t && !have.has(String(t.id))) { have.add(String(t.id)); list.push(t); }
+  });
+  return list;
 }
 
 /** The box on a note: a button for people who may write notes (data-tick = the note's id, data-v = its
