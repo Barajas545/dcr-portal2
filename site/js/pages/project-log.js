@@ -1,11 +1,16 @@
 /* Project tab Log (MODULES §3 "Logs"): the project's activity, newest first (300), with
    "Add log entry" for admin, manager, accountant and lead (RLS decides). Imported lines carry
    their original date and "Juan · old portal"; a long one folds behind "more". Amounts in notes are
-   masked for people without the prices switch (on screen only). */
+   masked for people without the prices switch (on screen only).
+   Check-off notes (DCR Desktop 2.26; the owner's request of 2026-11-02): the open to-dos come first (oldest
+   first), then the rest newest first; every note has its box - the same people tick any note off or take the
+   tick off (note-ticks.js), everyone else sees a to-do's box and a tick - and a ticked note says
+   "✓ Done Nov 2 · Cristobal". */
 
 import * as activityRepo from "../repo/activity.js";
-import { foldText } from "../map/activity.js";
+import { foldText, todosFirst, checkHtml, doneHtml } from "../map/activity.js";
 import { fmtWhen } from "../map/pacific.js";
+import { wireTicks } from "./note-ticks.js";
 
 let host = null, seq = 0, timer = null;
 
@@ -32,6 +37,8 @@ export function render(ctx, el) {
     } catch (e) { m.textContent = ctx.errorText(e); m.className = "pj-msg err"; }
     b.disabled = false;
   });
+  wireTicks(host, { me: function () { return ctx.me; }, mask: function () { return ctx.mask; },
+    changed: function () { load(ctx); }, toast: ctx.toast, errorText: ctx.errorText });
   host.addEventListener("click", function (e) {
     const more = e.target.closest && e.target.closest("[data-more]");
     if (!more) return;
@@ -49,12 +56,14 @@ async function load(ctx) {
     const lines = await activityRepo.forProject(ctx.pid, { limit: activityRepo.HISTORY_LIMIT, mask: ctx.mask });
     if (my !== seq) return;
     const esc = ctx.esc;
-    list.innerHTML = lines.length ? lines.map(function (l) {
+    list.innerHTML = lines.length ? todosFirst(lines).map(function (l) {
       const f = foldText(l.logDescription);
-      return '<div class="pj-log' + (l.kind !== "note" ? " sys" : "") + (l.imported ? " imp" : "") + '">' +
+      const box = checkHtml(l, esc, ctx.canLog);
+      return '<div class="pj-log' + (l.kind !== "note" ? " sys" : "") + (l.imported ? " imp" : "") + (l.done ? " nt-is-done" : "") +
+        (box ? " nt-has-box" : "") + '">' + box +
         '<div class="pj-log-date">' + esc(fmtWhen(l.logDate)) + "</div>" +
         '<div class="pj-log-text" data-full="' + (f.more ? esc(l.logDescription) : "") + '">' + esc(f.short) + "</div>" +
-        (f.more ? '<button type="button" class="pj-more" data-more="1">more</button>' : "") +
+        (f.more ? '<button type="button" class="pj-more" data-more="1">more</button>' : "") + doneHtml(l, esc) +
         (l.logUserName ? '<div class="pj-log-user">— ' + esc(l.logUserName) + "</div>" : "") + "</div>";
     }).join("") : '<div class="pj-empty">No log entries yet.</div>';
   } catch (e) {

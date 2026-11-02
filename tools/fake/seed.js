@@ -244,6 +244,12 @@
     // this morning and this afternoon (company time) so both windows always show something
     out.activity.push(Object.assign({ id: nid("activity"), project_id: sandbox.id, kind: "note", text: "Morning check-in on the sandbox project.",
       from_status: null, to_status: null, author_name: null, legacy_sp_id: null }, audit(minutesAgo(2), P.lead)));
+    // check-off notes (DCR Desktop 2.26): two of the usual steps as to-dos on the sandbox, the first one ticked off
+    out.activity.push(Object.assign({ id: nid("activity"), project_id: sandbox.id, kind: "note", text: "Send plans for material takeoff",
+      from_status: null, to_status: null, author_name: null, legacy_sp_id: null, todo: true }, audit(minutesAgo(300), P.manager),
+      { done_at: iso(Date.parse(minutesAgo(60))), done_by: P.lead }));
+    out.activity.push(Object.assign({ id: nid("activity"), project_id: sandbox.id, kind: "note", text: "Study drawings",
+      from_status: null, to_status: null, author_name: null, legacy_sp_id: null, todo: true }, audit(minutesAgo(299), P.manager)));
 
     // journal entries
     const jProjects = [sandbox].concat(busy.slice(-10));

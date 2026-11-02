@@ -115,8 +115,9 @@ export function itemScreenHtml(it, show) {
   const type = ITEM_TYPES[it.item_type] || "";
   const flags = flagChips(it, w);
   const notes = show && plain(it.notes).trim() ? '<div class="es-note">📝 ' + multiline(it.notes) + "</div>" : "";
-  return '<div class="es-t">' + (type ? '<span class="es-type">' + esc(type) + "</span> " : "") + esc(title.split("\n")[0]) + "</div>" +
-    (title.indexOf("\n") !== -1 ? '<div class="es-d">' + title.split("\n").slice(1).map(esc).join("<br>") + "</div>" : "") +
+  // every line of a name of several lines in the title style, as DCR Desktop 2.26's Estimates tab draws it (the owner's
+  // request of 2026-11-02, P4); the amount rule ran over the whole text above, before it is split
+  return '<div class="es-t">' + (type ? '<span class="es-type">' + esc(type) + "</span> " : "") + title.split("\n").map(esc).join("<br>") + "</div>" +
     rest.map(function (r) { return '<div class="es-d">' + r + "</div>"; }).join("") +
     (crew ? '<div class="es-crew">👷 ' + esc(crew) + "</div>" : "") +
     (flags ? '<div class="es-flags">' + flags + "</div>" : "") + notes;

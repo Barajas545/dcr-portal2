@@ -609,3 +609,27 @@ tbody tr:hover { background: var(--surface-2); }
 @media (prefers-reduced-motion: reduce) { .plan-prog i { transition: none; } }
 @media (max-width: 520px) { .pl-sheet { align-items: flex-end; padding: 0; }
   .pl-card { border-radius: 14px 14px 0 0; max-height: 92vh; max-height: calc(100% - 24px); padding-bottom: calc(16px + env(safe-area-inset-bottom)); } }
+
+/* ── Check-off notes (DCR Desktop 2.26, the owner's request of 2026-11-02): the box on a note in the Log tab, the
+   Board's panel and Log History (map/activity.js checkHtml / doneHtml, pages/note-ticks.js) ─────────────────── */
+.nt-has-box { position: relative; padding-left: 42px !important; }
+.nt-box { position: absolute; left: 12px; top: 10px; width: 20px; height: 20px; padding: 0; margin: 0; box-sizing: border-box;
+  border-radius: 5px; border: 1.5px solid var(--text-muted); background: transparent; cursor: pointer; }
+.nt-box::before { content: ""; position: absolute; inset: -10px; }          /* a finger-sized target */
+.nt-box.todo { border-color: var(--accent); background: rgba(31, 111, 200, 0.12); }
+.nt-box.done { border-color: var(--nt-ok, #18794a); background: var(--nt-ok, #18794a); }
+.nt-box.done::after { content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.nt-box.ro { cursor: default; opacity: .75; }
+.nt-box.busy { opacity: .45; cursor: progress; }
+.nt-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nt-is-done .pj-log-text, .nt-is-done .bd-log-text, .nt-is-done .lg-text { text-decoration: line-through; color: var(--text-muted); }
+.nt-done { font-size: 11px; font-weight: 600; color: var(--nt-ok, #18794a); margin-top: 3px; }
+.nt-todo { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: #8a5a00; background: rgba(214, 161, 58, 0.18); border-radius: 999px; padding: 1px 7px; margin-top: 4px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --nt-ok: #3fb47e; }
+  :root:not([data-theme="light"]) .nt-todo { color: #e0b049; }
+}
+:root[data-theme="dark"] { --nt-ok: #3fb47e; }
+:root[data-theme="dark"] .nt-todo { color: #e0b049; }

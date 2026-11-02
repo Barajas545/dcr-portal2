@@ -7,17 +7,21 @@
    amounts in notes are masked for people without the prices switch. Live: new lines appear in
    place — the list is swapped only once the new answer is there (no "Loading…" in between), the
    page stays where it was scrolled, lines opened with "more" stay open, and a burst of changes is
-   read once (every 5 seconds at most while the page is scrolled down). */
+   read once (every 5 seconds at most while the page is scrolled down).
+   Check-off notes (DCR Desktop 2.26): every note has its box - people who may write notes tick any note off
+   or take the tick off (note-ticks.js), everyone else sees a to-do's box and a tick - and a ticked note says
+   "✓ Done Nov 2 · Cristobal". */
 
-import { boot, el, esc, errorText, maskFor } from "./shell.js";
+import { boot, el, esc, errorText, maskFor, can, toast } from "./shell.js";
 import * as activityRepo from "../repo/activity.js";
 import * as projectsRepo from "../repo/projects.js";
 import { LOG_FILTERS, logWindow, fmtWhen } from "../map/pacific.js";
-import { groupByProject, foldText } from "../map/activity.js";
+import { groupByProject, foldText, checkHtml, doneHtml } from "../map/activity.js";
+import { wireTicks } from "./note-ticks.js";
 import { switcherLabel, projectTitle } from "../map/projects.js";
 
 const state = { projects: [], byId: {}, filter: "today", lines: [], projMode: null, seq: 0, mask: null, timer: null,
-  open: new Set(), lastLive: 0 };
+  open: new Set(), lastLive: 0, me: null, canLog: false };
 
 function lineKey(l) { return String(l.id != null ? l.id : (l.projectID + "|" + l.logDate + "|" + l.logDescription)); }
 
@@ -50,10 +54,12 @@ function render() {
         const f = foldText(l.logDescription);
         const key = lineKey(l);
         const opened = f.more && state.open.has(key);
-        return '<div class="lg-entry' + (l.kind !== "note" ? " sys" : "") + '"><div class="lg-when">' + esc(fmtWhen(l.logDate)) + "</div>" +
+        const tick = checkHtml(l, esc, state.canLog);
+        return '<div class="lg-entry' + (l.kind !== "note" ? " sys" : "") + (l.done ? " nt-is-done" : "") + (tick ? " nt-has-box" : "") + '">' + tick +
+          '<div class="lg-when">' + esc(fmtWhen(l.logDate)) + "</div>" +
           '<div class="lg-text" data-key="' + esc(key) + '" data-full="' + (f.more && !opened ? esc(l.logDescription) : "") + '">' +
             esc(opened ? l.logDescription : f.short) + "</div>" +
-          (f.more && !opened ? '<button type="button" class="lg-more" data-more="1">more</button>' : "") +
+          (f.more && !opened ? '<button type="button" class="lg-more" data-more="1">more</button>' : "") + doneHtml(l, esc) +
           (l.logUserName ? '<div class="lg-user">— ' + esc(l.logUserName) + "</div>" : "") + "</div>";
       }).join("") + "</div>";
   }).join("");
@@ -108,7 +114,11 @@ function trySearch() {
 
 async function init() {
   const me = await boot("logs");
+  state.me = me;
   state.mask = maskFor(me);
+  state.canLog = can(me, "activity");
+  wireTicks(el("lgList"), { me: function () { return state.me; }, mask: function () { return state.mask; },
+    changed: function () { load(true); }, toast: toast, errorText: errorText });
   el("lgRefresh").addEventListener("click", function () { load(); });
   el("lgSearch").addEventListener("change", trySearch);
   el("lgSearch").addEventListener("keydown", function (e) { if (e.key === "Enter") trySearch(); });

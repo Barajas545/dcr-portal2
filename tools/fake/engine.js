@@ -49,7 +49,12 @@
      the Estimator switch (profiles.can_estimate, added by tools/fake/p7-web.js with admin_set_profile and the
      cost writes); create_project's labor-rate zone alone from anyone who creates projects (a rate or "custom"
      needs prices); the project picture's checks (a live JPEG / PNG of the same project, in the thumbnail folder
-     itself); a receipt's cost (files.cost_id: a money editor's, the same project's, receipts or a bill's only).
+     itself); a receipt's cost (files.cost_id: a money editor's, the same project's, receipts or a bill's only);
+   - check-off notes (DCR Desktop 2.26, migration 20261103000100_activity_checkoff): activity.todo / done_at / done_by
+     (notes only - 23514; a done_by needs its done_at), t11_activity_done (a person's new note starts not done; a tick
+     is the server's moment and the caller, the first tick stays, unticking clears both) and the RPC set_note_done
+     (every active person who may write notes ticks any note; status / system lines 22023, a note out of sight
+     PT404, in the asked state already: as it is, a moved version PT409).
    Works in Node (the tests) and in the browser (fake-supabase.js). Nothing here touches a network. */
 (function (root) {
   "use strict";
@@ -105,7 +110,7 @@
       location_source: null, thumbnail_file_id: null, folder_name: null, legacy_sp_id: null, deleted_at: null }, AUDIT),
     project_prices: Object.assign({ project_id: null, labor_rate: null, rate_source: null }, AUDIT),
     activity: Object.assign({ id: null, project_id: null, kind: "note", text: null, from_status: null, to_status: null,
-      author_name: null, legacy_sp_id: null }, AUDIT),
+      author_name: null, legacy_sp_id: null, todo: false, done_at: null, done_by: null }, AUDIT),
     journal_entries: Object.assign({ id: null, project_id: null, entry_date: null, category: "progress", title: "", body: null,
       weather: null, crew_size: null, hours: null, follow_up: false, deleted_at: null }, AUDIT),
     files: Object.assign({ id: null, project_id: null, estimate_item_id: null, journal_entry_id: null, bill_id: null, folder: null,
@@ -729,6 +734,7 @@
           if (!quiet && r.kind !== "note") throw deny("only notes are written by people");
           if (!quiet && (r.author_name || r.legacy_sp_id)) throw deny("only the import may set legacy columns");
           if (r.project_id !== null && !rows.projects.some((p) => p.id === r.project_id)) throw rule("23503", 'insert or update on table "activity" violates foreign key constraint "activity_project_id_fkey"');
+          activityDone(w, r, null);
           break;
         }
         case "journal_entries": {
@@ -1187,7 +1193,10 @@
       if (table === "activity") {
         if (r.kind !== old.kind || r.project_id !== old.project_id) throw deny("a log line keeps its kind and project");
         const len = String(r.text || "").length;
-        if (len < 1 || len > 4000) throw rule("23514", 'new row for relation "activity" violates check constraint "activity_text_check"');
+        if (len < 1 || (len > 4000 && !(r.author_name && !r.created_by && len <= 20000))) {
+          throw rule("23514", 'new row for relation "activity" violates check constraint "activity_text_check"');
+        }
+        activityDone(w, r, old);
       }
       if (table === "journal_entries") {
         if (r.project_id !== old.project_id) throw rule("23514", "a journal entry cannot move to another project");
@@ -1227,6 +1236,27 @@
         // WITH CHECK: the row as it will be must still be in the writer's scope
         if (!tsWrites(w, r.employee_id)) throw new PgErr("42501", 'new row violates row-level security policy for table "timesheets"', 403);
       }
+    }
+
+    /* t11_activity_done (20261103000100_activity_checkoff): the database stamps a note's tick - a person's new note
+       starts not done (the seed's keeps its own); not done -> done is now and the caller; done -> done keeps the first
+       tick; done -> not done clears both. Then the checks: notes only, a done_by with its done_at. */
+    function activityDone(w, r, old) {
+      if (old === null) {
+        if (!quiet) { r.done_at = null; r.done_by = null; }
+      } else if (r.done_at === null || r.done_at === undefined) {
+        r.done_at = null; r.done_by = null;
+      } else if (old.done_at === null || old.done_at === undefined) {
+        r.done_at = nowIso(); r.done_by = w.uid || null;
+      } else {
+        r.done_at = old.done_at;
+        if ((r.done_by !== null && r.done_by !== undefined) || !quiet) r.done_by = old.done_by === undefined ? null : old.done_by;
+      }
+      r.todo = !!r.todo;
+      if (r.kind !== "note" && (r.todo || r.done_at || r.done_by)) {
+        throw rule("23514", 'new row for relation "activity" violates check constraint "activity_checkoff_note_check"');
+      }
+      if (r.done_by && !r.done_at) throw rule("23514", 'new row for relation "activity" violates check constraint "activity_done_by_check"');
     }
 
     function afterUpdate(w, table, old, r) {
@@ -1370,6 +1400,7 @@
       timesheet_weeks: { args: ["p_from", "p_to"], required: ["p_from", "p_to"] },
       add_task_note: { args: ["p_task_id", "p_text", "p_client_key"], required: ["p_task_id", "p_text"] },
       complete_task: { args: ["p_id", "p_version", "p_note", "p_via"], required: ["p_id"] },
+      set_note_done: { args: ["p_id", "p_version", "p_done"], required: ["p_id", "p_version", "p_done"] },
       my_tasks: { args: ["p_view"], required: [] },
       my_tasks_summary: { args: [], required: [] },
       agents_server_status: { args: [], required: [] },
@@ -1697,6 +1728,29 @@
             auditInsert(w, "task_notes", n);
             commitInsert("task_notes", n);
           }
+          return clone(r);
+        }
+        case "set_note_done": {
+          // SECURITY DEFINER: anyone active who may write notes ticks ANY note off (p_done true) or back on; the
+          // policy is not asked; in the asked state already: answered as it is; a moved version: PT409
+          if (!w.active) throw deny("sign in first");
+          const raw = arg(args, "p_id"), done = arg(args, "p_done");
+          if (raw === null || raw === undefined) throw rule("22023", "which note (p_id)?");
+          if (done === null || done === undefined) throw rule("22023", "p_done is true (done) or false (not done)");
+          if (!canEdit(w, "activity")) throw deny("Only people who may write notes can tick them off.");
+          const id = Number(raw);
+          const a = rows.activity.find((x) => x.id === id);
+          if (!a || !projectVisible(w, a.project_id)) throw new PgErr("PT404", "That note isn't on this project any more.", 404);
+          if ((a.kind || "note") !== "note") throw rule("22023", "Only a note can be ticked off - status changes and updates cannot.");
+          if (!!a.done_at === !!done) return clone(a);
+          const v = arg(args, "p_version");
+          if (v !== null && v !== undefined && Number(v) !== Number(a.version)) {
+            throw new PgErr("PT409", "Someone else changed this note first.", 409, JSON.stringify({ table: "activity", id, version: a.version }));
+          }
+          const r = Object.assign(clone(a), { done_at: done ? nowIso() : null });
+          activityDone(w, r, a);
+          auditUpdate(w, "activity", r, a);
+          commitUpdate("activity", a, r);
           return clone(r);
         }
         default:

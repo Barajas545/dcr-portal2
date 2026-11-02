@@ -668,7 +668,7 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - `<script src="js/config.js">`, then the pinned supabase-js
   (`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js`, `defer`),
   then the page's `<script type="module">`. Every CDN script names an exact version.
-- Browser-side names are Portal 2's own: session `dcr2-auth`, cache `dcr-portal2-v3` (P6), IndexedDB
+- Browser-side names are Portal 2's own: session `dcr2-auth`, cache `dcr-portal2-v4` (check-off notes, DCR Desktop 2.26), IndexedDB
   `dcr2Uploads`, drafts `dcr2JrnDraft:<profile>:<project>`, theme `dcr2_theme`, city cache
   `dcr2CityGeo`, Site Photos' last job list `dcr2CaptureJobs:<profile>`, locks
   `dcr-portal2-single-instance`, `dcr2-upload-queue` and `dcr2-journal-drafts`, My Assistant's drafts `dcr2:myAssistant.draft.v1:<profile>`. Never the old portal's

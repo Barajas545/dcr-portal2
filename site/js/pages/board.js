@@ -26,7 +26,8 @@ import { VIEWS, viewOf, buildBoard, summaryText, mergeRow } from "./board-model.
 import { STATUS_ORDER, statusLabel } from "../map/status.js";
 import { projectTitle, addressLine } from "../map/projects.js";
 import { ymd, fmtShort, fmtDay, fmtWhen } from "../map/pacific.js";
-import { foldText } from "../map/activity.js";
+import { foldText, checkHtml, doneHtml } from "../map/activity.js";
+import { wireTicks } from "./note-ticks.js";
 import { openNewProject, isOpen as isNewOpen } from "./new-project.js";
 
 const SHOW_OLD_KEY = "dcr2:board.showOld";
@@ -178,9 +179,12 @@ async function loadLogs(id) {
     if (!lines.length) { box.innerHTML = '<div class="bd-note">No log entries yet.</div>'; return; }
     box.innerHTML = lines.map(function (l) {
       const f = foldText(l.logDescription);
-      return '<div class="bd-log' + (l.kind !== "note" ? " sys" : "") + '"><div class="bd-log-date">' + esc(fmtWhen(l.logDate)) + "</div>" +
+      // check-off notes (DCR Desktop 2.26): the box, and "✓ Done Nov 2 · Cristobal" on a ticked note
+      const tick = checkHtml(l, esc, state.canLog);
+      return '<div class="bd-log' + (l.kind !== "note" ? " sys" : "") + (l.done ? " nt-is-done" : "") + (tick ? " nt-has-box" : "") + '">' + tick +
+        '<div class="bd-log-date">' + esc(fmtWhen(l.logDate)) + "</div>" +
         '<div class="bd-log-text" data-full="' + (f.more ? esc(l.logDescription) : "") + '">' + esc(f.short) + "</div>" +
-        (f.more ? '<button type="button" class="bd-more" data-more="1">more</button>' : "") +
+        (f.more ? '<button type="button" class="bd-more" data-more="1">more</button>' : "") + doneHtml(l, esc) +
         (l.logUserName ? '<div class="bd-log-user">— ' + esc(l.logUserName) + "</div>" : "") + "</div>";
     }).join("");
   } catch (e) {
@@ -362,6 +366,8 @@ function wire() {
   el("bdThumb").addEventListener("dblclick", function () {
     if (state.selectedId) location.href = "project.html?id=" + encodeURIComponent(state.selectedId);
   });
+  wireTicks(el("bdLogs"), { me: function () { return state.me; }, mask: function () { return state.mask; },
+    changed: function () { if (state.selectedId) loadLogs(state.selectedId); }, toast: toast, errorText: errorText });
   el("bdLogs").addEventListener("click", function (e) {
     const b = e.target.closest && e.target.closest("[data-more]");
     if (!b) return;

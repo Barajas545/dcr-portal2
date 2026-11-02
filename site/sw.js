@@ -1,6 +1,6 @@
 /* DCR Employee Portal 2 service worker (BLUEPRINT 2.2.6).
 
-   - Cache "dcr-portal2-v3". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
+   - Cache "dcr-portal2-v4". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
      portal's "dcr-portal-*" nor anything else on the device.
    - Network FIRST for the site's own pages and files (always up to date online; the last copy
      offline). A copy is kept under its path only, never with a query string: an address such as
@@ -42,8 +42,12 @@
    the pictures themselves are signed Storage addresses, never kept here. The Accounting page (the Books program, release
    B: books-home.html and its money-message modules - the ask and tell panels, the template editor) stays OUT of the
    list, as every money page does: Home only names it (its card) and reads its "N to do" through a dynamic import, so no
-   money code is ever kept ahead on a crew phone; the list and "dcr-portal2-v3" are unchanged. */
-const CACHE = "dcr-portal2-v3";
+   money code is ever kept ahead on a crew phone; the list and "dcr-portal2-v3" are unchanged.
+   v4 (check-off notes, DCR Desktop 2.26 - the owner's request of 2026-11-02): the three log views draw a box on every
+   note and tick it through set_note_done (js/pages/note-ticks.js joins the list; the map and repo modules they share
+   changed): a new name, so every installed copy takes the new log code at once instead of on its next visit; activate
+   carries the pinned libraries over as before. */
+const CACHE = "dcr-portal2-v4";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
 // tests/core-sw.test.mjs checks it), so the installed app also opens offline from a cold start (a
@@ -81,6 +85,8 @@ const SHELL = [
   "js/map/plan-library.js", "js/plan-pictures.js",
   // the contacts' pictures (Books release A3): Search draws them
   "js/pages/avatar.js", "js/repo/contacts.js",
+  // check-off notes (v4): the box on a note in the Log tab, the Board's panel and Log History
+  "js/pages/note-ticks.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 
