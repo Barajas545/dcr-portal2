@@ -4,9 +4,9 @@
    masked for people without the prices switch (on screen only).
    Check-off notes (DCR Desktop 2.26; the owner's request of 2026-11-02): the open to-dos come first (oldest
    first) - every one, read on its own (repo openTodos, at most 100), so one older than the 300 newest lines
-   stays on top until it is ticked off, as on DCR Desktop -, then the rest newest first; every note has its box - the same people tick any note off or take the
-   tick off (note-ticks.js), everyone else sees a to-do's box and a tick - and a ticked note says
-   "✓ Done Nov 2 · Cristobal". */
+   stays on top until it is ticked off, as on DCR Desktop -, then the rest newest first; every note has its
+   box - the same people tick any note off or take the tick off (note-ticks.js), everyone else sees a
+   to-do's box and a tick - and a ticked note says "✓ Done Nov 2 · Cristobal". */
 
 import * as activityRepo from "../repo/activity.js";
 import { foldText, todosFirst, withTodos, checkHtml, doneHtml } from "../map/activity.js";

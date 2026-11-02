@@ -443,6 +443,26 @@ await check("setDone() (rpc set_note_done, DCR Desktop 2.26 - present from migra
   await refused(() => activity.setDone(status, true, { me: PEOPLE.lead.id }), "22023", "a status line");
 });
 
+await check("openTodos() (DCR Desktop 2.26 - activity.todo / done_at from migration 20261103000100): every active role reads the project's open to-dos, oldest first - not a ticked one, not a plain note -; nothing for the agents account", async () => {
+  if (!steps.some((s) => s.endsWith("_activity_checkoff.sql"))) return;          // a Desktop 2 before 2.26: nothing to check
+  await as("manager");
+  const todo = async (text) => (await client.from("activity").insert({ project_id: S.p1.id, kind: "note", text, todo: true }).select("*")).data[0];
+  const first = await todo("Open to-do from the schema check");
+  const second = await todo("Second open to-do from the schema check");
+  const ticked = await todo("Ticked to-do from the schema check");
+  const plain = await activity.addNote(S.p1.id, "Plain note from the schema check");
+  const id = (x) => String(x.id);
+  await activity.setDone((await activity.forProject(S.p1.id, { limit: 300 })).find((l) => id(l) === id(ticked)), true, { me: PEOPLE.manager.id });
+  const made = [first, second, ticked, plain].map(id);
+  for (const k of ROLES) {
+    await as(k);
+    const open = (await activity.openTodos(S.p1.id)).filter((l) => made.includes(id(l)));
+    same(open.map((l) => [id(l), l.kind, l.todo, l.done]), [[id(first), "note", true, false], [id(second), "note", true, false]], k);
+  }
+  await as("agents");
+  same((await activity.openTodos(S.p1.id)).length, 0, "agents");
+});
+
 // ===========================================================================================
 section = "journal (repo/journal.js)";
 // ===========================================================================================

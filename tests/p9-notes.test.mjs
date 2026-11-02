@@ -1,9 +1,9 @@
 // Check-off notes (DCR Desktop 2.26, migration 20261103000100_activity_checkoff; the owner's request of 2026-11-02): the
 // log line's new fields and words (map/activity.js), the box the three log views draw (checkHtml / doneHtml), the
 // to-dos first in the project Log (every open to-do, however old: repo/activity.js openTodos), repo/activity.js
-// setDone (set_note_done; someone else first; a moved version sent
-// once more), the demo database's rules (tools/fake: the trigger and the RPC, as the SQL), the pages' wiring, the
-// service worker's new name and list - and, P4's Portal line, every line of an item name in the title style.
+// setDone (set_note_done; someone else first; a moved version sent once more), the demo database's rules (tools/fake:
+// the trigger and the RPC, as the SQL), the pages' wiring, the service worker's new name and list - and, P4's Portal
+// line, every line of an item name in the title style.
 // Made-up demo data only.
 import test from "node:test";
 import assert from "node:assert/strict";
