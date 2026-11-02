@@ -414,6 +414,35 @@ await check("forProject() and inWindow() (embed projects(number, name)) read for
   same((await activity.inWindow(from, to)).length, 0, "agents window");
 });
 
+await check("setDone() (rpc set_note_done, DCR Desktop 2.26 - present from migration 20261103000100): admin, managers, accountant and lead tick anyone's note off and take the tick off; field and viewer refused; a status line 22023; someone else first: already; a moved version sent once more", async () => {
+  if (!steps.some((s) => s.endsWith("_activity_checkoff.sql"))) return;          // a Desktop 2 before 2.26: nothing to check
+  await as("manager");
+  const made = await activity.addNote(S.p1.id, "Check-off from the schema check");
+  for (const k of ROLES) {
+    await as(k);
+    const cur = (await activity.forProject(S.p1.id, { limit: 300 })).find((l) => l.id === made.id);
+    if (ACTIVE_WRITERS.notes.includes(k)) {
+      const on = await activity.setDone(cur, true, { me: PEOPLE[k].id });
+      same([on.done, on.doneByName, on.already], [true, PEOPLE[k].name, false], k + " ticks");
+      const off = await activity.setDone(on, false, { me: PEOPLE[k].id });
+      same([off.done, off.doneAt, off.already], [false, null, false], k + " unticks");
+    } else {
+      await refused(() => activity.setDone(cur, true, { me: PEOPLE[k].id }), "42501", k);
+    }
+  }
+  await as("lead");
+  const now = (await activity.forProject(S.p1.id, { limit: 300 })).find((l) => l.id === made.id);
+  await as("accountant");
+  await activity.setDone(now, true, { me: PEOPLE.accountant.id });
+  await as("lead");
+  const first = await activity.setDone(now, true, { me: PEOPLE.lead.id });       // the version the lead saw is old now
+  same([first.done, first.already, first.doneByName], [true, true, PEOPLE.accountant.name], "someone else first");
+  const off = await activity.setDone(now, false, { me: PEOPLE.lead.id });         // a moved version: sent once more
+  same([off.done, off.already], [false, false], "a moved version");
+  const status = (await activity.forProject(S.p1.id, { limit: 300 })).find((l) => l.kind === "status");
+  await refused(() => activity.setDone(status, true, { me: PEOPLE.lead.id }), "22023", "a status line");
+});
+
 // ===========================================================================================
 section = "journal (repo/journal.js)";
 // ===========================================================================================
