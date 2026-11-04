@@ -51,7 +51,10 @@ test("no handler in HTML a script builds (the old map's popups and cards had 36 
     const src = readFileSync(f, "utf8");
     const hit = /<[a-z][^>'"]*\son[a-z]+\s*=/i.exec(src);
     assert.equal(hit, null, rel(f) + ": an inline handler in built HTML: " + (hit && hit[0]));
-    assert.ok(!/\.on(click|change|input|submit|keydown)\s*=/.test(src) || rel(f) === "sw.js", rel(f) + ": a handler property instead of addEventListener");
+    // (the vendored takeoff copy's pdf.js sets its own links' onclick: the portal's style rule, not the policy's - a
+    // property is no inline script; tests/core-site-guard.test.mjs VENDORED says why the copy is not rewritten)
+    assert.ok(!/\.on(click|change|input|submit|keydown)\s*=/.test(src) || rel(f) === "sw.js" || rel(f) === "takeoff/vendor/pdfjs/build/pdf.min.js",
+      rel(f) + ": a handler property instead of addEventListener");
   }
 });
 

@@ -61,6 +61,11 @@ export function onedriveLive(src) {
   return String(src).replace(/export const LIVE = false;/, "export const LIVE = true;   // (demo server: tools/fake/p7-onedrive.js answers)");
 }
 
+/** A path of the vendored takeoff app (site/takeoff/): served untouched, demo or not. */
+export function isVendored(path) {
+  return String(path).indexOf("/takeoff/") === 0;
+}
+
 /** The page as served in demo mode: the stand-in before the first script, the real library out. */
 export function injectDemo(html) {
   let out = String(html).replace(SUPABASE_TAG, "");
@@ -105,7 +110,9 @@ export function startServer(port = PORT) {
       if (st.isDirectory()) return send(res, 302, "", "text/plain", { location: path.replace(/\/?$/, "/") });
       const ext = extname(file).toLowerCase();
       let body = await readFile(file);
-      if (ext === ".html" && DEMO) body = injectDemo(body.toString("utf8"));
+      // the vendored takeoff app (site/takeoff/, another program: tools/vendor-takeoff.mjs) is served as published - it
+      // has no database to stand in for, and its page policy would refuse nothing of the stand-in's but it must not run there
+      if (ext === ".html" && DEMO && !isVendored(path)) body = injectDemo(body.toString("utf8"));
       if (DEMO && ONEDRIVE_ON && path === "/js/repo/onedrive.js") body = onedriveLive(body.toString("utf8"));
       const extra = path === "/sw.js" ? { "service-worker-allowed": "/" } : {};
       return send(res, 200, req.method === "HEAD" ? "" : body, TYPES[ext] || "application/octet-stream", extra);

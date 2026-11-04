@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://netorgft10120038-my.sharepoint.com; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Professional Takeoff Tools — Web</title>
+<script src="js/ui-mode-boot.js"></script>
+<link rel="stylesheet" href="css/app.css">
+
+<!-- Installable to a home screen, and usable with no signal once cached. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0d0d0d">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Takeoff">
+</head>
+<body>
+
+<div id="app" class="app">
+
+  <!--
+    Everything above the drawing, in one element.
+
+    It is a wrapper rather than five separately-hidden rows because hiding a
+    GRID ROW is what makes the drawing disappear: `display:none` takes the
+    element out of the grid, auto-placement slides `.body` up into an `auto`
+    row, and that row measures 0 tall because the canvas inside it is
+    absolutely positioned. Out of flow, this whole stack collapses its row to
+    nothing and `.body` keeps the `1fr` it already had.
+  -->
+  <div class="chrome" id="chrome">
+
+  <!-- ── menu bar ─────────────────────────────────────────────────────── -->
+  <div class="menubar" id="menubar">
+    <div class="brand">
+      <span class="brand-mark">PTT</span>
+      <span class="brand-name">Professional Takeoff Tools</span>
+    </div>
+
+    <nav class="menus" id="menus">
+      <div class="menu" data-menu="file">
+        <button class="menu-btn">File</button>
+        <div class="menu-pop">
+          <button data-act="new-project">New Project<kbd>Ctrl+N</kbd></button>
+          <button data-act="open-project">Open Project…<kbd>Ctrl+O</kbd></button>
+          <button data-act="plans-archive">Plans Archive…</button>
+          <button data-act="keep-on-device">Keep on This Device</button>
+          <button data-act="import-pdf">Import PDF…<kbd>Ctrl+I</kbd></button>
+          <hr>
+          <button data-act="save">Save<kbd>Ctrl+S</kbd></button>
+          <button data-act="save-as">Save As…<kbd>Ctrl+Shift+S</kbd></button>
+          <hr>
+          <button data-act="project-info">Project Info…</button>
+          <button data-act="recent">Recent Projects…</button>
+          <hr>
+          <button data-act="close-project">Close Project</button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="edit">
+        <button class="menu-btn">Edit</button>
+        <div class="menu-pop">
+          <button data-act="undo">Undo<kbd>Ctrl+Z</kbd></button>
+          <button data-act="redo">Redo<kbd>Ctrl+Y</kbd></button>
+          <hr>
+          <button data-act="delete">Delete Selected<kbd>Del</kbd></button>
+          <button data-act="select-none">Deselect<kbd>Esc</kbd></button>
+          <hr>
+          <button data-act="settings">Settings…</button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="view">
+        <button class="menu-btn">View</button>
+        <div class="menu-pop">
+          <button data-act="mode-view" id="modeViewItem">View Only</button>
+          <button data-act="mode-edit" id="modeEditItem">Edit Mode</button>
+          <hr>
+          <button data-act="zoom-fit">Fit to Window<kbd>F</kbd></button>
+          <button data-act="zoom-100">Actual Size<kbd>1</kbd></button>
+          <button data-act="zoom-width">Fit Width</button>
+          <hr>
+          <button data-act="toggle-thumbs">Sheets Panel</button>
+          <button data-act="toggle-items">Project Items Panel</button>
+          <button data-act="toggle-markup-bar">Markup Toolbar</button>
+          <button data-act="toggle-chrome-pin" id="chromePinItem">Pin Toolbars</button>
+          <button data-act="toggle-labels">Measurement Labels</button>
+          <hr>
+          <button data-act="ui-touch" id="uiTouchItem">Touch layout</button>
+          <button data-act="ui-standard" id="uiStandardItem">Standard layout</button>
+          <hr>
+          <button data-act="marker-smaller">Smaller Markers<kbd>Ctrl+Shift+[</kbd></button>
+          <button data-act="marker-normal">Normal Markers<kbd>Ctrl+0</kbd></button>
+          <button data-act="marker-bigger">Bigger Markers<kbd>Ctrl+Shift+]</kbd></button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="sheets">
+        <button class="menu-btn">Sheets</button>
+        <div class="menu-pop">
+          <button data-act="add-blank">Add Blank Sheet…</button>
+          <button data-act="import-more">Add Pages from PDF…</button>
+          <hr>
+          <button data-act="review-labels">Review Sheet Numbers…</button>
+          <button data-act="set-scale">Set Sheet Scale…</button>
+          <hr>
+          <button data-act="revisions">Plan Revisions…</button>
+          <button data-act="current-set">Current Set of Drawings…</button>
+          <button data-act="delete-page">Delete This Sheet</button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="tools">
+        <button class="menu-btn">Tools</button>
+        <div class="menu-pop">
+          <button data-act="catalog">Materials Catalog…</button>
+          <button data-act="add-standalone">Add Item Not on a Sheet…</button>
+          <hr>
+          <button data-act="isolate">Isolate Selected</button>
+          <button data-act="exit-isolate">Show Everything</button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="reports">
+        <button class="menu-btn">Reports</button>
+        <div class="menu-pop">
+          <button data-act="report-center">Report Center…</button>
+          <hr>
+          <button data-act="export-csv">Export CSV…</button>
+          <button data-act="export-xlsx">Export Excel…</button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="help">
+        <button class="menu-btn">Help</button>
+        <div class="menu-pop">
+          <button data-act="shortcuts">Keyboard Shortcuts…</button>
+          <button data-act="about">About</button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="menubar-right">
+      <button class="mode-btn" id="modeBtn" data-act="toggle-mode" hidden
+              title="Switch between View Only and Edit Mode">Edit Mode</button>
+      <span class="dirty-dot" id="dirtyDot" title="Unsaved changes" hidden>●</span>
+      <span class="proj-title" id="projTitle">No project open</span>
+      <!-- Pinned, these bars behave exactly as they always have. Unpinned they
+           get out of the way of the drawing and come back when reached for. -->
+      <button class="pin-btn" id="chromePin" data-act="toggle-chrome-pin"
+              title="Keep the toolbars on screen (M)">📌</button>
+    </div>
+  </div>
+
+  <!-- ── takeoff toolbar ──────────────────────────────────────────────── -->
+  <div class="toolbar" id="toolbar">
+    <div class="tool-group" id="toolButtons"></div>
+    <!-- View Only's own tools. The same modes as the edit row, but their
+         results go to the scratch store, so nothing here can change a file. -->
+    <div class="tool-group" id="viewToolButtons" hidden></div>
+    <div class="tool-group" id="viewMeasureGroup" hidden>
+      <button class="tb-btn" data-act="scratch-undo"
+              title="Remove the last temporary dimension">Undo last</button>
+      <button class="tb-btn" data-act="scratch-clear"
+              title="Remove every temporary dimension in this project">Clear</button>
+      <span class="tb-label scratch-count" id="scratchCount"></span>
+    </div>
+
+    <div class="tb-sep"></div>
+
+    <div class="tool-group">
+      <button class="tb-btn" data-act="zoom-out" title="Zoom out">−</button>
+      <span class="zoom-label" id="zoomLabel">100%</span>
+      <button class="tb-btn" data-act="zoom-in" title="Zoom in">+</button>
+      <button class="tb-btn" data-act="zoom-fit" title="Fit to window (F)">Fit</button>
+    </div>
+
+    <div class="tb-sep"></div>
+
+    <div class="tool-group">
+      <label class="tb-label">Scale</label>
+      <select id="scaleSelect" class="tb-select" title="The drawing scale of this sheet"></select>
+    </div>
+
+    <div class="tb-sep"></div>
+
+    <div class="tool-group">
+      <button class="tb-btn" data-act="undo" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
+      <button class="tb-btn" data-act="redo" id="redoBtn" title="Redo (Ctrl+Y)">↷</button>
+    </div>
+
+    <div class="tb-spacer"></div>
+
+    <div class="tool-group">
+      <span class="page-of" id="pageOf"></span>
+      <button class="tb-btn" data-act="prev-page" title="Previous sheet">‹</button>
+      <button class="tb-btn" data-act="next-page" title="Next sheet">›</button>
+    </div>
+  </div>
+
+  <!-- ── markup toolbar ───────────────────────────────────────────────── -->
+  <div class="toolbar markup" id="markupBar">
+    <span class="tb-label">Markup</span>
+    <div class="tool-group" id="markupButtons"></div>
+
+    <div class="tb-sep"></div>
+    <span class="tb-label">Highlight</span>
+    <div class="tool-group" id="highlightColors"></div>
+
+    <div class="tb-sep"></div>
+    <span class="tb-label">Pen</span>
+    <div class="tool-group" id="penColors"></div>
+
+    <div class="tb-sep"></div>
+    <span class="tb-label">Width</span>
+    <input type="range" id="markupWidth" class="tb-range" min="1" max="40" step="1" value="14"
+           title="Stroke width, in sheet pixels">
+    <span class="tb-label" id="markupWidthOut">14</span>
+
+    <div class="tb-sep"></div>
+    <button class="tb-btn" data-act="toggle-markup" id="markupToggle"
+            title="Show or hide all markup">Markup on</button>
+    <button class="tb-btn" data-act="clear-markup"
+            title="Remove every highlight and pen stroke on this sheet">Clear sheet</button>
+  </div>
+
+  <!-- ── sheet versions ───────────────────────────────────────────────────
+       Hidden entirely on a job with no plan revisions, which is most of them —
+       and when it is hidden the page below must not move by a pixel, so it is
+       pinned to its own grid row rather than placed automatically. -->
+  <div class="verbar" id="versionBar" hidden>
+    <span class="vb-sheet" id="vbSheet"></span>
+    <span class="vb-showing" id="vbShowing"></span>
+    <canvas class="vb-pips" id="vbPips" width="10" height="10"
+            title="Every version of this sheet. Click one to put it on screen."></canvas>
+    <button class="tb-btn" data-act="version-prev" title="Previous version of this sheet (Left)">‹</button>
+    <button class="tb-btn" data-act="version-next" title="Next version of this sheet (Right)">›</button>
+    <button class="tb-btn" data-act="version-newest" id="vbNewestBtn"
+            title="Back to the newest drawing of this sheet">Newest</button>
+    <button class="tb-btn" data-act="count-version" id="vbCountBtn" hidden
+            title="Count this sheet from the drawing on screen">Count this version</button>
+    <div class="tb-sep"></div>
+    <button class="tb-btn" data-act="compare-overlay" id="vbOverlay"
+            title="Draw this revision over the sheet in red">Overlay</button>
+    <button class="tb-btn" data-act="compare-diff" id="vbDiff"
+            title="Two-colour slip-sheet diff: blue original, red revision">Diff</button>
+    <div class="tb-spacer"></div>
+    <button class="tb-btn" data-act="revisions" title="All revision sets, sheet by sheet">Revisions…</button>
+  </div>
+
+  <!-- ── overlay compare controls (only while an overlay is up) ─────────── -->
+  <div class="verbar ovbar" id="overlayBar" hidden>
+    <span class="vb-sheet" id="ovWhat"></span>
+    <!--
+      A BALANCE between the two drawings, not an opacity.
+
+      Centre shows both. Right brings the newest forward and fades the older
+      out; left does the reverse. It cannot be a plain alpha over the sheet
+      because a floor plan is mostly white paper: blending two white sheets
+      hides the lines of whichever is underneath. Both drawings are reduced to
+      their ink and laid on one paper plate, so the comparison reads the same
+      whatever colour the background is set to.
+    -->
+    <span class="tb-label">Older</span>
+    <input type="range" id="ovBalance" class="tb-range wide"
+           min="-100" max="100" step="1" value="0"
+           title="Centre shows both drawings. Slide towards the version you want to see more of.">
+    <span class="tb-label">Newest</span>
+    <span class="tb-label ov-bal" id="ovBalanceOut">both</span>
+    <div class="tb-sep"></div>
+    <button class="tb-btn" data-act="overlay-align" id="ovAlign"
+            title="Drag the overlay to line it up with the sheet">Align</button>
+    <button class="tb-btn" data-act="overlay-reset" title="Put the overlay back where it started">Reset</button>
+    <button class="tb-btn" data-act="overlay-flash" id="ovFlash"
+            title="Blink the overlay on and off — changes jump out">Flash</button>
+    <div class="tb-spacer"></div>
+    <button class="tb-btn" data-act="overlay-off" title="Stop comparing">Done</button>
+  </div>
+
+  </div><!-- /#chrome -->
+
+  <!--
+    The tool's own options — size, pattern, angle, the item name.
+
+    OUTSIDE #chrome on purpose. It belongs to the tool being used on the
+    drawing, not to the toolbars, and inside the stack it was positioned
+    against a container translated off the top of the window: pick Tile, move
+    onto the sheet, and the controls went away with the bars. Out here it is
+    positioned against #app, which is what placeToolOptions already measures.
+  -->
+  <div class="tool-opts" id="toolOpts" hidden></div>
+
+  <!--
+    The strip you pull the chrome down from. Always present, four pixels of
+    nothing at the very top: the pointer reaching up finds it, and a downward
+    swipe starting on it brings the bars in. It is a sibling of #chrome rather
+    than a child so that it cannot travel with the thing it reveals.
+  -->
+  <div class="chrome-edge" id="chromeEdge" title="Pull down for the toolbars (M)">
+    <span class="chrome-edge-grip"></span>
+  </div>
+
+  <!-- ── main body ────────────────────────────────────────────────────── -->
+  <div class="body">
+
+    <aside class="thumbs" id="thumbsPanel">
+      <div class="panel-head">
+        <span class="panel-title">SHEETS</span>
+        <button class="icon-btn" data-act="thumb-compact" title="Compact list">▤</button>
+      </div>
+      <div class="thumb-list" id="thumbList"></div>
+    </aside>
+
+    <div class="grip" id="thumbGrip" data-target="thumbs"></div>
+
+    <main class="stage" id="stage">
+      <canvas id="canvas" tabindex="0"></canvas>
+      <div class="empty-state" id="emptyState">
+        <div class="es-card">
+          <h1>Professional Takeoff Tools</h1>
+          <p class="es-tag">Smart Takeoff. Better Estimates.</p>
+          <div class="es-actions">
+            <button class="es-btn primary" data-act="open-project">Open a .takeoff project</button>
+            <button class="es-btn" data-act="import-pdf">Start from a PDF</button>
+          </div>
+          <p class="es-hint">
+            Drop a <code>.takeoff</code> or <code>.pdf</code> file anywhere on this window.
+          </p>
+          <!-- The Plans Archive: plan files from a folder on this computer.
+               Filled by js/ui/plans-archive.js (renderStart): the "choose
+               your folder" step, "Reconnect" after a browser restart, then a
+               search box and the recently opened plans. Hidden until a
+               folder is chosen while plans still come from the portal. -->
+          <div class="es-lib es-arch" id="esArchive" hidden></div>
+          <!-- Plans kept on this device, so they open with no signal: this
+               app's own (File > Keep on This Device) and the portal's Plans
+               Library copies. Filled by renderLibraryList() in js/main.js;
+               hidden when there is nothing to list. The link to the portal's
+               page goes once plans come from the Plans Archive. -->
+          <div class="es-lib" id="esLibrary" hidden>
+            <div class="es-lib-head"><span>Plans on this device</span><a class="es-lib-manage" href="../dcr-portal/plans-library.html">Plans Library</a></div>
+            <div class="es-lib-list" id="esLibraryList"></div>
+          </div>
+        </div>
+      </div>
+      <!--
+        Not the newest drawing of this sheet. Translucent and in the corner,
+        because it has to be impossible to miss and impossible to mistake for
+        part of the drawing — an estimator who takes a quantity off a
+        superseded sheet has no way of finding out from the numbers.
+      -->
+      <div class="old-badge" id="oldBadge" hidden aria-live="polite">
+        <span class="old-word">OLD</span>
+        <span class="old-sub" id="oldBadgeSub"></span>
+      </div>
+      <div class="drop-veil" id="dropVeil" hidden><span>Drop to open</span></div>
+    </main>
+
+    <!-- Dims the sheet while a drawer is open; tapping it closes the drawer. -->
+    <div class="scrim" id="scrim" hidden></div>
+
+    <!--
+      The bar at the foot of a phone or tablet. It carries the handful of
+      things that must never be more than one tap away, because the toolbars
+      above it scroll sideways on a narrow screen and anything can be off
+      the edge. It has two faces: the normal one, and — while a chain tool
+      is collecting points — Finish / Undo point / Cancel, which is the only
+      way to close a polyline without a keyboard.
+    -->
+    <div class="mbar" id="mobileBar" hidden>
+      <div class="mbar-main" id="mbarMain">
+        <button class="mbar-btn" data-act="toggle-thumbs"><b>▤</b>Sheets</button>
+        <button class="mbar-btn" data-act="prev-page"><b>‹</b>Prev</button>
+        <button class="mbar-btn" data-act="zoom-fit"><b>⛶</b><span id="mbarPage">Fit</span></button>
+        <button class="mbar-btn" data-act="next-page"><b>›</b>Next</button>
+        <button class="mbar-btn" data-act="toggle-items"><b>☰</b>Items</button>
+        <!-- The menubar's own mode button scrolls off a 375px screen, and a
+             phone is exactly where View Only matters most. -->
+        <button class="mbar-btn" data-act="toggle-mode" id="mbarMode"><b>✎</b><span id="mbarModeLabel">Edit</span></button>
+      </div>
+      <div class="mbar-chain" id="mbarChain" hidden>
+        <button class="mbar-btn ok"   data-act="chain-finish"><b>✓</b>Finish</button>
+        <button class="mbar-btn"      data-act="chain-undo"><b>⌫</b>Undo point</button>
+        <button class="mbar-btn warn" data-act="chain-cancel"><b>✕</b>Cancel</button>
+      </div>
+    </div>
+
+    <!-- Plan revisions. Absolutely positioned over the stage, and NOT modal:
+         clicking a cell flips the drawing behind it, and that back-and-forth
+         is what makes a change jump out. -->
+    <aside class="revpanel" id="revPanel" hidden></aside>
+
+    <div class="grip" id="itemsGrip" data-target="items"></div>
+
+    <aside class="items" id="itemsPanel">
+      <div class="panel-head">
+        <span class="panel-title">PROJECT ITEMS</span>
+        <div class="cost-toggle" id="costToggle">
+          <button data-cost="all" class="on" title="Show labor and material items">ALL</button>
+          <button data-cost="labor" title="Labor estimate — labor items only">LAB</button>
+          <button data-cost="material" title="Material takeoff — material items only">MAT</button>
+        </div>
+        <button class="icon-btn" data-act="add-standalone"
+                title="Add an item that isn't drawn on a sheet — nails, glue, hardware, a labor line…">＋</button>
+      </div>
+      <div class="filter-bar">
+        <select id="floorFilter" class="tb-select sm"><option value="">All Floors</option></select>
+        <select id="groupFilter" class="tb-select sm"><option value="">All Groups</option></select>
+      </div>
+      <div class="item-list" id="itemList"></div>
+      <div class="items-foot" id="itemsFoot"></div>
+    </aside>
+
+  </div>
+
+  <!-- ── status bar ───────────────────────────────────────────────────── -->
+  <div class="statusbar">
+    <span class="status-text" id="statusText">Ready</span>
+    <span class="status-right">
+      <span id="scaleReadout"></span>
+      <span id="memReadout"></span>
+    </span>
+  </div>
+
+</div>
+
+<!-- progress overlay -->
+<div class="overlay" id="progress" hidden>
+  <div class="progress-card">
+    <div class="progress-label" id="progressLabel">Working…</div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-sub" id="progressSub"></div>
+  </div>
+</div>
+
+<!-- dialog host -->
+<div class="overlay" id="modal" hidden></div>
+
+<!-- context menu host -->
+<div class="ctx-menu" id="ctxMenu" hidden></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

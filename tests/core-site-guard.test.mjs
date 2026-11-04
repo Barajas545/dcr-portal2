@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SITE = fileURLToPath(new URL("../site/", import.meta.url));
@@ -37,6 +37,37 @@ export const PAGE_LIBS = { "timesheet.html": PDF_LIBS, "timesheet-mobile.html": 
 export const ONEDRIVE = "https://netorgft10120038-my.sharepoint.com";
 const LIBRARY_PAGES = ["plans-library.html", "search.html"];
 export const PAGE_CONNECT = { "project.html": [ONEDRIVE], "plans-library.html": [ONEDRIVE], "search.html": [ONEDRIVE] };
+// The pages that show the takeoff app in a frame on a phone or tablet (js/plan-frame.js: the 📐 menu of Search and of a
+// project, and the Plans Library) say so: frame-src 'self' - what default-src already allowed, written out so that the
+// frame keeps working whatever default-src becomes, and so nothing but this site's own page can ever be framed.
+export const FRAME_PAGES = ["project.html", "plans-library.html", "search.html"];
+
+// site/takeoff/ is ANOTHER program: takeoff-web at one reviewed commit, copied byte for byte by tools/vendor-takeoff.mjs
+// (owner decision Q4, 2026-11-04: on a phone or a tablet the takeoff app opens inside the portal, js/plan-frame.js;
+// site/takeoff/VERSION.json and tests/p8-takeoff-frame.test.mjs hold it to that commit). Like cme/ it is published as it
+// is; unlike cme/ (the portal's own port of the old drawing tool) it is not rewritten to the portal's code rules. It is
+// held instead to its own page policy - stricter than the portal's: script-src 'self' only, no CDN, no database - and to
+// every rule that keeps a secret, a tenant, the demo or an inline script out of the site. The portal's code rules it is
+// exempt from, each by name, file and why (a rule a new copy no longer needs fails "still needed", so the list shrinks):
+export const VENDORED = "takeoff/";
+export const VENDORED_PAGE = "takeoff/index.html";
+export const TAKEOFF_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
+  "connect-src 'self' " + ONEDRIVE + "; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'";
+export const VENDORED_EXEMPT = Object.freeze([
+  { rule: "the blueprint's page policy", files: [VENDORED_PAGE], why: "its own, TAKEOFF_CSP (the OneDrive host in connect-src for a plan opened online)" },
+  { rule: "eval", files: ["takeoff/vendor/pdfjs/build/pdf.min.js", "takeoff/vendor/pdfjs/build/pdf.worker.min.js"],
+    why: "pdf.js only tests whether eval works (the policy refuses it, and js/core/pdf-import.js sets isEvalSupported: false)" },
+  { rule: "look-behind", files: ["takeoff/js/ui/catalog.js"],
+    why: "DIMSEP at line 35 (reported by vendor-takeoff.mjs; takeoff-web's iPad package P2 rewrites it): the copy needs Safari 16.4 anyway, the Plans Library's writer does" },
+  { rule: "the old session key", files: ["takeoff/js/core/device-plans.js"],
+    why: "takeoff-web reads plans the OLD portal saved on its own site before the move (never on this site)" },
+  { rule: "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)", files: ["takeoff/js/core/portal-handoff.js"],
+    why: "takeoff-web checks a handed link is SharePoint's (*.sharepoint.com) before reading it" },
+]);
+/** This published file is exempt from this rule (a vendored file listed above). */
+function exempt(rule, path) {
+  return VENDORED_EXEMPT.some((x) => x.rule === rule && x.files.includes(path));
+}
 
 function walk(dir) {
   const out = [];
@@ -78,6 +109,14 @@ test("every page carries the security policy of BLUEPRINT 2.2.1, before any scri
     const m = /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(src);
     assert.ok(m, rel(f) + ": no Content-Security-Policy meta tag");
     const got = parseCsp(m[1]);
+    const firstScript = src.search(/<script\b/i);
+    assert.ok(firstScript === -1 || m.index < firstScript, rel(f) + ": the policy must come before any script");
+    if (exempt("the blueprint's page policy", rel(f))) {
+      // the takeoff copy's own policy, word for word (tools/vendor-takeoff.mjs writes it)
+      assert.equal(m[1], TAKEOFF_CSP, rel(f) + ": the takeoff copy's policy");
+      continue;
+    }
+    assert.ok(rel(f).indexOf(VENDORED) !== 0, rel(f) + ": a page of the vendored copy other than its one page");
     const extra = PAGE_LIBS[rel(f)] || [];
     const connect = PAGE_CONNECT[rel(f)] || [];
     const wantHere = Object.assign({}, want, { "script-src": want["script-src"].split(" ").concat(extra).sort().join(" "),
@@ -88,8 +127,7 @@ test("every page carries the security policy of BLUEPRINT 2.2.1, before any scri
       assert.ok(/^('self'|'none')$/.test(v), rel(f) + ": " + d + " " + v + " is looser than default-src");
     }
     assert.ok(!/'unsafe-inline'|'unsafe-eval'|'strict-dynamic'/.test(got["script-src"]), rel(f) + ": script-src too loose");
-    const firstScript = src.search(/<script\b/i);
-    assert.ok(firstScript === -1 || m.index < firstScript, rel(f) + ": the policy must come before any script");
+    assert.equal(got["frame-src"], FRAME_PAGES.includes(rel(f)) ? "'self'" : undefined, rel(f) + ": frame-src");
   }
   // Portal 2's own pages carry it word for word (the copy to take for a new page)
   for (const p of ["index.html", "change-password.html", "dashboard.html", "settings.html"]) {
@@ -106,7 +144,7 @@ test("the OneDrive host: exactly the one js/repo/onedrive.js names, in connect-s
   for (const f of html) {
     const csp = parseCsp(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(read(f))[1]);
     const has = Object.values(csp).some((v) => v.split(" ").includes(ONEDRIVE));
-    const may = rel(f) === "project.html" || LIBRARY_PAGES.includes(rel(f));
+    const may = rel(f) === "project.html" || LIBRARY_PAGES.includes(rel(f)) || rel(f) === VENDORED_PAGE;
     assert.equal(has, may, rel(f) + (has ? ": names the OneDrive host" : ": must name the OneDrive host in connect-src"));
     if (may) {
       for (const [d, v] of Object.entries(csp)) if (d !== "connect-src") assert.ok(!v.includes("sharepoint"), rel(f) + ": " + d + " names SharePoint");
@@ -141,7 +179,7 @@ test("the PDF pages name exactly the files timesheet-pdf.js loads (exact version
     const page = read(f);
     const mod = /<script type="module" src="([^"]+)"/.exec(page);
     if (!mod) continue;
-    const js = read(join(SITE, mod[1]));
+    const js = read(join(SITE, dirname(rel(f)), mod[1]));          // beside its page (the takeoff copy's: takeoff/js/)
     if (/timesheet-pdf\.js/.test(js)) assert.ok(PAGE_LIBS[rel(f)], rel(f) + " opens the PDF but does not name its library files");
   }
 });
@@ -159,7 +197,7 @@ test("no inline script, no inline handler, no javascript: URL", () => {
   }
   for (const f of scripts) {
     const src = read(f);
-    assert.ok(!/\beval\s*\(|new Function\s*\(/.test(src), rel(f) + ": eval");
+    assert.ok(!/\beval\s*\(|new Function\s*\(/.test(src) || exempt("eval", rel(f)), rel(f) + ": eval");
     assert.ok(!/setAttribute\(\s*["']on[a-z]+["']/i.test(src), rel(f) + ": inline handler set from script");
   }
 });
@@ -167,7 +205,7 @@ test("no inline script, no inline handler, no javascript: URL", () => {
 test("older iPhones: no regular-expression look-behind in any published script (Safari before 16.4 refuses the whole module)", () => {
   for (const f of scripts) {
     const src = read(f);
-    assert.ok(!/\(\?<[!=]/.test(src), rel(f) + ": a look-behind");
+    assert.ok(!/\(\?<[!=]/.test(src) || exempt("look-behind", rel(f)), rel(f) + ": a look-behind");
   }
 });
 
@@ -196,12 +234,12 @@ test("Portal 2's own browser-side names, never the old portal's (Appendix C)", (
     [/sharepoint\.com/i, "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)"],
     [/["'`]tsView["'`]/, "the old time-sheet view key"],
   ];
-  const HOST_OK = ["project.html", "js/repo/onedrive.js"].concat(LIBRARY_PAGES);
+  const HOST_OK = ["project.html", "js/repo/onedrive.js", VENDORED_PAGE].concat(LIBRARY_PAGES);
   for (const f of scripts.concat(html)) {
     let src = read(f);
     // the one exact host string, in the two files that may name it (D10): stripped before the test
     if (HOST_OK.includes(rel(f))) src = src.split(new URL(ONEDRIVE).hostname).join("onedrive-host");
-    for (const [re, what] of old) assert.ok(!re.test(src), rel(f) + ": uses " + what);
+    for (const [re, what] of old) assert.ok(!re.test(src) || exempt(what, rel(f)), rel(f) + ": uses " + what);
   }
   const sw = read(join(SITE, "sw.js"));
   assert.match(sw, /const CACHE = "dcr-portal2-v\d+"/);           // bumped when the worker's behaviour changes (v2: P3 push)
@@ -244,6 +282,24 @@ test("no Microsoft secret, tenant, app or drive id anywhere in the repository (s
     const src = readFileSync(f, "utf8");
     for (const [re, what] of NEVER) assert.ok(!re.test(src), relative(ROOT, f).replace(/\\/g, "/") + ": " + what);
   }
+});
+
+test("the vendored takeoff copy: exempt from the portal's code rules only as listed - each exemption names files of the copy that still need it", () => {
+  assert.deepEqual(VENDORED_EXEMPT.map((x) => x.rule), ["the blueprint's page policy", "eval", "look-behind", "the old session key",
+    "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)"], "no rule is added quietly");
+  const NEEDS = { "eval": /\beval\s*\(|new Function\s*\(/, "look-behind": /\(\?<[!=]/, "the old session key": /dcr_portal_token/,
+    "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)": /sharepoint\.com/i };
+  for (const x of VENDORED_EXEMPT) {
+    assert.ok(x.why && x.files.length, x.rule + ": says why");
+    for (const p of x.files) {
+      assert.equal(p.indexOf(VENDORED), 0, p + ": only the vendored copy is ever exempt");
+      assert.ok(files.some((f) => rel(f) === p), p + " is published (a re-vendored copy without it: take it off the list)");
+      if (NEEDS[x.rule]) assert.ok(NEEDS[x.rule].test(read(join(SITE, p))), p + " no longer needs '" + x.rule + "': take it off the list");
+    }
+  }
+  // the rules that keep secrets, the demo, an inline script and other sites' code out hold for the copy too: they are
+  // above, over every file of site/ - none of them knows VENDORED
+  assert.ok(html.some((f) => rel(f) === VENDORED_PAGE) && scripts.filter((f) => rel(f).indexOf(VENDORED) === 0).length > 40, "the copy is walked");
 });
 
 test("the manifest is Portal 2's own app", () => {

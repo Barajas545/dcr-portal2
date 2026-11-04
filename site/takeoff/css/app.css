@@ -1,0 +1,1570 @@
+/* app.css — the dark shell, matching the desktop app's palette exactly.
+   Colours are lifted from the Qt stylesheets so the two builds read as one
+   program. Everything is a token, so the whole surface can be retinted for the
+   employee portal without touching a rule. */
+
+:root {
+  --canvas-bg: #1e1e1e;
+  --panel-bg: #141414;
+  --head-bg: #0d0d0d;
+  --filter-bg: #101010;
+  --bar-bg: #1b1b1b;
+  --chip-bg: #282828;
+  --btn-bg: #3d3d3d;
+  --btn-hover: #474747;
+  --btn-press: #2a2a2a;
+  --field-bg: #1c1c1c;
+
+  --border: #2a2a2a;
+  --border-soft: #252525;
+  --border-hard: #151515;
+
+  --text: #dedede;
+  --text-2: #d0d0d0;
+  --text-dim: #9a9a9a;
+  --text-faint: #606060;
+  --text-ghost: #383838;
+  --text-off: #484848;
+
+  --accent: #4772b3;
+  --accent-2: #4aa8d8;
+  --select: #28486e;
+  --row-a: #191919;
+  --row-b: #1e1e1e;
+
+  --labor: #8a6d2a;
+  --material: #2c5a8c;
+  --eye-on: #4aad52;
+  --eye-off: #d95555;
+  --materials: #a0a040;
+  --warn: #e0a050;
+  --err: #e08080;
+
+  /* Plan revisions. Lifted from the desktop's Qt stylesheets and its GL
+     constants so the two builds read as one program:
+       rev-on    #8fd14f  the version on screen, and a "pair" drop band
+       rev-slot  #c9a648  an inserted "new sheet" row, and an "insert" band
+       rev-tint  rgb(255,77,77)   set_overlay_color(1.0, 0.3, 0.3)
+       diff-old  rgb(50,90,220)   _compose_diff_image black= for the original
+       diff-new  rgb(225,45,45)   _compose_diff_image black= for the revision */
+  --rev-on: #8fd14f;
+  --rev-slot: #c9a648;
+  --rev-fg: #d8b45a;
+  --rev-tint: #ff4d4d;
+  --diff-old: #325adc;
+  --diff-new: #e12d2d;
+
+  /* What a Pages tile says about its sheet's drawings — the desktop's
+     ThumbnailItem.VERSION_MARKS, kind -> chip text, chip background, edge:
+       rev    a revision superseded the sheet (the matrix's revision cyan)
+       added  a revision brought the sheet; not in the original plans
+       warn   the takeoff counts from another drawing than the one shown
+              (the amber of OLDER and NOT COUNTED) */
+  --vs-rev-fg: #7ec8f5;   --vs-rev-bg: #16303f;   --vs-rev-edge: #7ec8f5;
+  --vs-added-fg: #d2b0ff; --vs-added-bg: #2e2340; --vs-added-edge: #b48ce0;
+  --vs-warn-fg: #ffd9a0;  --vs-warn-bg: #6a3f06;  --vs-warn-edge: #d9a441;
+  --nc-fg: #ffd9a0;       --nc-bg: #6a3f06;
+
+  --thumb-w: 190px;
+  --items-w: 300px;
+
+  --ui: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Two layouts, one set of numbers
+
+   Everything that has to grow for a fingertip is a token here, and exactly
+   one selector decides the values. That is what lets a USER CHOICE beat a
+   media query: `@media (pointer: coarse)` is a fact about the hardware, and
+   there is no CSS operator for "this query, unless the user said otherwise".
+
+   Order matters and is deliberate:
+     1. bare :root          — the desktop numbers, and the fallback if the
+                              stamping script never runs (JS off, storage
+                              blocked, a stale cached index.html).
+     2. :root:not([data-ui]) inside the media query — no preference yet, so
+                              the device still decides.
+     3. :root[data-ui=…]    — the user chose. Beats 2 by being a different,
+                              mutually exclusive selector.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --ctl-h: 0px;              /* control floor; padding alone decides */
+  --ctl-pad: 5px 9px;
+  --menu-h: 0px;
+  --menuitem-h: 0px;
+  --icon-h: 0px;
+  --icon-pad: 2px 6px;
+  --swatch: 20px;
+  --range-w: 96px;
+  --range-h: auto;
+  --field-h: 0px;
+  --field-fs: 12px;
+  --panel-head-h: 36px;
+  --filter-h: 30px;
+  --rowact-h: 0px;
+  --rowact-pad: 0 3px;
+  --cost-pad: 3px 6px;
+  --form-cols: 128px 1fr;
+}
+
+@media (pointer: coarse) {
+  :root:not([data-ui]) {
+    --ctl-h: 40px;   --ctl-pad: 8px 12px;
+    --menu-h: 38px;  --menuitem-h: 42px;
+    --icon-h: 38px;  --icon-pad: 6px 10px;
+    --swatch: 30px;
+    --range-w: 128px; --range-h: 28px;
+    --field-h: 38px; --field-fs: 16px;
+    --panel-head-h: 46px;
+    --filter-h: 48px;
+    --rowact-h: 38px; --rowact-pad: 0 10px;
+    --cost-pad: 8px 10px;
+    --form-cols: 1fr;
+  }
+}
+
+:root[data-ui="touch"] {
+  --ctl-h: 40px;   --ctl-pad: 8px 12px;
+  --menu-h: 38px;  --menuitem-h: 42px;
+  --icon-h: 38px;  --icon-pad: 6px 10px;
+  --swatch: 30px;
+  --range-w: 128px; --range-h: 28px;
+  --field-h: 38px; --field-fs: 16px;
+  --panel-head-h: 46px;
+  --filter-h: 48px;
+  --rowact-h: 38px; --rowact-pad: 0 10px;
+  --cost-pad: 8px 10px;
+  --form-cols: 1fr;
+}
+
+/* Written out rather than left to inherit block 1, so that "standard" is a
+   statement and no future coarse-device rule can leak into it. */
+:root[data-ui="standard"] {
+  --ctl-h: 0px;    --ctl-pad: 5px 9px;
+  --menu-h: 0px;   --menuitem-h: 0px;
+  --icon-h: 0px;   --icon-pad: 2px 6px;
+  --swatch: 20px;
+  --range-w: 96px; --range-h: auto;
+  --field-h: 0px;  --field-fs: 12px;
+  --panel-head-h: 36px;
+  --filter-h: 30px;
+  --rowact-h: 0px; --rowact-pad: 0 3px;
+  --cost-pad: 3px 6px;
+  --form-cols: 128px 1fr;
+}
+
+* { box-sizing: border-box; }
+
+/* `hidden` means hidden.
+ *
+ * The HTML attribute is implemented as a UA rule of `display: none`, which
+ * ANY author rule that sets `display` silently beats — and a component rule
+ * almost always sets display. That is how `#modal` came to sit over the
+ * whole app: `.overlay[hidden] { display: none }` was written correctly, and
+ * `#modal { ...; display: block }` twelve lines later outranked it, so the
+ * dialog host never went away. A fixed, inset-0, z-index-80 sheet with no
+ * background is invisible and swallows every click in the program.
+ *
+ * Nothing in this app ever wants an element that is `hidden` and painted,
+ * so the attribute is made to win outright. */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%; margin: 0;
+  /* No pull-to-refresh and no rubber-band on a phone: both fire mid-drag,
+     and the pointercancel that follows would strand a half-drawn stroke. */
+  overscroll-behavior: none;
+  background: var(--panel-bg);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 12.5px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font-family: inherit; }
+
+.app {
+  height: 100%;
+  /* dvh so Safari's collapsing bottom bar cannot cover the last row */
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  position: relative;
+}
+/* Without this every row is floored at its min-content width: the 772px
+   run of tool buttons dragged the canvas, the body and the status bar to
+   788px inside a 390px phone, and overflow:hidden threw the right half away. */
+.app > * { min-width: 0; }
+
+/* And every row is pinned, for the same reason the body's children are
+   pinned to their columns further down. `display: none` takes an element
+   out of the grid entirely, so hiding a row let auto-placement slide the
+   body up into an `auto` row — it measured 0 tall, because the canvas
+   inside it is absolutely positioned — and left the 1fr row empty. The
+   drawing vanished and the toolbars looked perfectly fine.
+
+   That is also why the five bars above the drawing are now ONE element:
+   inside #chrome they stack with flex, where `hidden` is safe, and the grid
+   never sees them. */
+#chrome     { grid-row: 1; }
+.body       { grid-row: 2; }
+.statusbar  { grid-row: 3; }
+
+/* ── the chrome stack ─────────────────────────────────────────────────── */
+
+.chrome {
+  display: flex; flex-direction: column;
+  min-width: 0;
+  position: relative; z-index: 60;
+}
+
+/* Unpinned: out of flow, so the row it sits in collapses to nothing and the
+   drawing gets the whole window. Nothing is hidden — hiding is what moved
+   the body and lost the canvas — it is simply not in the flow any more. */
+.app.chrome-float .chrome {
+  position: absolute; top: 0; left: 0; right: 0;
+  transform: translateY(-100%);
+  transition: transform .18s cubic-bezier(.2, .7, .3, 1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .55);
+  border-bottom: 1px solid var(--border-hard);
+}
+.app.chrome-float.chrome-open .chrome { transform: translateY(0); }
+
+/* Nothing animates on the first paint, or every launch slides. */
+.app.chrome-float.chrome-still .chrome { transition: none; }
+
+/* The strip you pull it down from: four pixels of nothing at the very top,
+   with a grip that shows itself when the pointer gets near. Pinned, it is
+   not there at all — there is nothing to pull. */
+.chrome-edge {
+  position: absolute; top: 0; left: 0; right: 0; height: 5px;
+  z-index: 59; display: none;
+  touch-action: none;
+}
+.app.chrome-float .chrome-edge { display: block; }
+.app.chrome-float.chrome-open .chrome-edge { display: none; }
+.chrome-edge-grip {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 86px; height: 4px; border-radius: 0 0 5px 5px;
+  background: var(--border-hard);
+  opacity: .5; transition: opacity .15s, height .15s;
+}
+.chrome-edge:hover .chrome-edge-grip { opacity: 1; height: 7px; }
+
+.pin-btn {
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  color: var(--text-faint); font-size: 12px; line-height: 1;
+  padding: 3px 5px; cursor: pointer; filter: grayscale(1); opacity: .55;
+}
+.pin-btn:hover { background: #2a2a2a; opacity: .9; }
+.pin-btn.on { filter: none; opacity: 1; border-color: var(--border-hard); }
+
+/* ── menu bar ─────────────────────────────────────────────────────────── */
+
+.menubar {
+  display: flex; align-items: center; gap: 14px;
+  height: 34px; padding: 0 10px;
+  background: var(--head-bg);
+  border-bottom: 1px solid var(--border-soft);
+  user-select: none;
+}
+
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-mark {
+  font-weight: 800; font-size: 11px; letter-spacing: 1px;
+  color: #fff; background: var(--accent);
+  padding: 3px 6px; border-radius: 4px;
+}
+.brand-name { font-size: 11.5px; color: var(--text-faint); letter-spacing: .3px; }
+
+.menus { display: flex; gap: 1px; }
+.menu { position: relative; }
+.menu-btn {
+  background: none; border: 0; color: var(--text-2);
+  padding: 6px 10px; font-size: 12.5px; border-radius: 5px; cursor: pointer;
+}
+.menu-btn:hover, .menu.open .menu-btn { background: #232323; color: #fff; }
+
+.menu-pop {
+  position: absolute; top: 100%; left: 0; z-index: 60;
+  min-width: 230px; padding: 5px;
+  background: var(--chip-bg);
+  border: 1px solid var(--border-hard);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.55);
+  display: none;
+}
+.menu.open .menu-pop { display: block; }
+.menu-pop button {
+  display: flex; justify-content: space-between; align-items: center; gap: 20px;
+  width: 100%; text-align: left;
+  background: none; border: 0; color: var(--text);
+  padding: 6px 9px; border-radius: 5px; font-size: 12.5px; cursor: pointer;
+}
+.menu-pop button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.menu-pop button:disabled { color: var(--text-ghost); cursor: default; }
+.menu-pop kbd {
+  font-family: var(--ui); font-size: 10.5px; color: var(--text-faint);
+}
+.menu-pop button:hover:not(:disabled) kbd { color: #cfe0ff; }
+.menu-pop hr { border: 0; border-top: 1px solid #333; margin: 4px 6px; }
+
+.menubar-right {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--text-faint);
+}
+.proj-title { max-width: 32vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirty-dot { color: var(--warn); font-size: 14px; line-height: 1; }
+
+/* ── toolbar ──────────────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; min-height: 40px;
+  background: var(--bar-bg);
+  border-bottom: 1px solid var(--border);
+  user-select: none; flex-wrap: wrap;
+}
+.tool-group { display: flex; align-items: center; gap: 3px; }
+.tb-sep { width: 1px; height: 22px; background: #333; margin: 0 4px; }
+.tb-spacer { flex: 1; }
+
+.tb-btn, .tool-btn {
+  background: var(--btn-bg); color: var(--text);
+  border: 1px solid var(--btn-press); border-radius: 4px;
+  padding: var(--ctl-pad); min-height: var(--ctl-h);
+  font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.tb-btn:hover, .tool-btn:hover { background: var(--btn-hover); }
+.tb-btn:active { background: var(--btn-press); }
+.tb-btn:disabled { opacity: .35; cursor: default; }
+.tool-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.tb-label { font-size: 11px; color: var(--text-faint); margin-right: 3px; }
+.tb-select, .tb-input {
+  background: var(--field-bg); color: var(--text);
+  border: 1px solid #303030; border-radius: 4px;
+  padding: 4px 6px; font-size: max(var(--field-fs), 12px);
+  min-height: var(--field-h); font-family: inherit;
+}
+.tb-select.sm, .tb-input.sm { padding: 3px 5px; font-size: 11.5px; }
+.tb-input { width: 120px; }
+.zoom-label {
+  min-width: 46px; text-align: center; font-size: 11.5px;
+  color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.page-of { font-size: 11.5px; color: var(--text-dim); margin-right: 4px; }
+
+/* the markup row sits under the takeoff row and reads as a quieter band */
+.toolbar.markup {
+  min-height: 34px; padding: 4px 8px;
+  background: #171717; border-bottom: 1px solid var(--border);
+}
+.toolbar.markup .tool-btn { padding: 4px 8px; font-size: 11.5px; }
+.toolbar.markup[hidden] { display: none; }
+
+.swatch-btn {
+  width: var(--swatch); height: var(--swatch); border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--border-hard); padding: 0;
+}
+.swatch-btn:hover { border-color: #fff; }
+.swatch-btn.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+
+.tb-range { width: var(--range-w); height: var(--range-h); accent-color: var(--accent); }
+
+/* the floating per-tool options bar */
+.tool-opts {
+  position: absolute; z-index: 40;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  background: var(--chip-bg);
+  border: 1px solid var(--border-hard); border-radius: 8px;
+  box-shadow: 0 6px 22px rgba(0,0,0,.5);
+}
+.tool-opts .tb-label { color: #bdbdbd; }
+
+/* ── sheet versions ───────────────────────────────────────────────────── */
+
+.verbar {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 30px; padding: 3px 10px;
+  background: var(--head-bg);
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin;
+}
+/* An `auto` grid row whose only child is hidden still costs its padding, and
+   two of these stacked would push the drawing down on every job that has no
+   revisions at all. `hidden` has to mean gone. */
+.verbar[hidden] { display: none; }
+
+.ovbar { background: var(--chip-bg); }
+
+/* Wider than the ordinary range, because this one is read as a position and
+   not just dragged: the centre has to be findable by eye. */
+.tb-range.wide { width: 190px; }
+.ov-bal {
+  min-width: 68px; font-variant-numeric: tabular-nums;
+  color: var(--text-2); font-weight: 600;
+}
+
+.vb-sheet {
+  font-size: 11.5px; font-weight: 600; color: var(--text);
+  white-space: nowrap;
+}
+.vb-showing {
+  font-size: 11.5px; color: var(--text-dim); white-space: nowrap;
+}
+.vb-showing.rev { color: var(--rev-fg); font-weight: 600; }
+
+.vb-pips { flex: 0 0 auto; cursor: pointer; }
+
+.vb-check {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11.5px; color: var(--text-dim); white-space: nowrap; cursor: pointer;
+}
+.vb-check input { accent-color: var(--accent); }
+
+.tb-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── body ─────────────────────────────────────────────────────────────── */
+
+.body {
+  display: grid;
+  grid-template-columns: var(--thumb-w) 4px 1fr 4px var(--items-w);
+  min-height: 0;
+  /* the drawers below are absolutely positioned against this box */
+  position: relative;
+}
+
+/* Every child is pinned to its own column.
+   Without this, hiding a panel with `display: none` takes it out of the grid
+   and auto-placement slides everything left — the canvas lands in the 0-width
+   first track and the drawing disappears. It cost a while to find, because the
+   toolbars above are not in this grid and looked perfectly fine. */
+.thumbs { grid-column: 1; }
+#thumbGrip { grid-column: 2; }
+.stage { grid-column: 3; }
+#itemsGrip { grid-column: 4; }
+.items { grid-column: 5; }
+.body.no-thumbs { grid-template-columns: 0 0 1fr 4px var(--items-w); }
+.body.no-items { grid-template-columns: var(--thumb-w) 4px 1fr 0 0; }
+.body.no-thumbs.no-items { grid-template-columns: 0 0 1fr 0 0; }
+
+.grip { background: var(--border); cursor: col-resize; }
+.grip:hover { background: var(--accent); }
+
+.panel-head {
+  display: flex; align-items: center; gap: 6px;
+  min-height: var(--panel-head-h); padding: 0 8px;
+  background: var(--head-bg);
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.panel-title {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 1px;
+  color: var(--text-faint);
+}
+.icon-btn {
+  margin-left: auto;
+  background: none; border: 0; color: var(--text-faint);
+  font-size: 14px; cursor: pointer; border-radius: 4px;
+  padding: var(--icon-pad); min-height: var(--icon-h); min-width: var(--icon-h);
+}
+.icon-btn:hover { background: #232323; color: var(--text); }
+
+/* ── sheets panel ─────────────────────────────────────────────────────── */
+
+.thumbs, .items {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  background: var(--panel-bg);
+  overflow: hidden;
+}
+.thumbs { border-right: 1px solid var(--border); }
+.items { border-left: 1px solid var(--border); }
+
+.thumb-list, .item-list { flex: 1; overflow-y: auto; overflow-x: hidden; }
+
+.thumb-list::-webkit-scrollbar, .item-list::-webkit-scrollbar { width: 8px; }
+.thumb-list::-webkit-scrollbar-thumb, .item-list::-webkit-scrollbar-thumb {
+  background: #3c3c3c; border-radius: 4px;
+}
+.thumb-list::-webkit-scrollbar-thumb:hover,
+.item-list::-webkit-scrollbar-thumb:hover { background: #505050; }
+
+.thumb {
+  padding: 6px 8px; cursor: pointer;
+  border-bottom: 1px solid #1c1c1c;
+  position: relative;
+  /* Vertical scrolling belongs to the list; the horizontal axis is ours, for
+     sliding a sheet back through its versions. */
+  touch-action: pan-y;
+}
+/* Follows the finger while it is being slid. No transition here — a
+   transition on the live drag is what makes a swipe feel like treacle. */
+.thumb-slide { position: relative; }
+.thumb.settling .thumb-slide { transition: transform .16s ease-out; }
+
+/* Showing something other than the newest drawing of this sheet. The frame
+   turns red, and it stays red while you page away and come back, because the
+   version you chose is still the one that sheet is on. */
+.thumb.oldver .thumb-img { border-color: var(--old-line, #e03c3c); }
+.thumb.oldver {
+  box-shadow: inset 3px 0 0 var(--old-line, #e03c3c);
+  background: rgba(190, 40, 40, .07);
+}
+.thumb.oldver .thumb-ver { color: #ff7a7a; }
+.thumb-ver {
+  grid-column: 3; grid-row: 1;
+  font-size: 9px; font-weight: 700; letter-spacing: .3px;
+  color: var(--text-faint); white-space: nowrap;
+}
+/* The hint that a sheet has more than one drawing and can be slid. */
+.thumb-swipe {
+  position: absolute; inset: 0; pointer-events: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2px; opacity: 0; transition: opacity .15s;
+  font-size: 13px; color: var(--rev-fg);
+}
+.thumb.hasrev:hover .thumb-swipe { opacity: .55; }
+.thumb:hover { background: #1c1c1c; }
+.thumb.on { background: var(--select); }
+.thumb-img {
+  width: 100%; background: #0a0a0a; border: 1px solid #2c2c2c;
+  border-radius: 3px; display: block; min-height: 40px;
+}
+.thumb.on .thumb-img { border-color: #6a95cf; }
+/* Two lines: the sheet NUMBER, which is what a callout names, and under it
+   the sheet NAME, which is what it is called in conversation. The name wraps
+   to its own line rather than sharing one — at 190px a shared line truncated
+   "Floor Plans" to "Flo…" on the sheets that matter most. */
+.thumb-cap {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: baseline; gap: 2px 6px; margin-top: 4px;
+}
+/* Every child is pinned to its column: an empty chip must never re-flow the
+   caption (a grid child that drops out shifts every child after it). */
+.thumb-no {
+  grid-column: 1;
+  font-size: 11.5px; font-weight: 700; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.thumb-vs {
+  grid-column: 2; grid-row: 1;
+  font-size: 9px; font-weight: 700; letter-spacing: .2px;
+  border-radius: 3px; padding: 0 4px; white-space: nowrap;
+  max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+}
+.thumb-vs:empty { padding: 0; }
+.thumb.vs-rev .thumb-vs { color: var(--vs-rev-fg); background: var(--vs-rev-bg); }
+.thumb.vs-added .thumb-vs { color: var(--vs-added-fg); background: var(--vs-added-bg); }
+.thumb.vs-warn .thumb-vs { color: var(--vs-warn-fg); background: var(--vs-warn-bg); }
+/* The colour on the card's RIGHT edge; the left edge belongs to OLD. */
+.thumb.vs-rev::after, .thumb.vs-added::after, .thumb.vs-warn::after {
+  content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 3px;
+  pointer-events: none;
+}
+.thumb.vs-rev::after { background: var(--vs-rev-edge); }
+.thumb.vs-added::after { background: var(--vs-added-edge); }
+.thumb.vs-warn::after { background: var(--vs-warn-edge); }
+.thumb.on .thumb-no { color: #fff; }
+.thumb-name {
+  grid-column: 1 / -1;
+  font-size: 10px; color: var(--text-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.thumb.on .thumb-name { color: var(--text-2); }
+.thumb-badge {
+  grid-column: 4; grid-row: 1;
+  margin-left: auto; font-size: 9.5px; color: var(--accent-2);
+  background: #16283a; border-radius: 3px; padding: 1px 4px;
+}
+.thumb-badge:empty { padding: 0; }
+.thumbs.compact .thumb-img { display: none; }
+.thumbs.compact .thumb { padding: 4px 8px; }
+
+/* ── not the newest drawing ───────────────────────────────────────────── */
+
+/* Big enough that it cannot be missed from across a desk, translucent enough
+   that it never hides a line of the drawing it is sitting on, and pinned to
+   the corner of the SHEET area rather than the window so a panel sliding open
+   cannot push it somewhere else. */
+.old-badge {
+  position: absolute; top: 10px; right: 14px; z-index: 30;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+  pointer-events: none; user-select: none;
+}
+.old-badge[hidden] { display: none; }
+.old-word {
+  font-size: 44px; font-weight: 900; letter-spacing: 4px; line-height: .9;
+  color: rgba(255, 60, 60, .42);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+}
+.old-sub {
+  font-size: 11px; font-weight: 700; letter-spacing: .5px;
+  color: rgba(255, 90, 90, .72);
+  background: rgba(0, 0, 0, .3); border-radius: 3px; padding: 1px 6px;
+}
+
+/* ── items panel ──────────────────────────────────────────────────────── */
+
+.cost-toggle { display: flex; gap: 2px; margin-left: 6px; }
+.cost-toggle button {
+  background: #232323; color: var(--text-faint);
+  border: 1px solid #2e2e2e; border-radius: 4px;
+  font-size: 9.5px; font-weight: 700; padding: var(--cost-pad); cursor: pointer;
+}
+.cost-toggle button.on { color: #fff; border-color: transparent; }
+.cost-toggle button[data-cost="all"].on { background: var(--accent); }
+.cost-toggle button[data-cost="labor"].on { background: var(--labor); }
+.cost-toggle button[data-cost="material"].on { background: var(--material); }
+
+.filter-bar {
+  display: flex; gap: 5px; padding: 4px 6px; min-height: var(--filter-h);
+  background: var(--filter-bg); flex-shrink: 0;
+}
+.filter-bar select { flex: 1; min-width: 0; }
+
+.grp {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 4px 0 6px; cursor: pointer; user-select: none;
+}
+.grp .gutter { flex-shrink: 0; align-self: stretch; }
+.grp-label { font-weight: 700; padding: 4px 0; flex: 1; min-width: 0; }
+.grp.floor { border-left: 4px solid; }
+.grp.floor .grp-label { font-size: 11.5px; letter-spacing: .3px; }
+.grp.cat .grp-label { font-size: 11px; font-weight: 600; padding: 3px 0; }
+.grp.sub .grp-label { font-size: 10.5px; font-weight: 600; padding: 2px 0; }
+.grp-qty { font-size: 10px; color: var(--text-faint); white-space: nowrap; }
+
+.row {
+  display: flex; align-items: stretch; gap: 6px;
+  padding: 0 6px; cursor: pointer; user-select: none;
+}
+.row:hover { filter: brightness(1.14); }
+.row.on { background: var(--select) !important; }
+.row .gutter { flex-shrink: 0; }
+.row .dot {
+  width: 8px; height: 8px; border-radius: 4px;
+  margin-top: 7px; flex-shrink: 0;
+}
+.row .col { flex: 1; min-width: 0; padding: 3px 0; }
+.row .badge {
+  width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0;
+  font-size: 8px; font-weight: 700; color: #fff;
+  display: grid; place-items: center; margin-top: 3px;
+}
+.row .badge.M { background: var(--material); }
+.row .badge.L { background: var(--labor); }
+.row .nm {
+  display: flex; gap: 5px; align-items: flex-start;
+  font-size: 11.5px; color: var(--text-2); word-break: break-word;
+}
+.row.hidden .nm { color: var(--text-off); }
+.row .val { font-size: 10.5px; color: var(--accent-2); margin-top: 1px; }
+.row.hidden .val { color: #303030; }
+.row .nt {
+  font-size: 10px; font-style: italic; color: var(--text-faint);
+  margin-top: 1px; word-break: break-word;
+}
+.row .mats { font-size: 10px; color: var(--materials); margin-top: 1px; }
+.row .side {
+  display: flex; flex-direction: column; align-items: flex-end;
+  justify-content: space-between; padding: 3px 0; flex-shrink: 0;
+}
+.row .pg { font-size: 10px; color: #4a4a4a; }
+.row .pg.solo { font-style: italic; }
+.row .acts { display: flex; gap: 2px; align-items: center; }
+.row .act {
+  background: none; border: 0; cursor: pointer;
+  padding: var(--rowact-pad); min-width: var(--rowact-h);
+  align-self: stretch;
+  font-size: 12px; line-height: 1; color: var(--materials);
+}
+.row .eye { color: var(--eye-on); font-size: 13px; }
+.row.hidden .eye { color: var(--eye-off); }
+
+.gutter { width: 12px; position: relative; }
+.gutter svg { display: block; height: 100%; }
+
+.items-foot {
+  padding: 6px 8px; border-top: 1px solid var(--border-soft);
+  background: var(--head-bg); font-size: 10.5px; color: var(--text-dim);
+  flex-shrink: 0; min-height: 26px;
+}
+
+.empty-list {
+  text-align: center; color: var(--text-ghost);
+  font-size: 11.5px; padding: 30px 10px; white-space: pre-line; line-height: 1.6;
+}
+
+/* ── stage ────────────────────────────────────────────────────────────── */
+
+/* The canvas is taken OUT OF FLOW deliberately.
+   A `height: 100%` canvas inside a `1fr` grid row feeds its own height back
+   into the row: the canvas grows, the row grows to fit it, the canvas takes
+   100% of the bigger row, and the layout runs away — measured at 67,000 px
+   tall after a couple of window resizes. Absolute positioning inside a
+   `position: relative` stage means the canvas can never size its own parent.
+   min-height/min-width 0 stops the grid item from being sized by its content
+   for the same reason. */
+.stage { position: relative; min-width: 0; min-height: 0; overflow: hidden;
+         background: var(--canvas-bg); }
+/* width/height are NOT redundant with inset:0 here. A <canvas> is a REPLACED
+   element: absolutely positioned with all insets zero but width:auto, CSS
+   resolves it to the intrinsic 300x150, not to the containing block. */
+#canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  display: block; outline: none;
+  /* Every gesture on the sheet belongs to the app. Without this the browser
+     takes the first finger-drag for a scroll, fires pointercancel, and the
+     measurement being traced is abandoned with nothing on screen to say so.
+     It also switches off double-tap-to-zoom over the canvas only, so the
+     toolbars and dialogs keep their normal behaviour. */
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.empty-state[hidden] { display: none; }
+.empty-state {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  pointer-events: none;
+}
+.es-card {
+  pointer-events: auto; text-align: center; max-width: 460px; padding: 32px 36px;
+  background: #1a1a1a; border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.5);
+}
+.es-card h1 { margin: 0 0 4px; font-size: 19px; font-weight: 700; color: var(--text); }
+.es-tag { margin: 0 0 22px; font-size: 12px; color: var(--text-faint); }
+.es-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.es-btn {
+  background: var(--btn-bg); color: var(--text);
+  border: 1px solid var(--btn-press); border-radius: 6px;
+  padding: 9px 15px; font-size: 12.5px; cursor: pointer;
+}
+.es-btn:hover { background: var(--btn-hover); }
+.es-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.es-btn.primary:hover { background: #5482c6; }
+.es-hint { margin: 20px 0 0; font-size: 11px; color: var(--text-ghost); }
+.es-hint code {
+  font-family: var(--mono); background: #101010;
+  padding: 1px 4px; border-radius: 3px; color: var(--text-faint);
+}
+
+/* Saved on this device — the portal's Plans Library, for opening a plan with
+   no signal. Left-aligned inside the centred card. The list scrolls after
+   about six entries, and never past 40% of the window, so a long library
+   cannot push the card off the stage. Sizes come from the layout tokens, so
+   it follows the touch and standard layouts like the buttons above it. */
+.es-lib {
+  margin: 20px 0 0; padding-top: 14px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+.es-lib-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 8px;
+}
+.es-lib-head > span {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.es-lib-manage {
+  display: inline-flex; align-items: center; min-height: var(--icon-h);
+  padding: 2px 4px; border-radius: 4px;
+  font-size: 11.5px; font-weight: 600; color: var(--accent-2);
+  text-decoration: none; white-space: nowrap;
+}
+.es-lib-manage:hover { text-decoration: underline; }
+.es-lib-manage:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.es-lib-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: min(380px, 40vh);
+  overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.es-lib-list::-webkit-scrollbar { width: 8px; }
+.es-lib-list::-webkit-scrollbar-thumb { background: #3c3c3c; border-radius: 4px; }
+/* flex-shrink 0 is not optional: the standard layout's --ctl-h is 0, and a
+   min-height of 0 lets a column flex item squash below its own text. */
+.es-lib-item {
+  display: block; width: 100%; flex-shrink: 0;
+  min-height: var(--ctl-h); padding: var(--ctl-pad);
+  background: var(--chip-bg); color: var(--text);
+  border: 1px solid var(--btn-press); border-radius: 6px;
+  font-size: 12.5px; line-height: 1.35; text-align: left; cursor: pointer;
+}
+.es-lib-item:hover { background: var(--btn-bg); }
+.es-lib-item:active { background: var(--btn-press); }
+/* Inset, or the scrolling list clips the ring at its edges. */
+.es-lib-item:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+/* `anywhere`, not `break-word`: only `anywhere` lowers the min-content width,
+   and the card sizes itself to its content — a long file name would otherwise
+   widen it past a phone's screen instead of wrapping. */
+.es-lib-title, .es-lib-file { display: block; overflow-wrap: anywhere; }
+.es-lib-title { font-weight: 600; }
+.es-lib-file { margin-top: 1px; font-size: 11.5px; color: var(--text-dim); }
+.es-lib-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px;
+  margin-top: 2px; font-size: 11px; color: var(--text-dim);
+}
+.es-lib-chip {
+  padding: 0 6px; border-radius: 8px;
+  border: 1px solid rgba(224, 160, 80, .45);
+  background: rgba(224, 160, 80, .12); color: var(--warn);
+  font-size: 10px; font-weight: 600; line-height: 15px; white-space: nowrap;
+}
+
+/* The Plans Archive on the start screen — the same frame as the saved-copies
+   list above, so the two read as one family. The search box and the button
+   share a row, wrapping on a phone. */
+.es-arch-note { margin: 0 0 10px; font-size: 11.5px; line-height: 1.45; color: var(--text-dim); }
+.es-arch-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.es-arch-find {
+  flex: 1 1 160px; min-width: 0; min-height: var(--ctl-h);
+  background: var(--field-bg); color: var(--text);
+  border: 1px solid #303030; border-radius: 6px;
+  padding: 7px 9px; font-size: 12.5px; font-family: inherit;
+}
+.es-arch-btn { display: block; width: 100%; margin: 0 0 8px; min-height: var(--ctl-h); }
+.es-arch-row .es-arch-btn { width: auto; flex: 0 0 auto; margin: 0; }
+.es-arch-sub {
+  margin: 8px 0 6px; font-size: 10px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--text-faint);
+}
+button.es-lib-manage { background: none; border: 0; cursor: pointer; font-family: inherit; }
+.es-lib-manage[hidden] { display: none; }
+/* A copy this app may remove: the open button and a small Remove beside it. */
+.es-lib-row { display: flex; gap: 4px; align-items: stretch; flex-shrink: 0; }
+.es-lib-row .es-lib-item { flex: 1 1 auto; min-width: 0; }
+.es-lib-del {
+  flex: 0 0 auto; min-height: var(--ctl-h); padding: 0 10px;
+  background: none; color: var(--text-dim); cursor: pointer;
+  border: 1px solid var(--btn-press); border-radius: 6px;
+  font-size: 11.5px; font-weight: 600; font-family: inherit;
+}
+.es-lib-del:hover { color: var(--warn); border-color: rgba(224, 160, 80, .45); }
+.es-lib-del:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+
+/* The Plans Archive browser (a wide dialog). */
+.pa { display: flex; flex-direction: column; gap: 10px; min-height: min(420px, 60vh); }
+.pa-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pa-search {
+  flex: 1 1 220px; min-width: 0; min-height: var(--ctl-h);
+  background: var(--field-bg); color: var(--text);
+  border: 1px solid #303030; border-radius: 6px;
+  padding: 7px 10px; font-size: 13px; font-family: inherit;
+}
+.pa-count { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+.pa-list { display: flex; flex-direction: column; gap: 4px; }
+.pa-sect {
+  margin: 10px 0 2px; font-size: 10.5px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.pa-proj[hidden] { display: none; }
+.pa-proj { border: 1px solid var(--btn-press); border-radius: 6px; background: #222; }
+.pa-proj-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; width: 100%;
+  min-height: var(--ctl-h); padding: var(--ctl-pad);
+  background: none; border: 0; color: var(--text); text-align: left;
+  font-size: 12.5px; font-family: inherit; cursor: pointer; border-radius: 6px;
+}
+.pa-proj-head:hover { background: var(--btn-bg); }
+.pa-proj-head:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+.pa-proj-head[aria-expanded="true"] { border-bottom: 1px solid #333; border-radius: 6px 6px 0 0; }
+.pa-code { font-variant-numeric: tabular-nums; }
+.pa-pname { color: var(--text-dim); overflow-wrap: anywhere; min-width: 0; }
+.pa-tag {
+  margin-left: auto; padding: 0 6px; border-radius: 8px;
+  border: 1px solid #3a3a3a; color: var(--text-faint); font-size: 10.5px; line-height: 16px;
+}
+.pa-proj-body[hidden] { display: none; }
+.pa-proj-body { padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 4px; }
+.pa-sub { margin: 6px 0 2px; font-size: 11px; font-weight: 600; color: var(--text-dim); overflow-wrap: anywhere; }
+.pa-file, .pa-folder {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 8px; border-radius: 5px; background: var(--chip-bg);
+}
+.pa-ic { font-size: 16px; line-height: 1; }
+.pa-ftxt { flex: 1 1 240px; min-width: 0; }
+.pa-fname { font-size: 12.5px; overflow-wrap: anywhere; }
+.pa-fmeta { margin-top: 1px; font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
+.pa-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.pa-acts .btn { min-height: var(--ctl-h); }
+.pa-note { margin: 4px 0; font-size: 11.5px; line-height: 1.45; color: var(--text-dim); }
+.pa-warn { color: var(--warn); }
+.pa-folders { display: flex; flex-direction: column; gap: 6px; }
+
+/* A #plans link where this browser cannot open the folder — Firefox or Safari
+   on a computer, any phone or tablet (js/ui/plans-archive.js linkPanel). The
+   start screen's own rows and buttons, in a dialog. */
+.pl { display: flex; flex-direction: column; gap: 8px; }
+.pl > .es-lib-head { margin-bottom: 0; }
+.pl .pa-note { margin: 0; }
+.pl-list { max-height: min(320px, 40vh); }
+/* The dialog is --chip-bg too: a darker row, edged, so it reads as a button. */
+.pl .es-lib-item { background: var(--row-a); border-color: #383838; }
+.pl .es-lib-item:hover { background: var(--btn-press); }
+.pl .es-arch-btn { margin: 0; }
+.pl-other {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 6px; padding-top: 12px; border-top: 1px solid #333;
+}
+.pl-copy { display: flex; gap: 8px; flex-wrap: wrap; }
+.pl-copy .es-arch-btn { width: auto; }
+.pl-link {
+  width: 100%; min-width: 0; min-height: var(--ctl-h);
+  background: var(--field-bg); color: var(--text);
+  border: 1px solid #303030; border-radius: 6px;
+  padding: 7px 9px; font-family: var(--mono);
+}
+.dlg-foot .pl-btn { min-height: var(--ctl-h); }
+/* A fingertip, whichever layout is chosen: 44 px. */
+@media (pointer: coarse) {
+  .pl .es-lib-item, .pl .pl-btn, .pl-link, .dlg-foot .pl-btn { min-height: 44px; }
+}
+
+.drop-veil[hidden] { display: none; }
+.drop-veil {
+  position: absolute; inset: 12px; z-index: 30;
+  border: 2px dashed var(--accent); border-radius: 12px;
+  background: rgba(71,114,179,.12);
+  display: grid; place-items: center;
+  font-size: 15px; font-weight: 600; color: #cfe0ff;
+  pointer-events: none;
+}
+
+/* ── status bar ───────────────────────────────────────────────────────── */
+
+.statusbar {
+  display: flex; align-items: center; gap: 12px;
+  height: 24px; padding: 0 10px;
+  background: var(--head-bg); border-top: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text-dim);
+}
+.status-text { white-space: pre-line; overflow: hidden; text-overflow: ellipsis; }
+.status-right { margin-left: auto; display: flex; gap: 14px; color: var(--text-faint); }
+
+/* ── overlays ─────────────────────────────────────────────────────────── */
+
+.overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(0,0,0,.55);
+  display: grid; place-items: center;
+  backdrop-filter: blur(1.5px);
+}
+.overlay[hidden] { display: none; }
+
+/* Dialogs stack: each gets its own backdrop layer inside the host, and the
+   ones underneath dim so the live one is unambiguous. */
+#modal { background: none; backdrop-filter: none; display: block; }
+.modal-layer {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.55);
+  display: grid; place-items: center;
+  backdrop-filter: blur(1.5px);
+}
+.modal-layer.behind > .dlg { filter: brightness(.6); pointer-events: none; }
+
+.progress-card {
+  width: 380px; padding: 22px 24px;
+  background: var(--chip-bg); border: 1px solid var(--border-hard);
+  border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.6);
+}
+.progress-label { font-size: 13px; margin-bottom: 12px; }
+.progress-track { height: 6px; background: #111; border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+.progress-sub { margin-top: 8px; font-size: 11px; color: var(--text-faint); min-height: 14px; }
+
+/* dialogs */
+.dlg {
+  width: min(560px, 94vw); max-height: 88vh;
+  display: flex; flex-direction: column;
+  background: var(--chip-bg); border: 1px solid var(--border-hard);
+  border-radius: 10px; box-shadow: 0 24px 70px rgba(0,0,0,.65);
+}
+.dlg.wide { width: min(1000px, 96vw); }
+.dlg-head {
+  padding: 13px 18px; border-bottom: 1px solid #333;
+  font-size: 13.5px; font-weight: 600;
+}
+.dlg-body { padding: 16px 18px; overflow: auto; }
+.dlg-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 18px; border-top: 1px solid #333;
+}
+.dlg-foot .spacer { margin-right: auto; }
+
+.form { display: grid; grid-template-columns: var(--form-cols); gap: 9px 12px; align-items: center; }
+.form > label { font-size: 12px; color: var(--text-dim); text-align: right; }
+.form .full { grid-column: 1 / -1; }
+.form input[type=text], .form input[type=number], .form select, .form textarea {
+  width: 100%; background: var(--field-bg); color: var(--text);
+  border: 1px solid #303030; border-radius: 5px;
+  padding: 6px 8px; font-size: 12.5px; font-family: inherit;
+}
+.form textarea { min-height: 62px; resize: vertical; }
+.form .hint { font-size: 11px; color: var(--text-faint); grid-column: 2; margin-top: -4px; }
+.form .err { font-size: 11.5px; color: var(--err); grid-column: 1 / -1; min-height: 15px; }
+.radio-row { display: flex; gap: 14px; align-items: center; font-size: 12.5px; }
+.radio-row label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.swatch {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer;
+}
+.swatch.on { border-color: #fff; box-shadow: 0 0 0 2px rgba(71,114,179,.5); }
+
+.btn {
+  background: var(--btn-bg); color: var(--text);
+  border: 1px solid var(--btn-press); border-radius: 5px;
+  padding: 7px 14px; font-size: 12.5px; cursor: pointer;
+}
+.btn:hover { background: var(--btn-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #5482c6; }
+.btn.danger { background: #7a2f2f; border-color: #7a2f2f; color: #fff; }
+
+table.grid {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+table.grid th {
+  text-align: left; font-weight: 600; color: var(--text-faint);
+  border-bottom: 1px solid #333; padding: 6px 8px; position: sticky; top: 0;
+  background: var(--chip-bg);
+}
+table.grid td { padding: 5px 8px; border-bottom: 1px solid #232323; }
+table.grid tr:hover td { background: #232323; }
+table.grid tr.on td { background: var(--select); }
+table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.grid td.indent { padding-left: 26px; color: var(--text-dim); }
+
+.ctx-menu {
+  position: fixed; z-index: 90; min-width: 200px; padding: 5px;
+  background: var(--chip-bg); border: 1px solid var(--border-hard);
+  border-radius: 8px; box-shadow: 0 12px 34px rgba(0,0,0,.6);
+}
+.ctx-menu[hidden] { display: none; }
+.ctx-menu button {
+  display: block; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--text);
+  padding: 6px 9px; border-radius: 5px; font-size: 12.5px; cursor: pointer;
+}
+.ctx-menu button:hover { background: var(--accent); color: #fff; }
+.ctx-menu hr { border: 0; border-top: 1px solid #333; margin: 4px 6px; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%);
+  z-index: 95; padding: 9px 16px; border-radius: 8px;
+  background: #2b2b2b; border: 1px solid var(--border-hard);
+  box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: 12.5px;
+}
+.toast.err { border-color: #6a3030; color: #ffbdbd; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Phones and tablets
+
+   What was here before deleted the sheet list and the item list outright
+   below 900px — which is an iPad in portrait, not just a phone — and left
+   no way to reach either one, nor the per-item menu, which is bound to the
+   right mouse button. Below 1024px they become drawers instead: the same
+   DOM, slid over the sheet, one at a time, with a bar at the foot of the
+   screen to open them.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.scrim {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(0, 0, 0, .5);
+}
+
+/* the bar at the foot of the screen — the only chrome that never scrolls */
+.mbar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 70;
+  display: flex; align-items: stretch;
+  background: var(--head-bg);
+  border-top: 1px solid var(--border-hard);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mbar[hidden] { display: none; }
+.mbar-main, .mbar-chain { display: flex; flex: 1; }
+.mbar-main[hidden], .mbar-chain[hidden] { display: none; }
+.mbar-btn {
+  flex: 1; min-height: 52px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; padding: 4px 2px;
+  background: none; border: 0; border-right: 1px solid var(--border-soft);
+  color: var(--text-dim); font-family: inherit; font-size: 10px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.mbar-btn:last-child { border-right: 0; }
+.mbar-btn:active { background: var(--btn-press); }
+.mbar-btn b { font-size: 17px; font-weight: 400; line-height: 1.05; color: var(--text); }
+.mbar-btn.on b, .mbar-btn.on { color: var(--accent); }
+.mbar-btn.ok b { color: #6fcf7f; }
+.mbar-btn.warn b { color: var(--err); }
+
+@media (max-width: 1023px) {
+  /* The seven menus do not wrap either, and they were the last thing still
+     forcing the document wider than the screen. */
+  .menubar { overflow-x: auto; scrollbar-width: none; }
+  .menubar::-webkit-scrollbar { height: 0; }
+  .menubar > * { flex: 0 0 auto; }
+  .menubar-right { margin-left: 8px; }
+
+  /* One scrolling row per toolbar beats wrapping: wrapping the 13 tools
+     cost 122px of height on a 844px screen, and height is the scarce one. */
+  .toolbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+  .toolbar > * { flex: 0 0 auto; }
+  .toolbar::-webkit-scrollbar { height: 0; }
+  .toolbar { scrollbar-width: none; }
+  .tb-spacer { display: none; }
+
+  /* the sheet takes the whole body; the panels slide over it */
+  .body,
+  .body.no-thumbs,
+  .body.no-items,
+  .body.no-thumbs.no-items { grid-template-columns: 1fr; }
+  /* A drawer parked off-screen with translateX still counts as scrollable
+     overflow, which reported the document 319px wider than the phone. */
+  .body { overflow: hidden; }
+  .stage { grid-column: 1; }
+  .grip { display: none; }
+
+  .thumbs, .items {
+    grid-column: 1;
+    position: absolute; top: 0; bottom: 0; z-index: 60;
+    width: min(320px, 84vw);
+    box-shadow: 0 0 44px rgba(0, 0, 0, .65);
+    transition: transform .18s ease-out;
+  }
+  .thumbs { left: 0;  transform: translateX(-101%); }
+  .items  { right: 0; transform: translateX(101%); }
+  .thumbs.mopen, .items.mopen { transform: none; }
+
+  /* the foot bar owns the bottom of the stage */
+  .stage { padding-bottom: 0; }
+  .statusbar { padding-bottom: env(safe-area-inset-bottom); }
+  .toast { bottom: calc(64px + env(safe-area-inset-bottom)); }
+}
+
+@media (max-width: 720px) {
+  .brand-name { display: none; }
+  .statusbar { display: none; }
+  .proj-title { max-width: 46vw; }
+  .menubar { gap: 8px; padding: 0 8px; }
+  /* the markup row is off by default here and toggles from the View menu */
+}
+
+/* A fingertip is not a mouse cursor. These read the tokens above, so the
+   layout follows the user's choice and not the hardware. 16px on a field is
+   not cosmetic: anything smaller makes iOS zoom the whole page in when the
+   field takes focus, and it never zooms back out. */
+.es-btn { min-height: var(--ctl-h); }
+.menu-btn { min-height: var(--menu-h); }
+.menu-pop button { min-height: var(--menuitem-h); }
+input, select, textarea { font-size: max(var(--field-fs), 12px); }
+
+@media (max-width: 480px) {
+  .form { grid-template-columns: 1fr; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Callout preview
+
+   A crop of the sheet a callout points at, shown beside the bubble. Sized
+   to the drawing rather than to a fixed rectangle: a detail is whatever
+   shape it is, and pinning every one into 3:2 frames most of them in bars.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.cpv {
+  position: fixed; z-index: 78;
+  display: flex; flex-direction: column;
+  /* The two clamps have to agree. previewBudget() reserves a FIXED 2*EDGE
+     = 20px of window; a percentage reserve undercuts that on any window
+     wider than 500px, and .cpv is overflow:hidden, so the canvas it had
+     just sized to fit was quietly CLIPPED instead — including 'Huge' and
+     'Extra large' on an iPad in portrait. */
+  max-width: min(calc(100vw - 20px), 1100px);
+  background: var(--chip-bg, #232323);
+  border: 1px solid var(--border-hard);
+  border-radius: 10px;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, .62);
+  overflow: hidden;
+  /* The popup must never eat a gesture meant for the sheet behind it, so it
+     is only interactive while it is open — and `hidden` is enforced with
+     !important globally, so closed really is gone. */
+}
+.cpv-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px 7px 11px;
+  background: var(--head-bg);
+  border-bottom: 1px solid var(--border-soft);
+}
+.cpv-title {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* The title owns the slack, so the close button is pinned right whether
+     or not the zoom controls are there — they are hidden for "No preview"
+     and "No area selected", and moving margin-left:auto onto them had left
+     the X stranded against the title in both. */
+  flex: 1 1 auto; min-width: 0;
+}
+/* Zoom lives in the head: the foot is already the width of "Go to sheet"
+   plus a hint, and a 320px preview has no room for a second row of it. */
+.cpv-zoomer {
+  display: flex; align-items: center; gap: 5px;
+  flex: 0 0 auto;
+}
+.cpv-zb {
+  /* The same floor as every other icon button in this app: 38px with the
+     touch layout on, which is the DEFAULT layout, and which is what this
+     feature is being read on. */
+  min-width: max(26px, var(--icon-h, 0px));
+  min-height: max(26px, var(--icon-h, 0px));
+  padding: 0 5px;
+  background: none; border: 0; border-radius: 6px;
+  color: var(--text-dim); font-family: inherit; font-size: 14px;
+  line-height: 1; cursor: pointer;
+}
+.cpv-zb:hover:not(:disabled) { background: var(--btn-hover); color: var(--text); }
+.cpv-zb:disabled { opacity: .35; cursor: default; }
+.cpv-pct {
+  min-width: 42px; text-align: center;
+  font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.cpv-x {
+  flex: 0 0 auto;
+  /* The same floor as the zoom buttons beside it and the button below. */
+  min-width: max(30px, var(--icon-h, 0px));
+  min-height: max(30px, var(--icon-h, 0px));
+  background: none; border: 0; border-radius: 6px;
+  color: var(--text-dim); font-size: 13px; cursor: pointer;
+}
+.cpv-x:hover { background: var(--btn-hover); color: var(--text); }
+/* The gesture surface. The handlers are bound HERE, not to the picture
+   inside it, so that a finger landing on the padding beside a narrow
+   drawing counts as part of the pinch it is half of — and touch-action
+   does not inherit, so the properties that make that safe have to be on
+   this element. Without them iOS keeps its own double-tap-to-zoom over
+   the padding ring, which is exactly where the hint tells him to double
+   tap, and zooms the whole app instead of resetting the view. */
+.cpv-body {
+  display: grid; place-items: center;
+  padding: 8px; background: #f4f4f4; min-width: 220px; min-height: 90px;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.cpv-body canvas { display: block; border-radius: 3px; }
+/* The window onto the sheet. touch-action:none because every gesture in
+   here is ours — without it iOS pans the page and pinches the whole app
+   while the estimator is trying to move the drawing. */
+.cpv-view {
+  position: relative; overflow: hidden; border-radius: 3px;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  cursor: grab;
+}
+.cpv-view:active { cursor: grabbing; }
+/* A badge in the corner, not a veil. It is shown whenever the decoded
+   rectangle does not reach the edges of the window, which during a pan is
+   most of the time — covering the drawing he is dragging towards would be
+   worse than the blank strip it is apologising for. */
+.cpv-wait {
+  position: absolute; right: 8px; bottom: 8px;
+  padding: 3px 9px; border-radius: 10px;
+  background: rgba(0, 0, 0, .55); color: #fff;
+  font-size: 11px; pointer-events: none;
+}
+.cpv-msg {
+  min-width: 220px; min-height: 60px;
+  display: grid; place-items: center;
+  color: #555; font-size: 12px;
+}
+.cpv-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border-soft);
+}
+.cpv-go {
+  background: var(--accent); color: #fff;
+  border: 1px solid var(--accent); border-radius: 6px;
+  padding: 6px 12px; font-family: inherit; font-size: 12px; cursor: pointer;
+  min-height: var(--ctl-h, 0px);
+}
+.cpv-go:disabled { opacity: .4; cursor: default; }
+.cpv-hint { font-size: 10.5px; color: var(--text-faint); }
+
+/* ── the plan-revisions panel ─────────────────────────────────────────────
+   Absolutely positioned over .body (which is `position: relative`), the same
+   mechanism the mobile drawers use. It is pinned to a grid column as well —
+   an abspos child does not take part in auto-placement, but every child in
+   this grid carries an explicit column and a future edit that drops the
+   `position: absolute` would otherwise slide the canvas into a 0-width track
+   with nothing to show for it. */
+.revpanel {
+  grid-column: 3;
+  position: absolute; z-index: 30;
+  top: 0; right: 0; bottom: 0;
+  width: min(720px, 100%);
+  display: flex; flex-direction: column;
+  min-width: 0;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, .45);
+}
+.revpanel[hidden] { display: none; }
+
+.rp-head {
+  display: flex; align-items: center; gap: 8px;
+  min-height: var(--panel-head-h); padding: 0 8px;
+  background: var(--head-bg);
+  border-bottom: 1px solid var(--border-soft);
+}
+.rp-title {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .08em;
+  color: var(--text-dim);
+}
+.rp-tabs { display: flex; gap: 2px; margin-left: auto; }
+.rp-tab {
+  font: inherit; font-size: 11.5px;
+  padding: 3px 10px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent; border-radius: 4px;
+  cursor: pointer;
+}
+.rp-tab:hover { background: var(--btn-bg); color: var(--text); }
+.rp-tab.on { background: var(--accent); color: #fff; }
+
+.rp-body { flex: 1; min-height: 0; overflow: auto; }
+
+.rp-empty { padding: 20px; color: var(--text-dim); font-size: 12.5px; }
+.rp-empty .hint { color: var(--text-faint); font-size: 11.5px; line-height: 1.5; }
+
+/* ── the grid ──────────────────────────────────────────────────────────── */
+
+.rp-matrix { padding: 6px 0 0; }
+.rp-grid {
+  display: grid;
+  /* the sheet name, then one narrow column per version */
+  grid-template-columns: 130px repeat(var(--rp-cols), minmax(38px, 1fr));
+  font-size: 11px;
+  min-width: max-content;
+}
+.rp-row { display: contents; }
+.rp-cell {
+  /* Every cell carries a transparent border in its base state. The "on screen"
+     highlight adds a 2px one, and without the placeholder the highlighted cell
+     would grow and re-lay-out the whole grid under the pointer. */
+  border: 2px solid transparent;
+  padding: 2px 4px;
+  min-height: 20px;
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap; overflow: hidden;
+}
+.rp-row:nth-child(odd) .rp-cell { background: var(--row-a); }
+.rp-row:nth-child(even) .rp-cell { background: var(--row-b); }
+.rp-row-head .rp-cell {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--head-bg);
+  color: var(--text-dim);
+  font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  justify-content: center;
+}
+.rp-row-head .rp-sheet { justify-content: flex-start; }
+.rp-row.here .rp-cell { background: var(--select); }
+
+.rp-sheet {
+  position: sticky; left: 0; z-index: 1;
+  justify-content: space-between;
+}
+.rp-sheet.slot .rp-no { color: var(--rev-slot); }
+/* A sheet a revision ADDED, and the cell of the revision it came with. */
+.rp-sheet.added .rp-no { color: var(--vs-added-fg); }
+.rp-cell.rp-v.added { color: var(--vs-added-fg); background: var(--vs-added-bg); font-size: 9.5px; }
+.rp-no { color: var(--text-2); font-weight: 600; }
+.rp-seq { color: var(--text-faint); font-size: 10px; }
+
+.rp-v { justify-content: center; color: var(--text-faint); cursor: default; }
+.rp-v.has { color: var(--text-2); cursor: pointer; }
+.rp-v.has:hover { background: var(--btn-hover); }
+.rp-v.none::after { content: '·'; color: var(--text-ghost); }
+.rp-v.newest { color: var(--rev-on); font-weight: 700; }
+.rp-v.on { border-color: var(--rev-on); }
+
+.rp-legend {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  padding: 8px 10px;
+  font-size: 10.5px; color: var(--text-faint);
+  border-top: 1px solid var(--border-soft);
+  position: sticky; bottom: 0;
+  background: var(--panel-bg);
+}
+.rp-leg { display: flex; align-items: center; gap: 5px; }
+.rp-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.rp-swatch.has { background: var(--text-2); }
+.rp-swatch.newest { background: var(--rev-on); }
+.rp-swatch.on { border: 2px solid var(--rev-on); width: 7px; height: 7px; }
+.rp-swatch.slot { background: var(--rev-slot); }
+.rp-swatch.added { background: var(--vs-added-edge); }
+
+/* ── the sets ──────────────────────────────────────────────────────────── */
+
+.rp-sets { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.rp-set {
+  background: var(--row-b);
+  border: 1px solid var(--border-soft); border-radius: 6px;
+  padding: 8px 10px;
+}
+.rp-set-head { display: flex; align-items: baseline; gap: 8px; }
+.rp-col {
+  font-size: 10px; font-weight: 700; color: var(--text-faint);
+  background: var(--chip-bg); border-radius: 3px; padding: 1px 5px;
+}
+.rp-set-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.rp-set-date { font-size: 11.5px; color: var(--rev-fg); margin-left: auto; }
+.rp-set-date.bad { color: var(--warn); text-decoration: underline dotted; }
+.rp-set-stats { display: flex; gap: 12px; font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.rp-set-stats .warn { color: var(--warn); }
+.rp-set-notes { font-size: 11.5px; color: var(--text-2); margin-top: 6px; line-height: 1.45; }
+.rp-set-src, .rp-set-added {
+  font-size: 10.5px; color: var(--text-faint); margin-top: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rp-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.rp-chip {
+  font: inherit; font-size: 10.5px;
+  padding: 2px 7px;
+  color: var(--text-2); background: var(--chip-bg);
+  border: 1px solid var(--border); border-radius: 3px;
+  cursor: pointer;
+}
+.rp-chip:hover { background: var(--btn-hover); }
+.rp-chip.slot { color: var(--rev-slot); border-color: var(--rev-slot); }
+.rp-chip.added { color: var(--vs-added-fg); border-color: var(--vs-added-edge); background: var(--vs-added-bg); }
+.rp-set-stats .added { color: var(--vs-added-fg); }
+.rp-chip.loose { color: var(--warn); border-style: dashed; }
+
+/* ── the current set ───────────────────────────────────────────────────── */
+
+.rp-cur-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  font-size: 11.5px; color: var(--text-dim);
+  border-bottom: 1px solid var(--border-soft);
+  position: sticky; top: 0; z-index: 2; background: var(--panel-bg);
+}
+.rp-order {
+  font: inherit; font-size: 11px; margin-left: auto;
+  background: var(--field-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px;
+}
+.rp-warn {
+  padding: 7px 10px; font-size: 11.5px; line-height: 1.45;
+  color: var(--warn); background: rgba(224, 160, 80, .08);
+  border-bottom: 1px solid var(--border-soft);
+}
+.rp-cur-list { display: flex; flex-direction: column; }
+.rp-cur-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 84px 72px auto;
+  gap: 8px; align-items: center;
+  padding: 3px 10px; font-size: 11px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-soft);
+}
+.rp-cur-row:hover { background: var(--btn-bg); }
+.rp-cur-from { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+.rp-cur-from.rev { color: var(--rev-fg); }
+.rp-cur-date, .rp-cur-n { color: var(--text-faint); font-size: 10.5px; }
+.rp-tag {
+  font-size: 9.5px; color: var(--rev-slot);
+  border: 1px dashed var(--rev-slot); border-radius: 3px; padding: 0 4px;
+}
+
+/* On a phone the panel is the whole screen — a 12-column grid next to a
+   drawing neither of which fits is worse than one of them at a time. */
+@media (max-width: 1023px) {
+  .revpanel { width: 100%; border-left: none; }
+}
+
+/* One dot per revision that re-issued this sheet. An empty span on a job with
+   no revisions, so nothing about the card moves. */
+.thumb-rev { grid-column: 1; color: var(--rev-fg); font-size: 9px; letter-spacing: 1px; }
+
+/* An item his sheet does not count: listed, worded, and in no total. */
+.row.nc .nm > span:not(.badge):not(.nc-tag) { color: var(--text-dim); }
+.nc-tag {
+  margin-left: 6px; font-size: 8.5px; font-weight: 700; letter-spacing: .3px;
+  color: var(--nc-fg); background: var(--nc-bg); border-radius: 3px; padding: 0 4px;
+  white-space: nowrap;
+}
+/* The one button on the version bar that moves a total. */
+#vbCountBtn.on { color: var(--vs-warn-fg); }
+
+/* A version of the sheet, rather than the sheet, is on screen. */
+#canvas.on-version { outline: 2px solid var(--rev-on); outline-offset: -2px; }
+
+/* the standalone image viewer — the diff, and unpaired revision pages */
+.dlg.imgview { width: min(1100px, 94vw); height: min(820px, 88vh); display: flex; flex-direction: column; }
+.imgview-legend {
+  padding: 6px 12px; font-size: 11.5px; color: var(--text-2);
+  background: var(--chip-bg); border-bottom: 1px solid var(--border-hard);
+}
+.imgview-body { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #101010; touch-action: none; }
+.imgview-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.imgview-hint { font-size: 11px; color: var(--text-faint); margin-right: auto; }
+
+/* ── View Only mode ───────────────────────────────────────────────────────
+   The point is room for the drawing, so what goes is what only a person
+   PRODUCING work needs. What stays is everything needed to read a set:
+   the sheets list, zoom, the scale (readable, not settable), page nav, plan
+   revisions, reports, and the three tools that measure without saving. */
+
+.mode-btn {
+  font: inherit; font-size: 11px; font-weight: 600;
+  padding: 3px 11px; margin-right: 10px;
+  color: #fff; background: var(--accent);
+  border: 1px solid var(--accent); border-radius: 4px;
+  cursor: pointer; white-space: nowrap;
+}
+.mode-btn:hover { filter: brightness(1.15); }
+/* In Edit Mode the button OFFERS View Only, so it must not shout — the loud
+   one is the invitation to start editing, not the way back out. */
+.mode-btn.editing {
+  color: var(--text-2); background: var(--btn-bg); border-color: var(--border);
+}
+.mode-btn[hidden] { display: none; }
+
+/* A quiet reminder that nothing here writes. Along the top of the stage so
+   it reads as a property of the drawing, not a message that needs dismissing. */
+body.view-only .stage::before {
+  content: 'VIEW ONLY';
+  position: absolute; z-index: 20;
+  top: 0; left: 50%; transform: translateX(-50%);
+  padding: 2px 12px 3px;
+  font-size: 9px; font-weight: 700; letter-spacing: .14em;
+  color: var(--text-faint);
+  background: var(--head-bg);
+  border: 1px solid var(--border-soft); border-top: none;
+  border-radius: 0 0 5px 5px;
+  pointer-events: none;
+}
+
+/* The temporary-dimension count, next to its Undo/Clear pair. */
+.scratch-count { color: var(--rev-fg); font-size: 10.5px; white-space: nowrap; }
+
+/* A viewer's cursor is a hand, not a crosshair, until a tool is picked. */
+body.view-only .tool-btn[data-mode="pan"].on { background: var(--accent); }
+
+/* The mode switch in the phone foot bar. `on` means Edit Mode is live, so it
+   reads as armed rather than as an invitation. */
+#mbarMode.on b { color: var(--accent); }
+#mbarMode.on { color: var(--text); }

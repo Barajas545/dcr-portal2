@@ -1,0 +1,4 @@
+# site/takeoff/ is a byte-exact copy of takeoff-web at one commit (tools/vendor-takeoff.mjs; site/takeoff/VERSION.json
+# holds the sha256 of every file as published, and tests/p8-takeoff-frame.test.mjs checks them): never a line-ending
+# change on any checkout, Windows or CI.
+site/takeoff/** -text
