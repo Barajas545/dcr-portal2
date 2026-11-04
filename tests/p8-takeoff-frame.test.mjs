@@ -340,6 +340,14 @@ test("the hand-over's rules per device: the home-screen app is refused only when
   assert.match(H.handoffProblem({ ok: false, why: "blocked", via: "frame" }), /Reload the page/);
   assert.match(H.handoffProblem({ ok: false, why: "blocked", via: "tab" }), /pop-ups/);
   assert.match(H.handoffProblem({ ok: false, why: "paused" }), /paused/);
+  assert.match(H.handoffProblem({ ok: false, why: "busy", via: "frame" }), /open with changes that are not saved/);
+  // a frame already open is replaced only when nothing would be lost (never a second frame over unsaved work)
+  const fr = read("js/plan-frame.js");
+  assert.match(fr, /if \(active && !closeIfIdle\(\)\) return null;/);
+  assert.match(read("js/plan-handoff.js"), /if \(!peer\) \{ done\(\{ ok: false, why: frame\.isOpen\(\) \? "busy" : "blocked", via: "frame" \}\); return; \}/);
+  // a second tap while the same plan is on its way is the same opening
+  const lib = read("js/plan-library.js");
+  assert.match(lib, /if \(itemId && opening\[key\]\) return;\s*opening\[key\] = true;\s*try \{ await openOnDeviceNow\(o, itemId, key, onDone, onStep\); \} finally \{ delete opening\[key\]; \}/);
   assert.equal(H.handoffProblem({ ok: false, why: "failed", error: new Error("made up") }), "made up");
 });
 

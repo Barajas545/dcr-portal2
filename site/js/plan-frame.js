@@ -210,11 +210,12 @@ function onKey(e) {
 /**
  * Open the takeoff app's copy at `link` (map/plans.js frameLink) over the page. opts: {title, onClose()} - onClose runs
  * once the frame is gone (however it closed). -> the hand-over's peer (peerOf), or null (no page to show it on).
- * A frame already open is closed first (only a script can ask: the page under it takes no taps while it is open).
+ * A frame already open is closed first - only when nothing would be lost (only a script can ask while one is open: the
+ * page under it takes no taps); otherwise nothing opens (null, isOpen() true).
  */
 export function open(link, opts) {
   if (typeof document === "undefined" || !document.body) return null;
-  if (active) close();
+  if (active && !closeIfIdle()) return null;
   const o = opts || {};
   const host = ensureShell();
   // a new frame each time (a new window: a conversation of an earlier opening can never hear this one's app)

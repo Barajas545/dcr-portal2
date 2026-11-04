@@ -993,13 +993,22 @@ export function openOnline(projectId, number, file, onDone, opts) {
  * told on the frame's bar too (online: why it opened online).
  */
 export async function openOnDevice(o, onDone, onStep) {
+  const itemId = String(o.itemId || (o.file && o.file.id) || "");
+  const key = keyOf(itemId);
+  // a second tap while the same plan is still on its way (its download) is the same opening: it would otherwise open a
+  // second frame over the first when both downloads end
+  if (itemId && opening[key]) return;
+  opening[key] = true;
+  try { await openOnDeviceNow(o, itemId, key, onDone, onStep); } finally { delete opening[key]; }
+}
+const opening = {};          // key -> an openOnDevice waiting for its plan
+
+async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
   const done = typeof onDone === "function" ? onDone : function () {};
   const step = typeof onStep === "function" ? onStep : function () {};
   const still = typeof o.still === "function" ? o.still : function () { return true; };
-  const itemId = String(o.itemId || (o.file && o.file.id) || "");
   const title = o.name || (o.file && o.file.name) || "";
   if (!itemId) { done({ ok: false, why: "failed", error: err("bad", "No plan file to open.") }); return; }
-  const key = keyOf(itemId);
   let r = null;
   try { r = supported() ? await get("plans", key) : null; } catch (e) { r = null; }
   const online = !(HAS && navigator.onLine === false);

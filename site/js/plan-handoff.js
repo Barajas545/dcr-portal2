@@ -176,7 +176,8 @@ export function talk(peer, word, plan, renew, done, onOffline, host) {
  *   onDone({ok, why, error, via})  the plan was posted (ok), or why not: "blocked" (no tab: a popup blocker),
  *            "no_answer" (the app did not answer: offline before it was ever kept on this device), "failed" (plan()
  *            failed: error), "ios_home" (the frame switched off, an iPhone or iPad home-screen app), "closed" (the
- *            person closed the frame first). via: "tab" | "frame".
+ *            person closed the frame first), "busy" (the frame already open with something that would be lost).
+ *            via: "tab" | "frame". (openOnDevice adds "paused": the person paused the plan's download.)
  *   onOffline()  the app said it keeps itself on this device for offline use
  *   opts.title   the frame's title (the plan's name)
  */
@@ -186,7 +187,8 @@ export function openInTakeoff(plan, renew, onDone, onOffline, opts) {
   if (usesFrame()) {
     let ctl = null;
     const peer = frame.open(frameLink(word), { title: (opts && opts.title) || "", onClose: function () { if (ctl) ctl.stop(); } });
-    if (!peer) { done({ ok: false, why: "blocked", via: "frame" }); return; }
+    // none: no page to show it on, or the takeoff app already open with something that would be lost
+    if (!peer) { done({ ok: false, why: frame.isOpen() ? "busy" : "blocked", via: "frame" }); return; }
     // the page under the frame cannot be read while it is open: a problem is said on the frame's bar too (the frame
     // stays open when closing it would lose work: js/plan-frame.js closeIfIdle)
     ctl = talk(peer, word, plan, renew, function (r) {
@@ -215,5 +217,6 @@ export function handoffProblem(result, win) {
     return "The takeoff app did not answer. Open a plan once while online so this device keeps the takeoff app for offline use, then try again.";
   }
   if (result.why === "paused") return "The download was paused, so the plan did not open. Tap Open to carry on.";
+  if (result.why === "busy") return "The takeoff app is open with changes that are not saved: save or close it first, then open this plan.";
   return (result.error && result.error.message) || "The plan could not be handed to the takeoff app.";
 }
