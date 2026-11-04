@@ -135,6 +135,7 @@ site/                       published as is
   takeoff/                  the portal's own copy of takeoff-web at one commit (tools/vendor-takeoff.mjs; VERSION.json),
                             shown on phones and tablets by js/plan-frame.js (see "The takeoff app inside the portal")
   js/plan-frame.js          the full-screen frame of the takeoff copy (Close, the page under it held still, its worker first)
+  js/takeoff-stores.js      the takeoff copy's own stores on this site (its drafts, kept copies), purged with lost prices
   js/map/plans.js, js/pages/plan-buttons.js  the plan buttons (owner 2026-10-26): takeoff-web's link, the 📐 button, the
                             Floor Plans card's rule (pure); the slots of Search and the project header filled from one
                             plans_for call (see "The plan buttons and the Floor Plans card")
@@ -684,8 +685,32 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - **Open on a phone or a tablet** puts the plan on the device first (the Plans Library's download, its green bar), then
   hands it over as a file; no room: it opens online and says so. The doors that led to the Plans Archive (📐, the menu's
   foot, Floor Plans, the Takeoffs tab) lead to the 📐 menu or the Plans Library there; people without prices are told
-  "Plans are for the people who see prices". Save-back (P4) is not in this package.
+  "Plans are for the people who see prices".
 - **Tests.** `tests/p8-takeoff-frame.test.mjs`; `tools/e2e-p7-plans.mjs` 4b walks a tablet through it in headless Chrome.
+
+## Saving a plan back from a phone or a tablet (owner 2026-11-04, iPad package P4) in short
+
+- **Who and when.** A plan opened in the frame from the Plans Library (as a file) is offered a save back (`canSave` in
+  `ptt-open`) to an admin, or a person with Sees prices AND "Can upload to OneDrive" (`map/plans.js canSaveBack`; the
+  broker asks the same). `PLAN_SAVE_BACK` in `map/plans.js` switches it off (nothing offered, nothing sent).
+- **Kept first.** The app's Save comes as `ptt-save` (from the frame's own window, this site, the word, `req` of at most
+  20 characters, `size === file.size`); the Plans Library's worker copies it into a NEW file of its own (op `spool`,
+  8 MiB slices, never the whole file in memory, MAGIC and size checked), the record gets `local`, and only then is the
+  app told `kept`. The save opens from the device from then on (with no signal too) and nothing downloads over it.
+- **Then sent.** The Files tab's uploader sends it straight to OneDrive (`plan_save_session` / `plan_save_done`, the
+  upload address in memory only), the screen held awake and the rows saying "keep this screen open"; a send that does
+  not finish goes again later by itself (Search, a project, the Plans Library) or at Retry. OneDrive's version
+  unchanged since the device got it: the save REPLACES the plan (OneDrive keeps the old one in its version history)
+  and its bytes become the device's copy with no download (OneDrive's hash of them, given later, is taken without a
+  download too). Changed in the office meanwhile: the save becomes a separate file beside it, `<stem> - iPad
+  YYYY-MM-DD HHMM.takeoff`, the person is told, and nothing is overwritten.
+- **Rows.** The Plans Library and the 📐 menu say Saved on this iPad / Sending 45% / Sent / Saved as a separate file /
+  Not sent — tap to retry, with Send now / Retry. A purge on lost prices takes the saves waiting here too, and on this
+  site the takeoff app's own drafts (`ptt-drafts`) and kept copies (`plans-kept`).
+- **Before the owner's write grant** on the takeoff folder the broker answers 503 and a save just waits on the device.
+- **Tests.** `tests/p7-library.test.mjs` (the rules, and the library over a made-up phone: `tests/plan-device.mjs` with
+  the REAL worker), `tests/p8-plan-save.test.mjs`, `tests/p7-onedrive-repo.test.mjs`, `tests/p7-onedrive-upload.test.mjs`;
+  `tools/e2e-p7-plans.mjs` 4b saves from the frame and checks it is sent and adopted.
 
 ## Rules for every page
 
