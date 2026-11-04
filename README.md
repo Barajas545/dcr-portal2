@@ -186,7 +186,8 @@ tools/e2e-p7-onedrive.mjs   the Files tab's OneDrive part as every role (what is
                             and dark)
 tools/e2e-p7-plans.mjs      the plan buttons and the Floor Plans card: Search and the project header as a field person
                             and an admin, the card per role, the takeoff folder switched off (phone and desk, light and dark);
-                            a tablet opening a plan in the takeoff frame (4b)
+                            a tablet with the REAL vendored takeoff app in the frame: open, edit, save, sent, copy (4b),
+                            prices without the upload switch (4c)
 tools/vendor-takeoff.mjs    the takeoff copy at site/takeoff/ from one takeoff-web commit (see "The takeoff app inside the portal")
 tools/schema-check-p7-onedrive.mjs  the same modules through DCR Desktop 2's OWN broker (handler.ts with its fake Graph) and
                             the REAL migrations (20261028000200_onedrive): drift, gates, the files row, plans_for once the
@@ -719,7 +720,9 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - **Before the owner's write grant** on the takeoff folder the broker answers 503 and a save just waits on the device.
 - **Tests.** `tests/p7-library.test.mjs` (the rules, and the library over a made-up phone: `tests/plan-device.mjs` with
   the REAL worker), `tests/p8-plan-save.test.mjs`, `tests/p7-onedrive-repo.test.mjs`, `tests/p7-onedrive-upload.test.mjs`;
-  `tools/e2e-p7-plans.mjs` 4b saves from the frame and checks it is sent and adopted.
+  `tools/e2e-p7-plans.mjs` 4b drives the REAL vendored takeoff app in the frame (a made-up but real .takeoff as the
+  demo plan): its own Save is kept, marks the project saved, is sent and adopted with no download, and after an office
+  save the next one becomes a copy, said in both; 4c: prices without the upload switch saves to the share sheet only.
 
 ## Rules for every page
 

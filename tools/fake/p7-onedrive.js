@@ -393,6 +393,7 @@
     /* the Plans Library: each .takeoff file of the takeoff folder as plans_list answers it (made up, the same every time) */
     const planVersions = new Map();      // path -> a version a test set (a "new save")
     const savedBytes = new Map();        // path -> the saved Blob (this tab; another tab serves made-up bytes of its size)
+    const fixtures = new Map();          // path -> {size, version}: a real made-up .takeoff a browser e2e set (this tab)
     /** the last save back of the takeoff file at `full` (a row of the demo's table), or null */
     function savedPlan(full) {
       const all = rows[TABLE].filter((r) => r.takeoff === full);
@@ -416,6 +417,9 @@
           // a save back from a device (a row of the demo's table: every tab knows it): its bytes' size, time and version
           const sv = savedPlan(full);
           if (sv) Object.assign(out[out.length - 1], { size: sv.size, modified: sv.modified_at, version: sv.version });
+          // a real made-up project file set by a browser e2e (setPlanFixture) - until a save of it lands, or the office's
+          const fx = fixtures.get(full);
+          if (fx) Object.assign(out[out.length - 1], { size: fx.size, version: planVersions.get(full) || fx.version, modified: fx.modified });
         });
       });
       return out;
@@ -502,6 +506,7 @@
         full = s.folder + "/" + s.name;
       }
       if (typeof Blob !== "undefined") savedBytes.set(full, new Blob(s.parts, { type: "application/octet-stream" }));
+      fixtures.delete(full);
       const p = rows.projects.find((x) => x.id === s.pid);
       const f = p ? planFilesOf(p).find((x) => x.full === full) : null;
       const id = f ? f.id : s.item;
@@ -837,7 +842,41 @@
       /** plans_for's takeoff folder: false = not set up (503 takeoff_not_configured), true = there, null = the default */
       setTakeoff(on) { takeoffSet = on === null || on === undefined ? null : !!on; },
       /** the Plans Library: a takeoff file's new version ("<folder>/<path>", as the takeoff folder lists it) */
-      setPlanVersion(full, version) { if (version) planVersions.set(full, version); else planVersions.delete(full); } };
+      setPlanVersion(full, version) { if (version) planVersions.set(full, version); else planVersions.delete(full); },
+      /** a browser e2e that drives the REAL takeoff app (tools/e2e-p7-plans.mjs): `blob`, a made-up but real .takeoff
+          project, is the first plan of project `number` in this tab from now on - its bytes, size and a version of its
+          own - until a save of it lands or the office saves it (officeSave). -> {id, name, full, size, version} | null */
+      setPlanFixture(number, blob) {
+        const p = rows.projects.find((x) => x.number === number && !x.deleted_at);
+        const f = p ? planFilesOf(p)[0] : null;
+        if (!f || !blob || !(blob.size > 0)) return null;
+        fixtures.set(f.full, { size: blob.size, version: "qx:demo-fixture-" + blob.size, modified: nowIso() });
+        savedBytes.set(f.full, blob);
+        const g = planFilesOf(p)[0];
+        return { id: g.id, name: g.name, full: g.full, size: g.size, version: g.version };
+      },
+      /** the bytes the demo's OneDrive holds now for the takeoff file `itemId` (a plan or a copy of one), or null */
+      planBlobOf(itemId) {
+        for (const p of rows.projects.filter((x) => !x.deleted_at)) {
+          const f = planFilesOf(p).find((x) => x.id === itemId);
+          if (f) return planBytes(f);
+        }
+        return null;
+      },
+      /** someone saves the plan at `full` in the office: other bytes (made-up, of another size), a version of their own -
+          after any save this tab sent. -> that version */
+      officeSave(full) {
+        const p = rows.projects.find((x) => !x.deleted_at && planFilesOf(x).some((f) => f.full === full));
+        const f = p ? planFilesOf(p).find((x) => x.full === full) : null;
+        if (!f) return null;
+        fixtures.delete(full);
+        savedBytes.delete(full);
+        const at = nowIso();
+        const n = nextId(TABLE);
+        commitInsert(TABLE, { id: n, item_id: f.id, project_id: p.id, parent_id: null, name: f.name, folder: false, size: f.size + 7,
+          mime: "application/octet-stream", created_at: at, modified_at: at, by_app: false, takeoff: full, version: "qx:demo-office-" + n });
+        return "qx:demo-office-" + n;
+      } };
   });
 
   /* ── made-up data: the switch for two people, the admin's test project ── */

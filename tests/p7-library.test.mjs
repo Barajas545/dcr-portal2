@@ -728,6 +728,29 @@ test("demo plan_save_session / plan_save_done (the iPad's save back): a replace 
   assert.equal((await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: "01DEMONOTAPLAN", version: after.version, size: 5 }))).code, "not_found");
 });
 
+test("demo hooks for the real-app e2e: a made-up real .takeoff as a project's plan (its bytes, size, own version) until a save lands; the office's save; OneDrive's bytes of an item", { skip }, async () => {
+  await setup();
+  const a267 = project("A267");
+  const ext = E.exts.find((x) => x.name === "p7-onedrive");
+  as("admin");
+  const plan = (await onedrive.plansList([a267.id]))[String(a267.id)].files[0];
+  const blob = new Blob([new TextEncoder().encode("PDFCACHE1" + "x".repeat(4000))]);
+  const fx = ext.setPlanFixture("A267", blob);
+  assert.deepEqual([fx.id, fx.name, fx.size, fx.version], [plan.id, plan.name, blob.size, "qx:demo-fixture-" + blob.size]);
+  assert.equal(fx.full, plan.folder + "/" + plan.name);
+  const now = (await onedrive.plansList([a267.id]))[String(a267.id)].files.find((f) => f.id === plan.id);
+  assert.deepEqual([now.size, now.version], [blob.size, fx.version], "plans_list says so");
+  assert.equal(ext.planBlobOf(plan.id), blob, "OneDrive's bytes are the fixture's");
+  assert.equal(ext.setPlanFixture("A001", blob), null, "no plan there");
+  // the office saves it: another version and other bytes, the fixture gone
+  const v = ext.officeSave(fx.full);
+  assert.match(v, /^qx:demo-office-\d+$/);
+  const later = (await onedrive.plansList([a267.id]))[String(a267.id)].files.find((f) => f.id === plan.id);
+  assert.deepEqual([later.version, later.size], [v, blob.size + 7]);
+  assert.equal((await ext.planBlobOf(plan.id).text()).slice(0, 9), "PDFCACHE1");
+  assert.equal(ext.officeSave("A999 - Nowhere/None.takeoff"), null);
+});
+
 /* ── the save back (P4; owner decisions Q1-Q3, 2026-11-04; contract C3): the rules ──────────────────────────────── */
 
 const SAVE = "p1-x-2.takeoff";

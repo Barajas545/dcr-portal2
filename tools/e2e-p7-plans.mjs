@@ -16,20 +16,25 @@
      without prices, a lead, a field person or a view-only person; a new tab at takeoff-web's #plans;
    - the takeoff folder not set up (the demo's switch, localStorage "dcr2-demo-takeoff" = "off"): no button anywhere,
      nothing said, the page as before;
-   - a tablet (an iPad that calls itself a Mac, with touch; owner decision Q4, 2026-11-04): the Floor Plans card and
-     the header's 📐 lead to the Plans Library (never github.io), the menu's foot has no Plans Archive; Open saves the
-     plan on the device first, then shows the portal's copy of the takeoff app (/takeoff/) in the frame over a page held
-     still; a ready said from inside the frame (for takeoff-web main f499435, which does not talk to a same-site parent
-     yet: its P2 does) brings ptt-open with the saved plan's File into the frame; a ready from anywhere else, or with
-     another word, is never answered; Close with nothing unsaved closes at once. A tablet without prices: 📐 says "Plans
-     are for the people who see prices", and nothing is asked of the broker;
-   - the save back on that tablet (owner decisions Q1-Q3, 2026-11-04; contract C2/C3): the admin's plan comes with
-     canSave; a Save said from inside the frame (ptt-save with a made-up project file, as takeoff-web's P2 will send it)
-     is answered "kept", then "sent" once the Plans Library sent it to the demo's OneDrive (tools/fake/p7-onedrive.js
-     plan_save_session / plan_save_done, the upload address answered by the demo); the record has the saved bytes as
-     its copy (no save waiting, a new version) and the menu's row says "Sent to OneDrive"; a ptt-save from the page
-     itself is never heard; "Check now" in the Plans Library then takes OneDrive's hash of the same bytes as the
-     version with no download (no plan_link asked);
+   - a tablet (an iPad that calls itself a Mac, with touch; owner decisions Q1-Q4, 2026-11-04; contract C2/C3) with the
+     REAL takeoff app - the vendored copy at /takeoff/, nothing standing in for it - and a made-up but real .takeoff as
+     the demo's A267 plan (two made-up sheets, written in the page by the copy's own js/core/takeoff-file.js;
+     tools/fake/p7-onedrive.js setPlanFixture): the Floor Plans card and the header's 📐 lead to the Plans Library
+     (never github.io), the menu's foot has no Plans Archive; (i) Open saves the plan on the device first, then the
+     frame shows /takeoff/ over a page held still, and the app says ready, gets ptt-open with the File and canSave, and
+     shows the two sheets; a ready from the page itself or with another word is never answered; (vii) a first visit:
+     the frame's page never reloads (the copy's own worker first) and its #portal=<word> arrives; (ii) an edit (the
+     app's own undoable step), and Close asks first; (iii) the app's own File › Save -> "Saving to the portal…" with
+     "keeping" -> "kept" -> the app marks the project saved -> the demo's OneDrive gets it (plan_save_session /
+     plan_save_done) -> "sent" on the app's status line; the record holds exactly the bytes the app saved and OneDrive
+     got, the edit in them (no plan_link, no download), and a later check takes OneDrive's hash with no plan_link; a
+     ptt-save from the page itself is never heard; (iv) the office saves the plan (officeSave), and the next Save of
+     the same opening becomes a separate file: said on the frame's bar and on the app's status line, the plan's record
+     untouched, the copy a record of its own; the menu's row says so after Close. (v) A person with prices but without
+     "Can upload to OneDrive" (the accountant): the app opens without canSave and its Save goes to the share sheet (a
+     stand-in: headless Chrome has none, and the frame is given Safari's lack of file pickers), nothing handed to the
+     portal or sent. (vi) A tablet without prices: 📐 says "Plans are for the people who see prices", and nothing is
+     asked of the broker;
    - phone (375 px) and desktop, light and dark: never sideways; no Content-Security-Policy violation and no console
      error on any page (the frame's page included).
    Screenshots (--shots all): plans_<what>_<light|dark>_<desktop|phone>.png into --out.
@@ -216,50 +221,106 @@ async function main() {
       await O.eval("localStorage.removeItem('dcr2-demo-takeoff'); true");
     }, O);
 
-    /* ── 4b. a tablet (owner decision Q4, 2026-11-04): an iPad that calls itself a Mac, touch. The 📐 menu saves the plan
-       on the device first (the library's own download), then opens the portal's copy of the takeoff app in the frame;
-       the frame's app says ready (takeoff-web main f499435 does not talk to a same-site parent yet - takeoff-web's P2
-       does - so the test says it for the app, from inside the frame) and the portal posts the plan File there ── */
+    /* ── 4b. a tablet with the REAL takeoff app (owner decisions Q1-Q4, 2026-11-04; contract C2/C3): an iPad that calls
+       itself a Mac, touch. A made-up but real .takeoff (two made-up sheets, written by the vendored copy's own
+       js/core/takeoff-file.js) is the demo's A267 plan. 📐 saves it on the device first, the frame loads /takeoff/ - the
+       vendored takeoff-web itself, nothing stands in for it - which says ready, gets the File with canSave and shows the
+       plan; an edit, Close asks; the app's own Save -> "Saving to the portal…" -> kept (spooled here) -> saved in the
+       app -> sent to the demo's OneDrive -> "sent" on the app's status line; the record holds the saved bytes (no
+       download, and a later check needs no plan_link); then the office saves the plan and the next Save becomes a copy,
+       said in the portal and in the app ── */
     const TABLET_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
+    /** the records of the Plans Library on this device */
+    const records = (p) => p.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
+      " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
+      " return all.map(r => ({ key: r.key, itemId: r.itemId, name: r.name, file: r.file, size: r.size, version: r.version, local: r.local || null, sent: r.sent || null," +
+      " adopted: r.adopted || null, expect: !!r.expect, dl: r.dl || null })); })()");
+    /** every broker op the page asks from now on (the demo's functions.invoke) */
+    const watchOps = (p) => p.eval("(() => { const c = DCR2Demo.engine; if (!c.__opsWatched) { const inv = c.invoke; c.invoke = function (ctx, name, body) {" +
+      " if (name === 'onedrive' && body) window.__ops.push(body.op); return inv.apply(this, arguments); }; c.__opsWatched = true; } window.__ops = []; return true; })()");
+    /** a made-up but real takeoff project as the demo's plan of `number` (this page): composed by the copy's own writer */
+    const putFixture = (p, number, title) => p.eval("(async () => { const { writeProject } = await import('/takeoff/js/core/takeoff-file.js');" +
+      " const sheet = async (label, hue) => { const c = new OffscreenCanvas(1200, 800); const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 1200, 800);" +
+      " g.strokeStyle = 'hsl(' + hue + ' 60% 35%)'; g.lineWidth = 6; g.strokeRect(40, 40, 1120, 720); g.fillStyle = '#111'; g.font = 'bold 40px sans-serif'; g.fillText(label, 70, 110);" +
+      " return { kind: 'png', data: new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()) }; };" +
+      " const blob = await writeProject({ metadata: { project_name: " + JSON.stringify(title) + ", annotations: {}, measurements: {}, page_labels: ['A1', 'A2'] }," +
+      " pageSources: [await sheet('A1 MADE UP', 210), await sheet('A2 MADE UP', 20)] });" +
+      " return DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').setPlanFixture(" + JSON.stringify(number) + ", blob); })()");
+    /** a JS dialog in the walk (the app's or the portal's) is answered at once and noted (never blocks the walk) */
+    const answerDialogs = (p) => {
+      p.dialogs = [];
+      cdp.handlers.add((m) => {
+        if (m.sessionId !== p.s || m.method !== "Page.javascriptDialogOpening") return;
+        p.dialogs.push(m.params.type + ": " + m.params.message);
+        p.call("Page.handleJavaScriptDialog", { accept: false }).catch(() => null);
+      });
+    };
+    /** the frame's app (its window, from the page: one site) */
+    const APP = "document.getElementById('ptfFrame').contentWindow";
+    /** the project page of the sandbox A267, its 📐 there */
+    async function openReal(p) {
+      await p.goto(base + "/project.html?id=" + J.sandbox, 400);
+      await p.until("!!document.querySelector('#pjPlans:not([hidden]) a[data-plan-menu]')", 10000);
+    }
     const T = await newPage(cdp, "tablet-admin", OUT); pages.push(T);
-    await attempt("a tablet: 📐 saves the plan on the device first, then opens it in the frame; the portal posts the File to the frame only", async () => {
+    answerDialogs(T);
+    await attempt("a tablet with the real takeoff app: open from 📐 (saved here first), an edit, Close asks, Save -> kept -> saved -> sent; then the office's save makes the next one a copy", async () => {
       await T.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
       await T.size(1024, 768, true);
       await signIn(T, "admin", "dashboard.html");
       const card = await T.eval("(() => { const c = Array.from(document.querySelectorAll('.hm-card')).find(x => /Floor Plans/.test(x.textContent)); const a = c && c.querySelector('a.hm-card-go'); return a ? { href: a.getAttribute('href'), target: a.target } : null; })()");
       check("tablet: the Floor Plans card opens the Plans Library (no Plans Archive on a tablet)", card && card.href === "plans-library.html" && !card.target, JSON.stringify(card));
-      await T.goto(base + "/project.html?id=" + J.sandbox, 400);
-      await T.until("!!document.querySelector('#pjPlans:not([hidden]) a[data-plan-menu]')", 10000);
+      await openReal(T);
       const btn = await T.eval("(() => { const a = document.querySelector('#pjPlans a'); return { href: a.getAttribute('href'), target: a.target }; })()");
       check("tablet: the header's 📐 leads to the Plans Library, never github.io", btn.href === "plans-library.html" && !btn.target, JSON.stringify(btn));
+      // (vii) a first visit: no worker of the copy's on this device yet
+      const first = await T.eval("navigator.serviceWorker.getRegistration('/takeoff/').then(r => !r || !/\\/takeoff\\//.test(r.scope))");
+      const fx = await putFixture(T, "A267", "A267 made-up plan (e2e)");
+      check("tablet: the demo's A267 plan is a made-up but real takeoff project now", fx && fx.size > 1000 && /\.takeoff$/.test(fx.name), JSON.stringify(fx));
       await T.eval("document.querySelector('#pjPlans a[data-plan-menu]').click(); true");
-      await T.until("document.querySelectorAll('.pl-sheet [data-pl-act=\"open\"]').length > 0", 10000);
+      await T.until("!!document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(fx.id) + "]')", 10000);
       const foot = await T.eval("document.querySelector('.pl-sheet .pl-ft').innerText");
       check("tablet: the menu's foot has no Plans Archive", /Plans Library/.test(foot) && !/Plans Archive/.test(foot), foot);
-      // the conversation, watched from the page: every message the frame's app sends, and what the portal answers
-      await T.eval("window.__heard = []; window.addEventListener('message', (e) => window.__heard.push({ type: e.data && e.data.type, origin: e.origin," +
-        " fromFrame: !!document.getElementById('ptfFrame') && e.source === document.getElementById('ptfFrame').contentWindow })); true");
-      await T.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"]').click(); true");
+      // the conversation, watched from the page: every message the frame's app sends (a save's File kept to compare)
+      await T.eval("window.__heard = []; window.__saveFiles = []; window.addEventListener('message', (e) => { const f = document.getElementById('ptfFrame');" +
+        " const fromFrame = !!f && e.source === f.contentWindow; window.__heard.push({ type: e.data && e.data.type, origin: e.origin, fromFrame, nonce: e.data && e.data.nonce, req: e.data && e.data.req });" +
+        " if (fromFrame && e.data && e.data.type === 'ptt-save') window.__saveFiles.push(e.data.file); }); true");
+      await watchOps(T);
+      // (i) Open: saved on the device first, then the frame with the portal's copy of the app
+      await T.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(fx.id) + "]').click(); true");
       await T.until("!!document.querySelector('#ptfShell.open #ptfFrame[src]')", 20000);
       const shown = await T.eval("(() => { const f = document.getElementById('ptfFrame'); return { src: f.getAttribute('src'), title: document.getElementById('ptfTitle').textContent," +
         " inert: !!document.getElementById('dcr2Topbar').inert, overflow: document.body.style.overflow }; })()");
+      const word = shown.src.split("#portal=")[1];
       check("tablet: the frame shows the portal's copy at #portal=<word>, over a page held still", /^takeoff\/index\.html#portal=[A-Za-z0-9_-]{24}$/.test(shown.src) &&
-        /^📐 .+\.takeoff$/.test(shown.title) && shown.inert && shown.overflow === "hidden", JSON.stringify(shown));
-      const saved = await T.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
-        " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
-        " return all.map(r => ({ file: !!r.file, size: r.size, dl: r.dl })); })()");
-      check("tablet: the plan was saved on the device first (a whole copy in the Plans Library)", saved.length === 1 && saved[0].file && saved[0].size > 0 && !saved[0].dl, JSON.stringify(saved));
-      // the frame's app: its page is the vendored copy, served as published (once it has loaded: its window.TakeoffApp)
-      await T.until("!!(document.getElementById('ptfFrame').contentWindow.TakeoffApp) && document.getElementById('ptfFrame').contentDocument.readyState === 'complete'", 15000);
+        shown.title === "📐 " + fx.name && shown.inert && shown.overflow === "hidden", JSON.stringify(shown));
+      const saved = (await records(T)).filter((r) => r.itemId === fx.id);
+      check("tablet: the plan was saved on the device first (the fixture's bytes, whole, in the Plans Library)", saved.length === 1 && saved[0].file && saved[0].size === fx.size &&
+        !saved[0].dl && saved[0].version === fx.version, JSON.stringify(saved));
+      // the real app: ready -> ptt-open with the File and canSave -> the plan's two sheets shown
+      await T.until("(() => { try { const t = " + APP + ".TakeoffApp; return !!(t && t.app.portal && t.app.portal.kind === 'file' && t.app.project.pageCount === 2); } catch (e) { return false; } })()", 30000);
+      const app = await T.eval("(() => { const w = " + APP + "; const t = w.TakeoffApp; return { canSave: t.app.portal.canSave, name: t.app.portal.name, nonce: t.app.portal.nonce," +
+        " via: t.app.portal.peer && t.app.portal.peer.via, pages: t.app.project.pageCount, dirty: t.app.project.dirty, project: t.app.project.metadata.project_name," +
+        " status: w.document.getElementById('statusText').textContent, nav: (w.performance.getEntriesByType('navigation')[0] || {}).type," +
+        " controller: w.navigator.serviceWorker.controller ? new URL(w.navigator.serviceWorker.controller.scriptURL).pathname : null, path: w.location.pathname }; })()");
+      check("tablet (i): the real app got the plan from the portal - a File, canSave, the frame's parent as its peer - and shows its two sheets",
+        app.canSave === true && app.name === fx.name && app.nonce === word && app.via === "frame" && app.pages === 2 && app.dirty === false &&
+        app.project === "A267 made-up plan (e2e)" && app.path === "/takeoff/index.html", JSON.stringify(app));
+      const heard = await T.eval("window.__heard");
+      check("tablet: the portal heard the app's ready from the frame's own window, on this site, with the word",
+        heard.some((h) => h.type === "ptt-ready" && h.fromFrame && h.origin === base && h.nonce === word), JSON.stringify(heard));
+      // (vii) never reloaded: the copy's own worker was registered and active before the page loaded, and the word arrived
+      check("tablet (vii): a first visit, and the frame's page never reloaded - its own worker (takeoff/sw.js) from the start, #portal=<word> taken",
+        first === true && app.nav === "navigate" && (app.controller === null || app.controller === "/takeoff/sw.js") && app.nonce === word,
+        JSON.stringify({ first, nav: app.nav, controller: app.controller }));
+      // a stranger is never answered: a ready from the page itself, or from the frame with another word (code run as the
+      // frame's own page, an isolated world of it: what it posts comes from the frame's window)
       const tree = await T.call("Page.getFrameTree");
       const child = (tree.frameTree.childFrames || []).find((c) => /\/takeoff\/index\.html/.test(c.frame.url));
-      check("tablet: the frame's page is /takeoff/index.html (this site)", !!child && new URL(child.frame.url).origin === base, child ? child.frame.url : JSON.stringify(tree.frameTree.childFrames || []));
-      // code run as the frame's own page (an isolated world of it: what it posts comes from the frame's window); a world
-      // whose document went (the app's own worker taking over, say) is made again
       let world = null;
       const inFrame = async (expr) => {
         for (let i = 0; i < 2; i++) {
-          if (!world) world = await T.call("Page.createIsolatedWorld", { frameId: child.frame.id, worldName: "e2e-takeoff-p2-stand-in" });
+          if (!world) world = await T.call("Page.createIsolatedWorld", { frameId: child.frame.id, worldName: "e2e-stranger" });
           try {
             const r = await T.call("Runtime.evaluate", { expression: expr, contextId: world.executionContextId, awaitPromise: true, returnByValue: true });
             if (r.exceptionDetails) throw new Error("in the frame: " + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text));
@@ -271,90 +332,171 @@ async function main() {
         }
         return undefined;
       };
-      const word = shown.src.split("#portal=")[1];
-      // what takeoff-web P2's embedded profile will do: tell the parent it is ready, take the plan only from the parent, this site
-      const got = await inFrame("new Promise((resolve) => { const t = setTimeout(() => resolve(null), 15000);" +
-        " window.addEventListener('message', async (e) => { if (e.source !== window.parent || e.origin !== location.origin || !e.data || e.data.type !== 'ptt-open') return;" +
-        " clearTimeout(t); const d = e.data; const head = d.file ? await d.file.slice(0, 9).text() : '';" +
-        " resolve({ kind: d.kind, v: d.v, nonce: d.nonce, name: d.name, size: d.size, isFile: d.file instanceof Blob, fileSize: d.file ? d.file.size : -1, head, canSave: d.canSave === true, url: 'url' in d }); });" +
-        " window.parent.postMessage({ type: 'ptt-ready', v: 1, nonce: " + JSON.stringify(word) + " }, location.origin); })");
-      check("tablet: ptt-ready from the frame -> ptt-open with the plan's File arrives in the frame (kind file, PDFCACHE1, its size; no link; canSave: an admin saves back)",
-        got && got.kind === "file" && got.v === 1 && got.nonce === word && got.isFile && got.fileSize === got.size && got.size === saved[0].size &&
-        got.head === "PDFCACHE1" && got.canSave && !got.url, JSON.stringify(got));
-      const heard = await T.eval("window.__heard");
-      check("tablet: the portal heard the ready from the frame's own window, on this site", heard.some((h) => h.type === "ptt-ready" && h.fromFrame && h.origin === base), JSON.stringify(heard));
-      // a stranger (this site, but not the frame's window) is never answered: a second ready from the page itself
-      // (the count is kept on the frame's document, which every world of it shares)
-      await inFrame("document.documentElement.dataset.e2eOpens = '0'; window.addEventListener('message', (e) => { if (e.data && e.data.type === 'ptt-open')" +
-        " document.documentElement.dataset.e2eOpens = String(Number(document.documentElement.dataset.e2eOpens) + 1); }); true");
+      await T.eval("(() => { const w = " + APP + "; w.__opens = 0; w.__states = []; w.addEventListener('message', (e) => { if (!e.data) return;" +
+        " if (e.data.type === 'ptt-open') w.__opens++; if (e.data.type === 'ptt-save-state' && e.source === w.parent) w.__states.push({ req: e.data.req, state: e.data.state, pct: e.data.pct, name: e.data.name }); }); return true; })()");
       await T.eval("window.postMessage({ type: 'ptt-ready', v: 1, nonce: " + JSON.stringify(word) + " }, location.origin); true");
       await inFrame("window.parent.postMessage({ type: 'ptt-ready', v: 1, nonce: 'Zk3pQ9_x-7LmN2aBcD4e' }, location.origin); true");
       await sleep(800);
-      const opens = await T.eval("document.getElementById('ptfFrame').contentDocument.documentElement.dataset.e2eOpens");
-      check("tablet: a ready from the page itself, or with another word, is never answered (one plan, once)", opens === "0", opens);
-      // the copy's own worker was registered before its page loaded: the page is that worker's, and never reloaded itself
-      const ctl = await T.eval("(() => { const w = document.getElementById('ptfFrame').contentWindow; const c = w.navigator.serviceWorker.controller;" +
-        " return { nav: (w.performance.getEntriesByType('navigation')[0] || {}).type, controller: c ? new URL(c.scriptURL).pathname : null }; })()");
-      check("tablet: the frame's page was never reloaded (its own worker, takeoff/sw.js, from the start)", ctl.nav === "navigate" &&
-        (ctl.controller === null || ctl.controller === "/takeoff/sw.js"), JSON.stringify(ctl));
-      // the save back: a Save said from inside the frame (takeoff-web P2's ptt-save, a made-up project file) - kept,
-      // then sent; a ptt-save from the page itself is never heard
+      check("tablet: a ready from the page itself, or with another word, is never answered (one plan, once)", (await T.eval(APP + ".__opens")) === 0);
+      if (SHOTS !== "none") {
+        await T.call("Page.bringToFront").catch(() => null);
+        const took = await Promise.race([T.shot("plans_frame_real_open_tablet.png"), sleep(25000).then(() => null)]);
+        if (took) shots.push(took);
+      }
+      // (ii) a real edit (the app's own undoable step), then Close asks first and Cancel keeps it open
+      await T.eval("(() => { const p = " + APP + ".TakeoffApp.app.project; p.transact('e2e: a made-up client', () => { p.metadata.client_name = 'Made-up client (e2e)'; }); return p.dirty; })()");
+      await T.eval("document.getElementById('ptfClose').click(); true");
+      await T.until("!!document.querySelector('#dcrModalHost .dcr-mo-t')", 5000);
+      const ask = await T.eval("({ title: document.querySelector('#dcrModalHost .dcr-mo-t').textContent, yes: document.getElementById('dcrMoYes').textContent })");
+      await T.eval("document.getElementById('dcrMoNo').click(); true");
+      await sleep(300);
+      check("tablet (ii): with an unsaved edit in the app, Close asks first; Cancel keeps the app open", ask.title === "Close the takeoff app?" &&
+        ask.yes === "Close without saving" && (await T.eval("!!document.querySelector('#ptfShell.open #ptfFrame') && " + APP + ".TakeoffApp.app.project.dirty === true")), JSON.stringify(ask));
+      // (iii) the app's own Save (its File › Save button): "Saving to the portal…" -> kept -> saved -> sent
+      await T.eval("(() => { const w = " + APP + "; w.__bar = []; w.__status = []; const d = w.document; const watch = (id, to) => new w.MutationObserver(() => to.push(d.getElementById(id).textContent))" +
+        ".observe(d.getElementById(id), { childList: true, characterData: true, subtree: true }); watch('progressLabel', w.__bar); watch('statusText', w.__status); return true; })()");
+      await T.eval("window.__ops = []; true");
+      // a ptt-save from the page itself (this site, the word - but not the frame's window) is never heard
       await T.eval("window.postMessage({ type: 'ptt-save', v: 1, nonce: " + JSON.stringify(word) + ", req: 'sPAGE00000', name: 'x.takeoff', size: 9," +
         " file: new Blob(['PDFCACHE1']) }, location.origin); true");
-      const states = await inFrame("new Promise((resolve) => { const got = []; const t = setTimeout(() => resolve(got), 30000);" +
-        " window.addEventListener('message', (e) => { if (e.source !== window.parent || e.origin !== location.origin || !e.data || e.data.type !== 'ptt-save-state') return;" +
-        " got.push({ req: e.data.req, state: e.data.state, why: e.data.why || '', nonce: e.data.nonce });" +
-        " if (['sent', 'copy', 'refused', 'no-room'].includes(e.data.state) || (e.data.state === 'failed' && got.length > 1)) { clearTimeout(t); resolve(got); } });" +
-        " const body = 'PDFCACHE1 a made-up save from the takeoff app ' + '#'.repeat(700000);" +
-        " window.parent.postMessage({ type: 'ptt-save', v: 1, nonce: " + JSON.stringify(word) + ", req: 'sE2E000001', name: " + JSON.stringify(got ? got.name : "") +
-        ", size: body.length, file: new Blob([body]) }, location.origin); })");
-      const words = (states || []).map((x) => x.state);
-      check("tablet: a Save from the frame is answered 'kept' (in the Plans Library's own storage), then 'sent' (in OneDrive) - to the frame, with its word",
-        words[0] === "kept" && words[words.length - 1] === "sent" && states.every((x) => x.req === "sE2E000001" && x.nonce === word), JSON.stringify(states));
-      check("tablet: a ptt-save from the page itself is never heard", (states || []).every((x) => x.req !== "sPAGE00000"), JSON.stringify(states));
-      const after2 = await T.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
-        " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
-        " return all.map(r => ({ file: r.file, size: r.size, version: r.version, local: r.local, sent: r.sent && r.sent.mode, expect: !!r.expect })); })()");
-      const sentRow = after2.find((r) => r.sent === "replace");
-      check("tablet: the save is the plan's copy now (no save waiting, a new version, the saved bytes' size) - nothing downloaded",
-        !!sentRow && !sentRow.local && sentRow.size === 700046 && /^sm:700046:/.test(sentRow.version) && sentRow.expect && sentRow.file !== saved[0].file,
-        JSON.stringify(after2));
-      const bar = await T.eval("document.getElementById('ptfSay').textContent");
-      check("tablet: the frame's bar says it is in OneDrive", /in OneDrive/.test(bar), bar);
+      await T.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+      await T.until(APP + ".__states.some(s => s.state === 'sent' || s.state === 'copy' || s.state === 'failed' || s.state === 'refused')", 30000);
+      await sleep(500);
+      const s1 = await T.eval("(() => { const w = " + APP + "; return { states: w.__states, bar: w.__bar, status: w.__status, dirty: w.TakeoffApp.app.project.dirty," +
+        " now: w.document.getElementById('statusText').textContent }; })()");
+      const words = s1.states.map((x) => x.state);
+      const req = (s1.states[0] || {}).req;
+      check("tablet (iii): the app's Save goes to the portal - 'Saving to the portal…' on its bar while the portal keeps it ('keeping'), then 'kept', then the send's news, 'sent'",
+        s1.bar.some((t) => /^Saving to the portal…/.test(t)) && words.indexOf("keeping") !== -1 && words.indexOf("keeping") < words.indexOf("kept") &&
+        words[words.length - 1] === "sent" && s1.states.every((x) => x.req === req), JSON.stringify({ words, bar: s1.bar.slice(0, 6) }));
+      check("tablet: a ptt-save from the page itself is never heard (nothing said about it to the frame)", s1.states.every((x) => x.req !== "sPAGE00000") &&
+        (await T.eval("window.__heard")).filter((h) => h.type === "ptt-save" && h.fromFrame).length === 1, JSON.stringify(s1.states));
+      check("tablet (iii): the app marked the project saved once the portal kept it, and its status line says it was sent",
+        s1.dirty === false && s1.status.some((t) => /the portal sends it to OneDrive/.test(t)) && /^The portal sent .+ to OneDrive\.$/.test(s1.now), JSON.stringify({ status: s1.status, now: s1.now }));
+      const r1 = (await records(T)).find((r) => r.itemId === fx.id);
+      const ops1 = await T.eval("window.__ops");
+      check("tablet (iii): sent with one session and its check - no plan_link, no download", ops1.indexOf("plan_save_session") !== -1 && ops1.indexOf("plan_save_done") !== -1 &&
+        ops1.indexOf("plan_link") === -1, JSON.stringify(ops1));
+      const same1 = await T.eval("(async () => { const L = await import('/js/plan-library.js'); const f = await (await (await (await navigator.storage.getDirectory())" +
+        ".getDirectoryHandle('plan-library')).getFileHandle(" + JSON.stringify(r1 ? r1.file : "x") + ")).getFile();" +
+        " const sent = window.__saveFiles[window.__saveFiles.length - 1]; const od = DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').planBlobOf(" + JSON.stringify(fx.id) + ");" +
+        " const b = async (x) => new Uint8Array(await x.arrayBuffer()); const [a, s, o] = [await b(f), await b(sent), await b(od)];" +
+        " const eq = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);" +
+        " const { openProject } = await import('/takeoff/js/core/takeoff-file.js'); const meta = (await openProject(f)).metadata;" +
+        " return { size: a.length, appSaved: eq(a, s), inOneDrive: eq(a, o), client: meta.client_name, project: meta.project_name, L: typeof L.checkUpdates }; })()");
+      check("tablet (iii): the record now holds the saved bytes - exactly what the app saved, exactly what OneDrive got, the edit in them; no save waiting, a new version",
+        !!r1 && !r1.local && r1.sent && r1.sent.mode === "replace" && r1.file !== saved[0].file && /^sm:/.test(r1.version) && r1.adopted && r1.adopted.file === r1.file &&
+        same1.appSaved && same1.inOneDrive && same1.size === r1.size && same1.client === "Made-up client (e2e)", JSON.stringify({ r1, same1 }));
+      check("tablet (iii): the frame's bar says it is in OneDrive", /in OneDrive/.test(await T.eval("document.getElementById('ptfSay').textContent")));
       if (SHOTS !== "none") {
         await T.call("Page.bringToFront").catch(() => null);
         const took = await Promise.race([T.shot("plans_frame_tablet.png"), sleep(25000).then(() => null)]);
         if (took) shots.push(took);
       }
-      // Close: nothing unsaved in the app -> at once; the page under it comes back
-      await T.eval("document.getElementById('ptfClose').click(); true");
-      await T.until("!document.querySelector('#ptfShell.open') && !document.getElementById('ptfFrame')", 5000);
-      const after = await T.eval("({ inert: !!document.getElementById('dcr2Topbar').inert, overflow: document.body.style.overflow, menu: !!document.querySelector('.pl-sheet') })");
-      check("tablet: Close with nothing unsaved closes at once, and the page (and the menu) come back", !after.inert && after.overflow === "" && after.menu, JSON.stringify(after));
-      await T.until("/Sent to OneDrive/.test(document.querySelector('.pl-sheet .pl-list').innerText)", 5000).catch(() => null);
-      const rowText = await T.eval("document.querySelector('.pl-sheet .pl-list').innerText");
-      check("tablet: the 📐 menu's row says Sent to OneDrive", /Sent to OneDrive/.test(rowText), rowText);
+      // a later check (the Plans Library's Check now, here in the page): OneDrive's hash of the same bytes is taken as the
+      // version - no plan_link, nothing downloaded
+      await T.eval("window.__ops = []; true");
+      const chk = await T.eval("(async () => { const L = await import('/js/plan-library.js'); const s = await L.checkUpdates(); await L.clearHolds(); await L.autoWork(); return s; })()");
+      const r2 = (await records(T)).find((r) => r.itemId === fx.id);
+      const ops2 = await T.eval("window.__ops");
+      check("tablet (iii): a later check takes OneDrive's hash of the saved bytes as the version, and needs no plan_link",
+        !!r2 && /^qx:demo-saved-/.test(r2.version) && !r2.expect && r2.file === r1.file && ops2.indexOf("plan_link") === -1 && ops2.indexOf("plans_list") !== -1,
+        JSON.stringify({ chk, ops2, version: r2 && r2.version }));
+      // (iv) the office saves the plan; the next Save of this opening becomes a separate file - said in the portal and the app
+      const office = await T.eval("DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').officeSave(" + JSON.stringify(fx.full) + ")");
+      await T.eval("(() => { const p = " + APP + ".TakeoffApp.app.project; p.transact('e2e: a second edit', () => { p.metadata.client_name = 'Made-up client (e2e), second edit'; });" +
+        " const w = " + APP + "; w.__states.length = 0; w.__status.length = 0; return true; })()");
+      await T.eval("window.__ops = []; true");
+      await T.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+      await T.until(APP + ".__states.some(s => s.state === 'sent' || s.state === 'copy' || s.state === 'failed' || s.state === 'refused')", 30000);
+      await sleep(500);
+      const s2 = await T.eval("(() => { const w = " + APP + "; return { states: w.__states, status: w.document.getElementById('statusText').textContent, dirty: w.TakeoffApp.app.project.dirty }; })()");
+      const copyWord = s2.states.find((x) => x.state === "copy");
+      const bar2 = await T.eval("document.getElementById('ptfSay').textContent");
+      check("tablet (iv): the plan changed in OneDrive before the send - the save went as a separate file (mode copy), and both the portal and the app say so",
+        !!office && !!copyWord && /^A267 .+ - iPad \d{4}-\d{2}-\d{2} \d{4}\.takeoff$/.test(copyWord.name || "") && s2.dirty === false &&
+        /Someone saved this plan in the office after your iPad got it\. Your work was saved as '.+' next to it - nothing was overwritten\./.test(bar2) &&
+        /^Someone saved this plan in the office after this iPad got it\. Your work was saved as “.+” next to it — nothing was overwritten\.$/.test(s2.status),
+        JSON.stringify({ office, states: s2.states, bar2, status: s2.status }));
+      const after = await records(T);
+      const planRec = after.find((r) => r.itemId === fx.id);
+      const copyRec = after.find((r) => r.name === (copyWord && copyWord.name));
+      check("tablet (iv): the plan's record keeps the plan (nothing overwritten); the copy has a record of its own holding the saved bytes",
+        !!planRec && planRec.file === r1.file && !planRec.local && planRec.sent && planRec.sent.mode === "copy" && !!copyRec && copyRec.file && !copyRec.local,
+        JSON.stringify(after.map((r) => ({ itemId: r.itemId, name: r.name, file: r.file, version: r.version, sent: r.sent && r.sent.mode }))));
       if (SHOTS !== "none") {
         await T.call("Page.bringToFront").catch(() => null);
-        const took = await Promise.race([T.shot("plans_menu_sent_tablet.png"), sleep(25000).then(() => null)]);
+        const took = await Promise.race([T.shot("plans_frame_copy_tablet.png"), sleep(25000).then(() => null)]);
         if (took) shots.push(took);
       }
-      // the Plans Library's Check now: OneDrive's hash of the same bytes is taken as the version - no download
-      await T.goto(base + "/plans-library.html", 400);
-      await T.until("!!document.getElementById('libCheck') && document.querySelectorAll('.lib-row').length > 0", 10000);
-      await T.eval("(() => { const c = DCR2Demo.engine; const inv = c.invoke; window.__links = 0; c.invoke = function (ctx, name, body) {" +
-        " if (name === 'onedrive' && body && body.op === 'plan_link') window.__links++; return inv.apply(this, arguments); }; return true; })()");
-      await T.eval("document.getElementById('libCheck').click(); true");
-      await T.until("/Checked \\d+ plan/.test(document.getElementById('libSay').textContent)", 10000).catch(() => null);
-      await sleep(1500);
-      const v = await T.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
-        " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
-        " return all.map(r => ({ file: r.file, version: r.version, expect: r.expect || null })); })()");
-      const links = await T.eval("window.__links");
-      const hashed = v.find((r) => sentRow && r.file === sentRow.file);
-      check("tablet: Check now takes OneDrive's hash of the saved bytes as the version, and downloads nothing",
-        !!hashed && /^qx:demo-saved-/.test(hashed.version) && !hashed.expect && links === 0, JSON.stringify({ v, links }));
+      // Close: nothing unsaved in the app -> at once; the page under it comes back, and the menu says what became of it
+      await T.eval("document.getElementById('ptfClose').click(); true");
+      await T.until("!document.querySelector('#ptfShell.open') && !document.getElementById('ptfFrame')", 5000);
+      const back = await T.eval("({ inert: !!document.getElementById('dcr2Topbar').inert, overflow: document.body.style.overflow, menu: !!document.querySelector('.pl-sheet') })");
+      check("tablet: Close with nothing unsaved closes at once, and the page (and the menu) come back", !back.inert && back.overflow === "" && back.menu, JSON.stringify(back));
+      await T.until("/Saved as a separate file/.test(document.querySelector('.pl-sheet .pl-list').innerText)", 5000).catch(() => null);
+      const rowText = await T.eval("document.querySelector('.pl-sheet .pl-list').innerText");
+      check("tablet: the 📐 menu's row says the save became a separate file", /Saved as a separate file/.test(rowText), rowText);
+      if (SHOTS !== "none") {
+        await T.call("Page.bringToFront").catch(() => null);
+        const took = await Promise.race([T.shot("plans_menu_copy_tablet.png"), sleep(25000).then(() => null)]);
+        if (took) shots.push(took);
+      }
+      check("tablet: no dialog of the browser's own was opened by the app or the portal", !T.dialogs.length, JSON.stringify(T.dialogs));
     }, T);
+
+    /* ── 4c. a person with prices but WITHOUT "Can upload to OneDrive" (Q2): the real app opens without canSave, and its
+       Save stays on the device (the share sheet or a download) - nothing is handed to the portal or sent ── */
+    const TA = await newPage(cdp, "tablet-accountant", OUT); pages.push(TA);
+    answerDialogs(TA);
+    // the frame as Safari on an iPad has it: no File System Access (Chrome's pickers would take the Save there instead)
+    await TA.call("Page.addScriptToEvaluateOnNewDocument", { source: "if (location.pathname.indexOf('/takeoff/') === 0) { for (const k of ['showOpenFilePicker', 'showSaveFilePicker', 'showDirectoryPicker']) { try { delete window[k]; } catch (e) { /* */ } } }" });
+    await attempt("a tablet, prices without the upload switch: the real app opens without canSave; Save goes to the share sheet, nothing is sent", async () => {
+      await TA.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
+      await TA.size(1024, 768, true);
+      await signIn(TA, "accountant", "dashboard.html");
+      const me = await TA.eval("(async () => { const sb = await import('/js/sb.js'); const P = await import('/js/map/plans.js'); const p = await sb.me(); return { prices: P.planFilesFor(p), save: P.saveBackFor(p) }; })()").catch((e) => ({ error: e.message }));
+      await openReal(TA);
+      const fx = await putFixture(TA, "A267", "A267 made-up plan (e2e, accountant)");
+      await TA.eval("document.querySelector('#pjPlans a[data-plan-menu]').click(); true");
+      await TA.until("!!document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(fx.id) + "]')", 10000);
+      await TA.eval("window.__heard = []; window.addEventListener('message', (e) => window.__heard.push(e.data && e.data.type)); true");
+      await watchOps(TA);
+      await TA.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(fx.id) + "]').click(); true");
+      await TA.until("(() => { try { const t = " + APP + ".TakeoffApp; return !!(t && t.app.portal && t.app.project.pageCount === 2); } catch (e) { return false; } })()", 30000);
+      const app = await TA.eval("(() => { const t = " + APP + ".TakeoffApp; return { canSave: t.app.portal.canSave, kind: t.app.portal.kind }; })()");
+      check("tablet, no upload switch (v): the real app got the plan as a file WITHOUT canSave", app.kind === "file" && app.canSave === false &&
+        (!me || me.error || (me.prices === true && me.save === false)), JSON.stringify({ app, me }));
+      // the share sheet stands in for the device's own (headless Chrome has none): what the app hands it is noted
+      await TA.eval("(() => { const w = " + APP + "; w.__shared = []; w.navigator.canShare = () => true; w.navigator.share = (d) => { w.__shared.push((d.files || []).map(f => ({ name: f.name, size: f.size })));" +
+        " return Promise.resolve(); }; const p = w.TakeoffApp.app.project; p.transact('e2e: an edit', () => { p.metadata.client_name = 'Made-up client (no upload)'; }); return true; })()");
+      await TA.eval("window.__ops = []; true");
+      await TA.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+      // the app may ask first (a dialog of its own, a div): its button that shares or saves is pressed
+      for (let i = 0; i < 20; i++) {
+        const done = await TA.eval("(() => { const w = " + APP + "; if (w.__shared.length) return 'shared'; const d = w.document;" +
+          " const b = Array.from(d.querySelectorAll('button')).find(x => x.offsetParent !== null && /^(Share|Save a copy|Save to Files|Save|OK|Continue)\\b/i.test(x.textContent.trim()) && x.closest('.dlg, .dialog, [role=dialog], .modal, .sheet'));" +
+          " if (b) { b.click(); return 'clicked ' + b.textContent.trim(); } return ''; })()");
+        if (done === "shared") break;
+        await sleep(300);
+      }
+      await sleep(800);
+      const out = await TA.eval("(() => { const w = " + APP + "; return { shared: w.__shared, status: w.document.getElementById('statusText').textContent }; })()");
+      const heardSave = (await TA.eval("window.__heard")).filter((t) => t === "ptt-save").length;
+      const ops = await TA.eval("window.__ops");
+      const who = await TA.eval("(async () => (await import('/js/plan-library.js')).owner())()");
+      const recs = (await records(TA)).filter((r) => r.itemId === fx.id && r.key.split("|")[0] === who);     // (a shared tablet: the admin's too)
+      check("tablet, no upload switch (v): Save went to the share sheet (the project file), nothing was handed to the portal or sent to OneDrive",
+        out.shared.length === 1 && out.shared[0].length === 1 && /\.takeoff$/.test(out.shared[0][0].name) && out.shared[0][0].size > 1000 &&
+        heardSave === 0 && ops.indexOf("plan_save_session") === -1 && recs.length === 1 && !recs[0].local, JSON.stringify({ out, heardSave, ops, recs }));
+      await TA.eval("(() => { const p = " + APP + ".TakeoffApp.app.project; return p.dirty; })()");
+      if (SHOTS !== "none") {
+        await TA.call("Page.bringToFront").catch(() => null);
+        const took = await Promise.race([TA.shot("plans_frame_noupload_tablet.png"), sleep(25000).then(() => null)]);
+        if (took) shots.push(took);
+      }
+      check("tablet, no upload switch: no dialog of the browser's own", !TA.dialogs.length, JSON.stringify(TA.dialogs));
+    }, TA);
     const TF = await newPage(cdp, "tablet-field", OUT); pages.push(TF);
     await attempt("a tablet without prices: 📐 says 'Plans are for the people who see prices' (no dead end, nothing asked of the broker)", async () => {
       await TF.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
