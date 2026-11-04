@@ -27,14 +27,29 @@ import {
   permissionOf, askPermission, parseProjectCode, projectCodeOf, compareCodes, restOfName,
 } from '../core/plans-folder.js';
 import {
-  INVALID_LINK, isPhoneOrTablet, canOpenArchiveFolder, linkPanelModel, copyText,
+  INVALID_LINK, FROM_THE_PORTAL, isPhoneOrTablet, canOpenArchiveFolder, linkPanelModel, copyText,
 } from '../core/plans-link.js';
+import { HANDHELD_SAVE, REPLACE_WARNING } from '../core/save-route.js';
+import { EMBEDDED_PLANS, EMBEDDED_NO_ARCHIVE } from '../core/embedded.js';
 
-const UNSUPPORTED =
-  'Opening plans from a folder needs Chrome or Edge on a computer. On a phone '
-  + 'or a tablet, use “Open a .takeoff project” and pick the file in the '
-  + 'OneDrive app — then File › Keep on This Device keeps it here, to open '
-  + 'with no internet from the list below.';
+// What a browser that does not open the folder is told: a computer, where to
+// get one that does; a phone or a tablet — which never opens it — every way
+// it does get a plan, and what its Save really does (HANDHELD_SAVE: a new
+// file, through the share sheet only up to its cap, a download above it, and
+// what replacing the plan in Files would do). Only what exists is promised:
+// the portal's 📐 menu opens plans for the people who see prices, with the
+// portal in Safari when it asks for that (FROM_THE_PORTAL).
+const UNSUPPORTED_COMPUTER =
+  'Opening plans from a folder needs Chrome or Edge on a computer. In this '
+  + 'browser, use “Open a .takeoff project” and pick the plan file in your '
+  + 'OneDrive folder.';
+const UNSUPPORTED_HANDHELD =
+  'The Plans Archive folder opens only in Chrome or Edge on a computer. '
+  + `${FROM_THE_PORTAL} Or use “Open a .takeoff project” and pick the plan in the Files `
+  + 'app (OneDrive) — then File › Keep on This Device keeps it here, to open '
+  + 'with no internet from the list below. '
+  + `${HANDHELD_SAVE} ${REPLACE_WARNING}`;
+const unsupportedText = win => (isPhoneOrTablet(win) ? UNSUPPORTED_HANDHELD : UNSUPPORTED_COMPUTER);
 
 // The twin: a computer that synced the old SharePoint library has a folder of
 // the same name there, and a save into it goes to SharePoint.
@@ -54,7 +69,8 @@ export class PlansArchive {
    *                           startFromPdf(entry) → Promise,
    *                           devicePlans() → { kept, portal },
    *                           devicePlanRows({ kept, portal }, { beforeOpen }) → Node[],
-   *                           openFile({ beforeOpen }) — the start screen's "Open a .takeoff project" }
+   *                           openFile({ beforeOpen }) — the start screen's "Open a .takeoff project",
+   *                           embedded() → bool — inside the portal (js/core/embedded.js) }
    *        (`beforeOpen` runs only once the open goes ahead: past "Unsaved
    *        changes", and for openFile once a file is chosen)
    * @param {Window} [o.win]
@@ -73,10 +89,15 @@ export class PlansArchive {
   /**
    * Chrome or Edge on a computer. A phone or a tablet never opens the folder,
    * even where its browser has showDirectoryPicker (Chrome for Android 132+):
-   * it is told to pick the file in the OneDrive app (UNSUPPORTED), and a
+   * it is told where its plans do come from (UNSUPPORTED_HANDHELD), and a
    * #plans link shows its panel.
    */
-  supported() { return canOpenArchiveFolder(this.win); }
+  supported() { return !this.embedded() && canOpenArchiveFolder(this.win); }
+
+  /** Inside the portal (js/core/embedded.js): no folder, no list of folders — plans come from its 📐 menu. */
+  embedded() {
+    try { return !!(this.host.embedded && this.host.embedded()); } catch { return false; }
+  }
 
   /** Every folder this device knows, with whether the browser lets it be read now. */
   async folders() {
@@ -135,6 +156,15 @@ export class PlansArchive {
   async renderStart(box) {
     if (!box) return;
     const seq = ++this._renderSeq;
+    // Inside the portal the section says where plans come from, and nothing
+    // of this site's remembered folders is read (they are not the portal's).
+    if (this.embedded()) {
+      box.hidden = false;
+      const h = D.el('div', 'es-lib-head');
+      h.appendChild(D.el('span', null, 'Plans'));
+      box.replaceChildren(h, D.el('p', 'es-arch-note', EMBEDDED_PLANS));
+      return;
+    }
     const mode = this.host.mode();
     const supported = this.supported();
     const states = supported ? await this.folders() : [];
@@ -146,7 +176,7 @@ export class PlansArchive {
       box.replaceChildren();
       if (mode === 'folder') {
         box.appendChild(head());
-        box.appendChild(D.el('p', 'es-arch-note', UNSUPPORTED));
+        box.appendChild(D.el('p', 'es-arch-note', unsupportedText(this.win)));
       }
       return;
     }
@@ -294,7 +324,7 @@ export class PlansArchive {
    */
   async choose() {
     if (!this.supported()) {
-      await D.alertDialog('Plans Archive', UNSUPPORTED);
+      await D.alertDialog('Plans Archive', unsupportedText(this.win));
       return null;
     }
     let handle;
@@ -389,7 +419,8 @@ export class PlansArchive {
    * a click, so a reconnect or the picker can still be asked for.
    */
   async open() {
-    if (!this.supported()) { await D.alertDialog('Plans Archive', UNSUPPORTED); return; }
+    if (this.embedded()) { await D.alertDialog('Plans', EMBEDDED_NO_ARCHIVE); return; }
+    if (!this.supported()) { await D.alertDialog('Plans Archive', unsupportedText(this.win)); return; }
     const states = await this.folders();
     if (!states.length) { this.pending = { code: '' }; await this.choose(); return; }
     if (!states.some(s => s.perm === 'granted')) {
@@ -407,6 +438,7 @@ export class PlansArchive {
     const code = (link && link.code) || '';
     const invalid = !!(link && link.invalid);
     if (invalid) this.host.status(INVALID_LINK);
+    if (this.embedded()) { await D.alertDialog('Plans', EMBEDDED_NO_ARCHIVE); return; }
     if (!this.supported()) { await this.linkPanel({ code, invalid }); return; }
     const states = await this.folders();
     if (states.some(s => s.perm === 'granted')) { await this.browse({ code, query: code }); return; }

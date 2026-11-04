@@ -674,8 +674,10 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - **The copy.** `node tools/vendor-takeoff.mjs <takeoff-web checkout> <commit>` copies only the shipped files of that
   commit from git (never the working tree), writes a strict page policy into `takeoff/index.html` (this site only, the
   OneDrive host for a plan opened online, no inline script) and `takeoff/VERSION.json` (a sha256 per file;
-  `tests/p8-takeoff-frame.test.mjs` checks them). It refuses an inline script; `--allow-inline-boot` (main f499435 only)
-  moves the UI-mode boot into `takeoff/js/ui-mode-boot.js` - re-vendor takeoff-web's P2 commit without it. It reports, and
+  `tests/p8-takeoff-frame.test.mjs` checks them). It refuses an inline script; `--allow-inline-boot` was an escape for
+  takeoff-web main f499435 only, whose copy never answers the portal's frame: the copy that ships is takeoff-web's iPad
+  commit (its own `js/ui-mode-boot.js`, the embedded profile, the save to the portal) vendored WITHOUT it, and the tests
+  refuse a copy made with the escape. The policy also says `form-action 'none'` (the app has no form). It reports, and
   never fixes, what the portal's code rules would say (the guard lists the copy's exemptions by file). `.gitattributes`
   keeps the copy byte-exact. Its own worker (`takeoff/sw.js`, scope `takeoff/`) keeps it offline; the portal's worker
   (v5) lets everything under `takeoff/` through.

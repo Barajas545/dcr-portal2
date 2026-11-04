@@ -97,6 +97,17 @@ export async function dropDraft(key) {
   } catch { /* nothing to do about it */ }
 }
 
+/** Every draft's key (draftKey's "<name>|<size>"), and nothing of any draft read — for finding the one a file's own
+ *  name does not lead to (a copy the portal made of a save: js/core/save-route.js portalCopyDraftKey). */
+export async function listDraftKeys() {
+  try {
+    const keys = await tx('readonly', st => st.getAllKeys());
+    return Array.isArray(keys) ? keys.filter(k => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Every draft, newest first — for a "what was I working on?" list. */
 export async function listDrafts() {
   try {

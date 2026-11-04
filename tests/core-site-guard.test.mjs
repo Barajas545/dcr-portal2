@@ -52,13 +52,11 @@ export const FRAME_PAGES = ["project.html", "plans-library.html", "search.html"]
 export const VENDORED = "takeoff/";
 export const VENDORED_PAGE = "takeoff/index.html";
 export const TAKEOFF_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
-  "connect-src 'self' " + ONEDRIVE + "; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'";
+  "connect-src 'self' " + ONEDRIVE + "; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'";
 export const VENDORED_EXEMPT = Object.freeze([
   { rule: "the blueprint's page policy", files: [VENDORED_PAGE], why: "its own, TAKEOFF_CSP (the OneDrive host in connect-src for a plan opened online)" },
   { rule: "eval", files: ["takeoff/vendor/pdfjs/build/pdf.min.js", "takeoff/vendor/pdfjs/build/pdf.worker.min.js"],
     why: "pdf.js only tests whether eval works (the policy refuses it, and js/core/pdf-import.js sets isEvalSupported: false)" },
-  { rule: "look-behind", files: ["takeoff/js/ui/catalog.js"],
-    why: "DIMSEP at line 35 (reported by vendor-takeoff.mjs; takeoff-web's iPad package P2 rewrites it): the copy needs Safari 16.4 anyway, the Plans Library's writer does" },
   { rule: "the old session key", files: ["takeoff/js/core/device-plans.js"],
     why: "takeoff-web reads plans the OLD portal saved on its own site before the move (never on this site)" },
   { rule: "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)", files: ["takeoff/js/core/portal-handoff.js"],
@@ -285,9 +283,9 @@ test("no Microsoft secret, tenant, app or drive id anywhere in the repository (s
 });
 
 test("the vendored takeoff copy: exempt from the portal's code rules only as listed - each exemption names files of the copy that still need it", () => {
-  assert.deepEqual(VENDORED_EXEMPT.map((x) => x.rule), ["the blueprint's page policy", "eval", "look-behind", "the old session key",
+  assert.deepEqual(VENDORED_EXEMPT.map((x) => x.rule), ["the blueprint's page policy", "eval", "the old session key",
     "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)"], "no rule is added quietly");
-  const NEEDS = { "eval": /\beval\s*\(|new Function\s*\(/, "look-behind": /\(\?<[!=]/, "the old session key": /dcr_portal_token/,
+  const NEEDS = { "eval": /\beval\s*\(|new Function\s*\(/, "the old session key": /dcr_portal_token/,
     "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)": /sharepoint\.com/i };
   for (const x of VENDORED_EXEMPT) {
     assert.ok(x.why && x.files.length, x.rule + ": says why");

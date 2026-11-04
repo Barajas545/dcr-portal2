@@ -57,11 +57,13 @@ export function onedriveHost(src) {
 /** The page policy of the takeoff copy: this site only, and the OneDrive host for a plan opened online (byte ranges).
     style-src keeps 'unsafe-inline': takeoff-web's reports are HTML with a <style> block and style attributes, shown in
     the page and in a print window (js/ui/reports.js, js/ui/report-html.js) - no script can come in that way.
-    worker-src blob: for pdf.js's fallback worker; img-src blob: data: for sheet thumbnails and exports. */
+    worker-src blob: for pdf.js's fallback worker; img-src blob: data: for sheet thumbnails and exports. form-action
+    'none': takeoff-web has no <form> (its dialogs are divs), so markup that ever got into a report could not post
+    anything anywhere either (takeoff-web's iPad review, F1). */
 export function takeoffCsp(onedrive) {
   if (!/^https:\/\/[a-z0-9-]+\.sharepoint\.com$/.test(String(onedrive))) throw new Error("not the OneDrive host: " + onedrive);
   return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
-    "connect-src 'self' " + onedrive + "; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'";
+    "connect-src 'self' " + onedrive + "; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'";
 }
 
 /* ── what ships ─────────────────────────────────────────────────────── */

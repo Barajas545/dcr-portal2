@@ -26,7 +26,7 @@ function walk(dir) {
 // the same values as tests/core-site-guard.test.mjs (ONEDRIVE, TAKEOFF_CSP); not imported, so its tests run once
 const ONEDRIVE = "https://netorgft10120038-my.sharepoint.com";
 const TAKEOFF_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
-  "connect-src 'self' " + ONEDRIVE + "; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'";
+  "connect-src 'self' " + ONEDRIVE + "; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'";
 const VERSION = JSON.parse(readFileSync(join(TAKEOFF, "VERSION.json"), "utf8"));
 
 /* ── the copy (tools/vendor-takeoff.mjs) ─────────────────────────────────────────────────────────────────────── */
@@ -70,18 +70,25 @@ test("the copy's one page: the exact page policy before anything else, no inline
   assert.equal(V.onedriveHost(read("js/repo/onedrive.js")), ONEDRIVE, "the host the portal's own code names");
 });
 
-test("the moved UI-mode boot (--allow-inline-boot, until takeoff-web's P2 commit is vendored): the page's words, loaded where they stood, in the app's offline program", () => {
+test("the copy that ships talks to the portal's frame: takeoff-web's own UI-mode boot (never --allow-inline-boot), its embedded profile, the save to the portal and its heartbeat", () => {
   const html = read("takeoff/index.html");
-  if (!VERSION.inlineBootMoved) {
-    assert.ok(!(V.BOOT_FILE in VERSION.edits), "no boot made here");
-    return;
-  }
-  assert.ok(existsSync(join(TAKEOFF, V.BOOT_FILE)));
+  // a copy vendored with the escape (main f499435) never answers a same-origin parent: every handheld open would fail
+  assert.equal(VERSION.inlineBootMoved, false, "vendored WITHOUT --allow-inline-boot");
+  assert.deepEqual(Object.keys(VERSION.edits), ["index.html"], "only the page policy was written here");
+  assert.ok(V.BOOT_FILE in VERSION.files && existsSync(join(TAKEOFF, V.BOOT_FILE)), "takeoff-web's own boot file");
   const at = html.indexOf('<script src="' + V.BOOT_FILE + '"></script>');
   assert.ok(at > 0 && at < html.indexOf('<link rel="stylesheet"'), "a classic script before the stylesheet paints");
   assert.match(read("takeoff/" + V.BOOT_FILE), /document\.documentElement\.dataset\.ui = /);
-  assert.match(read("takeoff/sw.js"), /'index\.html',\n\s*'js\/ui-mode-boot\.js',/);
-  assert.match(VERSION.edits["sw.js"], /PROGRAM/);
+  assert.ok(!/DCR Portal 2's tools\/vendor-takeoff\.mjs/.test(read("takeoff/" + V.BOOT_FILE)), "not the tool's moved copy");
+  assert.match(read("takeoff/sw.js"), /'js\/ui-mode-boot\.js'/, "in the app's offline program");
+  assert.ok(!/vendor-takeoff/.test(read("takeoff/sw.js")), "the worker as takeoff-web wrote it");
+  // the other half of js/plan-handoff.js: the same-site parent is the peer, ptt-save, and the "keeping" heartbeat
+  const handoff = read("takeoff/js/core/portal-handoff.js");
+  assert.match(handoff, /framedBySameSite/);
+  assert.match(handoff, /'ptt-save'/);
+  assert.match(handoff, /'keeping'/);
+  assert.ok(existsSync(join(TAKEOFF, "js/core/embedded.js")), "the embedded profile");
+  assert.ok(!/\(\?<[!=]/.test(read("takeoff/js/ui/catalog.js")), "no look-behind (Safari before 16.4)");
 });
 
 test("vendor-takeoff.mjs: what ships, the page edits and their refusals", () => {

@@ -20,7 +20,7 @@
  * fails when one main.js can reach is missing, and when an entry names a
  * file that does not exist — that would fail every install.
  */
-const CACHE = 'ptt-web-v16';
+const CACHE = 'ptt-web-v17';
 
 /**
  * The program, precached on install: the page, the stylesheet, and every
@@ -41,13 +41,15 @@ const CACHE = 'ptt-web-v16';
 const PROGRAM = [
   './',
   'index.html',
-  'js/ui-mode-boot.js',   // moved out of index.html by DCR Portal 2's vendor-takeoff.mjs
   'css/app.css',
   'js/main.js',
+  // Not an import: the page's own <script> in its <head>, the layout decided before the stylesheet paints.
+  'js/ui-mode-boot.js',
   'js/site-config.js',
   'js/core/canvas-limits.js',
   'js/core/counting.js',
   'js/core/drafts.js',
+  'js/core/embedded.js',
   'js/core/geom.js',
   'js/core/measure.js',
   'js/core/page-store.js',
@@ -59,6 +61,7 @@ const PROGRAM = [
   'js/core/project.js',
   'js/core/remote-file.js',
   'js/core/revisions.js',
+  'js/core/save-route.js',
   'js/core/scratch.js',
   'js/core/takeoff-file.js',
   'js/core/units.js',
@@ -84,6 +87,9 @@ const PROGRAM = [
   'js/ui/thumbnails.js',
   'js/ui/version-bar.js',
   'js/ui/assemblies.js',          // imported on demand by the materials manager
+  // A worker, not an import: started by Keep on This Device where the page has
+  // no createWritable (Safari before 26), so offline it must be here too.
+  'js/core/opfs-write-worker.js',
 ];
 
 /**

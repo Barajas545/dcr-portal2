@@ -32,8 +32,18 @@ export function catNorm(s) {
   return String(s ?? '').toLowerCase().replaceAll('×', 'x').trim();
 }
 
-const DIMSEP = /(?<=\d)\s*[x×]\s*(?=\d)/g;   // the x between two digits
+// The x between two digits, dropped: "2x4x8" → "248". The digit before it is
+// matched and put back ($1) rather than looked behind for: Safari before 16.4
+// refuses a whole module with a look-behind in it, and the portal's copy of
+// this app is held to that rule. The same matches — the digit after stays a
+// look-ahead, never used up, so it can start the next one (tests/catalog-search.mjs).
+const DIMSEP = /(\d)\s*[x×]\s*(?=\d)/g;
 const RUNS = /\d+\/\d+|\d+|[a-z]+/g;              // fraction | digits | letters
+
+/** A query token with the x between its dimensions dropped. */
+export function fuseDims(token) {
+  return String(token).replace(DIMSEP, '$1');
+}
 
 /** The dims as one typed run: [2,4,8] → "248". What "248d" is matched against. */
 function digitKey(item) {
@@ -85,7 +95,7 @@ function tokenScore(token, words, digitkey, codeLc) {
   // The fused shorthand: "2x4x8" → "248", "248d", "d248". The pieces may come
   // in any order — digits must lead the dims or some word, letters and
   // fractions must lead some word.
-  const fused = token.replace(DIMSEP, '');
+  const fused = fuseDims(token);
   const runs = fused.match(RUNS) || [];
   if (runs.length < 2 && fused === token) return null;
   const digits = runs.filter(r => /^\d/.test(r) && !r.includes('/')).join('');

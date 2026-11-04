@@ -117,6 +117,8 @@ export class Project extends EventTarget {
   }
 
   reset() {
+    // Another project from here on (loadFrom resets first): see changeCount.
+    this._changes = (this._changes || 0) + 1;
     this.metadata = {
       project_name: '',
       internal_id_number: '',
@@ -858,7 +860,20 @@ export class Project extends EventTarget {
 
   get dirty() { return this._dirty; }
 
+  /**
+   * A count that moves on with EVERY edit — not only the first one, as the
+   * dirty flag does — and with every project loaded or reset; it never goes
+   * back. Taken at one moment and compared at a later one, it says whether
+   * anything was done in between, which the dirty flag cannot once it is
+   * set: a save that took a while (the share sheet reading the file) may
+   * mark the project saved only if nothing was done while it ran, and a file
+   * that arrives minutes after it was picked may replace the project only if
+   * nothing was done while it came (js/core/save-route.js).
+   */
+  get changeCount() { return this._changes || 0; }
+
   markDirty() {
+    this._changes = (this._changes || 0) + 1;
     if (!this._dirty) {
       this._dirty = true;
       this.emit('dirty-changed', { dirty: true });

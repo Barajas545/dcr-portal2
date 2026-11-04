@@ -254,10 +254,19 @@ function round4(v) {
   return Math.round(n * 10000) / 10000;
 }
 
+/**
+ * A measurement's cost type as the reports know it: 'labor', or 'material'
+ * for anything else — as the CSV, the workbook and the items panel read it.
+ * Never the file's own text: it ends up in the report's markup.
+ */
+export function costTypeOf(v) {
+  return v === 'labor' ? 'labor' : 'material';
+}
+
 function passes(m, { floor, category, costType } = {}) {
   if (floor != null && (m.floor_level || '').trim() !== floor) return false;
   if (category != null && (m.category || '').trim() !== category) return false;
-  if (costType && costType !== 'all' && (m.cost_type || 'material') !== costType) return false;
+  if (costType && costType !== 'all' && costTypeOf(m.cost_type) !== costType) return false;
   return true;
 }
 
@@ -305,7 +314,7 @@ export function collectItems(project, pageLabel, filters = {}) {
         floor: m.floor_level || '',
         category: m.category || '',
         sub: m.sub_category || '',
-        costType: m.cost_type || 'material',
+        costType: costTypeOf(m.cost_type),
         type: m.type,
         typeLabel: TYPE_LABEL[m.type] || '',
         qty: q.qty,
@@ -332,7 +341,7 @@ export function collectItems(project, pageLabel, filters = {}) {
           floor: line.floor_level || entry.floor,
           category: line.category || entry.category,
           sub: line.sub_category || entry.sub,
-          costType: line.cost_type || 'material',
+          costType: costTypeOf(line.cost_type),
           qty: line.total,
           unit: line.unit || 'each',
           rate: Number(line.unit_cost) || 0,

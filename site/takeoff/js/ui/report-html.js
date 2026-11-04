@@ -49,9 +49,24 @@ export const PRINT_CSS = `
  @media print { .rpt tr { page-break-inside: avoid; } .rpt thead { display: table-header-group; } }
 </style>`;
 
+/**
+ * Text as HTML, for an element's text OR an attribute's value: quotes too, so
+ * nothing a file carries can close an attribute and start markup of its own.
+ * The reports go into the page by innerHTML (and into the print window by
+ * document.write), and inside the portal that page is on the portal's site.
+ */
 export function esc(s) {
   return String(s ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * The class a cost type's rows are drawn with: one of two words, never the
+ * file's own text (a measurement's cost_type is whatever its file says).
+ */
+export function costClass(ct) {
+  return ct === 'labor' ? 'labor' : 'material';
 }
 
 export function money(v) {
@@ -178,7 +193,7 @@ export function groupedHtml(items, options) {
     if (sectAcc.length && ct) {
       // The section total is always printed, subtotals switch or not: it is
       // the number the reader came for.
-      out.push(`<tr class="sect ${ct}"><td colspan="${nCols}">` +
+      out.push(`<tr class="sect ${costClass(ct)}"><td colspan="${nCols}">` +
         `${ct === 'labor' ? 'LABOR' : 'MATERIAL'} TOTAL: &nbsp;` +
         `${esc(totalString(sectAcc, opts))}</td></tr>`);
     }
@@ -190,7 +205,7 @@ export function groupedHtml(items, options) {
       flushSection();
       ct = it.costType;
       k1 = null; k2 = null;
-      span(`band ${ct}`, ct === 'labor' ? 'LABOR' : 'MATERIAL');
+      span(`band ${costClass(ct)}`, ct === 'labor' ? 'LABOR' : 'MATERIAL');
     }
     if (g1(it) !== k1) {
       flush1();

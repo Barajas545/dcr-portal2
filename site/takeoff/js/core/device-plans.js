@@ -44,6 +44,13 @@ export const PORTAL_FILE_RE = /^[A-Za-z0-9_-]+\.takeoff$/;
 export const KEPT_FILE_RE = /^k[a-z0-9]+-[a-z0-9]+\.takeoff$/;
 /** Held (shared) while a copy is open in a window; such a copy is never removed. The portal's name, kept. */
 export const OPEN_LOCK = 'dcr-plans-open:';
+/**
+ * Held (exclusive) for the whole of a Keep on This Device copy, from before
+ * its file is made until its line is in the index or the file is gone again:
+ * a file in plans-kept that no line names and nobody holds this for is a
+ * leftover, and sweepKept may remove it.
+ */
+export const WRITE_LOCK = 'ptt-keep-write:';
 /** Never fill the last of the browser's quota: a full origin breaks every other save too. */
 export const SPACE_MARGIN = 64 * 1024 * 1024;
 
@@ -131,6 +138,9 @@ export async function copyInUse(locks, file) {
   }
 }
 
+/** Bytes read and written at a time where a file cannot be streamed: never the whole plan at once. */
+export const KEEP_SLICE = 8 * 1024 * 1024;
+
 async function* chunksOf(file) {
   if (typeof file.stream === 'function') {
     const reader = file.stream().getReader();
@@ -140,7 +150,195 @@ async function* chunksOf(file) {
       yield value;
     }
   }
-  yield new Uint8Array(await file.arrayBuffer());
+  // A 2 GB plan read in one arrayBuffer() is a killed tab on a phone.
+  const size = Number(file.size) || 0;
+  for (let at = 0; at < size; at += KEEP_SLICE) {
+    yield new Uint8Array(await file.slice(at, Math.min(at + KEEP_SLICE, size)).arrayBuffer());
+  }
+}
+
+/** Said when this browser has no way to write a file into its own storage. */
+export const CANNOT_KEEP = 'This browser cannot keep plan files on the device. On an iPhone or iPad it needs '
+  + 'Safari 16.4 or newer (iPadOS 16.4); on a computer, Chrome, Edge or Firefox.';
+
+/**
+ * How this browser can write a kept copy, as far as the page can tell:
+ *
+ *   'stream'  createWritable() on the page — Chrome, Edge, Firefox, Safari 26+
+ *   'worker'  no createWritable here, but workers exist: the synchronous
+ *             access handle is a worker-only API, invisible from the page, so
+ *             only the worker can say for sure (js/core/opfs-write-worker.js
+ *             refuses with "unsupported" where it is missing or too old)
+ *   null      no origin-private file system, or neither way
+ *
+ * Safari 16.4 to 18 on an iPad is the 'worker' case — and the reason it
+ * exists: before it, Keep on This Device failed there with
+ * "createWritable is not a function" while the app said 16.4 was enough.
+ */
+export function keepWriterFor(win = globalThis) {
+  const nav = (win && win.navigator) || {};
+  if (!nav.storage || typeof nav.storage.getDirectory !== 'function') return null;
+  const FH = win && win.FileSystemFileHandle;
+  if (FH && FH.prototype && 'createWritable' in FH.prototype) return 'stream';
+  if (win && typeof win.Worker === 'function') return 'worker';
+  return null;
+}
+
+/**
+ * A `syncWrite` for keepFile that hands the copy to the writer worker
+ * (js/core/opfs-write-worker.js) and waits for it: resolves { size } once the
+ * worker has written, flushed and closed the file; rejects with the worker's
+ * own words. One worker per copy, ended either way.
+ *
+ *   makeWorker  () => Worker — new Worker(new URL('./core/opfs-write-worker.js', import.meta.url)) in the page;
+ *               a made-up one in the tests
+ *   onProgress  (done, size) after every slice, for the progress bar
+ *   stallMs     no word from the worker for this long: it has died (a tab
+ *               short of memory can lose a worker without a word). Two
+ *               minutes: an 8 MiB slice takes well under a second, and on an
+ *               iPad the worker lives in the page's own process, so a worker
+ *               that is really lost has usually taken the page with it
+ *   doc         the document, for whether the page is in front: time it
+ *               spends hidden is not counted (below)
+ *
+ * Time the page spends hidden is not a stall. Someone who starts a 2 GB copy
+ * and switches to Mail for a while has the page AND its worker frozen by iOS
+ * together — but the page's timer runs on a clock that kept going, so on the
+ * way back it is already overdue and would fire before the worker has had a
+ * moment to send its next word, ending a copy that was doing fine. So a
+ * timer that comes due while the page is hidden, or after it has been hidden
+ * since the last word, starts again instead.
+ */
+export function workerWriter(makeWorker, {
+  onProgress = null, stallMs = 120000, doc = (typeof document !== 'undefined' ? document : null),
+} = {}) {
+  return ({ dir, name, file }) => new Promise((resolve, reject) => {
+    let w = null;
+    let timer = null;
+    let over = false;
+    const hiddenNow = () => { try { return !!doc && doc.visibilityState === 'hidden'; } catch { return false; } };
+    let wasHidden = hiddenNow();          // hidden at any moment since the last word from the worker
+    const onVisibility = () => { if (hiddenNow()) wasHidden = true; };
+    try { if (doc && typeof doc.addEventListener === 'function') doc.addEventListener('visibilitychange', onVisibility); } catch { /* counted as always in front */ }
+    const end = (fn, v) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      try { if (doc && typeof doc.removeEventListener === 'function') doc.removeEventListener('visibilitychange', onVisibility); } catch { /* gone with the page */ }
+      try { if (w) w.terminate(); } catch { /* already gone */ }
+      fn(v);
+    };
+    const due = () => {
+      if (over) return;
+      if (hiddenNow() || wasHidden) {
+        // Put away meanwhile: wait again, from now.
+        wasHidden = hiddenNow();
+        timer = setTimeout(due, stallMs);
+        return;
+      }
+      end(reject, new Error('The copy stopped part-way and did not go on. Nothing was kept.'));
+    };
+    const watch = () => {
+      clearTimeout(timer);
+      wasHidden = hiddenNow();
+      timer = setTimeout(due, stallMs);
+    };
+    try {
+      w = makeWorker();
+    } catch {
+      end(reject, new Error(CANNOT_KEEP));
+      return;
+    }
+    w.onmessage = ev => {
+      const m = (ev && ev.data) || {};
+      if (m.type === 'progress') {
+        watch();
+        if (onProgress) { try { onProgress(Number(m.done) || 0, Number(m.size) || 0); } catch { /* the bar only */ } }
+      } else if (m.type === 'done') {
+        end(resolve, { size: Number(m.size) || 0 });
+      } else if (m.type === 'error') {
+        end(reject, Object.assign(new Error(String(m.message || 'The copy could not be written.')), { code: String(m.code || 'failed') }));
+      }
+    };
+    // The script would not load (offline before it was ever cached) or threw.
+    w.onerror = ev => {
+      try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch { /* fine */ }
+      end(reject, new Error(`${CANNOT_KEEP} (Its file writer could not start.)`));
+    };
+    watch();
+    try {
+      w.postMessage({ op: 'write', dir, name, file });
+    } catch {
+      end(reject, new Error(CANNOT_KEEP));
+    }
+  });
+}
+
+/**
+ * Leftovers of copies that were cut off, removed: every file in plans-kept by
+ * this app's own naming rule (KEPT_FILE_RE) that no line in the index names,
+ * that no window is writing (WRITE_LOCK) and none has open (OPEN_LOCK).
+ *
+ * Why there are any. A copy is written straight into its final name, and its
+ * line goes into the index only once it is whole; the worker that writes it
+ * on Safari before 26 writes the bytes into that file as it goes (the page's
+ * createWritable keeps them in a swap file until close). So a tab closed or
+ * killed part-way through a 2 GB copy, or a worker ended while it still held
+ * the file, leaves gigabytes in a file no list shows — and every later Keep
+ * is then told there is no room, with nothing listed to remove.
+ *
+ * Without Web Locks nothing is removed: a copy still being written in
+ * another tab could not be told from a leftover. { removed }.
+ */
+export async function sweepKept({ root, store, locks = null }) {
+  const removed = [];
+  if (!root || !locks || typeof locks.query !== 'function') return { removed };
+  let dir;
+  try { dir = await root.getDirectoryHandle(KEPT_DIR); } catch { return { removed }; }
+  if (!dir || typeof dir.keys !== 'function') return { removed };
+  const names = [];
+  try {
+    for await (const name of dir.keys()) if (KEPT_FILE_RE.test(String(name))) names.push(String(name));
+  } catch { return { removed }; }
+  if (!names.length) return { removed };
+  // Locks first, then the index: a copy that finishes in between has written
+  // its line before it lets go of its lock, so it is seen one way or the other.
+  let busy;
+  try {
+    const q = await locks.query();
+    busy = new Set([...(q.held || []), ...(q.pending || [])].map(l => l && l.name));
+  } catch { return { removed }; }
+  const listed = new Set(keptIndex(store).map(e => e.file));
+  for (const name of names) {
+    if (listed.has(name) || busy.has(WRITE_LOCK + name) || busy.has(OPEN_LOCK + name)) continue;
+    try { await dir.removeEntry(name); removed.push(name); } catch { /* still held a moment longer: the next sweep */ }
+  }
+  return { removed };
+}
+
+/**
+ * Remove a copy that did not finish. A worker that was just ended may still
+ * hold the file for a moment (terminate() does not wait for its handle to be
+ * let go), and OPFS will not remove a file that is open — so this asks a few
+ * times before giving up; what is still there then, the next sweep takes.
+ */
+async function removeUnfinished(dir, name, { tries = 6, waitMs = 250 } = {}) {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      await dir.removeEntry(name);
+      return true;
+    } catch (err) {
+      if (err && err.name === 'NotFoundError') return true;
+      if (i < tries - 1) await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+  return false;
+}
+
+/** Run `fn` holding the named exclusive lock where the browser has Web Locks; just run it where it has not. */
+function holding(locks, name, fn) {
+  if (locks && typeof locks.request === 'function') return locks.request(name, () => fn());
+  return fn();
 }
 
 /**
@@ -152,8 +350,20 @@ async function* chunksOf(file) {
  *
  *   meta: { name, code, project, path, from }   what the list shows
  *   estimate: () => { quota, usage }           navigator.storage.estimate, optional
+ *   syncWrite: ({ dir, name, file }) => Promise  writes the bytes when the
+ *       file handle has no createWritable() (Safari before 26): the worker
+ *       (workerWriter). Without one such a browser is told it cannot keep here.
+ *   locks: navigator.locks, optional. The copy is written holding WRITE_LOCK
+ *       for its file, and leftovers of earlier copies are swept first
+ *       (sweepKept), so their room counts before "no room" is said.
+ *
+ * Where the handle has createWritable() it is used, on the page, as it always
+ * was; the worker is only for the browsers that lack it.
  */
-export async function keepFile({ root, store, file, meta = {}, estimate = null, now = () => Date.now(), makeId = newId }) {
+export async function keepFile({
+  root, store, file, meta = {}, estimate = null, now = () => Date.now(), makeId = newId, syncWrite = null,
+  locks = null, leftoverWaitMs = 250,
+}) {
   if (!file || !(Number(file.size) > 0)) throw new Error('There is nothing to keep: the plan file is empty.');
   const name = String(meta.name || file.name || 'Plan.takeoff');
   const lastModified = Number(file.lastModified) || 0;
@@ -166,6 +376,7 @@ export async function keepFile({ root, store, file, meta = {}, estimate = null, 
     try { there = (await (await (await root.getDirectoryHandle(KEPT_DIR)).getFileHandle(same.file)).getFile()).size === Number(same.size); } catch { there = false; }
     if (there) return { entry: same, existed: true };
   }
+  try { await sweepKept({ root, store, locks }); } catch { /* a leftover stays for the next one */ }
   if (estimate) {
     let est = null;
     try { est = await estimate(); } catch { est = null; }
@@ -176,16 +387,28 @@ export async function keepFile({ root, store, file, meta = {}, estimate = null, 
   const id = makeId();
   const fname = `${id}.takeoff`;
   const dir = await root.getDirectoryHandle(KEPT_DIR, { create: true });
+  return holding(locks, WRITE_LOCK + fname, () => writeKept({
+    dir, fname, id, file, name, lastModified, code, meta, store, now, syncWrite, leftoverWaitMs,
+  }));
+}
+
+async function writeKept({ dir, fname, id, file, name, lastModified, code, meta, store, now, syncWrite, leftoverWaitMs }) {
   const fh = await dir.getFileHandle(fname, { create: true });
   let ok = false;
   try {
-    const w = await fh.createWritable();
-    try {
-      for await (const chunk of chunksOf(file)) await w.write(chunk);
-      await w.close();
-    } catch (err) {
-      try { await w.abort(); } catch { /* already closed */ }
-      throw err;
+    if (typeof fh.createWritable === 'function') {
+      const w = await fh.createWritable();
+      try {
+        for await (const chunk of chunksOf(file)) await w.write(chunk);
+        await w.close();
+      } catch (err) {
+        try { await w.abort(); } catch { /* already closed */ }
+        throw err;
+      }
+    } else if (syncWrite) {
+      await syncWrite({ dir: KEPT_DIR, name: fname, file });
+    } else {
+      throw new Error(CANNOT_KEEP);
     }
     const got = await fh.getFile();
     if (got.size !== Number(file.size)) throw new Error('The copy did not come out whole. Nothing was kept.');
@@ -198,7 +421,7 @@ export async function keepFile({ root, store, file, meta = {}, estimate = null, 
     ok = true;
     return { entry, existed: false };
   } finally {
-    if (!ok) { try { await dir.removeEntry(fname); } catch { /* not made */ } }
+    if (!ok) await removeUnfinished(dir, fname, { waitMs: leftoverWaitMs });
   }
 }
 
