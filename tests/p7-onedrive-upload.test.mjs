@@ -240,3 +240,79 @@ test("uploader: a lost last answer and a flaky connection - never a new session 
   const [again] = await settle(up3);
   assert.deepEqual([again.state, b3.sessions, g3.items.size], ["done", 1, 1], again.error);
 });
+
+/* ── the Plans Library's save back (P4; owner decisions Q1-Q3, 2026-11-04): the same loop over a PLAN broker ──
+   (js/plan-library.js planBroker over repo/onedrive.js planSaveSession / planSaveDone): the job's meta reaches the
+   broker; a replace keeps the plan's own id; plan_save_done answers 409 not_saved when OneDrive did not get the whole
+   file; find asks "does OneDrive hold my save" (the plan itself: plan_save_done is the proof). */
+function planBroker(g) {
+  const b = { sessions: 0, saved: [], finds: 0, script: [], metas: [] };
+  b.session = async (j) => {
+    b.sessions++;
+    b.metas.push(j.meta);
+    const step = b.script.shift();
+    if (step) throw Object.assign(new Error(step.message || "x"), step);
+    const uploadUrl = g.open(j.name, j.size);
+    j.meta.itemId = "01ITEM" + String(g.n).padStart(6, "0");      // the plan's own id: what the last chunk answers
+    return { mode: "replace", uploadUrl, ticket: "pt" + b.sessions, name: j.name, chunkBytes: CHUNK_UNIT, maxChunkBytes: MAX_CHUNK };
+  };
+  b.done = async (j, itemId, ticket) => {
+    const step = b.script.shift();
+    if (step) throw Object.assign(new Error(step.message || "x"), step);
+    if (!g.items.has(itemId)) throw Object.assign(new Error("OneDrive did not get the whole file - send it again."), { code: "not_saved", status: 409 });
+    b.saved.push([itemId, ticket]);
+    return { saved: true, mode: "replace", id: itemId, name: j.name, size: j.size, modified: "2026-11-04T18:30:00Z", version: "qx:NEW" };
+  };
+  b.find = async (j) => { b.finds++; return [{ id: j.meta.itemId, name: j.name, size: j.size }]; };
+  return b;
+}
+
+test("uploader, a plan's save: its meta reaches the broker; the last answer lost and the session gone (404) - found by plan_save_done, never a second session or byte", async () => {
+  const g = graph(), b = planBroker(g);
+  const up = make(g, b);
+  const size = 2 * CHUNK_UNIT + 5;
+  g.script = [null, null, "lose-final"];                        // the last chunk lands, its answer never comes
+  const meta = { key: "u|01FAKEPLAN0001", base: "qx:AAA", file: "p1-x-2.takeoff" };
+  up.add({ projectId: 7, file: file(size, "A900 Bid.takeoff"), name: "A900 Bid.takeoff", meta });
+  const [job] = await settle(up);
+  assert.equal(job.state, "done", job.error);
+  assert.equal(b.metas[0], meta, "the job's meta, as given");
+  assert.ok(!("meta" in job), "never shown");
+  assert.deepEqual([b.sessions, b.finds, b.saved.length], [1, 1, 1], "looked, found it: done");
+  const puts = g.requests.filter((r) => r.method === "PUT");
+  assert.equal(puts.reduce((n, r) => n + r.size, 0), size, "every byte sent once");
+  assert.deepEqual([job.result.mode, job.result.id, job.result.version], ["replace", meta.itemId, "qx:NEW"]);
+});
+
+test("uploader, a plan's save: plan_save_done's not_saved is never 'the file is in OneDrive' - failed (code not_saved), and Retry sends it again from a new session", async () => {
+  const g = graph(), b = planBroker(g);
+  const up = make(g, b);
+  b.script = [null, { code: "not_saved", status: 409, message: "OneDrive did not get the whole file - send it again." }];
+  up.add({ projectId: 7, file: file(CHUNK_UNIT + 1, "A.takeoff"), name: "A.takeoff", meta: {} });
+  const [j] = await settle(up);
+  assert.deepEqual([j.state, j.code, j.landed, j.canRetry], ["failed", "not_saved", false, true]);
+  assert.match(j.error, /send it again/);
+  assert.ok(up.retry(j.id));
+  const [again] = await settle(up);
+  assert.deepEqual([again.state, again.code, b.sessions], ["done", "", 2], again.error);
+  // the session gone part way (run out): find asks plan_save_done, not_saved means not there - a new session from the
+  // start, one file in the end
+  const g2 = graph(), b2 = planBroker(g2);
+  const size = 2 * CHUNK_UNIT;
+  g2.send = ((orig) => async (req) => {
+    if (req.method === "PUT" && /s1$/.test(req.url) && /^bytes 327680-/.test(req.headers["Content-Range"])) g2.sessions.get(req.url).done = "expired";
+    return orig(req);
+  })(g2.send);
+  const up2 = make(g2, b2);
+  up2.add({ projectId: 7, file: file(size, "B.takeoff"), name: "B.takeoff", meta: {} });
+  const [j2] = await settle(up2);
+  assert.equal(j2.state, "done", j2.error);
+  assert.deepEqual([b2.finds, b2.sessions, b2.saved.length], [1, 2, 1], "looked (not there), started over, one save");
+  // a refusal at the session carries the broker's code (the library says it in a save's words: too_large, not_found)
+  const g3 = graph(), b3 = planBroker(g3);
+  const up3 = make(g3, b3);
+  b3.script = [{ code: "too_large", status: 413, message: "That file is too large to upload here." }];
+  up3.add({ projectId: 7, file: file(10, "C.takeoff"), name: "C.takeoff", meta: {} });
+  const [j3] = await settle(up3);
+  assert.deepEqual([j3.state, j3.code, j3.canRetry], ["failed", "too_large", true]);
+});

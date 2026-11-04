@@ -46,6 +46,18 @@
    * planLink(projectId, itemId)     op "plan_link" -> {url, id, name, folder, size, modified, version}: one of them and a
                                      download link (minutes; kept in memory only: js/plan-library.js reads it in ranges
                                      into this device's storage, or the takeoff app opens it over ranges);
+   * planSaveSession(o)              op "plan_save_session" {itemId, version, size, modified?, mode?} (the iPad's save
+                                     back, owner decisions Q1-Q3 of 2026-11-04; contract C1) -> {mode: "replace" |
+                                     "copy", uploadUrl, ticket, name, chunkBytes, chunkMultiple, maxChunkBytes, maxBytes,
+                                     expiresAt}: upload_session's answer plus the mode the broker chose - "replace" (the
+                                     plan itself, by its id, while OneDrive still holds `version`) or "copy" (a separate
+                                     file "<stem> - iPad <date> <time>.takeoff" beside it: someone saved the plan
+                                     meanwhile). The upload URL (https on ONEDRIVE_HOST, checked) is kept in memory only.
+                                     Only an admin, or Sees prices AND "Can upload to OneDrive" (403 forbidden);
+   * planSaveDone(projectId, itemId, ticket)  op "plan_save_done" -> {saved, mode, id, name, size, modified, version}:
+                                     the file as plans_list lists it now (its version in plans_list's form: "sm:..."
+                                     while OneDrive has no hash of the new bytes yet); 409 not_saved when OneDrive did
+                                     not get the whole file (send it again);
    * call(body)                    any op; errors are {code, status, message, field, info, retryAfter}: the
                                      broker's own codes (its messages are a fixed map), "not_deployed" (the gateway's
                                      own 404: no such function), the 503s by name, "offline" (no answer).
@@ -69,10 +81,12 @@ export const SELF_TEST_PROJECT = "A000T2";
 export const ITEM_ID = /^[A-Za-z0-9!_.-]{8,128}$/;
 
 // the broker's own error codes (handler.ts ERRORS): a 404 whose body carries one is the broker's answer, not the gateway's
+// (not_saved: plan_save_done's "OneDrive did not get the whole file"; plan_changed is reserved by the contract - a plan
+// that changed since the device got it becomes a copy, never this error)
 export const CONTRACT = Object.freeze(["invalid", "unauthorized", "forbidden", "not_downloadable", "not_found", "method_not_allowed",
   "other_folder", "not_a_folder", "not_this_upload", "too_large", "file_type", "server_error", "onedrive_failed",
   "onedrive_not_configured", "onedrive_not_authorized", "busy", "projects_root_missing", "onedrive_full",
-  "takeoff_not_configured", "takeoff_root_missing"]);
+  "takeoff_not_configured", "takeoff_root_missing", "not_saved", "plan_changed"]);
 // the broker's 503s: [code here, the sentence] (its own message may name settings: never shown)
 const UNAVAILABLE = {
   onedrive_not_configured: ["not_configured", "The OneDrive connection is not set up yet."],
@@ -340,6 +354,47 @@ export async function planLink(projectId, itemId) {
   if (!f || f.id !== itemId) throw failure("OneDrive could not do that just now.", "failed", 502);
   if (!linkOk(d.url)) throw failure("OneDrive sent a link this page does not open.", "bad_link", 502);
   return Object.assign({ url: String(d.url) }, f);
+}
+
+/* ── the iPad's save back (ops plan_save_session, plan_save_done; owner decisions Q1-Q3, 2026-11-04) ── */
+
+/** An upload session for a plan saved on this device (o: {projectId, itemId, version: the version the device got,
+    size, modified?: Date | ISO, mode?: "copy"}) - see the header. "replace" is the broker's default and is not sent. */
+export async function planSaveSession(o) {
+  if (typeof o.itemId !== "string" || !ITEM_ID.test(o.itemId)) throw failure("That plan file was not found.", "not_found", 404);
+  const body = { op: "plan_save_session", project_id: pidOf(o.projectId), item_id: o.itemId, version: String(o.version || ""), size: Number(o.size) };
+  if (o.modified) {
+    const t = o.modified instanceof Date ? o.modified : new Date(o.modified);
+    if (!isNaN(t.getTime())) body.modified = t.toISOString();
+  }
+  if (o.mode === "copy") body.mode = "copy";
+  const d = (await call(body)) || {};
+  if (!linkOk(d.upload_url) || !/^https:/.test(String(d.upload_url))) throw failure("OneDrive sent an upload address this page does not use.", "bad_link", 502);
+  if (typeof d.ticket !== "string" || !d.ticket) throw failure("OneDrive could not do that just now.", "failed", 502);
+  if (d.mode !== "replace" && d.mode !== "copy") throw failure("OneDrive could not do that just now.", "failed", 502);
+  return {
+    mode: d.mode,
+    uploadUrl: String(d.upload_url),
+    ticket: d.ticket,
+    name: typeof d.name === "string" && d.name ? d.name : "",
+    chunkBytes: Number(d.chunk_bytes) || 0,
+    chunkMultiple: Number(d.chunk_multiple) || 0,
+    maxChunkBytes: Number(d.max_chunk_bytes) || 0,
+    maxBytes: Number(d.max_bytes) || 0,
+    expiresAt: typeof d.expires_at === "string" ? d.expires_at : null,
+  };
+}
+
+/** OneDrive has the whole save: the file as plans_list lists it now (see the header). `itemId`: what the upload's last
+    chunk answered (a replace: the plan's own id). */
+export async function planSaveDone(projectId, itemId, ticket) {
+  if (typeof itemId !== "string" || !ITEM_ID.test(itemId)) throw failure("OneDrive did not say which file it made.", "failed", 502);
+  const d = (await call({ op: "plan_save_done", project_id: pidOf(projectId), item_id: itemId, ticket: String(ticket || "") })) || {};
+  const f = planFileOf(Object.assign({}, d, { folder: "" }));
+  if (d.saved !== true || !f || (d.mode !== "replace" && d.mode !== "copy") || typeof f.size !== "number") {
+    throw failure("OneDrive did not say the plan was saved.", "failed", 502);
+  }
+  return { saved: true, mode: d.mode, id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version };
 }
 
 /* ── the plan buttons (op plans_for) ── */

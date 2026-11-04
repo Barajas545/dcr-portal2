@@ -24,8 +24,16 @@
      send    transport(req) -> {status, header(name), text()}; req {method, url, headers, body, onProgress, signal}
      now(), setTimeout, clearTimeout, maxTries (8), wait(tries) -> ms
    -> {add(spec) -> job, cancel(id), retry(id), remove(id), list(), active(), wake(), onChange(cb) -> off}
-   spec: {projectId, file, folder, relDir, name, label}. A job's state: waiting | starting | sending | finishing | done |
-   failed | cancelled; done jobs carry the broker's answer (result: recorded, renamed, name, message).
+   spec: {projectId, file, folder, relDir, name, label, meta}. A job's state: waiting | starting | sending | finishing |
+   done | failed | cancelled; done jobs carry the broker's answer (result: recorded, renamed, name, message), failed ones
+   the broker's code when it gave one (code).
+
+   The Plans Library's save back (js/plan-library.js sendSaved, owner decisions Q1-Q3 of 2026-11-04) uses the same loop
+   with a plan broker: session = plan_save_session, done = plan_save_done, find = "does OneDrive hold my save" (the plan
+   itself for a replace - plan_save_done is the proof -, a file of the copy's name and size for a copy); `meta` carries
+   what that broker needs (the plan's item id, the version the work was done on), never shown. Its done answers 409
+   not_saved when OneDrive did not get the whole file: never "the bytes are in OneDrive" (as upload_done's refusals
+   are) - the next try sends it again from a new session.
 
    xhrTransport() is the page's transport (XMLHttpRequest for upload progress, no credentials). */
 
@@ -99,7 +107,7 @@ export function createUploader(parts) {
     return {
       id: j.id, projectId: j.projectId, name: j.name, label: j.label, folder: j.folder, relDir: j.relDir, size: j.size,
       sent: j.sent, pct: j.size ? Math.min(100, Math.round((j.sent / j.size) * 100)) : 0, state: j.state, error: j.error,
-      tries: j.tries, result: j.result, landed: !!j.landed,
+      tries: j.tries, result: j.result, landed: !!j.landed, code: j.code || "",
       canRetry: (j.state === "failed" || j.state === "cancelled") && !j.landed,
     };
   }
@@ -176,7 +184,7 @@ export function createUploader(parts) {
         const code = String((e && e.code) || "");
         if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
         if (stopped(j)) return false;
-        setState(j, "failed", { error: (e && e.message) || "OneDrive could not start the upload." });
+        setState(j, "failed", { error: (e && e.message) || "OneDrive could not start the upload.", code });
         return false;
       }
     }
@@ -202,7 +210,8 @@ export function createUploader(parts) {
         } catch (e) {
           if (stopped(j)) return null;
           const code = String((e && e.code) || "");
-          if (code === "not_this_upload") break;                      // someone else's file of that name and size: look on
+          // someone else's file of that name and size (upload_done), or not this save's bytes (plan_save_done): look on
+          if (code === "not_this_upload" || code === "not_saved") break;
           if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
           return stopped(j) ? null : { fail: (e && e.message) || "Could not check whether OneDrive kept the file." };
         }
@@ -277,13 +286,21 @@ export function createUploader(parts) {
         const code = String((e && e.code) || "");
         if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
         if (stopped(j)) return;
+        if (code === "not_saved") {
+          // a plan save OneDrive did not get whole (plan_save_done): nothing of it counts - Retry sends it again from a
+          // new session (never "the file is in OneDrive")
+          j.session = null;
+          j.itemId = null;
+          setState(j, "failed", { error: (e && e.message) || "OneDrive did not get the whole file - send it again.", code });
+          return;
+        }
         if (RETRYABLE.indexOf(code) !== -1) {
           // the bytes are in OneDrive; only the broker's check is left: Retry asks it again (never a second upload)
-          setState(j, "failed", { error: "The file is in OneDrive; adding it to the file list did not get through. Retry.", itemId });
+          setState(j, "failed", { error: "The file is in OneDrive; adding it to the file list did not get through. Retry.", itemId, code });
           return;
         }
         // the file list did not take it (the switch taken away, not this upload's file): the bytes stay in OneDrive
-        setState(j, "failed", { error: ((e && e.message) || "The file was not added to the file list.") + " The file is in OneDrive.", landed: true });
+        setState(j, "failed", { error: ((e && e.message) || "The file was not added to the file list.") + " The file is in OneDrive.", landed: true, code });
         return;
       }
     }
@@ -337,7 +354,7 @@ export function createUploader(parts) {
       id: "od" + (++seq), projectId: spec.projectId, file, folder: spec.folder, relDir: spec.relDir || "",
       name: spec.name || file.name, label: spec.label || "", size: Number(file.size) || 0, sent: 0, offset: 0, chunk: CHUNK_UNIT,
       state: "waiting", error: "", tries: 0, result: null, session: null, ctl: null, removed: false, itemId: null, landed: false,
-      modified: file.lastModified ? new Date(file.lastModified) : null,
+      modified: file.lastModified ? new Date(file.lastModified) : null, meta: spec.meta || null, code: "",
     };
     jobs.push(j);
     emitNow({ type: "added", job: pub(j) });
@@ -363,6 +380,7 @@ export function createUploader(parts) {
     if (!j || (j.state !== "failed" && j.state !== "cancelled") || j.landed) return false;
     j.state = "waiting";
     j.error = "";
+    j.code = "";
     j.tries = 0;
     emitNow({ type: "waiting", job: pub(j) });
     pump();

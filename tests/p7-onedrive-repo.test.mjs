@@ -179,3 +179,77 @@ test("repo/onedrive: LIVE is on since the go-live (2026-10-25); the self-test pr
   assert.equal(onedrive.selfTestFor(admin, { number: "A000T2-B" }), false);
   assert.equal(onedrive.shownFor({ role: "agents", active: true }, { number: "A000T2" }), false);
 });
+
+/* ── the iPad's save back (owner decisions Q1-Q3, 2026-11-04; contract C1): plan_save_session / plan_save_done ── */
+
+const PLAN = "01FAKEPLAN0001";
+const UP = "https://" + HOST + "/personal/x/_api/v2.0/drives/d/items/i/uploadSession?guid=1";
+const SESSION = { mode: "replace", upload_url: UP, expires_at: "2026-11-05T00:00:00Z", chunk_bytes: 10485760, chunk_multiple: 327680,
+  max_chunk_bytes: 62586880, max_bytes: 4294967296, ticket: "v1.plan.sealed", name: "A900 Bid.takeoff" };
+const DONE = { saved: true, mode: "replace", id: PLAN, name: "A900 Bid.takeoff", size: 2000, modified: "2026-11-04T18:30:00Z", version: "sm:2000:2026-11-04T18:30:00.000Z" };
+
+test("repo/onedrive: planSaveSession / planSaveDone - the exact bodies (mode only when a copy is asked), upload_session's answer plus the mode, plans_list's file", async () => {
+  const calls = stub((b) => (b.op === "plan_save_session" ? ok(SESSION) : b.op === "plan_save_done" ? ok(DONE) : http(400, { error: "invalid" })));
+  const s = await onedrive.planSaveSession({ projectId: "7", itemId: PLAN, version: "qx:AAA", size: 2000, modified: new Date(Date.UTC(2026, 10, 4, 18)) });
+  assert.deepEqual(s, { mode: "replace", uploadUrl: UP, ticket: "v1.plan.sealed", name: "A900 Bid.takeoff", chunkBytes: 10485760, chunkMultiple: 327680,
+    maxChunkBytes: 62586880, maxBytes: 4294967296, expiresAt: "2026-11-05T00:00:00Z" });
+  await onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "sm:9:2026-11-04T18:00:00.000Z", size: 9, mode: "copy" });
+  await onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 9, modified: "not a time", mode: "replace" });
+  const d = await onedrive.planSaveDone(7, PLAN, "v1.plan.sealed");
+  assert.deepEqual(d, { saved: true, mode: "replace", id: PLAN, name: "A900 Bid.takeoff", size: 2000, modified: "2026-11-04T18:30:00Z",
+    version: "sm:2000:2026-11-04T18:30:00.000Z" });
+  assert.deepEqual(calls.map((c) => c.body), [
+    { op: "plan_save_session", project_id: 7, item_id: PLAN, version: "qx:AAA", size: 2000, modified: "2026-11-04T18:00:00.000Z" },
+    { op: "plan_save_session", project_id: 7, item_id: PLAN, version: "sm:9:2026-11-04T18:00:00.000Z", size: 9, mode: "copy" },
+    { op: "plan_save_session", project_id: 7, item_id: PLAN, version: "qx:AAA", size: 9 },
+    { op: "plan_save_done", project_id: 7, item_id: PLAN, ticket: "v1.plan.sealed" },
+  ]);
+  // nothing is sent for an item id that is not one, or a project that is not one
+  assert.equal((await refusal(onedrive.planSaveSession({ projectId: 7, itemId: "../x", version: "qx:A", size: 1 }))).code, "not_found");
+  assert.equal((await refusal(onedrive.planSaveSession({ projectId: "x", itemId: PLAN, version: "qx:A", size: 1 }))).code, "invalid");
+  assert.equal((await refusal(onedrive.planSaveDone(7, "short", "t"))).code, "failed");
+  assert.equal(calls.length, 4);
+});
+
+test("repo/onedrive: the save's upload address must be https on the owner's OneDrive host (linkOk), its ticket and mode the broker's; plan_save_done's answer must be a plan file", async () => {
+  for (const url of ["https://evil.example.com/up", "http://" + HOST + "/up", "https://user:pw@" + HOST + "/up", "https://" + HOST + ".evil.example/up",
+    "blob:http://localhost/1", "javascript:alert(1)", ""]) {
+    stub(() => ok(Object.assign({}, SESSION, { upload_url: url })));
+    assert.equal((await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:A", size: 1 }))).code, "bad_link", url);
+  }
+  for (const bad of [{ ticket: "" }, { ticket: null }, { mode: "overwrite" }, { mode: undefined }]) {
+    stub(() => ok(Object.assign({}, SESSION, bad)));
+    assert.equal((await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:A", size: 1 }))).code, "failed", JSON.stringify(bad));
+  }
+  for (const bad of [{ saved: false }, { mode: "x" }, { name: "A900 Bid.pdf" }, { id: "bad id" }, { version: "" }, { size: "2000" }, null]) {
+    stub(() => ok(bad === null ? null : Object.assign({}, DONE, bad)));
+    assert.equal((await refusal(onedrive.planSaveDone(7, PLAN, "t"))).code, "failed", JSON.stringify(bad));
+  }
+  stub(() => ok(Object.assign({}, DONE, { mode: "copy", id: "01FAKECOPY0001", name: "A900 Bid - iPad 2026-11-04 1030.takeoff", webUrl: "https://x" })));
+  assert.deepEqual(await onedrive.planSaveDone(7, "01FAKECOPY0001", "t"), { saved: true, mode: "copy", id: "01FAKECOPY0001",
+    name: "A900 Bid - iPad 2026-11-04 1030.takeoff", size: 2000, modified: "2026-11-04T18:30:00Z", version: "sm:2000:2026-11-04T18:30:00.000Z" }, "nothing more");
+});
+
+test("repo/onedrive: the save's errors - not_saved (send it again), too_large with its limit, forbidden naming the switch, the takeoff folder's grant still read-only; plan_changed is reserved", async () => {
+  assert.ok(onedrive.CONTRACT.includes("not_saved") && onedrive.CONTRACT.includes("plan_changed"));
+  const cases = [
+    [http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." }), "not_saved", 409, /send it again/],
+    [http(413, { error: "too_large", message: "That file is too large to upload here.", max_bytes: 4294967296 }), "too_large", 413, /too large/],
+    [http(403, { error: "forbidden", message: "Saving a plan back needs the \"Can upload to OneDrive\" switch (an admin turns it on)." }), "forbidden", 403, /Can upload to OneDrive/],
+    [http(404, { error: "not_found", message: "That file or folder was not found." }), "not_found", 404, /not found/],
+    [http(503, { error: "onedrive_not_authorized", message: "Graph said: read only (ONEDRIVE_SECRET)" }), "not_authorized", 503, /not allowed in just now/],
+    [http(503, { error: "takeoff_not_configured", message: "x" }), "takeoff_not_configured", 503, /takeoff folder is not set up/],
+    [http(503, { error: "busy", message: "x" }, { "Retry-After": "60" }), "busy", 503, /busy/],
+  ];
+  for (const [answer, code, status, words] of cases) {
+    stub(() => answer);
+    const e = await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:A", size: 1 }));
+    assert.deepEqual([e.code, e.status], [code, status], code);
+    assert.match(e.message, words, code);
+    assert.ok(!/ONEDRIVE_SECRET|Graph said/.test(e.message), "a 503's own words never shown");
+    const d = await refusal(onedrive.planSaveDone(7, PLAN, "t"));
+    assert.equal(d.code, code, "done: " + code);
+  }
+  stub(() => http(413, { error: "too_large", message: "x", max_bytes: 4294967296 }));
+  assert.equal((await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:A", size: 1 }))).info.max_bytes, 4294967296);
+});
