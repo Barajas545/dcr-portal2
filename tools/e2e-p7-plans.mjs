@@ -23,6 +23,13 @@
      yet: its P2 does) brings ptt-open with the saved plan's File into the frame; a ready from anywhere else, or with
      another word, is never answered; Close with nothing unsaved closes at once. A tablet without prices: 📐 says "Plans
      are for the people who see prices", and nothing is asked of the broker;
+   - the save back on that tablet (owner decisions Q1-Q3, 2026-11-04; contract C2/C3): the admin's plan comes with
+     canSave; a Save said from inside the frame (ptt-save with a made-up project file, as takeoff-web's P2 will send it)
+     is answered "kept", then "sent" once the Plans Library sent it to the demo's OneDrive (tools/fake/p7-onedrive.js
+     plan_save_session / plan_save_done, the upload address answered by the demo); the record has the saved bytes as
+     its copy (no save waiting, a new version) and the menu's row says "Sent to OneDrive"; a ptt-save from the page
+     itself is never heard; "Check now" in the Plans Library then takes OneDrive's hash of the same bytes as the
+     version with no download (no plan_link asked);
    - phone (375 px) and desktop, light and dark: never sideways; no Content-Security-Policy violation and no console
      error on any page (the frame's page included).
    Screenshots (--shots all): plans_<what>_<light|dark>_<desktop|phone>.png into --out.
@@ -269,11 +276,11 @@ async function main() {
       const got = await inFrame("new Promise((resolve) => { const t = setTimeout(() => resolve(null), 15000);" +
         " window.addEventListener('message', async (e) => { if (e.source !== window.parent || e.origin !== location.origin || !e.data || e.data.type !== 'ptt-open') return;" +
         " clearTimeout(t); const d = e.data; const head = d.file ? await d.file.slice(0, 9).text() : '';" +
-        " resolve({ kind: d.kind, v: d.v, nonce: d.nonce, name: d.name, size: d.size, isFile: d.file instanceof Blob, fileSize: d.file ? d.file.size : -1, head, canSave: 'canSave' in d, url: 'url' in d }); });" +
+        " resolve({ kind: d.kind, v: d.v, nonce: d.nonce, name: d.name, size: d.size, isFile: d.file instanceof Blob, fileSize: d.file ? d.file.size : -1, head, canSave: d.canSave === true, url: 'url' in d }); });" +
         " window.parent.postMessage({ type: 'ptt-ready', v: 1, nonce: " + JSON.stringify(word) + " }, location.origin); })");
-      check("tablet: ptt-ready from the frame -> ptt-open with the plan's File arrives in the frame (kind file, PDFCACHE1, its size; no link, no canSave yet)",
+      check("tablet: ptt-ready from the frame -> ptt-open with the plan's File arrives in the frame (kind file, PDFCACHE1, its size; no link; canSave: an admin saves back)",
         got && got.kind === "file" && got.v === 1 && got.nonce === word && got.isFile && got.fileSize === got.size && got.size === saved[0].size &&
-        got.head === "PDFCACHE1" && !got.canSave && !got.url, JSON.stringify(got));
+        got.head === "PDFCACHE1" && got.canSave && !got.url, JSON.stringify(got));
       const heard = await T.eval("window.__heard");
       check("tablet: the portal heard the ready from the frame's own window, on this site", heard.some((h) => h.type === "ptt-ready" && h.fromFrame && h.origin === base), JSON.stringify(heard));
       // a stranger (this site, but not the frame's window) is never answered: a second ready from the page itself
@@ -290,6 +297,30 @@ async function main() {
         " return { nav: (w.performance.getEntriesByType('navigation')[0] || {}).type, controller: c ? new URL(c.scriptURL).pathname : null }; })()");
       check("tablet: the frame's page was never reloaded (its own worker, takeoff/sw.js, from the start)", ctl.nav === "navigate" &&
         (ctl.controller === null || ctl.controller === "/takeoff/sw.js"), JSON.stringify(ctl));
+      // the save back: a Save said from inside the frame (takeoff-web P2's ptt-save, a made-up project file) - kept,
+      // then sent; a ptt-save from the page itself is never heard
+      await T.eval("window.postMessage({ type: 'ptt-save', v: 1, nonce: " + JSON.stringify(word) + ", req: 'sPAGE00000', name: 'x.takeoff', size: 9," +
+        " file: new Blob(['PDFCACHE1']) }, location.origin); true");
+      const states = await inFrame("new Promise((resolve) => { const got = []; const t = setTimeout(() => resolve(got), 30000);" +
+        " window.addEventListener('message', (e) => { if (e.source !== window.parent || e.origin !== location.origin || !e.data || e.data.type !== 'ptt-save-state') return;" +
+        " got.push({ req: e.data.req, state: e.data.state, why: e.data.why || '', nonce: e.data.nonce });" +
+        " if (['sent', 'copy', 'refused', 'no-room'].includes(e.data.state) || (e.data.state === 'failed' && got.length > 1)) { clearTimeout(t); resolve(got); } });" +
+        " const body = 'PDFCACHE1 a made-up save from the takeoff app ' + '#'.repeat(700000);" +
+        " window.parent.postMessage({ type: 'ptt-save', v: 1, nonce: " + JSON.stringify(word) + ", req: 'sE2E000001', name: " + JSON.stringify(got ? got.name : "") +
+        ", size: body.length, file: new Blob([body]) }, location.origin); })");
+      const words = (states || []).map((x) => x.state);
+      check("tablet: a Save from the frame is answered 'kept' (in the Plans Library's own storage), then 'sent' (in OneDrive) - to the frame, with its word",
+        words[0] === "kept" && words[words.length - 1] === "sent" && states.every((x) => x.req === "sE2E000001" && x.nonce === word), JSON.stringify(states));
+      check("tablet: a ptt-save from the page itself is never heard", (states || []).every((x) => x.req !== "sPAGE00000"), JSON.stringify(states));
+      const after2 = await T.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
+        " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
+        " return all.map(r => ({ file: r.file, size: r.size, version: r.version, local: r.local, sent: r.sent && r.sent.mode, expect: !!r.expect })); })()");
+      const sentRow = after2.find((r) => r.sent === "replace");
+      check("tablet: the save is the plan's copy now (no save waiting, a new version, the saved bytes' size) - nothing downloaded",
+        !!sentRow && !sentRow.local && sentRow.size === 700046 && /^sm:700046:/.test(sentRow.version) && sentRow.expect && sentRow.file !== saved[0].file,
+        JSON.stringify(after2));
+      const bar = await T.eval("document.getElementById('ptfSay').textContent");
+      check("tablet: the frame's bar says it is in OneDrive", /in OneDrive/.test(bar), bar);
       if (SHOTS !== "none") {
         await T.call("Page.bringToFront").catch(() => null);
         const took = await Promise.race([T.shot("plans_frame_tablet.png"), sleep(25000).then(() => null)]);
@@ -300,6 +331,24 @@ async function main() {
       await T.until("!document.querySelector('#ptfShell.open') && !document.getElementById('ptfFrame')", 5000);
       const after = await T.eval("({ inert: !!document.getElementById('dcr2Topbar').inert, overflow: document.body.style.overflow, menu: !!document.querySelector('.pl-sheet') })");
       check("tablet: Close with nothing unsaved closes at once, and the page (and the menu) come back", !after.inert && after.overflow === "" && after.menu, JSON.stringify(after));
+      await T.until("/Sent to OneDrive/.test(document.querySelector('.pl-sheet .pl-list').innerText)", 5000).catch(() => null);
+      const rowText = await T.eval("document.querySelector('.pl-sheet .pl-list').innerText");
+      check("tablet: the 📐 menu's row says Sent to OneDrive", /Sent to OneDrive/.test(rowText), rowText);
+      // the Plans Library's Check now: OneDrive's hash of the same bytes is taken as the version - no download
+      await T.goto(base + "/plans-library.html", 400);
+      await T.until("!!document.getElementById('libCheck') && document.querySelectorAll('.lib-row').length > 0", 10000);
+      await T.eval("(() => { const c = DCR2Demo.engine; const inv = c.invoke; window.__links = 0; c.invoke = function (ctx, name, body) {" +
+        " if (name === 'onedrive' && body && body.op === 'plan_link') window.__links++; return inv.apply(this, arguments); }; return true; })()");
+      await T.eval("document.getElementById('libCheck').click(); true");
+      await T.until("/Checked \\d+ plan/.test(document.getElementById('libSay').textContent)", 10000).catch(() => null);
+      await sleep(1500);
+      const v = await T.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
+        " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
+        " return all.map(r => ({ file: r.file, version: r.version, expect: r.expect || null })); })()");
+      const links = await T.eval("window.__links");
+      const hashed = v.find((r) => sentRow && r.file === sentRow.file);
+      check("tablet: Check now takes OneDrive's hash of the saved bytes as the version, and downloads nothing",
+        !!hashed && /^qx:demo-saved-/.test(hashed.version) && !hashed.expect && links === 0, JSON.stringify({ v, links }));
     }, T);
     const TF = await newPage(cdp, "tablet-field", OUT); pages.push(TF);
     await attempt("a tablet without prices: 📐 says 'Plans are for the people who see prices' (no dead end, nothing asked of the broker)", async () => {

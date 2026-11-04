@@ -48,6 +48,17 @@
      project the person may not see too) and this tab's own download link (a blob:; node: a placeholder on the host)
      answering byte ranges; its bytes start "PDFCACHE1" as a takeoff file does (made up: the takeoff app cannot open
      it). setPlanVersion(path, version) gives one a new version (a node test's "new save in OneDrive").
+   * plan_save_session {project_id, item_id, version, size, modified?, mode?} (the iPad's save back, owner decisions
+     Q1-Q3 of 2026-11-04; contract C1) -> {mode, upload_url, expires_at, chunk_bytes, chunk_multiple, max_chunk_bytes,
+     max_bytes, ticket, name}: an admin, or prices AND the upload switch (403 forbidden naming the switch when only it is
+     missing), one of the project's plans (404), at most 4096 MiB (413 too_large {max_bytes}); "replace" while the plan's
+     version is still `version` (the same item id), else a COPY beside it "<stem> - iPad YYYY-MM-DD HHMM.takeoff" (company
+     time; " (2)" ... " (9)" when taken; all taken: 503 busy, Retry-After 60). The upload URL answers as upload_session's
+     does; its last chunk replaces the plan's bytes (a new version: "sm:<size>:<time>") or adds the copy to the folder;
+   * plan_save_done {project_id, item_id, ticket} -> {saved: true, mode, id, name, size, modified, version}: the ticket's
+     person, project, plan (a replace: the same id and size, another version, changed since the ticket) or copy (its
+     name and size), else 409 not_saved; the version in plans_list's form - the "sm:" one, which plans_list then
+     reports under a made-up hash (the same size and time: the portal takes it without a download).
    The takeoff folder (made up, the same every time): A267 three .takeoff files in its folder (and an autosave, a PDF
    and plan notes, never counted) and two older ones in Backup/ and Backup/Old/ (never counted); A024 one and A024-B
    two (apart; a third in Backup/); A120 one in its folder and one in an older second folder; the other A### numbers by
@@ -59,7 +70,9 @@
    A304 has only a folder of another name (other_folder), A305 and the test project A000T2 (added here for the
    admin's self-test) none yet. What people add (uploads, folders made) is a row of demo_onedrive_items - a demo-only
    table nobody reads (no policy), so it is kept with the demo's changes and reaches the other tabs - and its bytes
-   stay in this tab's memory. Made-up names only. */
+   stay in this tab's memory. So is a plan saved back from a device (a row with `takeoff`, its path in the takeoff
+   folder, and its `version`): the next page's plans_list still knows its size, time and version, and a copy beside
+   the plan. Made-up names only. */
 (function (root) {
   "use strict";
   const NS = (root.DCR2Fake = root.DCR2Fake || {});
@@ -79,7 +92,7 @@
   (NS.extTables = NS.extTables || []).push({
     tables: [TABLE],
     cols: { [TABLE]: { id: null, item_id: null, project_id: null, parent_id: null, name: null, folder: false, size: null, mime: null,
-      created_at: null, modified_at: null, by_app: false } },
+      created_at: null, modified_at: null, by_app: false, takeoff: null, version: null } },
     pk: {}, uuid: [], noAudit: [TABLE], fks: [],
   });
 
@@ -92,6 +105,8 @@
     not_this_upload: [409, "That file is not the one this upload made."], too_large: [413, "That file is too large to upload here."],
     file_type: [415, "That kind of file cannot be uploaded here (PDFs, pictures, videos, Office files, text and CAD files can)."],
     takeoff_not_configured: [503, "The takeoff folder is not set up yet."],
+    not_saved: [409, "OneDrive did not get the whole file - send it again."],
+    busy: [503, "OneDrive is busy just now: try again in a minute."],
   };
   const NOT_RECORDED = {
     priced_name: "Saved in OneDrive. Its folder or name is about prices or money, so it is not added to the project's file list (people who see prices find it in OneDrive).",
@@ -158,7 +173,7 @@
   }
 
   (NS.extInstall = NS.extInstall || []).push(function install(E) {
-    const { rows, COLS: ECOLS, clone, nowIso, who, canEdit, nextId, commitInsert } = E;
+    const { rows, COLS: ECOLS, clone, nowIso, who, canEdit, nextId, commitInsert, commitUpdate } = E;
     if (!rows[TABLE]) return null;
     if (ECOLS.profiles && !("can_upload_onedrive" in ECOLS.profiles)) ECOLS.profiles.can_upload_onedrive = false;
     const secret = "demo-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -244,7 +259,8 @@
         folder: true, size: null, mime: null, created: p.created_at, modified: p.created_at, app: false, pid: p.id }));
     }
     function stored() {
-      return rows[TABLE].map((r) => ({ id: r.item_id, parent: r.parent_id, name: r.name, folder: !!r.folder, size: r.size, mime: r.mime,
+      // (a plan saved back is the takeoff folder's, never one of the Projects folder's items)
+      return rows[TABLE].filter((r) => !r.takeoff).map((r) => ({ id: r.item_id, parent: r.parent_id, name: r.name, folder: !!r.folder, size: r.size, mime: r.mime,
         created: r.created_at, modified: r.modified_at, app: !!r.by_app, pid: r.project_id }));
     }
     function itemsOf(pid) {
@@ -327,6 +343,12 @@
         else if (last === 3) out.push({ name: at, files: ["Plans/" + n + " plans.pdf", n + " Bid.takeoff.autosave", "Backup/" + n + " Bid.takeoff"] });
         if (n === "A120") out.push({ name: "A120 - older plans", files: ["A120 First bid.takeoff"] });
       }
+      // the copies saved back beside a plan (the demo's table), in the order they were made
+      rows[TABLE].filter((r) => r.takeoff).forEach(function (r) {
+        const i = r.takeoff.indexOf("/");
+        const f = out.find((x) => x.name === r.takeoff.slice(0, i));
+        if (f && f.files.indexOf(r.takeoff.slice(i + 1)) === -1) f.files.push(r.takeoff.slice(i + 1));
+      });
       return (takeoffTree = out);
     }
     function plansFor(b, w) {
@@ -353,6 +375,12 @@
     }
     /* the Plans Library: each .takeoff file of the takeoff folder as plans_list answers it (made up, the same every time) */
     const planVersions = new Map();      // path -> a version a test set (a "new save")
+    const savedBytes = new Map();        // path -> the saved Blob (this tab; another tab serves made-up bytes of its size)
+    /** the last save back of the takeoff file at `full` (a row of the demo's table), or null */
+    function savedPlan(full) {
+      const all = rows[TABLE].filter((r) => r.takeoff === full);
+      return all.length ? all[all.length - 1] : null;
+    }
     function planFilesOf(p) {
       const folders = takeoffFolders();
       const names = candidates(folders.map((f) => f.name), p.number);
@@ -367,12 +395,16 @@
           const size = 180000 + ((fi * 7 + i * 13) % 9) * 41000;
           out.push({ id: "01DEMOTKO" + String(fi).padStart(3, "0") + "F" + String(i).padStart(3, "0"), name, folder: parts.join("/"),
             size, modified: new Date(Date.UTC(2026, 8, 1 + ((fi + i) % 27), 17, 0, 0)).toISOString(),
-            version: planVersions.get(full) || "qx:demo" + full.length.toString(36) + i + fi, full });
+            version: planVersions.get(full) || "qx:demo" + full.length.toString(36) + i + fi, full, folderName: f.name });
+          // a save back from a device (a row of the demo's table: every tab knows it): its bytes' size, time and version
+          const sv = savedPlan(full);
+          if (sv) Object.assign(out[out.length - 1], { size: sv.size, modified: sv.modified_at, version: sv.version });
         });
       });
       return out;
     }
     function planBytes(f) {
+      if (savedBytes.has(f.full)) return savedBytes.get(f.full);
       const head = "PDFCACHE1 made-up demo plan file - the takeoff app cannot open it: " + f.name + "\n";
       const text = head + ".".repeat(Math.max(0, f.size - head.length));
       return typeof Blob !== "undefined" ? new Blob([text], { type: "application/octet-stream" }) : text;
@@ -396,6 +428,89 @@
       }
       return answer(200, { projects, checked_at: nowIso() });
     }
+    /* the iPad's save back (contract C1): replace the plan by its id while it is still the device's version, else a copy */
+    const MAX_PLAN = 4096 * 1024 * 1024;
+    const STAMP = typeof Intl !== "undefined" ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit",
+      day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : null;
+    function companyStamp(ms) {
+      const q = {};
+      (STAMP ? STAMP.formatToParts(new Date(ms)) : []).forEach((x) => { q[x.type] = x.value; });
+      return q.year + "-" + q.month + "-" + q.day + " " + (q.hour === "24" ? "00" : q.hour) + q.minute;
+    }
+    const saver = (w) => (!w.active ? fail("forbidden") : !(w.admin || w.prices) ? fail("forbidden", null, "Plan files are for the people who see prices.")
+      : !(w.admin || (w.p && w.p.can_upload_onedrive)) ? fail("forbidden", null, 'Saving a plan back needs the "Can upload to OneDrive" switch (an admin turns it on).') : null);
+    function planOf(b, w) {
+      const p = E.readable(w, "projects").find((x) => x.id === b.project_id && !x.deleted_at);
+      return p ? { p, f: planFilesOf(p).find((x) => x.id === b.item_id) || null } : { p: null, f: null };
+    }
+    function planSaveSession(b, w) {
+      if (typeof b.version !== "string" || !/^(qx|sm):/.test(b.version) || b.version.length > 200) return bad("version", "version must be the plan's version as the plan list gave it");
+      if (typeof b.size !== "number" || !Number.isSafeInteger(b.size) || b.size < 1) return bad("size", "size must be the file's size in bytes");
+      if (b.mode !== undefined && b.mode !== null && b.mode !== "replace" && b.mode !== "copy") return bad("mode", 'mode must be "replace" or "copy"');
+      if (!takeoffOn()) return fail("takeoff_not_configured");
+      const no = saver(w);
+      if (no) return no;
+      const { p, f } = planOf(b, w);
+      if (!f) return fail("not_found");
+      if (b.size > MAX_PLAN) return fail("too_large", { max_bytes: MAX_PLAN });
+      const mode = (b.mode || "replace") === "replace" && f.version === b.version ? "replace" : "copy";
+      let name = f.name;
+      if (mode === "copy") {
+        const taken = new Set(planFilesOf(p).filter((x) => x.folder === f.folder).map((x) => nfc(x.name).toLowerCase()));
+        const stem = nfc(f.name).replace(/\.takeoff$/i, "");
+        const stamp = companyStamp(nowMs());
+        name = null;
+        for (let n = 1; n <= 9 && !name; n++) {
+          const want = stem + " - iPad " + stamp + (n > 1 ? " (" + n + ")" : "") + ".takeoff";
+          if (!taken.has(want.toLowerCase())) name = want;
+        }
+        if (!name) return answer(503, { error: "busy", message: "Several copies of this plan were saved this minute already. Try again in a minute." });
+      }
+      const token = "s" + (++sessionN) + "-" + Math.random().toString(36).slice(2, 10);
+      const exp = nowMs() + 24 * 3600 * 1000;
+      sessions.set(token, { plan: true, mode, uid: w.uid, pid: p.id, item: f.id, full: f.full, folderName: f.folderName, folder: f.folder, name,
+        size: b.size, offset: 0, parts: [], done: null, exp });
+      const ticket = seal("plan", { u: w.uid, p: p.id, m: mode, t: mode === "replace" ? f.id : f.folder, v: b.version, s: b.size, n: name,
+        i: Math.floor(nowMs() / 1000) }, nowMs() + TICKET_MS);
+      return answer(200, { mode, upload_url: "https://" + HOST + "/__demo/up/" + token, expires_at: new Date(exp).toISOString(), chunk_bytes: CHUNK,
+        chunk_multiple: UNIT, max_chunk_bytes: MAX_CHUNK, max_bytes: MAX_PLAN, ticket, name });
+    }
+    /** the last chunk of a plan's save: the plan's bytes replaced (a new version), or the copy added to its folder */
+    function planSaveLanded(s) {
+      const at = nowIso();
+      let full = s.full;
+      if (s.mode === "copy") {
+        const folder = takeoffFolders().find((x) => x.name === s.folderName);
+        if (folder) folder.files.push(s.name);
+        full = s.folder + "/" + s.name;
+      }
+      if (typeof Blob !== "undefined") savedBytes.set(full, new Blob(s.parts, { type: "application/octet-stream" }));
+      const p = rows.projects.find((x) => x.id === s.pid);
+      const f = p ? planFilesOf(p).find((x) => x.full === full) : null;
+      const id = f ? f.id : s.item;
+      commitInsert(TABLE, { id: nextId(TABLE), item_id: id, project_id: s.pid, parent_id: null, name: s.name, folder: false, size: s.size,
+        mime: "application/octet-stream", created_at: at, modified_at: at, by_app: true, takeoff: full, version: "sm:" + s.size + ":" + at });
+      return id;
+    }
+    function planSaveDone(b, w) {
+      if (!takeoffOn()) return fail("takeoff_not_configured");
+      const no = saver(w);
+      if (no) return no;
+      const t = unseal("plan", b.ticket);
+      if (!t || t.u !== w.uid || t.p !== b.project_id) return bad("ticket", "This save's ticket is not valid or has run out: save the plan again.");
+      const { f } = planOf(b, w);
+      if (!f) return fail("not_saved");
+      const changed = Date.parse(f.modified || "");
+      if (t.m === "replace" && (f.id !== t.t || f.size !== t.s || f.version === t.v || !(changed >= t.i * 1000 - SKEW_MS))) return fail("not_saved");
+      if (t.m === "copy" && (f.folder !== t.t || !same(f.name, t.n) || f.size !== t.s)) return fail("not_saved");
+      const out = { saved: true, mode: t.m, id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version };
+      // OneDrive computes its hash of the new bytes a moment later: plans_list reports that from now on (the same size
+      // and time - the portal takes it without a download)
+      const kept = savedPlan(f.full);
+      if (kept && /^sm:/.test(kept.version)) commitUpdate(TABLE, kept, Object.assign({}, kept, { version: "qx:demo-saved-" + kept.id + "x" }));
+      return answer(200, out);
+    }
+
     function planLink(b, w) {
       if (!takeoffOn()) return fail("takeoff_not_configured");
       const no = pricesOnly(w);
@@ -461,7 +576,7 @@
       if (!b) return bad("body", "the body must be a JSON object");
       const ops = { list: ["path", "cursor"], download: ["item_id"], upload_session: ["folder", "rel_dir", "name", "size", "modified"],
         upload_done: ["item_id", "ticket"], ensure_folder: [], status: [], plans_for: ["project_ids"], plans_list: ["project_ids"],
-        plan_link: ["item_id"] };
+        plan_link: ["item_id"], plan_save_session: ["item_id", "version", "size", "modified", "mode"], plan_save_done: ["item_id", "ticket"] };
       if (!Object.prototype.hasOwnProperty.call(ops, b.op)) return bad("op", "op must be one of " + Object.keys(ops).join(", "));
       const allowed = ["op"].concat(b.op === "status" || b.op === "plans_for" || b.op === "plans_list" ? [] : ["project_id"], ops[b.op]);
       const extra = Object.keys(b).find((k) => !allowed.includes(k));
@@ -479,8 +594,10 @@
       if (b.item_id !== undefined && (typeof b.item_id !== "string" || !/^[A-Za-z0-9!_.-]{8,128}$/.test(b.item_id))) {
         return bad("item_id", "item_id must be an item id from the list");
       }
-      if (b.op === "plan_link") {
+      if (b.op === "plan_link" || b.op === "plan_save_session" || b.op === "plan_save_done") {
         if (typeof b.item_id !== "string") return bad("item_id", "item_id must be an item id from the list");
+        if (b.op === "plan_save_session") return planSaveSession(b, w);
+        if (b.op === "plan_save_done") return planSaveDone(b, w);
         return planLink(b, w);
       }
       const c = context(w, pid);
@@ -670,6 +787,12 @@
       s.parts.push(body);
       s.offset = z + 1;
       if (s.offset < s.size) return graphJson(202, nextRanges());
+      if (s.plan) {
+        // a plan's save back: the plan itself (its id stays) or the copy beside it - never a Projects-folder item
+        const id = planSaveLanded(s);
+        s.done = id;
+        return graphJson(201, { id, name: s.name, size: s.size, file: { mimeType: "application/octet-stream" } });
+      }
       const taken = new Set(kids(s.parent, s.pid).map((x) => nfc(x.name).toLowerCase()));
       let name = s.name;
       if (taken.has(nfc(name).toLowerCase())) {

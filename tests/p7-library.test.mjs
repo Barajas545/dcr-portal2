@@ -664,6 +664,69 @@ test("demo plan_link: a link answering byte ranges whose bytes start PDFCACHE1; 
   ext.setPlanVersion(files[0].folder + "/" + files[0].name, null);
 });
 
+test("demo plan_save_session / plan_save_done (the iPad's save back): a replace keeps the plan's id and gives it a new version (sm:, then OneDrive's hash of the same bytes); a changed plan becomes a copy beside it; the gate is prices AND the upload switch", { skip }, async () => {
+  await setup();
+  const { createUploader } = await import("../site/js/onedrive-upload.js");
+  const a267 = project("A267");
+  const ext = E.exts.find((x) => x.name === "p7-onedrive");
+  const send = (j) => new Promise((resolve) => {
+    const up = createUploader({
+      send: async (req) => {
+        const r = ext.http(req.method, req.url, Object.assign({}, req.headers), req.body);
+        return { status: r.status, header: (n) => r.headers[String(n).toLowerCase()] || null, text: () => (typeof r.body === "string" ? r.body : "") };
+      },
+      broker: {
+        session: (job) => onedrive.planSaveSession({ projectId: job.projectId, itemId: job.meta.itemId, version: job.meta.base, size: job.size }),
+        done: (job, itemId, ticket) => onedrive.planSaveDone(job.projectId, itemId, ticket),
+        find: async () => [],
+      },
+      setTimeout: (fn) => setTimeout(fn, 0), wait: () => 1,
+    });
+    up.onChange((items) => { const x = items[0]; if (x && ["done", "failed", "cancelled"].includes(x.state)) resolve(x); });
+    up.add(j);
+  });
+  as("manager_prices");
+  const before = (await onedrive.plansList([a267.id]))[String(a267.id)].files;
+  const plan = before.find((f) => f.name === "A267 Bid.takeoff");
+  const bytes = new File([new Uint8Array(3 * 327680 + 11).fill(80)], plan.name);
+  const job = await send({ projectId: a267.id, file: bytes, name: plan.name, meta: { itemId: plan.id, base: plan.version } });
+  assert.equal(job.state, "done", job.error);
+  assert.deepEqual([job.result.mode, job.result.id, job.result.size], ["replace", plan.id, bytes.size], "the plan itself, by its id");
+  assert.match(job.result.version, /^sm:\d+:/, "no hash yet: the sm: form");
+  const after = (await onedrive.plansList([a267.id]))[String(a267.id)].files.find((f) => f.id === plan.id);
+  assert.deepEqual([after.size, after.modified], [bytes.size, job.result.modified], "the same bytes...");
+  assert.ok(/^qx:/.test(after.version) && lib.keptAs({ file: "p1-a-1.takeoff", version: job.result.version, size: bytes.size,
+    expect: lib.expectOf(job.result) }, after), "...under OneDrive's hash: taken without a download");
+  // someone saved it meanwhile (the device still has the old version): a copy beside it, the plan untouched
+  const copy = await send({ projectId: a267.id, file: new File([new Uint8Array(100).fill(80)], plan.name), name: plan.name,
+    meta: { itemId: plan.id, base: plan.version } });
+  assert.equal(copy.state, "done", copy.error);
+  assert.equal(copy.result.mode, "copy");
+  assert.match(copy.result.name, /^A267 Bid - iPad \d{4}-\d{2}-\d{2} \d{4}\.takeoff$/);
+  const files = (await onedrive.plansList([a267.id]))[String(a267.id)].files;
+  assert.ok(files.some((f) => f.id === copy.result.id && f.name === copy.result.name && f.folder === plan.folder), "a plan of the project now");
+  assert.equal(files.find((f) => f.id === plan.id).size, bytes.size, "the plan as the first save left it");
+  // the same minute again: " (2)"
+  const second = await send({ projectId: a267.id, file: new File([new Uint8Array(100).fill(80)], plan.name), name: plan.name,
+    meta: { itemId: plan.id, base: plan.version } });
+  assert.match(second.result.name, /^A267 Bid - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(2\))?\.takeoff$/);
+  // a done for another ticket, or before the bytes landed: not_saved
+  const s = await onedrive.planSaveSession({ projectId: a267.id, itemId: plan.id, version: after.version, size: 5 });
+  assert.equal(s.mode, "replace");
+  assert.equal((await refusal(onedrive.planSaveDone(a267.id, plan.id, s.ticket))).code, "not_saved");
+  // the gate: prices AND the upload switch (an accountant with prices, no switch: told so); no prices at all; too large
+  as("accountant");
+  const no = await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: plan.id, version: after.version, size: 5 }));
+  assert.equal(no.code, "forbidden");
+  assert.match(no.message, /Can upload to OneDrive/);
+  as("field");
+  assert.equal((await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: plan.id, version: after.version, size: 5 }))).code, "forbidden");
+  as("admin");
+  const big = await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: plan.id, version: after.version, size: 4096 * 1024 * 1024 + 1 }));
+  assert.deepEqual([big.code, big.info.max_bytes], ["too_large", 4096 * 1024 * 1024]);
+  assert.equal((await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: "01DEMONOTAPLAN", version: after.version, size: 5 }))).code, "not_found");
+});
+
 /* ── the save back (P4; owner decisions Q1-Q3, 2026-11-04; contract C3): the rules ──────────────────────────────── */
 
 const SAVE = "p1-x-2.takeoff";

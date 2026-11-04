@@ -15,6 +15,11 @@
      op and takeoff_not_configured in the drift; the takeoff folder not set up (no ONEDRIVE_TAKEOFF_ITEM_ID) is a quiet {}
      for repo/onedrive.js plansFor; set up (when test_world.ts's settings have it), a field person's answer carries the
      project's number and a count only, a deleted project left out; signed out 401, the agents account 403;
+   * the iPad's save back (owner decisions Q1-Q3 of 2026-11-04; contract C1), once the broker has plan_save_session /
+     plan_save_done (until then a line says the check waits): the ops and not_saved / plan_changed in the drift; an
+     admin's save through Portal 2's own uploader replaces the made-up plan (its id kept, a new version as plans_list
+     words it), a device with the old version saves a copy beside it ("<stem> - iPad <date> <time>.takeoff"), and a
+     person without prices or without the switch is refused;
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -75,6 +80,9 @@ export async function run(h) {
   const HAS_PLANS = Array.isArray(fn.OPS) && fn.OPS.includes("plans_for");
   // and the Plans Library's two (2026-10-26)
   const HAS_LIBRARY = Array.isArray(fn.OPS) && fn.OPS.includes("plans_list");
+  // and the iPad's save back (owner decisions Q1-Q3 of 2026-11-04; contract C1): until DCR Desktop 2 has it, the drift
+  // is the older one and its check waits
+  const HAS_SAVE = Array.isArray(fn.OPS) && fn.OPS.includes("plan_save_session");
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   const deps = {
     settings: () => {
@@ -144,9 +152,9 @@ export async function run(h) {
   try {
     await check("Part 4 OneDrive: drift - the broker's ops, error codes, CORS origin, chunk unit and cap, allowlist and blocklist are the ones Portal 2 knows", async () => {
       same(fn.OPS.slice().sort(), ["download", "ensure_folder", "list", "status", "upload_done", "upload_session"].concat(HAS_PLANS ? ["plans_for"] : [])
-        .concat(HAS_LIBRARY ? ["plans_list", "plan_link"] : []).sort(), "the ops");
-      same(Object.keys(fn.ERRORS).sort(), od.CONTRACT.filter((c) => HAS_PLANS || !/^takeoff_/.test(c)).sort(),
-        "every error code the broker answers is one repo/onedrive.js reads");
+        .concat(HAS_LIBRARY ? ["plans_list", "plan_link"] : []).concat(HAS_SAVE ? ["plan_save_session", "plan_save_done"] : []).sort(), "the ops");
+      same(Object.keys(fn.ERRORS).sort(), od.CONTRACT.filter((c) => (HAS_PLANS || !/^takeoff_/.test(c)) &&
+        (HAS_SAVE || (c !== "not_saved" && c !== "plan_changed"))).sort(), "every error code the broker answers is one repo/onedrive.js reads");
       ok(fn.ALLOWED_ORIGINS.includes("https://portal.dcrframing.com"), "the site's origin is allowed in CORS");
       same(fn.CHUNK_MULTIPLE, OD.CHUNK_UNIT, "320 KiB");
       same(fn.MAX_CHUNK_BYTES, OD.MAX_CHUNK, "191 x 320 KiB");
@@ -321,6 +329,50 @@ export async function run(h) {
         same((await refused(() => od.call({ op: "plans_for", project_ids: [pid] }), "forbidden", "the agents account")).status, 403, "agents");
         client.as(null);
         same((await refused(() => od.call({ op: "plans_for", project_ids: [pid] }), "auth", "signed out")).status, 401, "signed out");
+      });
+    }
+
+    if (!HAS_SAVE || !HAS_LIBRARY) {
+      results.push({ section, name: "the save back: ops plan_save_session / plan_save_done are not in DCR Desktop 2's broker yet - their check waits for them", ok: true });
+    } else if (!(g.takeoff && g.takeoff.id && "ONEDRIVE_TAKEOFF_ITEM_ID" in (TW.SETTINGS_OK || {}))) {
+      results.push({ section, name: "the save back: the fake Graph has no takeoff folder here - its check waits for one", ok: true });
+    } else {
+      await check("the save back (contract C1): Portal 2's repo and uploader over the REAL plan_save_session / plan_save_done - an admin's save replaces the plan (its id kept, a new version as plans_list says it); a device whose version is old saves a copy beside it; prices without the switch, or the switch without prices, 403", async () => {
+        client.as(id("admin"));
+        const listed = (await od.plansList([pid]))[String(pid)];
+        const plan = listed && listed.files.find((f) => f.name === made.number + " Bid.takeoff");
+        ok(!!plan, "the made-up project's plan (the plan buttons' check made it)");
+        const saveOf = (base) => createUploader({
+          send: transport,
+          broker: {
+            session: (j) => od.planSaveSession({ projectId: j.projectId, itemId: plan.id, version: base, size: j.size }),
+            done: (j, itemId, ticket) => od.planSaveDone(j.projectId, itemId, ticket),
+            find: async () => [],
+          },
+          setTimeout: (f) => setTimeout(f, 0), wait: () => 1,
+        });
+        const up = saveOf(plan.version);
+        up.add({ projectId: pid, file: file(3 * OD.CHUNK_UNIT + 7, plan.name), name: plan.name });
+        const [job] = await settle(up);
+        same(job.state, "done", "replaced: " + job.error);
+        same([job.result.mode, job.result.id, job.result.size], ["replace", plan.id, 3 * OD.CHUNK_UNIT + 7], "the plan itself, by its id");
+        ok(job.result.version !== plan.version, "a new version");
+        const now = (await od.plansList([pid]))[String(pid)].files.find((f) => f.id === plan.id);
+        same(now.version, job.result.version, "in plans_list's form exactly");
+        // the device still has the old version: a copy beside it, never over the newer save
+        const up2 = saveOf(plan.version);
+        up2.add({ projectId: pid, file: file(100, plan.name), name: plan.name });
+        const [copy] = await settle(up2);
+        same(copy.state, "done", "a copy: " + copy.error);
+        same(copy.result.mode, "copy", "the plan changed since the device got it");
+        ok(/ - iPad \d{4}-\d{2}-\d{2} \d{4}\.takeoff$/.test(copy.result.name), "the copy's name: " + copy.result.name);
+        same((await od.plansList([pid]))[String(pid)].files.find((f) => f.id === plan.id).version, job.result.version, "the plan untouched");
+        // the gate (Q2): prices AND "Can upload to OneDrive"
+        for (const k of ["manager", "field"]) {
+          client.as(id(k));
+          same((await refused(() => od.planSaveSession({ projectId: pid, itemId: plan.id, version: now.version, size: 5 }), "forbidden", k)).status, 403, k);
+        }
+        client.as(null);
       });
     }
   } finally {
