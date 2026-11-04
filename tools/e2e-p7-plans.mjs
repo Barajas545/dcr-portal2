@@ -334,6 +334,11 @@ async function main() {
       await T.until("/Sent to OneDrive/.test(document.querySelector('.pl-sheet .pl-list').innerText)", 5000).catch(() => null);
       const rowText = await T.eval("document.querySelector('.pl-sheet .pl-list').innerText");
       check("tablet: the 📐 menu's row says Sent to OneDrive", /Sent to OneDrive/.test(rowText), rowText);
+      if (SHOTS !== "none") {
+        await T.call("Page.bringToFront").catch(() => null);
+        const took = await Promise.race([T.shot("plans_menu_sent_tablet.png"), sleep(25000).then(() => null)]);
+        if (took) shots.push(took);
+      }
       // the Plans Library's Check now: OneDrive's hash of the same bytes is taken as the version - no download
       await T.goto(base + "/plans-library.html", 400);
       await T.until("!!document.getElementById('libCheck') && document.querySelectorAll('.lib-row').length > 0", 10000);
