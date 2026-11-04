@@ -311,7 +311,8 @@ test("a plan saved from a project's sub-folder (a Backup's, before the owner's r
   // maybeCheck takes one off the device only once a check says OneDrive no longer lists it (a copy handed to the takeoff
   // app lately after its grace, as any Remove) - after the check, so a file moved up into the project's folder is kept
   const drop = src.slice(src.indexOf("async function dropSubFolderCopies"), src.indexOf("/** A hold after a failure"));
-  assert.match(drop, /for \(const r of \(await getAll\("plans"\)\)\.filter\(\(x\) => x\.owner === who && inSubFolder\(x\.folder\) && x\.latest && x\.latest\.status !== "ok"\)\) \{\s*try \{ await remove\(r\.itemId, \{ owner: who \}\); \}/,
+  // (P4: never one with a save of the person's own waiting on the device - that goes only with their own Remove)
+  assert.match(drop, /for \(const r of \(await getAll\("plans"\)\)\.filter\(\(x\) => x\.owner === who && inSubFolder\(x\.folder\) && x\.latest && x\.latest\.status !== "ok" && !hasLocal\(x\)\)\) \{\s*try \{ await remove\(r\.itemId, \{ owner: who \}\); \}/,
     "gone, or denied (the project not visible: never found moved up)");
   const mc = src.slice(src.indexOf("export async function maybeCheck"), src.indexOf("/* ── opening in the takeoff app"));
   assert.ok(mc.indexOf("await dropSubFolderCopies(who);") > mc.indexOf("await checkUpdates();"), "maybeCheck: after the check");

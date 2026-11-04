@@ -181,6 +181,9 @@ test("the Plans Library offers a save only in the frame, to a person who may sav
   assert.match(lib, /if \(!PLAN_SAVE_BACK\) return \{ state: "refused",/, "keepSave refuses with the switch off");
   assert.match(lib, /if \(!PLAN_SAVE_BACK\) throw err\("off",/, "and nothing is sent");
   assert.match(lib, /if \(o\.download !== false && saveBackFor\(me\)\) await sendWaiting\(\);/, "sent on the pages that may reach OneDrive");
+  // a save waiting here is never taken away by the library's own housekeeping (only by the person's Remove, a purge)
+  assert.match(lib, /inSubFolder\(x\.folder\) && x\.latest && x\.latest\.status !== "ok" && !hasLocal\(x\)\)/);
+  assert.match(lib, /if \(hasLocal\(r\)\) return \{ local: true \};/, "no download over it");
   // the bytes: through the worker's spool only, never read whole by the page
   assert.ok(!/\.arrayBuffer\(\)|\.blob\(\)|\.text\(\)/.test(lib), "never a whole plan in memory");
   const worker = code(read("js/plan-library-worker.js"));

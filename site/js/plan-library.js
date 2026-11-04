@@ -6,7 +6,8 @@
    yet. Each saved copy is exactly one version of one OneDrive file in the owner's takeoff folder; when OneDrive holds a
    newer one, it downloads BY ITSELF while a portal page is open and online (maybeCheck: the Plans Library, Search, a
    project; the home page only asks for new versions), and the saved copy keeps opening until the new one is whole and
-   checked. The takeoff app never writes into a saved copy: its Save goes to Save As or a download.
+   checked. The takeoff app never writes into a saved copy: its Save goes to Save As or a download - or, in the portal's
+   frame, back here as a NEW file of its own (the save back, below).
 
    Where things live (per browser profile, this site only):
      · the files - the Origin Private File System, folder "plan-library", one file per download (map/plan-library.js
@@ -870,7 +871,8 @@ export async function checkUpdates() {
     visible: never found moved up) - go from the device, a copy just handed to the takeoff app after its grace, as any
     Remove. One the check found moved up into the project's folder took that folder and is a plan again. */
 async function dropSubFolderCopies(who) {
-  for (const r of (await getAll("plans")).filter((x) => x.owner === who && inSubFolder(x.folder) && x.latest && x.latest.status !== "ok")) {
+  // (never one with a save of the person's own waiting here: that work goes only with the person's own Remove)
+  for (const r of (await getAll("plans")).filter((x) => x.owner === who && inSubFolder(x.folder) && x.latest && x.latest.status !== "ok" && !hasLocal(x))) {
     try { await remove(r.itemId, { owner: who }); } catch (e) { /* the next page */ }
   }
 }
@@ -1442,6 +1444,9 @@ async function commitSent(key, file, ans, size) {
   if (!ans || ans.saved !== true || Number(ans.size) !== Number(size)) {
     throw err("not_saved", "OneDrive did not get the whole file - it is sent again.");
   }
+  // a download of this plan still running (one started before the save: none starts while a save waits) ends first,
+  // as for a Remove - its own check against OneDrive then throws away what it fetched (the version moved)
+  await downloadReleased(key, 15000);
   let a = null;
   await mutate("plans", key, function (c) {
     a = adoptSent(c, file, ans, nowIso());
