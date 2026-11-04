@@ -264,3 +264,361 @@ test("site/sw.js v5: the takeoff copy is never answered, kept or precached by th
   assert.match(tw, /n\.startsWith\('ptt-web-'\) && n !== CACHE/, "the copy's worker deletes only its own names");
   assert.match(tw, /const CACHE = 'ptt-web-v\d+';/);
 });
+
+/* ── where the takeoff app opens (map/plans.js) ──────────────────────────────────────────────────────────────── */
+
+// made-up user agents of the kinds a phone, a tablet and a computer send
+const UA = {
+  iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
+  ipadOld: "Mozilla/5.0 (iPad; CPU OS 15_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Mobile/15E148 Safari/604.1",
+  mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15",
+  android: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36",
+  androidTablet: "Mozilla/5.0 (Linux; Android 15; SM-X910) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+  tabletDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+  winEdge: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0",
+  chromebook: "Mozilla/5.0 (X11; CrOS x86_64 16181.61.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+};
+const device = (ua, o) => {
+  const x = o || {};
+  return { navigator: Object.assign({ userAgent: ua, maxTouchPoints: x.touch || 0 }, x.mobile === undefined ? {} : { userAgentData: { mobile: x.mobile } },
+    x.standalone ? { standalone: true } : {}),
+  matchMedia: (q) => ({ matches: q === "(pointer: coarse)" ? !!x.coarse : q === "(display-mode: standalone)" ? !!x.standalone : false }) };
+};
+
+test("phones and tablets open the takeoff app in the frame (home-screen app and Safari alike), computers in a new tab; the switch turns the frame off", async () => {
+  const P = await import("../site/js/map/plans.js");
+  assert.equal(P.PLAN_FRAME, true, "the frame is on");
+  const TABLE = [
+    ["Safari on an iPhone", device(UA.iphone, { touch: 5, coarse: true }), "frame"],
+    ["the iPhone home-screen app", device(UA.iphone, { touch: 5, coarse: true, standalone: true }), "frame"],
+    ["an iPad that calls itself a Mac (Safari)", device(UA.mac, { touch: 5, coarse: true }), "frame"],
+    ["an iPad that calls itself a Mac (home-screen app)", device(UA.mac, { touch: 5, coarse: true, standalone: true }), "frame"],
+    ["an older iPad that says iPad", device(UA.ipadOld, { touch: 5, coarse: true }), "frame"],
+    ["Chrome on an Android phone", device(UA.android, { touch: 5, coarse: true, mobile: true }), "frame"],
+    ["Chrome on an Android tablet (userAgentData not mobile)", device(UA.androidTablet, { touch: 10, coarse: true, mobile: false }), "frame"],
+    ["an Android tablet asking for the desktop site", device(UA.tabletDesktop, { touch: 10, coarse: true, mobile: false }), "frame"],
+    ["Safari on a Mac (no touch)", device(UA.mac), "tab"],
+    ["Edge on Windows", device(UA.winEdge, { mobile: false }), "tab"],
+    ["Edge on a Windows touch laptop", device(UA.winEdge, { touch: 10, coarse: true, mobile: false }), "tab"],
+    ["a Chromebook with a touch screen", device(UA.chromebook, { touch: 10, coarse: true, mobile: false }), "tab"],
+    ["Linux with a touch screen and a mouse", device(UA.tabletDesktop, { touch: 10, coarse: false }), "tab"],
+    ["nothing to go on", {}, "tab"],
+    ["no window (node)", null, "tab"],
+  ];
+  for (const [label, win, want] of TABLE) {
+    assert.equal(P.planRoute(win), want, label);
+    assert.equal(P.handheld(win), want === "frame", label + " (handheld)");
+    assert.equal(P.planRoute(win, false), "tab", label + ": the switch off");
+  }
+  assert.equal(P.handheld({ navigator: { userAgent: "odd", maxTouchPoints: 2 }, matchMedia() { throw new Error("made up"); } }), false, "a matchMedia that throws");
+  // the portal's copy, beside the page, with the hand-over's word only (nothing of the plan in the address)
+  assert.equal(P.TAKEOFF_FRAME, "takeoff/index.html");
+  assert.equal(P.frameLink("Zk3pQ9_x-7LmN2aBcD4e"), "takeoff/index.html#portal=Zk3pQ9_x-7LmN2aBcD4e");
+  assert.equal(new URL(P.frameLink("Zk3pQ9_x-7LmN2aBcD4e"), "https://portal.dcrframing.com/search.html").href,
+    "https://portal.dcrframing.com/takeoff/index.html#portal=Zk3pQ9_x-7LmN2aBcD4e");
+  for (const bad of ["short", "a b c d e f g h i j k l m", "x".repeat(65), "../../evil#portal=1234567890abcdef", ""]) assert.throws(() => P.frameLink(bad), bad);
+  assert.ok(existsSync(join(SITE, P.TAKEOFF_FRAME)), "the copy is there");
+  // the plan pages sit at the site's root (the frame's address is relative to them)
+  for (const page of ["search.html", "project.html", "plans-library.html"]) assert.ok(existsSync(join(SITE, page)));
+});
+
+test("the hand-over's rules per device: the home-screen app is refused only when the frame is off; the frame's problems never send anyone to Safari", async () => {
+  const H = await import("../site/js/plan-handoff.js");
+  const ipadHome = device(UA.mac, { touch: 5, coarse: true, standalone: true });
+  const iphoneSafari = device(UA.iphone, { touch: 5, coarse: true });
+  assert.equal(H.iosHomeScreen(ipadHome), true, "still an iPad home-screen app");
+  assert.equal(H.usesFrame(ipadHome), true);
+  assert.equal(H.iosHomeRefused(ipadHome), false, "nothing refused: the frame shares the home-screen app's storage");
+  assert.equal(H.usesFrame(iphoneSafari), true);
+  assert.equal(H.usesFrame(device(UA.winEdge)), false);
+  assert.equal(H.iosHomeRefused(device(UA.winEdge)), false);
+  // the frame's no answer is the app's (offline before it was ever kept), never "use Safari"
+  assert.match(H.handoffProblem({ ok: false, why: "no_answer", via: "frame" }, ipadHome), /did not answer/);
+  assert.equal(H.handoffProblem({ ok: false, why: "ios_home", via: "tab" }), H.IOS_HOME);
+  assert.equal(H.handoffProblem({ ok: false, why: "no_answer", via: "tab" }, ipadHome), H.IOS_HOME, "a tab from the home-screen app (the frame off)");
+  assert.equal(H.handoffProblem({ ok: false, why: "closed", via: "frame" }), "", "the person closed it: nothing to say");
+  assert.match(H.handoffProblem({ ok: false, why: "blocked", via: "frame" }), /Reload the page/);
+  assert.match(H.handoffProblem({ ok: false, why: "blocked", via: "tab" }), /pop-ups/);
+  assert.match(H.handoffProblem({ ok: false, why: "paused" }), /paused/);
+  assert.equal(H.handoffProblem({ ok: false, why: "failed", error: new Error("made up") }), "made up");
+});
+
+/* ── the conversation (plan-handoff.js talk): one for the tab and the frame ──────────────────────────────────── */
+
+const WORD = "Zk3pQ9_x-7LmN2aBcD4e";
+const HERE = "https://portal.example.test";
+function stage(via, origin) {
+  const host = { ls: [], addEventListener(t, fn) { if (t === "message") this.ls.push(fn); }, removeEventListener(t, fn) { this.ls = this.ls.filter((x) => x !== fn); } };
+  const win = { posted: [], postMessage(m, o) { this.posted.push({ m, o }); } };
+  const peer = { win, origin, via, isClosed: false, closes: 0, closed() { return this.isClosed; }, close() { this.closes++; } };
+  const said = [];
+  const emit = async (ev) => { for (const fn of host.ls.slice()) fn(ev); for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+  return { host, win, peer, said, emit };
+}
+const ready = (s, over) => Object.assign({ source: s.win, origin: s.peer.origin, data: { type: "ptt-ready", v: 1, nonce: WORD } }, over || {});
+
+test("the frame's messages: only from the frame's own window, from this site, protocol v1, with the word (accepted)", async () => {
+  const H = await import("../site/js/plan-handoff.js");
+  const F = await import("../site/js/plan-frame.js");
+  const frameWin = { postMessage() {} };
+  const peer = F.peerOf({ contentWindow: frameWin }, { origin: HERE });
+  assert.deepEqual([peer.win === frameWin, peer.origin, peer.via], [true, HERE, "frame"], "the peer: the frame's window, this site's origin");
+  const ok = { source: frameWin, origin: HERE, data: { type: "ptt-ready", v: 1, nonce: WORD } };
+  assert.deepEqual(H.accepted(ok, peer, WORD), ok.data);
+  const other = { postMessage() {} };
+  for (const [label, ev] of [
+    ["another window of this site (a second frame, the page itself)", Object.assign({}, ok, { source: other })],
+    ["no window", Object.assign({}, ok, { source: null })],
+    ["the takeoff app's own site (github.io) in this frame", Object.assign({}, ok, { origin: "https://barajas545.github.io" })],
+    ["another site", Object.assign({}, ok, { origin: "https://evil.example" })],
+    ["this site over http", Object.assign({}, ok, { origin: "http://portal.example.test" })],
+    ["another word", Object.assign({}, ok, { data: Object.assign({}, ok.data, { nonce: "Zk3pQ9_x-7LmN2aBcD4f" }) })],
+    ["no word", Object.assign({}, ok, { data: { type: "ptt-ready", v: 1 } })],
+    ["protocol v2", Object.assign({}, ok, { data: Object.assign({}, ok.data, { v: 2 }) })],
+    ["a string", Object.assign({}, ok, { data: "ptt-ready" })],
+    ["nothing", Object.assign({}, ok, { data: null })],
+  ]) assert.equal(H.accepted(ev, peer, WORD), null, label);
+  assert.equal(H.accepted(null, peer, WORD), null);
+  assert.equal(H.accepted(ok, null, WORD), null);
+});
+
+test("talk(): ready -> the plan, to the peer's origin only; a renewal answered for a link; the offline word noted; nothing from anyone else", async () => {
+  const H = await import("../site/js/plan-handoff.js");
+  for (const [via, origin] of [["frame", HERE], ["tab", "https://barajas545.github.io"]]) {
+    const s = stage(via, origin);
+    const file = new Blob(["PDFCACHE1 made up"]);
+    let offline = 0;
+    const plan = { kind: "file", file, name: "A900 Bid.takeoff", size: file.size, lastModified: 1, number: "A900", updateAvailable: false };
+    const ctl = H.talk(s.peer, WORD, async () => plan, null, (r) => s.said.push(r), () => offline++, s.host);
+    // a stranger's ready and a wrong word are ignored: nothing is posted
+    await s.emit(ready(s, { source: { postMessage() {} } }));
+    await s.emit(ready(s, { origin: origin === HERE ? "https://barajas545.github.io" : HERE }));
+    await s.emit(ready(s, { data: { type: "ptt-ready", v: 1, nonce: "x".repeat(20) } }));
+    assert.equal(s.win.posted.length, 0, via + ": nothing for a stranger");
+    await s.emit(ready(s));
+    assert.equal(s.win.posted.length, 1, via + ": the plan, once");
+    const { m, o } = s.win.posted[0];
+    assert.equal(o, origin, via + ": to the peer's origin, never '*'");
+    assert.deepEqual(Object.assign({}, m, { file: null }), Object.assign({}, plan, { file: null, type: "ptt-open", v: 1, nonce: WORD }));
+    assert.equal(m.file, file, "the File itself (nothing copied)");
+    assert.ok(!("canSave" in m), "canSave is not offered yet (P4, behind PLAN_SAVE_BACK)");
+    assert.deepEqual(s.said, [{ ok: true, via, kind: "file" }]);
+    await s.emit(ready(s));
+    assert.equal(s.win.posted.length, 1, "a second ready posts nothing");
+    await s.emit(ready(s, { data: { type: "ptt-renew", v: 1, nonce: WORD, req: "r1" } }));
+    assert.equal(s.win.posted.length, 1, "a file is never renewed");
+    await s.emit(ready(s, { data: { type: "ptt-offline", v: 1, nonce: WORD } }));
+    assert.equal(offline, 1);
+    assert.equal(s.host.ls.length, 0, via + ": a file's conversation ends at the offline word");
+    ctl.stop();
+    assert.equal(s.said.length, 1, "stopping after it opened says nothing more");
+  }
+  // a link: renewed for as long as the app is open, '' when there is none; a req longer than 20 is refused
+  const s = stage("frame", HERE);
+  const urls = ["https://made-up-my.sharepoint.com/fresh-1", ""];
+  const link = H.talk(s.peer, WORD, async () => ({ kind: "link", url: "https://made-up-my.sharepoint.com/x", name: "B.takeoff", size: 5, lastModified: 0, number: "A1" }),
+    async () => urls.shift(), (r) => s.said.push(r), null, s.host);
+  await s.emit(ready(s));
+  await s.emit(ready(s, { data: { type: "ptt-renew", v: 1, nonce: WORD, req: "r1" } }));
+  await s.emit(ready(s, { data: { type: "ptt-renew", v: 1, nonce: WORD, req: "r2" } }));
+  await s.emit(ready(s, { data: { type: "ptt-renew", v: 1, nonce: WORD, req: "r".repeat(21) } }));
+  await s.emit(ready(s, { source: { postMessage() {} }, data: { type: "ptt-renew", v: 1, nonce: WORD, req: "r3" } }));
+  assert.deepEqual(s.win.posted.slice(1).map((x) => [x.m.type, x.m.req, x.m.url, x.m.nonce, x.o]),
+    [["ptt-link", "r1", "https://made-up-my.sharepoint.com/fresh-1", WORD, HERE], ["ptt-link", "r2", "", WORD, HERE]]);
+  assert.equal(s.host.ls.length, 1, "a link's conversation lasts while the app is open");
+  link.stop();                                               // the frame closed
+  assert.equal(s.host.ls.length, 0);
+  assert.deepEqual(s.said, [{ ok: true, via: "frame", kind: "link" }], "nothing more said once it had opened");
+});
+
+test("talk(): no answer in 90 s - said, then the peer closed (the frame only if nothing would be lost); a plan that fails; the person closing first", async (t) => {
+  const H = await import("../site/js/plan-handoff.js");
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const a = stage("frame", HERE);
+  const order = [];
+  a.peer.close = function () { order.push("close"); };
+  H.talk(a.peer, WORD, async () => ({ kind: "file" }), null, (r) => { order.push("said:" + r.why); }, null, a.host);
+  t.mock.timers.tick(H.READY_WAIT_MS - 1);
+  assert.deepEqual(order, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(order, ["said:no_answer", "close"], "said first: the frame's own close then cannot turn it into 'closed'");
+  assert.equal(a.host.ls.length, 0);
+  // the person closes the frame before the app said it is ready: "closed" (the menu says nothing), nothing more heard
+  const c = stage("frame", HERE);
+  const ctl = H.talk(c.peer, WORD, async () => ({ kind: "file" }), null, (r) => c.said.push(r), null, c.host);
+  ctl.stop();
+  assert.deepEqual(c.said, [{ ok: false, why: "closed", via: "frame" }]);
+  assert.equal(c.host.ls.length, 0);
+  // the tab closed by the person: noticed by the 5 s watch
+  const d = stage("tab", "https://barajas545.github.io");
+  H.talk(d.peer, WORD, async () => ({ kind: "file" }), null, (r) => d.said.push(r), null, d.host);
+  d.peer.isClosed = true;
+  t.mock.timers.tick(5000);
+  assert.deepEqual(d.said, [{ ok: false, why: "closed", via: "tab" }]);
+  t.mock.timers.reset();
+  // the plan cannot be read: said, the peer closed, nothing posted
+  const b = stage("frame", HERE);
+  H.talk(b.peer, WORD, async () => { throw new Error("This saved plan is no longer on this device."); }, null, (r) => b.said.push(r), null, b.host);
+  await b.emit(ready(b));
+  assert.equal(b.win.posted.length, 0);
+  assert.deepEqual([b.said[0].ok, b.said[0].why, b.said[0].error.message, b.peer.closes], [false, "failed", "This saved plan is no longer on this device.", 1]);
+  b.host.ls.forEach(() => assert.fail("still listening"));
+});
+
+/* ── the frame (js/plan-frame.js) ────────────────────────────────────────────────────────────────────────────── */
+
+test("the frame's Close: at once when nothing would be lost; asked while the app has unsaved changes or a save is in flight", async () => {
+  const F = await import("../site/js/plan-frame.js");
+  assert.equal(F.closeQuestion("", false), null);
+  assert.equal(F.closeQuestion("", null), null, "no app in the frame yet (still loading, an offline page): closes at once");
+  const dirty = F.closeQuestion("", true);
+  assert.match(dirty.text, /not saved/);
+  assert.equal(dirty.danger, true);
+  const busy = F.closeQuestion("Your save is being sent to OneDrive (45%).", true);
+  assert.match(busy.title, /save is not finished/);
+  assert.match(busy.text, /^Your save is being sent to OneDrive \(45%\)\. Closing now stops it/);
+  // the app's own live objects (takeoff-web's window.TakeoffApp, "for the portal embed"), read defensively
+  assert.equal(F.unsavedIn({ TakeoffApp: { app: { project: { dirty: true } } } }), true);
+  assert.equal(F.unsavedIn({ TakeoffApp: { app: { project: { dirty: false } } } }), false);
+  assert.equal(F.unsavedIn({}), null);
+  assert.equal(F.unsavedIn(null), null);
+  assert.equal(F.unsavedIn({ get TakeoffApp() { throw new Error("a page of another site (SecurityError)"); } }), null);
+  assert.match(read("takeoff/js/main.js"), /window\.TakeoffApp = \{\s*app,/, "the vendored app still exposes it");
+  // a save in flight (P4) registers a guard; unregistered, Close is free again
+  const off = F.guard(() => "A save is being kept on this device.");
+  assert.equal(typeof off, "function");
+  off();
+  // the visual viewport (iOS keyboard, a pinch): the frame takes its box
+  assert.deepEqual(F.viewportBox({ offsetTop: 120.4, offsetLeft: 0, width: 834, height: 700.6 }), { top: 120, left: 0, width: 834, height: 701 });
+  assert.equal(F.viewportBox(null), null);
+  assert.equal(F.viewportBox({ width: 0, height: 0 }), null);
+  assert.equal(F.isOpen(), false);
+  assert.equal(F.open("takeoff/index.html#portal=" + WORD), null, "no page (node): nothing opens");
+});
+
+test("plan-frame.js: a same-site frame of the copy, over everything, with Close; the page under it held still; it never posts itself", () => {
+  const src = read("js/plan-frame.js");
+  const js = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'])\/\/[^\n]*/g, "$1");
+  assert.ok(!/postMessage\(/.test(js), "the conversation is plan-handoff.js's alone");
+  assert.match(js, /export const FRAME_ALLOW = "fullscreen; clipboard-write; web-share";/);
+  assert.match(js, /frame\.setAttribute\("allow", FRAME_ALLOW\);\s*frame\.src = String\(link\);/);
+  assert.ok(!/sandbox|srcdoc|github\.io|https?:\/\//.test(js), "no other site, no inline document");
+  assert.match(js, /const frame = document\.createElement\("iframe"\);/, "a new frame (a new window) each time");
+  assert.match(js, /try \{ frame\.remove\(\); \}/);
+  assert.match(js, /n\.inert = true;/, "the page under it out of reach of taps and focus");
+  assert.match(js, /document\.body\.style\.overflow = "hidden";/, "and still");
+  assert.match(js, /env\(safe-area-inset-top, 0px\)/, "the bar below the home-screen app's status bar");
+  assert.match(js, /env\(safe-area-inset-bottom, 0px\)/);
+  assert.match(js, /window\.visualViewport\.addEventListener\("resize", fit\)/, "it follows the on-screen keyboard");
+  assert.match(js, /if \(e\.key === "Escape"\) \{ e\.preventDefault\(\); requestClose\(\); return; \}/);
+  assert.match(js, /try \{ if \(a\.back && a\.back\.isConnected && a\.back\.focus\) a\.back\.focus\(\); \}/, "the focus goes back");
+  assert.match(js, /z-index:100000;/);
+  // the hand-over opens it with the copy's address and stops when it closes
+  const ho = read("js/plan-handoff.js");
+  assert.match(ho, /const peer = frame\.open\(frameLink\(word\), \{ title: \(opts && opts\.title\) \|\| "", onClose: function \(\) \{ if \(ctl\) ctl\.stop\(\); \} \}\);/);
+  assert.ok(read("sw.js").includes('"js/plan-frame.js"'), "kept for offline use (the menu opens it with no signal)");
+});
+
+/* ── open on a phone or a tablet: on the device first (js/plan-library.js openOnDevice) ─────────────────────── */
+
+test("a phone or a tablet opens a plan from a copy on the device: saved first, online only without room (and said so)", async () => {
+  const L = await import("../site/js/map/plan-library.js");
+  assert.equal(L.deviceOpenStep({ have: true, online: true, writable: true }), "fetch", "online: brought up to OneDrive's version first");
+  assert.equal(L.deviceOpenStep({ have: false, online: true, writable: true }), "fetch", "not on the device: saved first");
+  assert.equal(L.deviceOpenStep({ have: true, online: false, writable: true }), "open", "offline: the copy here, as it is");
+  assert.equal(L.deviceOpenStep({ have: false, online: false, writable: true }), "offline");
+  assert.equal(L.deviceOpenStep({ have: false, online: true, writable: false }), "online", "a browser that cannot keep plans");
+  assert.equal(L.deviceOpenStep(null), "offline");
+  for (const have of [true, false]) {
+    assert.equal(L.afterFetch("space", have), "online", "no room: the newest, online");
+    assert.equal(L.afterFetch("unsupported", have), "online");
+    assert.equal(L.afterFetch("forbidden", have), "fail", "refused (prices taken away): nothing opens");
+    assert.equal(L.afterFetch("removed", have), "fail");
+  }
+  for (const code of ["busy", "gone", "offline", "paused", "changed", "stopped", "busy_here", "not_plan", undefined]) {
+    assert.equal(L.afterFetch(code, true), "open", code + ": the copy here");
+    assert.equal(L.afterFetch(code, false), "fail", code + ": nothing here");
+  }
+  const lib = read("js/plan-library.js");
+  const fn = lib.slice(lib.indexOf("export async function openOnDevice"));
+  assert.match(fn, /res = r \? await resume\(itemId\)\s*: await save\(\{ projectId: o\.projectId, number: o\.number, projectTitle: o\.projectTitle, file: o\.file \}\);/,
+    "the library's own download (its green bar)");
+  assert.match(fn, /if \(!still\(\)\) \{ done\(\{ ok: false, why: "closed" \}\); return; \}/, "a menu closed meanwhile opens nothing");
+  assert.match(fn, /Not enough room on this device for this plan, so it opened online/);
+  assert.match(fn, /openOnline\(o\.projectId, o\.number, \{ id: itemId \}/);
+  assert.ok(fn.indexOf("open(itemId,") !== -1, "then the file itself");
+  assert.ok(!/canSave/.test(lib), "no save-back offered yet (P4)");
+});
+
+test("the home-screen refusals are lifted on the frame path only: saving, resuming and the automatic downloads; the 📐 menu and the library page say IOS_HOME only with the frame off", () => {
+  const lib = read("js/plan-library.js");
+  assert.equal((lib.match(/if \(iosHomeRefused\(\)\) throw err\("ios_home", IOS_HOME\);/g) || []).length, 2, "save() and resume()");
+  assert.match(lib, /if \(o\.download !== false && !iosHomeRefused\(\)\) await autoWork\(\);/);
+  assert.ok(!/iosHomeScreen\(\)/.test(lib), "no refusal left that ignores the frame");
+  const pb = read("js/pages/plan-buttons.js");
+  assert.match(pb, /const ios = iosHomeRefused\(\);/);
+  assert.ok(!/iosHomeScreen/.test(pb));
+  assert.match(pb, /if \(usesFrame\(\)\) \{[\s\S]*?L\.openOnDevice\(\{ projectId: c\.o\.projectId,[\s\S]*?still: function \(\) \{ return current === c; \} \}/);
+  const page = read("js/pages/plans-library.js");
+  assert.match(page, /if \(iosHomeRefused\(\)\) \{/);
+  assert.match(page, /if \(!iosHomeRefused\(\)\) L\.autoWork\(\);/);
+  assert.match(page, /if \(usesFrame\(\)\) \{[\s\S]*?L\.openOnDevice\(/);
+  assert.ok(!/iosHomeScreen/.test(page));
+});
+
+/* ── the doors of a phone or a tablet: the 📐 menu or the Plans Library, never the Plans Archive ────────────────── */
+
+test("the 📐 button on a phone or a tablet: the menu for the people who see prices, 'Plans are for the people who see prices' for anyone else; a computer's as before", async () => {
+  const P = await import("../site/js/map/plans.js");
+  const { menuText } = await import("../site/js/pages/plan-buttons.js");
+  const e = { number: "A900", plans: 3 };
+  const pc = P.planButtonHtml(e, "icon");
+  assert.match(pc, /href="https:\/\/barajas545\.github\.io\/takeoff-web\/index\.html#plans=A900" target="_blank" rel="noopener"/, "a computer: the Plans Archive");
+  assert.equal(P.planButtonHtml(e, "icon", false, false), pc);
+  const none = P.planButtonHtml(e, "button", false, true);
+  assert.match(none, /^<a class="pj-btn" href="plans-library\.html" aria-label="Plans for A900" title="3 takeoff files for A900" data-plan-none="A900" aria-haspopup="dialog">/);
+  assert.ok(!/github\.io|target=|↗/.test(none), "no dead end, no new tab");
+  const menu = P.planButtonHtml(e, "icon", true, true);
+  assert.match(menu, /href="plans-library\.html" aria-label="Plans for A900 — open or save the plan files"/);
+  assert.match(menu, /data-plan-menu="A900" aria-haspopup="dialog"/);
+  assert.ok(!/github\.io|target=/.test(menu));
+  assert.equal(P.planButtonHtml({ number: "A900", plans: 0 }, "icon", false, true), "");
+  assert.equal(P.PRICES_ONLY, "Plans are for the people who see prices: plan files carry prices.");
+  // the menu's words: no Plans Archive at a phone's foot
+  const m = menuText("A900", false, false), h = menuText("A900", true, false), n = menuText("A900", true, true);
+  assert.match(m.foot, /Plans Archive \(Edge or Chrome on a computer\) ↗/);
+  assert.match(m.foot, /#plans=A900/);
+  assert.equal(h.foot, '<a href="plans-library.html">Plans Library</a>');
+  assert.match(h.lead, /on this device first \(the green bar\)/);
+  assert.deepEqual(n, { lead: P.PRICES_ONLY, foot: "" });
+  const pb = read("js/pages/plan-buttons.js");
+  assert.match(pb, /const html = planButtonHtml\(got\[s\.getAttribute\("data-plans"\)\], s\.getAttribute\("data-plans-style"\), menu, hand\);/);
+  assert.match(pb, /closest\("\[data-plan-menu\], \[data-plan-none\]"\)/);
+  assert.match(pb, /if \(o\.none\) return;/, "the plain sentence: no broker call, no library");
+  assert.match(pb, /if \(current !== c \|\| frameOpen\(\)\) return;/, "the frame's keys are its own");
+});
+
+test("the Floor Plans card and the Takeoffs tab on a phone or a tablet: the Plans Library and the project's 📐; a computer's as before", async () => {
+  const P = await import("../site/js/map/plans.js");
+  assert.deepEqual(P.floorPlansCard(false), { href: P.PLANS_HOME, ext: true, ds: "Open plans in the takeoff app — the Plans Archive and the plans kept on this device." });
+  assert.deepEqual(P.floorPlansCard(true), { href: "plans-library.html", ext: false, ds: "Open plans on this device: the Plans Library, or 📐 on a project." });
+  const tk = read("js/pages/project-takeoffs.js");
+  assert.match(tk, /import \{ openPlans \} from "\.\/plan-buttons\.js";/);
+  assert.match(tk, /const hand = handheld\(typeof window !== "undefined" \? window : null\);/);
+  assert.match(tk, /id="tkoPlans" aria-haspopup="dialog"/);
+  assert.match(tk, /openPlans\(\{ projectId: ctx\.pid,/);
+  assert.match(tk, /📐 Plans Archive \(takeoff-web\) ↗/, "a computer keeps its link");
+  const pb = read("js/pages/plan-buttons.js");
+  assert.match(pb, /export function openPlans\(o\) \{\s*openMenu\(Object\.assign\(\{\}, o, \{ none: !planFilesFor\(o\.me\) \}\)\);\s*\}/);
+});
+
+test("the pages that show the frame name it in their policy (frame-src 'self': this site only) and nothing else changes; no github.io anywhere in a policy", () => {
+  for (const page of ["search.html", "project.html", "plans-library.html"]) {
+    const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(read(page))[1];
+    assert.match(csp, /; frame-src 'self';/, page);
+    assert.ok(!/github\.io|child-src/.test(csp), page);
+  }
+  for (const page of ["dashboard.html", "index.html", "settings.html"]) {
+    assert.ok(!/frame-src/.test(read(page)), page + ": shows no frame");
+  }
+});

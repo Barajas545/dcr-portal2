@@ -22,9 +22,13 @@
    shared tablet shows each person only their own plans. Someone whose Sees prices is turned off loses theirs from the
    device the next time an online portal page sees it (purgeOwner).
 
-   Opening hands the copy to the takeoff app in a new tab, window to window (js/plan-handoff.js): the app is another
-   site and reads the File by slices as it draws, and nothing on its site can hold the copy open. So a copy handed over
-   is kept a week after it is replaced or removed (map/plan-library.js HANDED_GRACE_MS) and goes at a sweep after that.
+   Opening hands the copy to the takeoff app window to window (js/plan-handoff.js): on a computer in a new tab (the app is
+   another site), on a phone or a tablet in the portal's own copy of the app in a frame over the page (js/plan-frame.js;
+   owner decision Q4, 2026-11-04 - the home-screen app included, since the frame shares this storage). Either way the
+   app reads the File by slices as it draws, and nothing there holds the copy open. So a copy handed over is kept a week
+   after it is replaced or removed (map/plan-library.js HANDED_GRACE_MS) and goes at a sweep after that. On a phone or a
+   tablet a plan always opens from a copy on the device (openOnDevice): it is saved here first when it is not, or is not
+   the version OneDrive holds - and only when there is no room (or no way to keep it) does it open online.
 
    The automatic downloads are polite: after a failure a record waits 5 min, then 10, 20, … up to 6 h before it is tried
    again by itself (a person's own Save, Resume or Update now never waits; a download that went forward before it
@@ -42,10 +46,11 @@ import * as onedrive from "./repo/onedrive.js";
 import { storedUserId, storedUserEmail } from "./sb.js";
 import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
-  brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder,
+  brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
 } from "./map/plan-library.js";
 import { planFilesFor } from "./map/plans.js";
-import { openInTakeoff, iosHomeScreen, READY_KEY, IOS_HOME } from "./plan-handoff.js";
+import { openInTakeoff, iosHomeRefused, READY_KEY, IOS_HOME } from "./plan-handoff.js";
+import { say as frameSay } from "./plan-frame.js";
 
 const DB_NAME = "dcr2-plan-library";
 const DB_VER = 1;
@@ -340,7 +345,7 @@ export async function lastChecked() {
 /** Save one plan file of a project on this device: {projectId, number, projectTitle, file: {id, name, folder, size,
     modified, version}}. Resolves when the download ends (or pauses); the rows follow it through onChange. */
 export async function save(info) {
-  if (iosHomeScreen()) throw err("ios_home", IOS_HOME);
+  if (iosHomeRefused()) throw err("ios_home", IOS_HOME);         // (the frame, js/plan-frame.js, shares this storage: no refusal)
   if (!(await canWrite())) throw err("unsupported", UNSUPPORTED);
   const who = owner();
   if (!who) throw err("signin", "Sign in first.");
@@ -366,7 +371,7 @@ export async function save(info) {
 
 /** Download a saved plan again now (a newer version, a paused or stopped download): the person's own act. */
 export async function resume(itemId) {
-  if (iosHomeScreen()) throw err("ios_home", IOS_HOME);
+  if (iosHomeRefused()) throw err("ios_home", IOS_HOME);         // (the frame, js/plan-frame.js, shares this storage: no refusal)
   const key = keyOf(itemId);
   await mutate("plans", key, function (r) {
     if (!r) return undefined;
@@ -913,7 +918,7 @@ export async function maybeCheck(me, opts) {
       }
     }
     await dropSubFolderCopies(who);                          // (a check that did not run now: what an earlier one found)
-    if (o.download !== false && !iosHomeScreen()) await autoWork();
+    if (o.download !== false && !iosHomeRefused()) await autoWork();
     await sweep();
   } catch (e) { /* the next page asks again */ }
 }
@@ -926,8 +931,9 @@ function noteReady() {
   emit({ t: "ready" });                                     // other windows hear it through the storage event
 }
 
-/** Open a saved copy in the takeoff app (new tab). Call IN the click. onDone({ok, why, error}). */
-export function open(itemId, onDone) {
+/** Open a saved copy in the takeoff app (a computer's new tab, a phone's or tablet's frame). Call IN the click.
+    onDone({ok, why, error, via}); opts.title: the frame's title (the plan's name). */
+export function open(itemId, onDone, opts) {
   const key = keyOf(itemId);
   openInTakeoff(async function () {
     // marked as handed over first, then read again: a new version committed in between (here or in another window)
@@ -947,13 +953,13 @@ export function open(itemId, onDone) {
     const t = Date.parse(r.modified || "");
     return { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : f.lastModified, number: r.number,
       updateAvailable: statusOf(r, null, false) === "outdated" };
-  }, null, onDone, noteReady);
+  }, null, onDone, noteReady, opts);
 }
 
 /** Open a plan in OneDrive in the takeoff app over byte ranges (online; nothing saved). Call IN the click. A fresh link
     is handed only for the version first opened: a file saved again in OneDrive meanwhile is not read on as if it were
     the same (the tab says to open it again). */
-export function openOnline(projectId, number, file, onDone) {
+export function openOnline(projectId, number, file, onDone, opts) {
   let version = null;
   let stale = false;                        // saved again in OneDrive since it was opened: no fresh link will match
   openInTakeoff(async function () {
@@ -968,5 +974,72 @@ export function openOnline(projectId, number, file, onDone) {
     if (version && l.version === version) return l.url;
     stale = true;                           // (a busy or failed ask throws instead: the next sheet may ask again)
     return "";
-  }, onDone, noteReady);
+  }, onDone, noteReady, opts);
+}
+
+/**
+ * Open a plan on a phone or a tablet (the frame) - always from a copy on THIS device: the plan is saved here first when
+ * it is not, or is not the version OneDrive holds (the library's own download: its green bar in the 📐 menu and the
+ * Plans Library; a copy already the right version costs one question to the broker), then handed over as a file.
+ * map/plan-library.js deviceOpenStep / afterFetch decide:
+ *   · offline: the copy saved here opens as it is (a newer version waits for the signal); with none, nothing opens;
+ *   · no room for it, or a browser that cannot keep plans: it opens ONLINE (over byte ranges, nothing kept) and the
+ *     person is told so;
+ *   · OneDrive busy, the file gone from OneDrive, the download stopped - with a copy here: that copy opens, and the
+ *     person is told why it is not the newest; refused (Sees prices taken away): nothing opens;
+ *   · paused by the person meanwhile, or `o.still()` false (the menu was closed): nothing opens.
+ * o: {projectId, number, projectTitle, itemId, name, file (the plans_list file, when the 📐 menu has it), still()}.
+ * onStep(text) says what happens meanwhile; onDone({ok, why, error, via, online, note}) - `note`: what the person is
+ * told on the frame's bar too (online: why it opened online).
+ */
+export async function openOnDevice(o, onDone, onStep) {
+  const done = typeof onDone === "function" ? onDone : function () {};
+  const step = typeof onStep === "function" ? onStep : function () {};
+  const still = typeof o.still === "function" ? o.still : function () { return true; };
+  const itemId = String(o.itemId || (o.file && o.file.id) || "");
+  const title = o.name || (o.file && o.file.name) || "";
+  if (!itemId) { done({ ok: false, why: "failed", error: err("bad", "No plan file to open.") }); return; }
+  const key = keyOf(itemId);
+  let r = null;
+  try { r = supported() ? await get("plans", key) : null; } catch (e) { r = null; }
+  const online = !(HAS && navigator.onLine === false);
+  const writable = online && (await canWrite());
+  const viaOnline = function (why) {
+    const note = why === "space"
+      ? "Not enough room on this device for this plan, so it opened online: it needs the internet while it is open, and nothing is kept here."
+      : "This browser cannot keep plans on the device, so it opened online: it needs the internet while it is open.";
+    openOnline(o.projectId, o.number, { id: itemId }, function (res) { done(Object.assign({ online: why, note }, res)); }, { title });
+    frameSay(note, "warn");
+  };
+  const fromHere = function (note) {
+    open(itemId, function (res) { done(note ? Object.assign({ note }, res) : res); }, { title });
+    if (note) frameSay(note, "warn");
+  };
+  const first = deviceOpenStep({ have: !!(r && r.file), online, writable });
+  if (first === "offline") {
+    done({ ok: false, why: "failed", error: err("offline", "You're offline, and this plan is not saved on this device yet. Open it once while online.") });
+    return;
+  }
+  if (first === "open") { fromHere(r && statusOf(r, null, false) === "outdated" ? "You're offline: the copy saved on this device opened (a newer version is in OneDrive)." : ""); return; }
+  if (first === "online") { viaOnline("unsupported"); return; }
+  // "fetch": on this device first (save, update or resume - the person's own act: no wait after earlier failures)
+  step(r && r.file ? "Checking for a newer version…" : "Saving it on this device first…");
+  let res = null, failed = null;
+  try {
+    res = r ? await resume(itemId)
+      : await save({ projectId: o.projectId, number: o.number, projectTitle: o.projectTitle, file: o.file });
+  } catch (x) { failed = x; }
+  if (!still()) { done({ ok: false, why: "closed" }); return; }
+  if (failed) {
+    r = null;
+    try { r = await get("plans", key); } catch (e) { r = null; }
+    const next = afterFetch(failed.code, !!(r && r.file));
+    if (next === "online") { viaOnline(failed.code === "space" ? "space" : "unsupported"); return; }
+    if (next === "open") { fromHere("The copy saved on this device opened — the newest version did not download: " + String(failed.message || "it stopped").replace(/[.\s]+$/, "") + "."); return; }
+    done({ ok: false, why: "failed", error: failed });
+    return;
+  }
+  if (res && res.paused) { done({ ok: false, why: "paused" }); return; }
+  if (res && res.removed) { done({ ok: false, why: "failed", error: err("removed", "That saved plan was removed.") }); return; }
+  fromHere("");
 }

@@ -49,8 +49,11 @@ test("the project page: the header's slot beside the progress chart (on every ta
 
 test("the home page: Floor Plans in Projects for the people who see prices, opening the takeoff app's plans in a new tab", () => {
   const dash = code(read("js/shell/dashboard.js"));
-  assert.match(dash, /^import \{ PLANS_HOME, plansCardFor, planFilesFor \} from "\.\.\/map\/plans\.js";$/m);
-  assert.match(dash, /\{ href: PLANS_HOME, ic: "📐", tt: "Floor Plans", ext: true, show: plansCardFor\(p\),\s*ds: "Open plans in the takeoff app — the Plans Archive and the plans kept on this device\." \}/);
+  // (owner decision Q4, 2026-11-04: on a phone or a tablet the card opens the Plans Library - map/plans.js floorPlansCard;
+  // a computer's is the card it always was: tests/p8-takeoff-frame.test.mjs)
+  assert.match(dash, /^import \{ plansCardFor, planFilesFor, floorPlansCard, handheld \} from "\.\.\/map\/plans\.js";$/m);
+  assert.match(dash, /\{ href: plansCard\.href, ic: "📐", tt: "Floor Plans", ext: plansCard\.ext, show: plansCardFor\(p\), ds: plansCard\.ds \}/);
+  assert.match(dash, /const plansCard = floorPlansCard\(opts && opts\.handheld !== undefined \? !!opts\.handheld : handheld\(typeof window !== "undefined" \? window : null\)\);/);
   const projects = dash.slice(dash.indexOf('sections.push({ label: "Projects"'), dash.indexOf('sections.push({ label: "Sales & Marketing"'));
   assert.ok(projects.indexOf('tt: "Floor Plans"') > projects.indexOf('tt: "Search"'), "in Projects, after Search");
   assert.match(dash, /el\("a", \{ class: "hm-card-go", href: c\.href,\s*target: c\.ext \? "_blank" : null, rel: c\.ext \? "noopener" : null/);
@@ -115,12 +118,16 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
   // Sees prices taken away: the plans saved here go, but only on a profile read online (never an old copy of it)
   assert.match(js, /if \(fresh && L\.supported\(\)\) \{ try \{ gone = await L\.purgeOwner\(L\.owner\(\)\); \}/);
   assert.ok(!/functions\.invoke|\.rpc\(|\.from\(|sb\(\)/.test(js), "the data only through the library and repo/");
-  // the hand-over: only to the takeoff app's address, only from its tab, with its word
+  // the hand-over: only to the peer's address, only from the peer's window, with its word - ONE conversation for a
+  // computer's tab (the takeoff app's site) and a phone's or tablet's frame (this site's own origin: js/plan-frame.js
+  // peerOf; tests/p8-takeoff-frame.test.mjs drives both)
   const ho = code(read("js/plan-handoff.js"));
-  assert.match(ho, /if \(ev\.source !== win \|\| ev\.origin !== TAKEOFF_ORIGIN\) return;/);
-  assert.match(ho, /if \(!d \|\| typeof d !== "object" \|\| d\.v !== VERSION \|\| d\.nonce !== word\) return;/);
+  assert.match(ho, /if \(!ev \|\| !peer \|\| ev\.source !== peer\.win \|\| ev\.origin !== peer\.origin\) return null;/);
+  assert.match(ho, /if \(!d \|\| typeof d !== "object" \|\| d\.v !== VERSION \|\| d\.nonce !== word\) return null;/);
   assert.equal((ho.match(/postMessage\(/g) || []).length, 2, "the plan and a fresh link, nothing else");
-  assert.equal((ho.match(/, TAKEOFF_ORIGIN\)/g) || []).length, 2, "each to the takeoff app's address only");
+  assert.equal((ho.match(/, peer\.origin\)/g) || []).length, 2, "each to the peer's address only");
+  assert.match(ho, /talk\(\{ win, origin: TAKEOFF_ORIGIN, via: "tab",/, "a tab's peer: the takeoff app's site");
+  assert.match(code(read("js/plan-frame.js")), /win: frame\.contentWindow,\s*origin: loc\.origin,\s*via: "frame",/, "the frame's: this site");
   assert.ok(!/postMessage\([^)]*["']\*["']/.test(ho), "never to any address");
   // the library: the bytes from OneDrive only through the broker's link, the link kept in memory only
   const lib = code(read("js/plan-library.js"));

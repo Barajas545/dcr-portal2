@@ -25,7 +25,8 @@
    the readers of sub_submissions), with "N waiting" (repo/submissions.js pendingCount, a dynamic import).
    Owner decision 2026-10-26 (4): Floor Plans in Projects for the people who see prices (an admin, or Sees prices:
    map/plans.js plansCardFor), opening the takeoff app's plans (takeoff-web #plans: the Plans Archive and the plans kept
-   on that device) in a new tab - a link only, nothing is asked of the database or the broker for it. The Plans
+   on that device) in a new tab - a link only, nothing is asked of the database or the broker for it; on a phone or a
+   tablet (owner decision Q4, 2026-11-04) the Plans Library instead, where plans open inside the portal. The Plans
    Library (owner 2026-10-26), for the same people: the plan files saved on this device (plans-library.html); this page
    keeps them up to date (pages/plan-buttons.js keepPlansFresh).
    The Books program, release B: the Accounting card (books-home.html) first in Office for whoever sees the Books, with
@@ -33,7 +34,7 @@
    card says who asked about each bill ("asked by Casey · 2 h ago", money_messages); the installed app's Home sends an
    accountant with financials to the Accounting page once per browser session (common2.js bounceFor). */
 import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday, bounceFor } from "../common2.js";
-import { PLANS_HOME, plansCardFor, planFilesFor } from "../map/plans.js";
+import { plansCardFor, planFilesFor, floorPlansCard, handheld } from "../map/plans.js";
 import { keepPlansFresh } from "../pages/plan-buttons.js";
 import { crewOf } from "../repo/employees.js";
 import { summary as taskSummary } from "../repo/tasks.js";
@@ -54,6 +55,9 @@ const $ = (id) => document.getElementById(id);
 export function cardsFor(p, opts) {
   const role = p.role;
   const hasCrew = !!(opts && opts.hasCrew);
+  // a phone or a tablet: Floor Plans opens the Plans Library (the Plans Archive is a computer's folder; plans open inside
+  // the portal there - owner decision Q4, 2026-11-04). opts.handheld stands in for the device (a test)
+  const plansCard = floorPlansCard(opts && opts.handheld !== undefined ? !!opts.handheld : handheld(typeof window !== "undefined" ? window : null));
   const sections = [];
   sections.push({ label: "Projects", cards: [
     { href: "board.html", ic: "📋", tt: "Project Board",
@@ -65,9 +69,9 @@ export function cardsFor(p, opts) {
         ? "Every stage, item and dollar — bids to paid — on one chart."
         : "Every stage, estimate item and quote of a project on one chart." },
     { href: "search.html", ic: "🔎", tt: "Search", ds: "Projects, contacts, tasks and files, by name, number, address or phone." },
-    /* 2026-10-26 (4): the takeoff app's plans, in a new tab (another site: ext) */
-    { href: PLANS_HOME, ic: "📐", tt: "Floor Plans", ext: true, show: plansCardFor(p),
-      ds: "Open plans in the takeoff app — the Plans Archive and the plans kept on this device." },
+    /* 2026-10-26 (4): the takeoff app's plans, in a new tab (another site: ext) - on a phone or a tablet the Plans
+       Library (map/plans.js floorPlansCard) */
+    { href: plansCard.href, ic: "📐", tt: "Floor Plans", ext: plansCard.ext, show: plansCardFor(p), ds: plansCard.ds },
     /* the Plans Library (owner 2026-10-26): the plan files saved on this device, kept up to date by themselves */
     { href: "plans-library.html", ic: "💾", tt: "Plans Library", show: planFilesFor(p),
       ds: "Plan files saved on this device: they open with no signal and update by themselves." },

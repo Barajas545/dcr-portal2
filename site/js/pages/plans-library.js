@@ -8,12 +8,17 @@
    Works offline: the page is in the service worker's list, and the sign-in this device holds is read without the
    network (boot's offline mode). Only for the people who see prices (map/plans.js planFilesFor): plan files carry
    prices, and the broker refuses anyone else; a person whose Sees prices was taken away finds their saved plans gone
-   from the device once this page (or Search, a project, Home) reads their profile online. */
+   from the device once this page (or Search, a project, Home) reads their profile online.
+
+   On a phone or a tablet (owner decision Q4, 2026-11-04) Open first brings the copy here up to the version OneDrive
+   holds (when online), then opens it in the portal's own copy of the takeoff app, in a frame over this page
+   (js/plan-library.js openOnDevice, js/plan-frame.js) - the home-screen app included: it shares this storage, so it is
+   no longer told to use Safari, and its saved plans download by themselves too. */
 
 import { boot, el, esc, confirmBox } from "./shell.js";
 import { planFilesFor } from "../map/plans.js";
 import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh, progressOf, progressHtml } from "../map/plan-library.js";
-import { handoffProblem, lastReady, iosHomeScreen, IOS_HOME } from "../plan-handoff.js";
+import { handoffProblem, lastReady, iosHomeRefused, usesFrame, IOS_HOME } from "../plan-handoff.js";
 import * as L from "../plan-library.js";
 
 const state = { me: null, rows: [], busy: false, timer: null, pics: {}, picsFor: null, picsBusy: false, picsAgain: false };
@@ -40,7 +45,7 @@ async function paintBar() {
 
 function paintTool() {
   const n = el("libTool");
-  if (iosHomeScreen()) {
+  if (iosHomeRefused()) {                                   // the frame switched off: the home-screen app is told to use Safari
     n.hidden = false;
     n.className = "lib-note warn";
     n.textContent = IOS_HOME;
@@ -212,7 +217,7 @@ async function checkNow() {
   } catch (e) {
     say((e && e.message) || "Could not check for new versions.", "warn");
   } finally {
-    if (!iosHomeScreen()) L.autoWork();                      // what already needs it goes on, checked or not
+    if (!iosHomeRefused()) L.autoWork();                     // what already needs it goes on, checked or not
     state.busy = false;
     queueRender();
   }
@@ -220,9 +225,18 @@ async function checkNow() {
 
 function act(what, id) {
   if (what === "open") {
+    const told = function (r) { say(r.ok ? (r.note || "") : handoffProblem(r), r.ok && !r.note ? "" : "warn"); queueRender(); };
+    if (usesFrame()) {
+      // a phone or a tablet: the newest version on this device first (its green bar here), then the frame
+      const r = state.rows.find((x) => x.itemId === id);
+      say("Opening…");
+      L.openOnDevice({ projectId: r && r.projectId, number: r && r.number, projectTitle: r && r.projectTitle, itemId: id, name: r && r.name },
+        told, function (text) { say(text); });
+      return;
+    }
     // in the click itself: the new tab opens now
     say("Opening in the takeoff app…");
-    L.open(id, function (r) { say(r.ok ? "" : handoffProblem(r), r.ok ? "" : "warn"); queueRender(); });
+    L.open(id, told);
     return;
   }
   if (what === "pause") { L.pause(id); return; }

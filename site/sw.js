@@ -92,6 +92,9 @@ const SHELL = [
   // the Plans Library (owner 2026-10-26): it opens with no signal
   "plans-library.html", "js/pages/plans-library.js", "js/plan-library.js", "js/plan-library-worker.js", "js/plan-handoff.js",
   "js/map/plan-library.js", "js/plan-pictures.js",
+  // the takeoff app inside the portal on a phone or tablet (v5): the frame only - the copy itself (takeoff/) is its own
+  // worker's, never this list's
+  "js/plan-frame.js",
   // the contacts' pictures (Books release A3): Search draws them
   "js/pages/avatar.js", "js/repo/contacts.js",
   // check-off notes (v4): the box on a note in the Log tab, the Board's panel and Log History

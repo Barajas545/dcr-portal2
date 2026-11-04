@@ -10,6 +10,7 @@
    * sortFiles(files)           the menu's order: by folder, then name;
    * fileNameFor(owner, id, v, stamp)  one download's file name on this device (never the same twice; plain characters);
    * statusOf(rec, job)         saved | outdated | downloading | paused | stopped | gone | denied | missing;
+   * deviceOpenStep / afterFetch  how a phone or a tablet opens a plan: from a copy on the device, saved first;
    * progressOf(row, done, size), progressHtml(p)  a row's green bar: filling while it saves, full once it is saved;
    * applyCheck(rec, answer)     a record after a plans_list answer for its project ({files} | null: not visible);
    * dueForCheck / needsWork     when to ask for new versions, and which saved plans to download again;
@@ -134,6 +135,29 @@ export function statusOf(rec, job, running) {
   if (rec.dl && (rec.dl.state === "paused" || rec.dl.state === "running")) return "paused";
   if (!rec.file) return "missing";
   return outdated(rec) ? "outdated" : "saved";
+}
+
+/**
+ * How a phone or a tablet opens a plan (owner decision Q4, 2026-11-04: always from a copy on the device, in the frame;
+ * js/plan-library.js openOnDevice). s: {have: a copy is saved here, online, writable: this browser keeps plans}.
+ *   "fetch"    online, and plans can be kept here: save it, update it or carry its download on first, then open it;
+ *   "open"     offline with a copy here: open that copy as it is;
+ *   "online"   online, but this browser cannot keep plans: open it over byte ranges (nothing kept), and say so;
+ *   "offline"  offline with nothing here: nothing can open.
+ */
+export function deviceOpenStep(s) {
+  if (!s || !s.online) return s && s.have ? "open" : "offline";
+  return s.writable ? "fetch" : "online";
+}
+
+/** After a "fetch" that failed (its error's code), with or without a copy here: "online" when there was no room or no
+    way to keep it (the newest version, nothing kept - an older copy here would only be a plan OneDrive has moved past);
+    "fail" when this person may not open it (refused: prices taken away; removed meanwhile); otherwise the copy here
+    ("open": OneDrive busy, the file no longer in OneDrive, a download that stopped), or "fail" without one. */
+export function afterFetch(code, have) {
+  if (code === "space" || code === "unsupported") return "online";
+  if (code === "forbidden" || code === "removed" || code === "signin") return "fail";
+  return have ? "open" : "fail";
 }
 
 /** The words of a status, for a row (`hasCopy`: a saved copy is on the device, so it still opens). */

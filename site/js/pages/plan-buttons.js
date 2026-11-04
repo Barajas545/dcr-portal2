@@ -11,12 +11,19 @@
    The Plans Library (owner 2026-10-26): for a person who sees prices (map/plans.js planFilesFor), 📐 opens a menu of
    the project's plan files instead (op plans_list): each one opens in the takeoff app (online, over byte ranges), or is
    saved on this device to open with no signal - and kept up to date by itself (js/plan-library.js). Offline, the menu
-   lists what is saved for the project. The page's own link (the Plans Archive on this computer) stays at its foot. */
+   lists what is saved for the project. The page's own link (the Plans Archive on this computer) stays at its foot.
+
+   On a phone or a tablet (owner decision Q4, 2026-11-04; map/plans.js handheld) the Plans Archive is no door (a folder
+   only Chrome or Edge on a computer opens): the menu's foot leads to the Plans Library only; Open puts the plan on the
+   device first (its green bar), then opens it in the portal's own copy of the takeoff app, in a frame over the page
+   (js/plan-library.js openOnDevice, js/plan-frame.js) - the home-screen app included, so it saves there too; and a
+   person who does not see prices gets a plain "Plans are for the people who see prices" from 📐 (data-plan-none)
+   instead of a dead end. openPlans() is the same 📐 for another door (the Takeoffs tab's). */
 
 import * as onedrive from "../repo/onedrive.js";
-import { planButtonHtml, planFilesFor, plansLink } from "../map/plans.js";
+import { planButtonHtml, planFilesFor, plansLink, handheld, PRICES_ONLY } from "../map/plans.js";
 import { folderLabel, sortFiles, fmtSize, statusText, progressOf, progressHtml } from "../map/plan-library.js";
-import { handoffProblem, iosHomeScreen, IOS_HOME } from "../plan-handoff.js";
+import { handoffProblem, iosHomeRefused, usesFrame, frameOpen, IOS_HOME } from "../plan-handoff.js";
 
 const wired = new WeakSet();
 let lib = null;
@@ -58,25 +65,34 @@ export async function paintPlans(root, me, still) {
   try { got = await onedrive.plansFor(ids); } catch (e) { return 0; }
   if (typeof still === "function" && !still()) return 0;
   const menu = planFilesFor(me);
+  const hand = handheld(typeof window !== "undefined" ? window : null);
   let drawn = 0;
   slots.forEach(function (s) {
-    const html = planButtonHtml(got[s.getAttribute("data-plans")], s.getAttribute("data-plans-style"), menu);
+    const html = planButtonHtml(got[s.getAttribute("data-plans")], s.getAttribute("data-plans-style"), menu, hand);
     s.innerHTML = html;
     s.hidden = !html;
     if (html) drawn++;
   });
-  if (menu && drawn && typeof root.addEventListener === "function" && !wired.has(root)) {
+  if ((menu || hand) && drawn && typeof root.addEventListener === "function" && !wired.has(root)) {
     wired.add(root);
     root.addEventListener("click", function (ev) {
-      const a = ev.target && ev.target.closest ? ev.target.closest("[data-plan-menu]") : null;
+      const a = ev.target && ev.target.closest ? ev.target.closest("[data-plan-menu], [data-plan-none]") : null;
       if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
       ev.preventDefault();
       const slot = a.closest("[data-plans]");
-      openMenu({ projectId: slot.getAttribute("data-plans"), number: a.getAttribute("data-plan-menu"),
-        title: slot.getAttribute("data-plans-title") || "", me, from: a, root });
+      const none = a.hasAttribute("data-plan-none");
+      openMenu({ projectId: slot.getAttribute("data-plans"), number: a.getAttribute(none ? "data-plan-none" : "data-plan-menu"),
+        title: slot.getAttribute("data-plans-title") || "", me, from: a, root, none });
     });
   }
   return drawn;
+}
+
+/** The 📐 of a project for another door (the Takeoffs tab's on a phone or a tablet): the menu of its plan files for a
+    person who sees prices, the plain "Plans are for the people who see prices" for anyone else. o: {projectId, number,
+    title, me, from}. */
+export function openPlans(o) {
+  openMenu(Object.assign({}, o, { none: !planFilesFor(o.me) }));
 }
 
 /* ── the menu ──────────────────────────────────────────────────────────── */
@@ -174,24 +190,40 @@ function say(text, kind) {
   n.className = "pl-say" + (kind ? " " + kind : "");
 }
 
+/** The menu's words for this device and person: its lead and its foot (pure: the tests read them). `none`: a person who
+    does not see prices on a phone or a tablet (no list, no library: PRICES_ONLY). */
+export function menuText(number, hand, none) {
+  if (none) return { lead: PRICES_ONLY, foot: "" };
+  return {
+    lead: hand
+      ? "Open puts the plan on this device first (the green bar), then opens it in the takeoff app — with no signal next time too. " +
+        "Saved plans update by themselves while the portal is open."
+      : "Open a plan in the takeoff app, or save it on this device to open with no signal. Saved plans update by themselves while the portal is open.",
+    // the Plans Archive is a folder only Chrome or Edge on a computer opens: never offered on a phone or a tablet
+    foot: '<a href="plans-library.html">Plans Library</a>' +
+      (hand ? "" : '<a href="' + esc(plansLink(number)) + '" target="_blank" rel="noopener">Plans Archive (Edge or Chrome on a computer) ↗</a>'),
+  };
+}
+
 async function openMenu(o) {
   closeMenu();
+  const hand = handheld(window);
+  const words = menuText(o.number, hand, !!o.none);
   const host = document.createElement("div");
   host.className = "pl-sheet";
   host.innerHTML = '<div class="pl-card" role="dialog" aria-modal="true" aria-labelledby="plMenuT">' +
     '<div class="pl-hd"><span id="plMenuT">📐 Plans for ' + esc(o.number) + "</span>" +
     '<button type="button" class="pl-x" aria-label="Close">✕</button></div>' +
     (o.title ? '<div class="pl-proj">' + esc(o.title) + "</div>" : "") +
-    '<div class="pl-lead">Open a plan in the takeoff app, or save it on this device to open with no signal. ' +
-    "Saved plans update by themselves while the portal is open.</div>" +
-    '<div class="pl-list"><div class="pl-empty">Loading the plan files…</div></div>' +
-    '<div class="pl-say" role="status" aria-live="polite"></div>' +
-    '<div class="pl-ft"><a href="plans-library.html">Plans Library</a>' +
-    '<a href="' + esc(plansLink(o.number)) + '" target="_blank" rel="noopener">Plans Archive (Edge or Chrome on a computer) ↗</a></div></div>';
+    '<div class="pl-lead">' + esc(words.lead) + "</div>" +
+    (o.none ? "" : '<div class="pl-list"><div class="pl-empty">Loading the plan files…</div></div>' +
+      '<div class="pl-say" role="status" aria-live="polite"></div>' +
+      '<div class="pl-ft">' + words.foot + "</div>") + "</div>";
   document.body.appendChild(host);
   const c = current = { host, from: o.from, o, files: null, off: null, onKey: null, repaint: null, keys: {} };
   c.onKey = function (e) {
-    if (current !== c) return;
+    // the takeoff app's frame over the menu has its own keys (its bar's Escape closes the frame, not this)
+    if (current !== c || frameOpen()) return;
     if (e.key === "Escape") { e.preventDefault(); closeMenu(); return; }
     if (e.key === "Tab") {
       // the sheet is modal: Tab goes round inside it
@@ -215,6 +247,8 @@ async function openMenu(o) {
     if (b && !b.disabled) act(c, b.getAttribute("data-pl-act"), b.getAttribute("data-id"));
   });
   setTimeout(function () { const x = host.querySelector(".pl-x"); if (x) x.focus(); }, 20);
+  // a person who does not see prices: the plain sentence, nothing asked of the broker, the library never loaded
+  if (o.none) return;
 
   try {
     c.L = await library();
@@ -276,7 +310,8 @@ async function paint(c) {
   const a = document.activeElement;
   const wasId = a && list.contains(a) ? a.getAttribute("data-id") || "" : null;
   const wasAct = wasId !== null && a.getAttribute ? a.getAttribute("data-pl-act") : null;
-  const ios = iosHomeScreen();
+  // an iPhone or iPad home-screen app with the frame switched off: no saving (IOS_HOME); with the frame, it saves here
+  const ios = iosHomeRefused();
   if (!rows.length) {
     list.innerHTML = notes || '<div class="pl-empty">' + esc(c.files ? "No plan files for this project in OneDrive." : "Nothing is saved on this device for this project.") + "</div>";
   } else {
@@ -297,11 +332,19 @@ function act(c, what, id) {
   if (!L) return;
   const f = c.files ? c.files.find((x) => x.id === id) : null;
   if (what === "open") {
+    const s = c.savedIndex && c.savedIndex[id];
+    const done = function (r) { if (current === c) say(r.ok ? (r.note || "") : handoffProblem(r), r.ok && !r.note ? "" : "warn"); };
+    if (usesFrame()) {
+      // a phone or a tablet: on this device first (the row's green bar), then the frame - nothing opens a tab, so
+      // nothing has to happen inside the click; the menu closed meanwhile opens nothing
+      say("Opening…");
+      L.openOnDevice({ projectId: c.o.projectId, number: c.o.number, projectTitle: c.o.title, itemId: id, name: (f || s || {}).name, file: f,
+        still: function () { return current === c; } }, done, function (text) { if (current === c) say(text); });
+      return;
+    }
     // in the click itself: the new tab must open now, before anything is awaited
     say("Opening in the takeoff app…");
-    const done = function (r) { if (current === c) say(r.ok ? "" : handoffProblem(r), r.ok ? "" : "warn"); };
     // a copy saved here opens from the device (no signal needed); otherwise the file in OneDrive, over byte ranges
-    const s = c.savedIndex && c.savedIndex[id];
     if (s && s.file) L.open(id, done);
     else if (f) L.openOnline(c.o.projectId, c.o.number, f, done);
     return;

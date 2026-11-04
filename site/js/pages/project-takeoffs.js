@@ -14,8 +14,12 @@
 import * as estRepo from "../repo/estimates.js";
 import { LIVE as ONEDRIVE_LIVE } from "../repo/onedrive.js";
 import { takeoffCardsHtml, esc } from "./est-render.js";
-// the link is built in one place (map/plans.js: the plan buttons of Search and the project header use it too)
-import { TAKEOFF_WEB, plansLink } from "../map/plans.js";
+// the link is built in one place (map/plans.js: the plan buttons of Search and the project header use it too); on a
+// phone or a tablet the Plans Archive is no door (a computer's folder: owner decision Q4, 2026-11-04) - the bar's 📐
+// opens the project's 📐 menu there instead (pages/plan-buttons.js openPlans: "Plans are for the people who see
+// prices" for anyone else)
+import { TAKEOFF_WEB, plansLink, handheld } from "../map/plans.js";
+import { openPlans } from "./plan-buttons.js";
 
 export { TAKEOFF_WEB, plansLink };
 
@@ -32,6 +36,11 @@ export function render(ctx, el) {
   }, true);
   host.addEventListener("click", function (e) {
     if (e.target.closest && e.target.closest("#tkoReload")) load(ctx);
+    const plans = e.target.closest ? e.target.closest("#tkoPlans") : null;
+    if (plans) {
+      openPlans({ projectId: ctx.pid, number: (ctx.project && ctx.project.internalIDNumber) || "", title: plans.getAttribute("data-title") || "",
+        me: ctx.me, from: plans });
+    }
   });
   load(ctx);
 }
@@ -57,8 +66,13 @@ function draw(ctx) {
   const priced = state.prices && list.length && list.every(function (t) { return t.priced; }) && lines > 0;
   const all = "report-takeoff.html?id=" + encodeURIComponent(ctx.pid) + "&amp;tk=all";
   const number = ctx.project && ctx.project.internalIDNumber;
-  host.querySelector("#tkoBar").innerHTML = '<a class="pj-btn pj-btn-sm" target="_blank" rel="noopener" href="' + esc(plansLink(number)) +
-    '" title="The floor plans and .takeoff files of this project in takeoff-web (on a computer, in Chrome or Edge)">📐 Plans Archive (takeoff-web) ↗</a>' +
+  const hand = handheld(typeof window !== "undefined" ? window : null);
+  const title = (typeof document !== "undefined" && document.getElementById("pjTitle") && document.getElementById("pjTitle").textContent) || "";
+  host.querySelector("#tkoBar").innerHTML = (hand
+    ? '<button type="button" class="pj-btn pj-btn-sm" id="tkoPlans" aria-haspopup="dialog" data-title="' + esc(title) +
+      '" title="This project\'s .takeoff files: open one here, or save it on this device">📐 Plans</button>'
+    : '<a class="pj-btn pj-btn-sm" target="_blank" rel="noopener" href="' + esc(plansLink(number)) +
+      '" title="The floor plans and .takeoff files of this project in takeoff-web (on a computer, in Chrome or Edge)">📐 Plans Archive (takeoff-web) ↗</a>') +
     (list.length > 1
     ? '<a class="pj-btn pj-btn-sm pj-btn-primary" href="' + all + '">🖨 All takeoffs (material list)</a>' +
       (priced ? '<a class="pj-btn pj-btn-sm" href="' + all + '&amp;kind=quote">🖨 All (material quote)</a>' : "") : "") +
@@ -66,8 +80,9 @@ function draw(ctx) {
     '<span class="es-count">' + list.length + " takeoff" + (list.length === 1 ? "" : "s") + " · " + lines + " line" + (lines === 1 ? "" : "s") +
     " · edited in DCR Desktop 2" + (ctx.prices ? "" : " · prices hidden") + "</span>";
   host.querySelector("#tkoList").innerHTML = list.length ? takeoffCardsHtml(list, { show: state.prices, pid: ctx.pid, open: state.open })
-    : '<div class="pj-empty">No takeoffs yet. Takeoffs are made in DCR Desktop 2; floor plans and .takeoff files are in the Plans Archive ' +
-      "(takeoff-web opens it on a computer, in Chrome or Edge). " +
+    : '<div class="pj-empty">No takeoffs yet. Takeoffs are made in DCR Desktop 2; ' +
+      (hand ? "the .takeoff files open from 📐 Plans above. "
+        : "floor plans and .takeoff files are in the Plans Archive (takeoff-web opens it on a computer, in Chrome or Edge). ") +
       (ONEDRIVE_LIVE ? "Floor-plan PDFs added in the Files tab go to the project's OneDrive Floor Plans folder."
         : "Floor-plan PDFs are kept in the project's OneDrive Floor Plans folder.") + "</div>";
 }
