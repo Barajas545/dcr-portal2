@@ -132,6 +132,9 @@ site/                       published as is
   js/onedrive-upload.js     chunks straight from the browser to the upload URL (no sign-in header), resumable within the
                             page, kept in memory only (never the upload queue)
   js/pages/onedrive-selftest.js  the admin's OneDrive self-test on the test project A000T2 (loaded only when clicked)
+  takeoff/                  the portal's own copy of takeoff-web at one commit (tools/vendor-takeoff.mjs; VERSION.json),
+                            shown on phones and tablets by js/plan-frame.js (see "The takeoff app inside the portal")
+  js/plan-frame.js          the full-screen frame of the takeoff copy (Close, the page under it held still, its worker first)
   js/map/plans.js, js/pages/plan-buttons.js  the plan buttons (owner 2026-10-26): takeoff-web's link, the 📐 button, the
                             Floor Plans card's rule (pure); the slots of Search and the project header filled from one
                             plans_for call (see "The plan buttons and the Floor Plans card")
@@ -181,7 +184,9 @@ tools/e2e-p7-onedrive.mjs   the Files tab's OneDrive part as every role (what is
                             from a phone, opening a file, Make the folder, the admin's self-test; phone and desk, light
                             and dark)
 tools/e2e-p7-plans.mjs      the plan buttons and the Floor Plans card: Search and the project header as a field person
-                            and an admin, the card per role, the takeoff folder switched off (phone and desk, light and dark)
+                            and an admin, the card per role, the takeoff folder switched off (phone and desk, light and dark);
+                            a tablet opening a plan in the takeoff frame (4b)
+tools/vendor-takeoff.mjs    the takeoff copy at site/takeoff/ from one takeoff-web commit (see "The takeoff app inside the portal")
 tools/schema-check-p7-onedrive.mjs  the same modules through DCR Desktop 2's OWN broker (handler.ts with its fake Graph) and
                             the REAL migrations (20261028000200_onedrive): drift, gates, the files row, plans_for once the
                             broker has it (schema-check runs it)
@@ -656,6 +661,31 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   `handler.ts` once it has the op (a line says the checks wait before that); `tools/e2e-p7-plans.mjs` in a real browser
   (Search and the project page as a field person and an admin, the card per role, the takeoff folder switched off in the
   demo with `localStorage` `dcr2-demo-takeoff` = `off`, 375 px phones, light and dark).
+
+## The takeoff app inside the portal on phones and tablets (owner 2026-11-04, iPad package P3) in short
+
+- **Why.** An iPhone or iPad home-screen app opens another site without an opener and in Safari (whose storage is not the
+  app's), so the hand-over to takeoff-web on github.io cannot work there. So on a phone or a tablet (`map/plans.js`
+  `handheld`: takeoff-web's own rule - an iPad that calls itself a Mac, an iPhone, Android) the takeoff app opens INSIDE
+  the portal, in the home-screen app and in Safari alike: the portal's own copy of takeoff-web at `site/takeoff/`, in a
+  full-screen frame (`js/plan-frame.js`). Computers keep the new tab to github.io (and their Plans Archive folder).
+  `PLAN_FRAME` in `map/plans.js` switches it off (back to the tab everywhere, the home-screen app told to use Safari).
+- **The copy.** `node tools/vendor-takeoff.mjs <takeoff-web checkout> <commit>` copies only the shipped files of that
+  commit from git (never the working tree), writes a strict page policy into `takeoff/index.html` (this site only, the
+  OneDrive host for a plan opened online, no inline script) and `takeoff/VERSION.json` (a sha256 per file;
+  `tests/p8-takeoff-frame.test.mjs` checks them). It refuses an inline script; `--allow-inline-boot` (main f499435 only)
+  moves the UI-mode boot into `takeoff/js/ui-mode-boot.js` - re-vendor takeoff-web's P2 commit without it. It reports, and
+  never fixes, what the portal's code rules would say (the guard lists the copy's exemptions by file). `.gitattributes`
+  keeps the copy byte-exact. Its own worker (`takeoff/sw.js`, scope `takeoff/`) keeps it offline; the portal's worker
+  (v5) lets everything under `takeoff/` through.
+- **The hand-over** is the computer's (`js/plan-handoff.js` `talk`: ptt-ready, ptt-open, ptt-renew/ptt-link,
+  ptt-offline), with the frame's window and this site's origin as the peer. The frame registers the copy's worker and
+  waits for it before loading (else the app reloads itself under the portal's worker and loses the word).
+- **Open on a phone or a tablet** puts the plan on the device first (the Plans Library's download, its green bar), then
+  hands it over as a file; no room: it opens online and says so. The doors that led to the Plans Archive (📐, the menu's
+  foot, Floor Plans, the Takeoffs tab) lead to the 📐 menu or the Plans Library there; people without prices are told
+  "Plans are for the people who see prices". Save-back (P4) is not in this package.
+- **Tests.** `tests/p8-takeoff-frame.test.mjs`; `tools/e2e-p7-plans.mjs` 4b walks a tablet through it in headless Chrome.
 
 ## Rules for every page
 
