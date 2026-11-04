@@ -9,7 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 import * as H from "../site/js/plan-handoff.js";
 import * as F from "../site/js/plan-frame.js";
@@ -301,7 +301,9 @@ test("a copy's name (Q3): the demo broker's is the real broker's (handler.ts cop
   }
   // the real broker's own (DCR Desktop 2's handler.ts, offline: a pure function) - the same name for every case
   let broker = null;
-  try { broker = await import("file:///C:/DCR/wt/ipad-broker/supabase/functions/onedrive/handler.ts"); } catch (e) { broker = null; }
+  // DCR Desktop 2 where tools/schema-check.mjs looks for it: DCR_DESKTOP2_DIR, else next to this repository
+  const d2 = process.env.DCR_DESKTOP2_DIR || fileURLToPath(new URL("../../DCR Desktop 2/", import.meta.url));
+  try { broker = await import(pathToFileURL(join(d2, "supabase", "functions", "onedrive", "handler.ts")).href); } catch (e) { broker = null; }
   if (!broker || typeof broker.copyName !== "function") return;            // not on this machine: the rule above stands
   assert.equal(broker.MAX_TAKEOFF_PATH, 326);
   for (const [plan, n, f] of cases) {
