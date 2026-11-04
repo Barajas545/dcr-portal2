@@ -16,8 +16,15 @@
      without prices, a lead, a field person or a view-only person; a new tab at takeoff-web's #plans;
    - the takeoff folder not set up (the demo's switch, localStorage "dcr2-demo-takeoff" = "off"): no button anywhere,
      nothing said, the page as before;
+   - a tablet (an iPad that calls itself a Mac, with touch; owner decision Q4, 2026-11-04): the Floor Plans card and
+     the header's 📐 lead to the Plans Library (never github.io), the menu's foot has no Plans Archive; Open saves the
+     plan on the device first, then shows the portal's copy of the takeoff app (/takeoff/) in the frame over a page held
+     still; a ready said from inside the frame (for takeoff-web main f499435, which does not talk to a same-site parent
+     yet: its P2 does) brings ptt-open with the saved plan's File into the frame; a ready from anywhere else, or with
+     another word, is never answered; Close with nothing unsaved closes at once. A tablet without prices: 📐 says "Plans
+     are for the people who see prices", and nothing is asked of the broker;
    - phone (375 px) and desktop, light and dark: never sideways; no Content-Security-Policy violation and no console
-     error on any page.
+     error on any page (the frame's page included).
    Screenshots (--shots all): plans_<what>_<light|dark>_<desktop|phone>.png into --out.
    Prints a JSON summary; exit code 1 when a check failed. */
 import { mkdirSync } from "node:fs";
@@ -201,6 +208,115 @@ async function main() {
       check("off: no header button on A267, no notice", await O.eval("document.getElementById('pjPlans').hidden && !document.getElementById('pjNotice').textContent"));
       await O.eval("localStorage.removeItem('dcr2-demo-takeoff'); true");
     }, O);
+
+    /* ── 4b. a tablet (owner decision Q4, 2026-11-04): an iPad that calls itself a Mac, touch. The 📐 menu saves the plan
+       on the device first (the library's own download), then opens the portal's copy of the takeoff app in the frame;
+       the frame's app says ready (takeoff-web main f499435 does not talk to a same-site parent yet - takeoff-web's P2
+       does - so the test says it for the app, from inside the frame) and the portal posts the plan File there ── */
+    const TABLET_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
+    const T = await newPage(cdp, "tablet-admin", OUT); pages.push(T);
+    await attempt("a tablet: 📐 saves the plan on the device first, then opens it in the frame; the portal posts the File to the frame only", async () => {
+      await T.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
+      await T.size(1024, 768, true);
+      await signIn(T, "admin", "dashboard.html");
+      const card = await T.eval("(() => { const c = Array.from(document.querySelectorAll('.hm-card')).find(x => /Floor Plans/.test(x.textContent)); const a = c && c.querySelector('a.hm-card-go'); return a ? { href: a.getAttribute('href'), target: a.target } : null; })()");
+      check("tablet: the Floor Plans card opens the Plans Library (no Plans Archive on a tablet)", card && card.href === "plans-library.html" && !card.target, JSON.stringify(card));
+      await T.goto(base + "/project.html?id=" + J.sandbox, 400);
+      await T.until("!!document.querySelector('#pjPlans:not([hidden]) a[data-plan-menu]')", 10000);
+      const btn = await T.eval("(() => { const a = document.querySelector('#pjPlans a'); return { href: a.getAttribute('href'), target: a.target }; })()");
+      check("tablet: the header's 📐 leads to the Plans Library, never github.io", btn.href === "plans-library.html" && !btn.target, JSON.stringify(btn));
+      await T.eval("document.querySelector('#pjPlans a[data-plan-menu]').click(); true");
+      await T.until("document.querySelectorAll('.pl-sheet [data-pl-act=\"open\"]').length > 0", 10000);
+      const foot = await T.eval("document.querySelector('.pl-sheet .pl-ft').innerText");
+      check("tablet: the menu's foot has no Plans Archive", /Plans Library/.test(foot) && !/Plans Archive/.test(foot), foot);
+      // the conversation, watched from the page: every message the frame's app sends, and what the portal answers
+      await T.eval("window.__heard = []; window.addEventListener('message', (e) => window.__heard.push({ type: e.data && e.data.type, origin: e.origin," +
+        " fromFrame: !!document.getElementById('ptfFrame') && e.source === document.getElementById('ptfFrame').contentWindow })); true");
+      await T.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"]').click(); true");
+      await T.until("!!document.querySelector('#ptfShell.open #ptfFrame[src]')", 20000);
+      const shown = await T.eval("(() => { const f = document.getElementById('ptfFrame'); return { src: f.getAttribute('src'), title: document.getElementById('ptfTitle').textContent," +
+        " inert: !!document.getElementById('dcr2Topbar').inert, overflow: document.body.style.overflow }; })()");
+      check("tablet: the frame shows the portal's copy at #portal=<word>, over a page held still", /^takeoff\/index\.html#portal=[A-Za-z0-9_-]{24}$/.test(shown.src) &&
+        /^📐 .+\.takeoff$/.test(shown.title) && shown.inert && shown.overflow === "hidden", JSON.stringify(shown));
+      const saved = await T.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
+        " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
+        " return all.map(r => ({ file: !!r.file, size: r.size, dl: r.dl })); })()");
+      check("tablet: the plan was saved on the device first (a whole copy in the Plans Library)", saved.length === 1 && saved[0].file && saved[0].size > 0 && !saved[0].dl, JSON.stringify(saved));
+      // the frame's app: its page is the vendored copy, served as published (once it has loaded: its window.TakeoffApp)
+      await T.until("!!(document.getElementById('ptfFrame').contentWindow.TakeoffApp) && document.getElementById('ptfFrame').contentDocument.readyState === 'complete'", 15000);
+      const tree = await T.call("Page.getFrameTree");
+      const child = (tree.frameTree.childFrames || []).find((c) => /\/takeoff\/index\.html/.test(c.frame.url));
+      check("tablet: the frame's page is /takeoff/index.html (this site)", !!child && new URL(child.frame.url).origin === base, child ? child.frame.url : JSON.stringify(tree.frameTree.childFrames || []));
+      // code run as the frame's own page (an isolated world of it: what it posts comes from the frame's window); a world
+      // whose document went (the app's own worker taking over, say) is made again
+      let world = null;
+      const inFrame = async (expr) => {
+        for (let i = 0; i < 2; i++) {
+          if (!world) world = await T.call("Page.createIsolatedWorld", { frameId: child.frame.id, worldName: "e2e-takeoff-p2-stand-in" });
+          try {
+            const r = await T.call("Runtime.evaluate", { expression: expr, contextId: world.executionContextId, awaitPromise: true, returnByValue: true });
+            if (r.exceptionDetails) throw new Error("in the frame: " + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text));
+            return r.result.value;
+          } catch (e) {
+            if (i || !/Cannot find context/.test(e.message)) throw e;
+            world = null;
+          }
+        }
+        return undefined;
+      };
+      const word = shown.src.split("#portal=")[1];
+      // what takeoff-web P2's embedded profile will do: tell the parent it is ready, take the plan only from the parent, this site
+      const got = await inFrame("new Promise((resolve) => { const t = setTimeout(() => resolve(null), 15000);" +
+        " window.addEventListener('message', async (e) => { if (e.source !== window.parent || e.origin !== location.origin || !e.data || e.data.type !== 'ptt-open') return;" +
+        " clearTimeout(t); const d = e.data; const head = d.file ? await d.file.slice(0, 9).text() : '';" +
+        " resolve({ kind: d.kind, v: d.v, nonce: d.nonce, name: d.name, size: d.size, isFile: d.file instanceof Blob, fileSize: d.file ? d.file.size : -1, head, canSave: 'canSave' in d, url: 'url' in d }); });" +
+        " window.parent.postMessage({ type: 'ptt-ready', v: 1, nonce: " + JSON.stringify(word) + " }, location.origin); })");
+      check("tablet: ptt-ready from the frame -> ptt-open with the plan's File arrives in the frame (kind file, PDFCACHE1, its size; no link, no canSave yet)",
+        got && got.kind === "file" && got.v === 1 && got.nonce === word && got.isFile && got.fileSize === got.size && got.size === saved[0].size &&
+        got.head === "PDFCACHE1" && !got.canSave && !got.url, JSON.stringify(got));
+      const heard = await T.eval("window.__heard");
+      check("tablet: the portal heard the ready from the frame's own window, on this site", heard.some((h) => h.type === "ptt-ready" && h.fromFrame && h.origin === base), JSON.stringify(heard));
+      // a stranger (this site, but not the frame's window) is never answered: a second ready from the page itself
+      // (the count is kept on the frame's document, which every world of it shares)
+      await inFrame("document.documentElement.dataset.e2eOpens = '0'; window.addEventListener('message', (e) => { if (e.data && e.data.type === 'ptt-open')" +
+        " document.documentElement.dataset.e2eOpens = String(Number(document.documentElement.dataset.e2eOpens) + 1); }); true");
+      await T.eval("window.postMessage({ type: 'ptt-ready', v: 1, nonce: " + JSON.stringify(word) + " }, location.origin); true");
+      await inFrame("window.parent.postMessage({ type: 'ptt-ready', v: 1, nonce: 'Zk3pQ9_x-7LmN2aBcD4e' }, location.origin); true");
+      await sleep(800);
+      const opens = await T.eval("document.getElementById('ptfFrame').contentDocument.documentElement.dataset.e2eOpens");
+      check("tablet: a ready from the page itself, or with another word, is never answered (one plan, once)", opens === "0", opens);
+      // the copy's own worker was registered before its page loaded: the page is that worker's, and never reloaded itself
+      const ctl = await T.eval("(() => { const w = document.getElementById('ptfFrame').contentWindow; const c = w.navigator.serviceWorker.controller;" +
+        " return { nav: (w.performance.getEntriesByType('navigation')[0] || {}).type, controller: c ? new URL(c.scriptURL).pathname : null }; })()");
+      check("tablet: the frame's page was never reloaded (its own worker, takeoff/sw.js, from the start)", ctl.nav === "navigate" &&
+        (ctl.controller === null || ctl.controller === "/takeoff/sw.js"), JSON.stringify(ctl));
+      if (SHOTS !== "none") {
+        await T.call("Page.bringToFront").catch(() => null);
+        const took = await Promise.race([T.shot("plans_frame_tablet.png"), sleep(25000).then(() => null)]);
+        if (took) shots.push(took);
+      }
+      // Close: nothing unsaved in the app -> at once; the page under it comes back
+      await T.eval("document.getElementById('ptfClose').click(); true");
+      await T.until("!document.querySelector('#ptfShell.open') && !document.getElementById('ptfFrame')", 5000);
+      const after = await T.eval("({ inert: !!document.getElementById('dcr2Topbar').inert, overflow: document.body.style.overflow, menu: !!document.querySelector('.pl-sheet') })");
+      check("tablet: Close with nothing unsaved closes at once, and the page (and the menu) come back", !after.inert && after.overflow === "" && after.menu, JSON.stringify(after));
+    }, T);
+    const TF = await newPage(cdp, "tablet-field", OUT); pages.push(TF);
+    await attempt("a tablet without prices: 📐 says 'Plans are for the people who see prices' (no dead end, nothing asked of the broker)", async () => {
+      await TF.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
+      await TF.size(1024, 768, true);
+      await signIn(TF, "field", "dashboard.html");
+      await TF.goto(base + "/project.html?id=" + J.sandbox, 400);
+      await TF.until("!!document.querySelector('#pjPlans:not([hidden]) a[data-plan-none]')", 10000);
+      await TF.eval("(() => { const c = DCR2Demo.engine; const inv = c.invoke; window.__lists = 0; c.invoke = function (ctx, name, body) {" +
+        " if (name === 'onedrive' && body && (body.op === 'plans_list' || body.op === 'plan_link')) window.__lists++; return inv.apply(this, arguments); }; return true; })()");
+      await TF.eval("document.querySelector('#pjPlans a[data-plan-none]').click(); true");
+      await TF.until("!!document.querySelector('.pl-sheet .pl-lead')", 5000);
+      const text = await TF.eval("document.querySelector('.pl-sheet').innerText");
+      check("tablet, no prices: the plain sentence, no list, no Plans Archive", /Plans are for the people who see prices/.test(text) && !/Plans Archive|Open/.test(text), text);
+      check("tablet, no prices: no plans_list or plan_link asked", (await TF.eval("window.__lists")) === 0);
+      await TF.eval("document.querySelector('.pl-sheet .pl-x').click(); true");
+    }, TF);
 
     /* ── 5. no security-policy violation, no console error ─────────────── */
     for (const p of pages) {

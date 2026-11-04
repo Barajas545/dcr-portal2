@@ -24,13 +24,59 @@
    focus goes back where it was afterwards.
 
    On an iPhone or iPad the frame follows the visual viewport (the on-screen keyboard and the home-screen app's
-   translucent status bar: safe-area insets), so its bar never slides under either. Browser-only module (node tests
-   import its pure helpers: peerOf, closeQuestion, unsavedIn, viewportBox). */
+   translucent status bar: safe-area insets), so its bar never slides under either.
+
+   The copy's page loads only once its own service worker is registered (takeoffWorker: else the app reloads itself
+   under the portal's worker on a first visit and loses the hand-over's word). Browser-only module (node tests import
+   its pure helpers: peerOf, closeQuestion, unsavedIn, viewportBox, takeoffWorker). */
 
 /** What the frame's page may use: a same-site page has these by default anyway (their allowlists are 'self'); said so
     that its Save can still reach the share sheet (web-share) and a link be copied, whatever a browser's default. No
     sandbox: the copy is this site's own reviewed program, held by its own page policy (no inline script). */
 export const FRAME_ALLOW = "fullscreen; clipboard-write; web-share";
+
+/** The copy's own service worker - the script and scope takeoff-web registers itself (one registration) - and how long
+    the frame's page waits for it (offline, or a browser without workers: it loads anyway). */
+export const TAKEOFF_SW = "takeoff/sw.js";
+export const TAKEOFF_SCOPE = "takeoff/";
+/** A first install keeps the app's whole program (about a megabyte): a slow phone may need a while. */
+export const WORKER_WAIT_MS = 20000;
+const READYING = "Getting the takeoff app ready on this device…";
+
+/**
+ * The copy's own worker registered and ACTIVE before its page loads in the frame. Otherwise, on a first visit, the
+ * frame's page belongs to the portal's worker (its scope "./" covers takeoff/; site/sw.js only lets the requests
+ * through), and when the copy's own worker then takes it over (clients.claim) the app sees a new controller and reloads
+ * itself as for an update - losing the #portal=<word> it was opened with, so the plan never arrives (seen in headless
+ * Chrome, 2026-11-04, also with the registration made first but not yet active). Active first, the frame's page is that
+ * worker's from the start, and its claim changes nothing. An existing registration is used as it is (no second update
+ * check). `nav`, `base`: the browser's navigator and this page's address (a test's stand-ins). -> the registration
+ * (active, or still installing after `ms`), or null (no workers here, a refusal: offline before it was ever kept).
+ * Never throws.
+ */
+export function takeoffWorker(nav, base, ms) {
+  const sw = nav && nav.serviceWorker;
+  if (!sw || typeof sw.register !== "function") return Promise.resolve(null);
+  const scope = new URL(TAKEOFF_SCOPE, base).href;
+  return Promise.resolve(typeof sw.getRegistration === "function" ? sw.getRegistration(scope) : null)
+    .then(function (reg) { return reg && reg.scope === scope ? reg : sw.register(new URL(TAKEOFF_SW, base).href, { scope }); })
+    .then(function (reg) { return activeOf(reg, ms === undefined ? WORKER_WAIT_MS : ms); })
+    .catch(function () { return null; });
+}
+
+/** `reg` once it has an active worker (an install that fails, "redundant", or `ms` passing: as it is). */
+export function activeOf(reg, ms) {
+  if (!reg || reg.active) return Promise.resolve(reg || null);
+  const w = reg.installing || reg.waiting;
+  if (!w || typeof w.addEventListener !== "function") return Promise.resolve(reg);
+  return new Promise(function (resolve) {
+    const t = setTimeout(done, ms);
+    function done() { clearTimeout(t); w.removeEventListener("statechange", on); resolve(reg); }
+    function on() { if (reg.active || w.state === "activated" || w.state === "redundant") done(); }
+    w.addEventListener("statechange", on);
+    on();
+  });
+}
 
 let shell = null;
 let active = null;          // {frame, onClose, back, inerted, overflow}
@@ -176,7 +222,6 @@ export function open(link, opts) {
   frame.id = "ptfFrame";
   frame.title = "Takeoff app";
   frame.setAttribute("allow", FRAME_ALLOW);
-  frame.src = String(link);
   // the rest of the page: still, out of reach of taps and of the focus (inert), until the frame closes
   const inerted = [];
   Array.prototype.forEach.call(document.body.children, function (n) {
@@ -191,6 +236,18 @@ export function open(link, opts) {
   el("ptfTitle").textContent = "📐 " + (o.title ? String(o.title).slice(0, 120) : "Takeoff");
   say("");
   host.querySelector(".ptf-body").appendChild(frame);
+  // the copy's page once its own worker is active (takeoffWorker), or after WORKER_WAIT_MS whatever happens; the
+  // frame's window (the hand-over's peer) is the same before and after
+  let started = false;
+  const go = function () {
+    if (started || !active || active.frame !== frame) return;
+    started = true;
+    if (el("ptfSay").textContent === READYING) say("");
+    frame.src = String(link);
+  };
+  takeoffWorker(navigator, location.href).then(go, go);
+  setTimeout(go, WORKER_WAIT_MS + 500);
+  setTimeout(function () { if (!started && active && active.frame === frame && !el("ptfSay").textContent) say(READYING); }, 600);
   host.classList.add("open");
   fit();
   if (!listening) {

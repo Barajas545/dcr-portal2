@@ -496,12 +496,67 @@ test("the frame's Close: at once when nothing would be lost; asked while the app
   assert.equal(F.open("takeoff/index.html#portal=" + WORD), null, "no page (node): nothing opens");
 });
 
+test("the copy's own worker is registered before its page loads in the frame (else the app reloads itself under the portal's worker and loses the word)", async () => {
+  const F = await import("../site/js/plan-frame.js");
+  const BASE = HERE + "/search.html?q=A900";
+  const calls = [];
+  const nav = (regs) => ({ serviceWorker: {
+    getRegistration: async (u) => { calls.push(["get", u]); return regs[u] || regs[HERE + "/"] || undefined; },
+    register: async (u, o) => { calls.push(["register", u, o.scope]); return { scope: o.scope }; } } });
+  // none of its own yet (getRegistration answers the portal's, scope "/"): registered, the script and scope takeoff-web uses
+  assert.deepEqual(await F.takeoffWorker(nav({ [HERE + "/"]: { scope: HERE + "/" } }), BASE), { scope: HERE + "/takeoff/" });
+  assert.deepEqual(calls, [["get", HERE + "/takeoff/"], ["register", HERE + "/takeoff/sw.js", HERE + "/takeoff/"]]);
+  assert.equal(new URL(F.TAKEOFF_SW, BASE).pathname, "/takeoff/sw.js");
+  assert.ok(existsSync(join(SITE, F.TAKEOFF_SW)), "the copy's own worker is published");
+  // already there: used as it is (no second update check)
+  calls.length = 0;
+  const mine = { scope: HERE + "/takeoff/" };
+  assert.equal(await F.takeoffWorker(nav({ [HERE + "/takeoff/"]: mine }), BASE), mine);
+  assert.deepEqual(calls, [["get", HERE + "/takeoff/"]]);
+  // no workers here, or a refusal (offline, a private window): null, never a throw - the page loads anyway
+  assert.equal(await F.takeoffWorker({}, BASE), null);
+  assert.equal(await F.takeoffWorker({ serviceWorker: { register: async () => { throw new Error("made up"); } } }, BASE), null);
+  assert.ok(F.WORKER_WAIT_MS >= 5000 && F.WORKER_WAIT_MS <= 30000, "time for a first install on a slow phone, but bounded");
+  // ACTIVE first: an installing worker is waited for until it is activated (or fails, or the wait ends)
+  const worker = () => {
+    const ls = [];
+    return { state: "installing", addEventListener: (t, fn) => ls.push(fn), removeEventListener: (t, fn) => ls.splice(ls.indexOf(fn), 1),
+      go(state) { this.state = state; ls.slice().forEach((fn) => fn()); }, ls };
+  };
+  for (const end of ["activated", "redundant"]) {
+    const w = worker();
+    const reg = { scope: HERE + "/takeoff/", installing: w, active: null };
+    let got = null;
+    const p = F.activeOf(reg, 60000).then((r) => { got = r; });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(got, null, "still installing: the page waits");
+    w.go("installed");
+    await new Promise((r) => setImmediate(r));
+    assert.equal(got, null);
+    if (end === "activated") reg.active = w;
+    w.go(end);
+    await p;
+    assert.equal(got, reg, end);
+    assert.equal(w.ls.length, 0, "its listener goes");
+  }
+  const slow = { scope: HERE + "/takeoff/", installing: worker(), active: null };
+  assert.equal(await F.activeOf(slow, 5), slow, "a wait that ends: the page loads anyway");
+  assert.equal(await F.activeOf(null, 5), null);
+  const on = { active: {} };
+  assert.equal(await F.activeOf(on, 5), on);
+  // the vendored app does reload itself on a new controller - the reason for all this
+  assert.match(read("takeoff/js/main.js"), /const hadController = !!navigator\.serviceWorker\.controller;/);
+});
+
 test("plan-frame.js: a same-site frame of the copy, over everything, with Close; the page under it held still; it never posts itself", () => {
   const src = read("js/plan-frame.js");
   const js = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'])\/\/[^\n]*/g, "$1");
   assert.ok(!/postMessage\(/.test(js), "the conversation is plan-handoff.js's alone");
   assert.match(js, /export const FRAME_ALLOW = "fullscreen; clipboard-write; web-share";/);
-  assert.match(js, /frame\.setAttribute\("allow", FRAME_ALLOW\);\s*frame\.src = String\(link\);/);
+  assert.match(js, /frame\.setAttribute\("allow", FRAME_ALLOW\);/);
+  // the copy's page only once its own worker is active (or after a while whatever happens)
+  assert.match(js, /takeoffWorker\(navigator, location\.href\)\.then\(go, go\);\s*setTimeout\(go, WORKER_WAIT_MS \+ 500\);/);
+  assert.match(js, /started = true;\s*if \(el\("ptfSay"\)\.textContent === READYING\) say\(""\);\s*frame\.src = String\(link\);/);
   assert.ok(!/sandbox|srcdoc|github\.io|https?:\/\//.test(js), "no other site, no inline document");
   assert.match(js, /const frame = document\.createElement\("iframe"\);/, "a new frame (a new window) each time");
   assert.match(js, /try \{ frame\.remove\(\); \}/);
