@@ -229,7 +229,12 @@ test("the project Log over the demo database: an open to-do older than the 300 n
   assert.ok(at >= 0 && at < rows.findIndex((r) => r.includes("Busy day")), "on top, with the open to-dos");
   assert.ok(rows.slice(0, at + 1).every((r) => r.includes('aria-label="To-do"')), "only open to-dos above it");
   assert.equal(rows.filter((r) => r.includes("Follow up estimate")).length, 1, "once");
-  assert.equal(rows.length, recent.length + 1, "and the 300 newest lines (the to-do one more)");
+  // every open to-do older than the 300 newest is pinned: this one, and the seed's own "Study drawings" when the seed's
+  // clock (NOW) is older than the engine's (the real time the 300 lines above were written at) - on any day after NOW
+  const pinned = e.rows.activity.filter((a) => a.project_id === sandbox.id && a.todo && !a.done_at && !recent.some((l) => l.id === a.id));
+  assert.ok(pinned.some((a) => a.id === old.id));
+  for (const a of pinned) assert.equal(rows.filter((r) => r.includes(a.text)).length, 1, a.text + ": pinned once");
+  assert.equal(rows.length, recent.length + pinned.length, "and the 300 newest lines (each older open to-do one more)");
   const got = await activity.setDone(toLogLine(old, nameOf), true, { me: mgr.id });
   assert.equal(got.done, true);
   list.innerHTML = "";
