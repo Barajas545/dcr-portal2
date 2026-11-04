@@ -124,6 +124,23 @@
   const folded = (s) => String(s == null ? "" : s).normalize("NFKC").toLowerCase();
   const nfc = (s) => String(s == null ? "" : s).normalize("NFC");
   const same = (a, b) => nfc(a).toLowerCase() === nfc(b).toLowerCase();
+  /** A copy's name as the real broker makes it (DCR Desktop 2 handler.ts copyName + copySession's room; contract C1,
+      the owner's Q3): "<stem> - iPad YYYY-MM-DD HHMM[ (n)].takeoff" - the stem NFC, cut by characters so the name fits
+      200 and "<project folder>/<name>" fits 326, its trailing spaces and dots always dropped, "Plan" when nothing is
+      left, the extension always lower case; null when the folder's name leaves no room. takeoff-web finds the draft of
+      a copy it did not see made by this very rule (its save-route.js portalCopyKind / COPY_ROOM_MIN = 326 - 255 - 1):
+      tests/p8-plan-save.test.mjs holds this to the broker's own when its checkout is here. */
+  const MAX_NEW_FILE_NAME = 200, MAX_TAKEOFF_PATH = 326;
+  function copyName(planName, stamp, n, folder) {
+    const room = Math.min(MAX_NEW_FILE_NAME, MAX_TAKEOFF_PATH - Array.from(String(folder == null ? "" : folder)).length - 1);
+    const stem = nfc(planName).replace(/\.takeoff$/i, "");
+    const tail = " - iPad " + stamp + (n > 1 ? " (" + n + ")" : "") + ".takeoff";
+    const fits = Math.min(room, MAX_NEW_FILE_NAME) - Array.from(tail).length;
+    if (fits < 1) return null;
+    const cut = Array.from(stem).slice(0, fits).join("").replace(/[\s.]+$/u, "");
+    return (cut || "Plan") + tail;
+  }
+  NS.onedriveCopyName = copyName;
   const extOf = (n) => { const s = folded(n); const i = s.lastIndexOf("."); return i <= 0 || i === s.length - 1 ? "" : s.slice(i + 1); };
   function segmentProblem(seg, max) {
     if (typeof seg !== "string" || !seg) return "an empty name";
@@ -457,11 +474,11 @@
       let name = f.name;
       if (mode === "copy") {
         const taken = new Set(planFilesOf(p).filter((x) => x.folder === f.folder).map((x) => nfc(x.name).toLowerCase()));
-        const stem = nfc(f.name).replace(/\.takeoff$/i, "");
         const stamp = companyStamp(nowMs());
         name = null;
         for (let n = 1; n <= 9 && !name; n++) {
-          const want = stem + " - iPad " + stamp + (n > 1 ? " (" + n + ")" : "") + ".takeoff";
+          const want = copyName(f.name, stamp, n, f.folder);
+          if (want === null) return bad("item_id", "That plan's folder name is too long for a copy of the plan next to it.");
           if (!taken.has(want.toLowerCase())) name = want;
         }
         if (!name) return answer(503, { error: "busy", message: "Several copies of this plan were saved this minute already. Try again in a minute." });

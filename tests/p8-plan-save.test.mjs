@@ -268,6 +268,48 @@ test("the two halves together (the vendored takeoff-web's own askPortalToKeep): 
   assert.equal(String(TW.SAVE_WAIT_MS / 1000), "120", "the app's window: one heartbeat within it is enough (BEAT_MS is 2 s)");
 });
 
+test("a copy's name (Q3): the demo broker's is the real broker's (handler.ts copyName, when its checkout is here); every one reaches the app whole in the 'copy' news", async () => {
+  const { loadFake } = await import("./pages-engine.mjs");
+  const F = await loadFake();
+  const name = F.onedriveCopyName;
+  assert.equal(typeof name, "function");
+  const ST = "2026-11-04 1030";
+  const folder = (n) => "A900 - " + "f".repeat(Math.max(0, n - 7));
+  const cases = [];
+  for (const plan of ["A900 Bid.takeoff", "Main Level.TAKEOFF", "Plan .takeoff", "Plan...takeoff", " .takeoff", "Cafe\u0301 Rev 2.takeoff", "x".repeat(170) + ".takeoff",
+    "y".repeat(240) + ".takeoff", "Level 1 - " + "z".repeat(150) + "  ..takeoff", "A900 Bid - iPad 2026-11-03 0900.takeoff"]) {
+    for (const f of [30, 125, 126, 200, 294, 300]) for (const n of [1, 2, 9]) cases.push([plan, n, folder(f)]);
+  }
+  // the rule, by itself: whole, cut, tidied, "Plan", lower-case extension, NFC, null when no room
+  assert.equal(name("A900 Bid.takeoff", ST, 1, folder(30)), "A900 Bid - iPad 2026-11-04 1030.takeoff");
+  assert.equal(name("A900 Bid.takeoff", ST, 2, folder(30)), "A900 Bid - iPad 2026-11-04 1030 (2).takeoff");
+  assert.equal(name("Main Level.TAKEOFF", ST, 1, folder(30)), "Main Level - iPad 2026-11-04 1030.takeoff");
+  assert.equal(name("Plan...takeoff", ST, 1, folder(30)), "Plan - iPad 2026-11-04 1030.takeoff", "trailing dots dropped");
+  assert.equal(name(" .takeoff", ST, 1, folder(30)), "Plan - iPad 2026-11-04 1030.takeoff");
+  assert.equal(name("Cafe\u0301.takeoff", ST, 1, folder(30)), "Caf\u00e9 - iPad 2026-11-04 1030.takeoff", "NFC");
+  assert.equal(Array.from(name("x".repeat(300) + ".takeoff", ST, 1, folder(30))).length, 200, "at most 200");
+  assert.equal(Array.from(name("x".repeat(300) + ".takeoff", ST, 1, folder(200))).length, 326 - 200 - 1, "the folder's room");
+  assert.equal(name("A.takeoff", ST, 1, folder(300)), null, "no room");
+  // every copy name the broker can give is one the portal passes on and the app reads whole (no "" name in the news)
+  const TW = await import("../site/takeoff/js/core/portal-handoff.js");
+  for (const [plan, n, f] of cases) {
+    const c = name(plan, ST, n, f);
+    if (c === null) continue;
+    const m = H.saveState(WORD, "s1", "copy", { name: c });
+    assert.equal(m.name, c, "the portal passes on " + c);
+    assert.equal(TW.saveStateFromMessage(m, WORD, "s1").name, c, "the app reads " + c);
+  }
+  // the real broker's own (DCR Desktop 2's handler.ts, offline: a pure function) - the same name for every case
+  let broker = null;
+  try { broker = await import("file:///C:/DCR/wt/ipad-broker/supabase/functions/onedrive/handler.ts"); } catch (e) { broker = null; }
+  if (!broker || typeof broker.copyName !== "function") return;            // not on this machine: the rule above stands
+  assert.equal(broker.MAX_TAKEOFF_PATH, 326);
+  for (const [plan, n, f] of cases) {
+    const room = Math.min(200, broker.MAX_TAKEOFF_PATH - Array.from(f).length - 1);
+    assert.equal(name(plan, ST, n, f), broker.copyName(plan, ST, n, room), JSON.stringify([plan, n, f.length]));
+  }
+});
+
 test("the hand-over's file: three posts in all (the plan, a fresh link, a save's state), each to the peer's address; a save's word checked as takeoff-web makes it", () => {
   const ho = code(read("js/plan-handoff.js"));
   assert.equal((ho.match(/postMessage\(/g) || []).length, 3);
@@ -343,6 +385,12 @@ test("takeoff-stores.js: the takeoff app's drafts, kept copies and their indexes
     r.onupgradeneeded = () => r.result.createObjectStore("drafts");
     r.onsuccess = () => { app = r.result; const t = app.transaction("drafts", "readwrite"); t.objectStore("drafts").put({ unit_cost: 4.25 }, "k"); t.oncomplete = done; };
   });
+  // its Plans Archive's database (a /takeoff/ tab of its own on a computer writes it on this site): not held open
+  await new Promise((done) => {
+    const r = idb.open("ptt-plans-archive", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => { const d = r.result; const t = d.transaction("kv", "readwrite"); t.objectStore("kv").put([{ name: "A900 Bid.takeoff" }], "recent"); t.oncomplete = () => { d.close(); done(); }; };
+  });
   ["ptt.keptPlans.v1", "ptt.recent.v1", "ptt.settings.v1", "ptt.catalog.user.v1"].forEach((k) => store.setItem(k, "x"));
   TS.noteTakeoffUser("u1", store);
   TS.noteTakeoffUser("u2", store);
@@ -350,7 +398,8 @@ test("takeoff-stores.js: the takeoff app's drafts, kept copies and their indexes
   assert.deepEqual(TS.takeoffUsers(store), ["u2", "u1"], "ids only, once each");
   idb.blockDelete = true;                                    // the app in a frame holds its database open
   const out = await TS.purgeTakeoffStores({ root: fs.root, idb, store, wait: 2000 });
-  assert.deepEqual(out, { kept: "removed", drafts: "cleared", keys: 2 });
+  assert.deepEqual(out, { kept: "removed", drafts: "cleared", archive: "deleted", keys: 2 });
+  assert.equal(idb.dbs.has("ptt-plans-archive"), false, "the Plans Archive's names and paths are gone");
   assert.equal(fs.root.entries.has("plans-kept"), false);
   assert.equal(fs.root.entries.has("plan-library"), true, "the Plans Library's own folder is not the takeoff app's");
   assert.deepEqual(idb.rows("ptt-drafts", "drafts"), [], "its drafts cleared now");
@@ -359,7 +408,20 @@ test("takeoff-stores.js: the takeoff app's drafts, kept copies and their indexes
   // nothing there: nothing to do, nothing fails
   idb.blockDelete = false;
   app.close();
-  assert.deepEqual(await TS.purgeTakeoffStores({ root: fakeOPFS().root, idb: fakeIndexedDB(), store: fakeStorage(), wait: 50 }), { kept: "none", drafts: "deleted", keys: 0 });
+  assert.deepEqual(await TS.purgeTakeoffStores({ root: fakeOPFS().root, idb: fakeIndexedDB(), store: fakeStorage(), wait: 50 }), { kept: "none", drafts: "deleted", archive: "deleted", keys: 0 });
+  // the archive held open (a tab of its own still running): its records cleared now, the hint kept until it really goes
+  const idb2 = fakeIndexedDB();
+  const store2 = fakeStorage();
+  TS.noteTakeoffUser("u1", store2);
+  await new Promise((done) => {
+    const r = idb2.open("ptt-plans-archive", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => { const t = r.result.transaction("kv", "readwrite"); t.objectStore("kv").put("handle", "folder"); t.oncomplete = done; };
+  });
+  idb2.blockDelete = true;
+  assert.deepEqual(await TS.purgeTakeoffStores({ root: fakeOPFS().root, idb: idb2, store: store2, wait: 2000 }), { kept: "none", drafts: "deleted", archive: "cleared", keys: 0 });
+  assert.deepEqual(idb2.rows("ptt-plans-archive", "kv"), []);
+  assert.ok(read("takeoff/js/core/plans-folder.js").includes("export function idbBackend(name = 'ptt-plans-archive', store = 'kv')"), "takeoff-web's own names");
   // the names are takeoff-web's own (the vendored copy's)
   assert.match(read("takeoff/js/core/drafts.js"), /const DB_NAME = 'ptt-drafts';/);
   assert.match(read("takeoff/js/core/device-plans.js"), /export const KEPT_DIR = 'plans-kept';/);
