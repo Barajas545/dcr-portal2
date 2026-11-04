@@ -1161,6 +1161,8 @@ const waiting = {};        // uploader job id -> resolve(the job, once it ended)
 const sendCalls = {};      // key -> a sendSaved running in this window (a second call is the same one)
 let spooling = 0;
 let upl = null;
+/** At most one "keeping" word to the app this often while a save is kept (takeoff-web needs one within 120 s). */
+export const BEAT_MS = 2000;
 let transportFn = null;
 
 /** A test's stand-in for OneDrive's upload address (the page's: XMLHttpRequest, js/onedrive-upload.js xhrTransport). */
@@ -1321,8 +1323,9 @@ frameGuard(function () {
     text: "Your save is on this " + d + " and is being sent to OneDrive (" + pct + "%). It carries on after the takeoff app closes: keep the portal open on this screen until it says Sent." };
 });
 
-/** Copy the app's Blob into the library file `name` (the worker's op "spool") -> {size, magic} | {error}. */
-function runSpool(key, name, blob, size) {
+/** Copy the app's Blob into the library file `name` (the worker's op "spool") -> {size, magic} | {error}.
+    onProgress(done): the worker's own progress (every slice, and its beat every 10 s while a write is slow). */
+function runSpool(key, name, blob, size, onProgress) {
   return new Promise(function (resolve) {
     let w;
     try { w = new Worker(new URL("./plan-library-worker.js", import.meta.url)); } catch (e) { resolve({ error: err("unsupported", UNSUPPORTED) }); return; }
@@ -1341,7 +1344,8 @@ function runSpool(key, name, blob, size) {
     w.onmessage = function (ev) {
       const m = ev.data || {};
       last = Date.now();
-      if (m.type === "spooled") end({ size: m.size, magic: m.magic });
+      if (m.type === "progress") { if (!over && typeof onProgress === "function") { try { onProgress(Number(m.done) || 0); } catch (e) { /* words only */ } } }
+      else if (m.type === "spooled") end({ size: m.size, magic: m.magic });
       else if (m.type === "error") end({ error: err("spool", m.message || "The save could not be kept on this device.", { status: m.status }) });
       else if (m.type === "cancelled") end({ error: err("spool", "Keeping the save stopped. Save again.") });
     };
@@ -1381,7 +1385,17 @@ export async function keepSave(itemId, save, tell) {
     try { await roomFor(size); } catch (x) { return { state: "no-room", why: x.message }; }
     // a name never used before: never the plan's own copy (the app reads it still), never an earlier save
     const name = fileNameFor(r.owner, r.itemId, "save:" + (r.version || ""), Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
-    const spool = function () { return runSpool(key, name, s.file, size); };
+    // the app's heartbeat ("keeping", contract C2 + takeoff-web's integration): from the worker's own progress only -
+    // never a timer of this page's - so a worker that stalls goes silent, and the watchdog here (90 s) and the app's
+    // wait (120 s from the last word) both still end it; at most one every BEAT_MS
+    let beatAt = -Infinity;
+    const beat = function (done) {
+      const now = Date.now();
+      if (typeof tell !== "function" || now - beatAt < BEAT_MS) return;
+      beatAt = now;
+      tell("keeping", { pct: Math.max(0, Math.min(100, Math.floor((done * 100) / size))) });
+    };
+    const spool = function () { return runSpool(key, name, s.file, size, beat); };
     const w = HAS && navigator.locks && navigator.locks.request ? await navigator.locks.request(SPOOL_LOCK + key, spool) : await spool();
     if (w.error) {
       if (w.error.status === 507) return { state: "no-room", why: w.error.message };

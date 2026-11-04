@@ -26,8 +26,11 @@
         whole saved project over - {type: "ptt-save", v: 1, nonce, req, name, size, file} (saveOf: req at most 20
         characters, the opened plan's file name, size === file.size) - and this window answers
         {type: "ptt-save-state", v: 1, nonce, req, state, why?}: "kept" once the Plans Library has the bytes in its own
-        storage (spooled and checked: only then does the app mark the project saved), "refused", "no-room" or "failed";
-        later, while the app is open, the send to OneDrive's news: "sending" (pct), "sent", "copy" (name) or "failed".
+        storage (spooled and checked: only then does the app mark the project saved), "refused", "no-room" or "failed".
+        While it is being kept, "keeping" (pct) - the spool worker's own progress, at most every 2 s - restarts the
+        app's 120 s wait each time (takeoff-web's heartbeat; a stalled worker goes silent, so both waits still end it);
+        a save queued behind it hears "keeping" without a pct then too. Later, while the app is open, the send to
+        OneDrive's news: "sending" (pct), "sent", "copy" (name) or "failed".
         Such a conversation lasts as long as the frame is open (a Save can come any time). A tab is never offered a
         save, and a ptt-save there - or for a plan not offered - is refused.
    A message counts only from the peer's window, from the peer's origin, with its word (accepted()).
@@ -122,12 +125,17 @@ export function saveOf(d) {
   return { req, name: d.name, size: d.size, file: f };
 }
 
-/** The answer about save `req` ({type: "ptt-save-state", v, nonce, req, state, why?, pct?, name?}). */
+/** The answers that end a save's wait in the app (one each); every other word about a save is news. */
+export const SAVE_FINAL = Object.freeze(["kept", "refused", "no-room", "failed"]);
+
+/** The answer about save `req` ({type: "ptt-save-state", v, nonce, req, state, why?, pct?, name?}). "keeping" (pct?) is
+    the heartbeat while the save is being kept: takeoff-web restarts its 120 s wait at each one (its portal-handoff.js
+    SAVE_PROGRESS) and shows the pct on its bar. */
 export function saveState(word, req, state, extra) {
   const x = extra || {};
   const m = { type: "ptt-save-state", v: VERSION, nonce: word, req, state };
   if (x.why) m.why = String(x.why).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, WHY_MAX);
-  if (state === "sending" && typeof x.pct === "number" && isFinite(x.pct)) m.pct = Math.max(0, Math.min(100, Math.round(x.pct)));
+  if ((state === "sending" || state === "keeping") && typeof x.pct === "number" && isFinite(x.pct)) m.pct = Math.max(0, Math.min(100, Math.round(x.pct)));
   if (state === "copy" && typeof x.name === "string" && SAVE_NAME.test(x.name)) m.name = x.name;
   return m;
 }
@@ -146,6 +154,8 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
   let posted = false, finished = false, kind = "", saving = false;
   let saves = Promise.resolve();          // the saves, one at a time in the order they came
   const heard = new Set();                // the save words answered (or being): one answer each
+  const queued = new Set();               // the save words waiting behind another one (not started yet)
+  const answered = new Set();             // the save words given their answer (no "keeping" after it)
   // said first, then closed: closing the frame stops this conversation too (its onClose), which must not say "closed"
   let timer = setTimeout(function () {
     if (posted) return;
@@ -215,14 +225,20 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
         tell(s.req, "refused", { why: s.why || "The portal does not take a save of this plan here: use Save a copy to Files in the takeoff app." });
         return;
       }
+      queued.add(s.req);
       saves = saves.then(async function () {
+        queued.delete(s.req);
         let out = null;
         try {
-          out = await onSave(s, function (state, extra) { tell(s.req, state, extra); });
+          out = await onSave(s, function (state, extra) {
+            // the heartbeat of the save being kept goes to the ones waiting behind it too (no pct: not started)
+            if (state === "keeping") queued.forEach(function (q) { tell(q, "keeping"); });
+            tell(s.req, state, extra);
+          });
         } catch (e) {
           out = { state: "failed", why: (e && e.message) || "The save could not be kept on this device." };
         }
-        const state = out && ["kept", "refused", "no-room", "failed"].indexOf(out.state) !== -1 ? out.state : "failed";
+        const state = out && SAVE_FINAL.indexOf(out.state) !== -1 ? out.state : "failed";
         tell(s.req, state, { why: out && out.why });
       });
       return;
@@ -236,6 +252,8 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
   /** A word about save `req` to the app (its answer, then the send's news while it is open). */
   function tell(req, state, extra) {
     if (finished) return;
+    if (state === "keeping" && answered.has(req)) return;   // its answer is out: the heartbeat is over
+    if (SAVE_FINAL.indexOf(state) !== -1) answered.add(req);
     try { peer.win.postMessage(saveState(word, req, state, extra), peer.origin); } catch (e) { /* the frame went */ }
   }
   listen.addEventListener("message", onMessage);

@@ -990,6 +990,48 @@ test("keepSave: the takeoff app's Save is copied into a NEW file in slices of 8 
   assert.match(src, /const which = \(c\) => \(hasLocal\(c\) \? c\.local\.file : c\.file\);/, "open() hands the save when one waits");
 });
 
+test("keepSave's heartbeat (takeoff-web's 'keeping'): from the worker's own progress, a pct of the save, at most one every BEAT_MS, never after the answer", async () => {
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;                                    // kept only (nothing is sent offline)
+  const real = Date.now;
+  let t = real();
+  try {
+    // a slow device: every clock reading 2.5 s on - every slice the worker reports is a word to the app
+    Date.now = () => (t += 2500);
+    const beats = [];
+    let over = false;
+    const p = savedProject(17 * MiB + 9);
+    const out = await LIB.keepSave(F1.id, saveOf(p), (state, extra) => beats.push([state, extra, over]));
+    over = true;
+    assert.equal(out.state, "kept", out.why);
+    const keeping = beats.filter((b) => b[0] === "keeping");
+    assert.ok(keeping.length >= 3, "one per slice of 8 MiB: " + JSON.stringify(beats));
+    assert.ok(keeping.every((b) => b[2] === false), "all before the answer");
+    const pcts = keeping.map((b) => b[1].pct);
+    assert.ok(pcts.every((x, i) => Number.isInteger(x) && x >= 0 && x <= 100 && (i === 0 || x >= pcts[i - 1])), JSON.stringify(pcts));
+    assert.ok(pcts.includes(47) && pcts[pcts.length - 1] === 100, "8 MiB of 17 is 47%, the whole of it 100%: " + JSON.stringify(pcts));
+    await out.sent;
+    assert.equal(beats.filter((b) => b[0] === "keeping" && b[2]).length, 0, "nothing after the answer");
+    // a fast device: the clock barely moves - one word in all (BEAT_MS apart at most)
+    t = real();
+    Date.now = () => (t += 1);
+    const fast = [];
+    const out2 = await LIB.keepSave(F1.id, saveOf(savedProject(17 * MiB + 11)), (state, extra) => fast.push([state, extra]));
+    assert.equal(out2.state, "kept", out2.why);
+    assert.equal(fast.filter((b) => b[0] === "keeping").length, 1, JSON.stringify(fast));
+    await out2.sent;
+  } finally {
+    Date.now = real;
+  }
+  assert.equal(LIB.BEAT_MS, 2000);
+  // derived from the worker's messages only: no timer of the page's own for it
+  const src = read("js/plan-library.js");
+  assert.match(src, /if \(m\.type === "progress"\) \{ if \(!over && typeof onProgress === "function"\)/);
+  assert.match(src, /const spool = function \(\) \{ return runSpool\(key, name, s\.file, size, beat\); \};/);
+  assert.ok(!/setInterval\([^)]*keeping/.test(src) && !/setTimeout\([^)]*keeping/.test(src));
+});
+
 test("keepSave: not a takeoff project, not whole, not a plan saved here, no room - refused or no-room, nothing left behind", async () => {
   await devicePlan();
   saveWorld();
@@ -1038,7 +1080,8 @@ test("sent: a replace - the saved bytes ARE the plan's copy now (no download), t
   assert.equal(LIBFILES()[before.file], undefined, "the old copy went (not handed to the app lately)");
   assert.deepEqual([DEV.wake.asked > 0, DEV.wake.held], [true, 0], "the screen was held awake while it went, and let go");
   // the app hears how it went: the end (and "sending" on the way when the upload takes a while)
-  assert.deepEqual(news.map((n) => n[0]).filter((s) => s !== "sending"), ["sent"], JSON.stringify(news));
+  assert.deepEqual(news.map((n) => n[0]).filter((s) => s !== "sending" && s !== "keeping"), ["sent"], JSON.stringify(news));
+  assert.equal(news[0][0], "keeping", "the heartbeat while it was kept came first");
   assert.deepEqual((await LIB.list())[0].save, { state: "sent" });
   // the next check: OneDrive now gives its hash of the same bytes (the same size and time) - taken, nothing downloaded
   w.plan.version = "qx:HASHEDNOW";

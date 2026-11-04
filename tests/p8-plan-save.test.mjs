@@ -156,6 +156,118 @@ test("talk(): what the Library says is the answer - refused / no-room / failed w
   ctl.stop();
 });
 
+test("the heartbeat (takeoff-web's 'keeping', pct): to the save being kept and, without a pct, to one queued behind it; never after a save's answer", async () => {
+  // the answer's shape: pct carried for keeping as for sending, rounded and kept within 0-100; no pct when not a number
+  assert.deepEqual(H.saveState(WORD, "s1", "keeping", { pct: 45.4 }), { type: "ptt-save-state", v: 1, nonce: WORD, req: "s1", state: "keeping", pct: 45 });
+  assert.equal(H.saveState(WORD, "s1", "keeping", { pct: -3 }).pct, 0);
+  assert.equal(H.saveState(WORD, "s1", "keeping", { pct: 250 }).pct, 100);
+  for (const bad of [NaN, Infinity, "45", null, undefined]) assert.ok(!("pct" in H.saveState(WORD, "s1", "keeping", { pct: bad })), String(bad));
+  assert.deepEqual(H.saveState(WORD, "s1", "keeping"), { type: "ptt-save-state", v: 1, nonce: WORD, req: "s1", state: "keeping" });
+  assert.ok(!("pct" in H.saveState(WORD, "s1", "kept", { pct: 5 })), "an answer carries no pct");
+  assert.deepEqual(H.SAVE_FINAL, ["kept", "refused", "no-room", "failed"]);
+  // talk(): s1 is being kept (its heartbeat), s2 came meanwhile and waits behind it
+  const s = stage("frame", HERE);
+  const gates = {};
+  const tells = {};
+  const ctl = H.talk(s.peer, WORD, filePlan(true), null, () => {}, null, s.host, async (save, tell) => {
+    tells[save.req] = tell;
+    tell("keeping", { pct: 0 });
+    await new Promise((r) => { gates[save.req] = r; });
+    return { state: "kept" };
+  });
+  try {
+    await s.emit(s.from({ type: "ptt-ready" }));
+    await s.emit(s.from({ type: "ptt-save", req: "s1", name: NAME, size: 9, file: blob(9) }));
+    assert.deepEqual(s.states().map((x) => [x.req, x.state, x.pct, x.o]), [["s1", "keeping", 0, HERE]], "to this site only");
+    await s.emit(s.from({ type: "ptt-save", req: "s2", name: NAME, size: 9, file: blob(9) }));
+    // the queue: a word for s1 now reaches s2 too (no pct: its own copy has not started)
+    tells.s1("keeping", { pct: 40 });
+    assert.deepEqual(s.states().slice(1).map((x) => [x.req, x.state, x.pct, x.o]), [["s2", "keeping", undefined, HERE], ["s1", "keeping", 40, HERE]]);
+    gates.s1();
+    await s.emit(s.from({ type: "ptt-noop" }));
+    // s1 answered: its heartbeat is over (a late word from its worker is never posted); s2 started (its own word, pct 0)
+    const after = s.states().length;
+    tells.s1("keeping", { pct: 99 });
+    assert.equal(s.states().length, after, "no keeping after s1's answer");
+    assert.deepEqual(s.states().filter((x) => x.req === "s1").map((x) => x.state), ["keeping", "keeping", "kept"]);
+    assert.deepEqual(s.states().filter((x) => x.req === "s2").map((x) => [x.state, x.pct]), [["keeping", undefined], ["keeping", 0]]);
+    // s2 is no longer queued: s1's late words never reach it either; news after an answer still goes (only "keeping" stops)
+    tells.s1("sending", { pct: 10 });
+    assert.deepEqual(s.states().slice(-1).map((x) => [x.req, x.state, x.pct]), [["s1", "sending", 10]]);
+    gates.s2();
+    await s.emit(s.from({ type: "ptt-noop" }));
+    tells.s2("keeping", { pct: 50 });
+    assert.deepEqual(s.states().filter((x) => x.req === "s2").map((x) => x.state), ["keeping", "keeping", "kept"]);
+  } finally {
+    ctl.stop();
+  }
+});
+
+/** The two halves wired together: this portal's talk() and the VENDORED takeoff-web's own portal-handoff.js
+    (site/takeoff/js/core/portal-handoff.js: what the frame really runs), over a made-up pair of windows of one site. */
+async function twoHalves(onSave, waitMs) {
+  const TW = await import("../site/takeoff/js/core/portal-handoff.js");
+  const portalLs = [], appLs = [];
+  const later = (fn) => setImmediate(fn);
+  const portalWin = { postMessage(m, o) { later(() => { if (o === HERE) portalLs.slice().forEach((fn) => fn({ source: frameWin, origin: HERE, data: m })); }); } };
+  const frameWin = { postMessage(m, o) { later(() => { if (o === HERE) appLs.slice().forEach((fn) => fn({ source: portalWin, origin: HERE, data: m })); }); } };
+  const host = { addEventListener(t, fn) { if (t === "message") portalLs.push(fn); }, removeEventListener(t, fn) { const i = portalLs.indexOf(fn); if (i !== -1) portalLs.splice(i, 1); } };
+  const peer = { win: frameWin, origin: HERE, via: "frame", closed: () => false, close() {} };
+  const ctl = H.talk(peer, WORD, filePlan(true), null, () => {}, null, host, onSave);
+  const opened = new Promise((resolve) => appLs.push(function first(ev) {
+    if (ev.data && ev.data.type === "ptt-open") { appLs.splice(appLs.indexOf(first), 1); resolve(TW.openFromMessage(ev.data, WORD)); }
+  }));
+  portalWin.postMessage(TW.readyMessage(WORD), HERE);
+  const plan = await opened;
+  const news = [];
+  const ask = (req) => TW.askPortalToKeep({ peer: { via: "frame", win: portalWin, origin: HERE }, nonce: WORD, req, name: NAME, size: 9, file: blob(9) }, {
+    listen(fn) { appLs.push(fn); return () => { const i = appLs.indexOf(fn); if (i !== -1) appLs.splice(i, 1); }; },
+    post(win, msg, origin) { win.postMessage(msg, origin); }, peerGone: () => false, onNews: (s) => news.push(s), doc: null, waitMs, pollMs: 1000 });
+  return { TW, plan, ask, news, stop: () => ctl.stop() };
+}
+
+test("the two halves together (the vendored takeoff-web's own askPortalToKeep): the heartbeat keeps the app waiting past its window; kept, then the send's news; without it the app times out and still hears a late kept", async () => {
+  const WAIT = 150;
+  const t = Date.now;
+  // a save the portal takes 4 windows to keep, its worker reporting all along
+  const slow = await twoHalves(async (save, tell) => {
+    for (let pct = 0; pct <= 100; pct += 10) { tell("keeping", { pct }); await new Promise((r) => setTimeout(r, WAIT * 0.4 * 1.5)); }
+    setTimeout(() => { tell("sending", { pct: 50 }); tell("sent"); }, 20);
+    return { state: "kept" };
+  }, WAIT);
+  try {
+    assert.equal(slow.plan.canSave, true, "the app reads canSave from the portal's ptt-open");
+    const start = t();
+    const r = await slow.ask("sAAAAAAAAA");
+    assert.equal(r.ending, "kept", "the heartbeat kept the wait going");
+    assert.ok(t() - start > WAIT * 3, "well past the app's own window: " + (t() - start) + " ms");
+    await new Promise((res) => setTimeout(res, 80));
+    const keeping = slow.news.filter((s) => s.state === "keeping");
+    assert.ok(keeping.length >= 10 && keeping.every((s, i) => s.pct === i * 10), JSON.stringify(keeping));
+    assert.deepEqual(slow.news.filter((s) => s.state !== "keeping").map((s) => [s.state, s.pct]), [["sending", 50], ["sent", undefined]], "then the send's news");
+  } finally { slow.stop(); }
+  // the same save with a portal that says nothing until it is done: the app gives up, and a late kept still counts
+  const quiet = await twoHalves(async () => { await new Promise((r) => setTimeout(r, WAIT * 3)); return { state: "kept" }; }, WAIT);
+  try {
+    const r = await quiet.ask("sBBBBBBBBB");
+    assert.equal(r.ending, "timeout");
+    assert.deepEqual(await r.late, { state: "kept", why: "" }, "the late answer");
+    r.stop();
+  } finally { quiet.stop(); }
+  // every word the portal composes is one the app reads, exactly
+  const TW = slow.TW;
+  for (const [state, extra, want] of [["keeping", { pct: 45.4 }, { pct: 45 }], ["keeping", {}, { pct: null }], ["sending", { pct: 3 }, { pct: 3 }], ["sent", {}, {}],
+    ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }, { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }], ["kept", {}, {}], ["refused", { why: "No." }, {}],
+    ["no-room", {}, {}], ["failed", { why: "x" }, {}]]) {
+    const got = TW.saveStateFromMessage(H.saveState(WORD, "s1", state, extra), WORD, "s1");
+    assert.ok(got && got.state === state, state);
+    for (const [k, v] of Object.entries(want)) assert.equal(got[k], v, state + " " + k);
+  }
+  assert.deepEqual(Array.from(TW.SAVE_ENDINGS), Array.from(H.SAVE_FINAL), "the same answers on both sides");
+  assert.ok(TW.SAVE_PROGRESS.includes("keeping"));
+  assert.equal(String(TW.SAVE_WAIT_MS / 1000), "120", "the app's window: one heartbeat within it is enough (BEAT_MS is 2 s)");
+});
+
 test("the hand-over's file: three posts in all (the plan, a fresh link, a save's state), each to the peer's address; a save's word checked as takeoff-web makes it", () => {
   const ho = code(read("js/plan-handoff.js"));
   assert.equal((ho.match(/postMessage\(/g) || []).length, 3);
