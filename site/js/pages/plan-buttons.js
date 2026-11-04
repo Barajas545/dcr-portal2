@@ -18,11 +18,16 @@
    device first (its green bar), then opens it in the portal's own copy of the takeoff app, in a frame over the page
    (js/plan-library.js openOnDevice, js/plan-frame.js) - the home-screen app included, so it saves there too; and a
    person who does not see prices gets a plain "Plans are for the people who see prices" from 📐 (data-plan-none)
-   instead of a dead end. openPlans() is the same 📐 for another door (the Takeoffs tab's). */
+   instead of a dead end. openPlans() is the same 📐 for another door (the Takeoffs tab's).
+
+   The save back (owner decisions Q1-Q3, 2026-11-04): a Save in the frame's takeoff app is kept on this device and sent
+   to OneDrive by the Plans Library (js/plan-library.js keepSave / sendSaved); a row says where it is - "Saved on this
+   iPad", "Sending 45%", "Sent", "Saved as a separate file", "Not sent — tap to retry" (map/plan-library.js saveText) -
+   with Send now / Retry, and no download is offered over a save waiting there. */
 
 import * as onedrive from "../repo/onedrive.js";
-import { planButtonHtml, planFilesFor, plansLink, handheld, PRICES_ONLY } from "../map/plans.js";
-import { folderLabel, sortFiles, fmtSize, statusText, progressOf, progressHtml } from "../map/plan-library.js";
+import { planButtonHtml, planFilesFor, plansLink, handheld, deviceWord, PRICES_ONLY } from "../map/plans.js";
+import { folderLabel, sortFiles, fmtSize, statusText, progressOf, progressHtml, saveText, sendBar, hasLocal } from "../map/plan-library.js";
 import { handoffProblem, iosHomeRefused, usesFrame, frameOpen, IOS_HOME } from "../plan-handoff.js";
 
 const wired = new WeakSet();
@@ -34,12 +39,17 @@ function library() {
   return lib;
 }
 
-/** The user ids that have plans saved on this device (js/plan-library.js keeps this list: ids only). */
+/** The user ids that have plans saved on this device (js/plan-library.js keeps this list: ids only), and those that
+    opened the takeoff app in the frame here (js/takeoff-stores.js: its drafts carry prices too). */
 function ownersHere() {
-  try {
-    const v = JSON.parse(localStorage.getItem("dcr2-plan-owners") || "[]");
-    return Array.isArray(v) ? v : [];
-  } catch (e) { return []; }
+  const ids = [];
+  ["dcr2-plan-owners", "dcr2-takeoff-users"].forEach(function (k) {
+    try {
+      const v = JSON.parse(localStorage.getItem(k) || "[]");
+      if (Array.isArray(v)) v.forEach(function (x) { ids.push(x); });
+    } catch (e) { /* none */ }
+  });
+  return ids;
 }
 
 /** On a page that opens often (Search, a project, the home page): for a person who sees prices, ask OneDrive for new
@@ -125,21 +135,35 @@ export function menuRows(files, saved) {
   return rows;
 }
 
-/** A row's state line: "Downloading 45%", or what its status says. */
+/** A row's state line: "Downloading 45%", the person's own save ("Saved on this iPad", "Sending 45%", "Sent", "Saved as
+    a separate file", "Not sent — tap to retry"), or what its status says. */
 function stateText(s, done, size) {
   if (!s) return "";
   if (s.status === "downloading" && size) return "Downloading " + Math.min(99, Math.floor((done / size) * 100)) + "%";
+  if (s.save && s.status !== "downloading") return saveText(s.save, deviceWord(typeof window !== "undefined" ? window : null));
   return statusText(s.status, !!s.file) + (s.dl && s.dl.error && s.status !== "downloading" ? " — " + s.dl.error : "");
+}
+/** A row's bar: its download's, or its save's on the way to OneDrive. */
+function barOf(s, done, size) {
+  if (s && s.save && s.status !== "downloading") return sendBar(s.save);
+  return s ? progressOf(s, done, size) : null;
 }
 
 function rowHtml(r, noSave) {
   const s = r.saved;
   const meta = [r.where, r.size != null ? fmtSize(r.size) : "", day(r.modified)].filter(Boolean).join(" · ");
   const state = s ? stateText(s, s.job ? s.job.done : 0, s.job ? s.job.size : 0) : "";
-  const openable = (s && s.file) || r.file;
+  const openable = (s && (s.file || hasLocal(s))) || r.file;
   const btns = [];
   if (openable) btns.push('<button type="button" class="btn btn-sm" data-pl-act="open" data-id="' + esc(r.id) + '">Open</button>');
   if (noSave) { /* an iPhone or iPad home-screen app: no saving here (IOS_HOME) */ }
+  else if (s && hasLocal(s)) {
+    // the person's own save waits here: it is sent (Send now / Retry), never downloaded over
+    if (s.save && (s.save.state === "kept" || s.save.state === "failed")) {
+      btns.push('<button type="button" class="btn btn-ghost btn-sm" data-pl-act="send" data-id="' + esc(r.id) + '">' +
+        (s.save.state === "failed" ? "Retry" : "Send now") + "</button>");
+    }
+  }
   else if (!s && r.file) btns.push('<button type="button" class="btn btn-ghost btn-sm" data-pl-act="save" data-id="' + esc(r.id) + '">Save to this device</button>');
   else if (s && s.status === "downloading") btns.push('<button type="button" class="btn btn-ghost btn-sm" data-pl-act="pause" data-id="' + esc(r.id) + '">Pause</button>');
   else if (s && (s.status === "paused" || s.status === "stopped" || s.status === "missing" || s.status === "outdated") && r.file) {
@@ -149,8 +173,8 @@ function rowHtml(r, noSave) {
   return '<div class="pl-row" data-id="' + esc(r.id) + '">' +
     '<div class="pl-name">' + esc(r.name) + "</div>" +
     (meta ? '<div class="pl-meta">' + esc(meta) + "</div>" : "") +
-    '<div class="pl-state' + (s && s.status === "saved" ? " ok" : "") + '"' + (state ? "" : " hidden") + ">" + esc(state) + "</div>" +
-    progressHtml(s ? progressOf(s, s.job ? s.job.done : 0, s.job ? s.job.size : 0) : null) +
+    '<div class="pl-state' + (s && (s.save ? s.save.state === "sent" : s.status === "saved") ? " ok" : "") + '"' + (state ? "" : " hidden") + ">" + esc(state) + "</div>" +
+    progressHtml(barOf(s, s && s.job ? s.job.done : 0, s && s.job ? s.job.size : 0)) +
     '<div class="pl-btns">' + btns.join("") + "</div></div>";
 }
 
@@ -260,6 +284,7 @@ async function openMenu(o) {
   c.off = c.L.onChange(function (m) {
     if (current !== c || !m || !c.keys[m.key]) return;          // another project's plan: nothing to redraw here
     if (m.t === "progress") { paintProgress(c, m); return; }
+    if (m.t === "send") { paintSend(c, m); return; }
     clearTimeout(c.repaint);
     c.repaint = setTimeout(function () { if (current === c) paint(c); }, 150);
   });
@@ -287,6 +312,19 @@ function paintProgress(c, m) {
   n.hidden = false;
   n.textContent = stateText(s, m.done, m.size);
   setBar(row.querySelector(".plan-prog"), progressOf(s, m.done, m.size));
+}
+
+/** A save on its way to OneDrive: only its row's line and bar change. */
+function paintSend(c, m) {
+  const id = String(m.key).slice(String(m.key).indexOf("|") + 1);
+  const row = Array.prototype.find.call(c.host.querySelectorAll(".pl-row"), (n) => n.getAttribute("data-id") === id);
+  const s = c.savedIndex && c.savedIndex[id];
+  if (!row || !s || !hasLocal(s)) return;
+  s.save = { state: "sending", pct: m.size ? Math.min(99, Math.floor((m.sent / m.size) * 100)) : 0 };
+  const n = row.querySelector(".pl-state");
+  n.hidden = false;
+  n.textContent = stateText(s, 0, 0);
+  setBar(row.querySelector(".plan-prog"), sendBar(s.save));
 }
 
 async function paint(c) {
@@ -339,7 +377,7 @@ function act(c, what, id) {
       // nothing has to happen inside the click; the menu closed meanwhile opens nothing
       say("Opening…");
       L.openOnDevice({ projectId: c.o.projectId, number: c.o.number, projectTitle: c.o.title, itemId: id, name: (f || s || {}).name, file: f,
-        still: function () { return current === c; } }, done, function (text) { if (current === c) say(text); });
+        still: function () { return current === c; }, me: c.o.me }, done, function (text) { if (current === c) say(text); });
       return;
     }
     // in the click itself: the new tab must open now, before anything is awaited
@@ -358,5 +396,16 @@ function act(c, what, id) {
     });
     return;
   }
-  if (what === "pause") L.pause(id);
+  if (what === "pause") { L.pause(id); return; }
+  if (what === "send") {
+    // the person's own Retry / Send now (no wait after earlier failures)
+    say("Sending your save to OneDrive…");
+    L.sendSaved(id, { manual: true }).then(function (r) {
+      if (current !== c) return;
+      if (r && r.sent) say(r.mode === "copy" ? "Saved in OneDrive as a separate file: " + r.name + " — nothing was overwritten." : "Sent to OneDrive.", "ok");
+      else say("");
+    }, function (e) {
+      if (current === c) say((e && e.message) || "The save was not sent.", "warn");
+    });
+  }
 }

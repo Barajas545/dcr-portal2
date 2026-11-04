@@ -368,12 +368,17 @@ export async function signIn(email, password, keep) {
 }
 
 /** A turned-off account: the plan files it saved on this device (they carry prices) go before it is signed out - only
-    when the Plans Library's list of owners names it (js/plan-library.js keeps it: ids only), and never waiting long.
-    Not finished in time: the id stays on the list, and this person's next sign-in, or the next page, tries again. */
+    when the Plans Library's list of owners names it (js/plan-library.js keeps it: ids only), or the list of those who
+    opened the takeoff app in the frame here (js/takeoff-stores.js: its drafts carry prices too), and never waiting
+    long. Not finished in time: the id stays on the list, and this person's next sign-in, or the next page, tries again. */
 export async function forgetSavedPlans(id) {
   let owners = [];
   try { owners = JSON.parse(localStorage.getItem("dcr2-plan-owners") || "[]"); } catch (e) { owners = []; }
-  if (!id || !Array.isArray(owners) || owners.indexOf(id) === -1) return;
+  let users = [];
+  try { users = JSON.parse(localStorage.getItem("dcr2-takeoff-users") || "[]"); } catch (e) { users = []; }
+  if (!Array.isArray(owners)) owners = [];
+  if (!Array.isArray(users)) users = [];
+  if (!id || (owners.indexOf(id) === -1 && users.indexOf(id) === -1)) return;
   let timer = null;
   try {
     await Promise.race([

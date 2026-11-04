@@ -124,8 +124,9 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
   const ho = code(read("js/plan-handoff.js"));
   assert.match(ho, /if \(!ev \|\| !peer \|\| ev\.source !== peer\.win \|\| ev\.origin !== peer\.origin\) return null;/);
   assert.match(ho, /if \(!d \|\| typeof d !== "object" \|\| d\.v !== VERSION \|\| d\.nonce !== word\) return null;/);
-  assert.equal((ho.match(/postMessage\(/g) || []).length, 2, "the plan and a fresh link, nothing else");
-  assert.equal((ho.match(/, peer\.origin\)/g) || []).length, 2, "each to the peer's address only");
+  // (P4, the save back: a third - a save's state, ptt-save-state, to the frame only: tests/p8-plan-save.test.mjs)
+  assert.equal((ho.match(/postMessage\(/g) || []).length, 3, "the plan, a fresh link and a save's state, nothing else");
+  assert.equal((ho.match(/, peer\.origin\)/g) || []).length, 3, "each to the peer's address only");
   assert.match(ho, /talk\(\{ win, origin: TAKEOFF_ORIGIN, via: "tab",/, "a tab's peer: the takeoff app's site");
   assert.match(code(read("js/plan-frame.js")), /win: frame\.contentWindow,\s*origin: loc\.origin,\s*via: "frame",/, "the frame's: this site");
   assert.ok(!/postMessage\([^)]*["']\*["']/.test(ho), "never to any address");

@@ -108,9 +108,15 @@ export function unsavedIn(win) {
   } catch (e) { return null; }
 }
 
-/** What Close asks first, or null (it closes at once). `busy`: what a guard says is in flight (a save being kept or
-    sent); `dirty`: unsavedIn's answer. */
+/** What Close asks first, or null (it closes at once). `busy`: what a guard says is in flight - a sentence (a save
+    being kept on this device: closing now can stop it) or a whole question {title, text, okText, danger} (a save being
+    sent to OneDrive: that goes on in the page after the frame closes, so the question only says to keep the page
+    open); `dirty`: unsavedIn's answer. */
 export function closeQuestion(busy, dirty) {
+  if (busy && typeof busy === "object") {
+    return { title: String(busy.title || "The save is not finished"), okText: String(busy.okText || "Close anyway"), danger: busy.danger !== false,
+      text: String(busy.text || "") };
+  }
   if (busy) {
     return { title: "The save is not finished", okText: "Close anyway", danger: true,
       text: String(busy) + " Closing now stops it: leave the takeoff app open until it says so." };
@@ -130,14 +136,19 @@ export function viewportBox(vv) {
     width: Math.round(Number(vv.width)), height: Math.round(Number(vv.height)) };
 }
 
-/** A save-back step says what is in flight (P4): fn() -> "" or a sentence. -> unregister. */
+/** A save-back step says what is in flight (js/plan-library.js): fn() -> "", a sentence, or a question (closeQuestion).
+    -> unregister. */
 export function guard(fn) {
   guards.push(fn);
   return function () { const i = guards.indexOf(fn); if (i !== -1) guards.splice(i, 1); };
 }
 function busyText() {
   for (const g of guards) {
-    try { const t = g(); if (t) return String(t); } catch (e) { /* a guard's own problem */ }
+    try {
+      const t = g();
+      if (t && typeof t === "object") return t;
+      if (t) return String(t);
+    } catch (e) { /* a guard's own problem */ }
   }
   return "";
 }

@@ -31,6 +31,16 @@
    * frameLink(nonce)             the portal's copy at #portal=<the hand-over's word>;
    * floorPlansCard(me, handheld) the Floor Plans card's address and words for this device.
 
+   And the save back (owner decisions Q1-Q3, 2026-11-04; contract C3 "Save-back"): a Save in the frame's takeoff app
+   hands the saved plan to the portal, which keeps it on the device first and then sends it to OneDrive in place of the
+   plan (js/plan-library.js keepSave / sendSaved; the broker's plan_save_session / plan_save_done):
+   * PLAN_SAVE_BACK               the save back's switch (on): off, the frame never offers it (canSave is not sent) and
+                                  nothing kept on a device is sent;
+   * canSaveBack(me)              a person who may save a plan back (Q2): an admin, or Sees prices AND "Can upload to
+                                  OneDrive" - the broker asks the same (403 forbidden otherwise);
+   * saveBackFor(me, on)          the switch and the person together: whether the frame offers a save of the plan;
+   * deviceWord(win)              "iPad", "iPhone" or "device": what the words call this device ("Saved on this iPad").
+
    Pure module (node tests import it). */
 
 export const TAKEOFF_WEB = "https://barajas545.github.io/takeoff-web/index.html";
@@ -152,6 +162,36 @@ export const PRICES_ONLY = "Plans are for the people who see prices: plan files 
 /** The home page's Floor Plans card: the people who see prices (an admin, or Sees prices) - decision 4. */
 export function plansCardFor(me) {
   return !!me && me.active !== false && me.role !== "agents" && (me.role === "admin" || !!me.can_see_prices);
+}
+
+/** The save back (contract C3, P4): on in the code. The go-live order keeps the owner's WRITE grant on the takeoff
+    folder first - until then the broker answers 503 onedrive_not_authorized, and a save simply waits on the device
+    (it opens from there, and is sent once OneDrive lets it in). Off: the frame never offers a save (no canSave in
+    ptt-open, so the takeoff app keeps its own Save a copy to Files), and nothing kept on a device is sent. */
+export const PLAN_SAVE_BACK = true;
+
+/** A person who may save a plan back to OneDrive (owner decision Q2, 2026-11-04): an admin, or Sees prices AND "Can
+    upload to OneDrive" (sb.js shapeProfile: an admin always holds every switch). Never the agents account or a person
+    turned off. The broker's plan_save_session asks the same (app.can_upload_onedrive()) - this only decides what is
+    offered. */
+export function canSaveBack(me) {
+  return planFilesFor(me) && (me.role === "admin" || !!me.can_upload_onedrive);
+}
+
+/** The frame offers a save of the plan it opens: the switch (`on` stands in for PLAN_SAVE_BACK: a test) and the
+    person. */
+export function saveBackFor(me, on) {
+  return (on === undefined ? PLAN_SAVE_BACK : !!on) && canSaveBack(me);
+}
+
+/** What the words call this device: "iPad" (an iPad, also one that calls itself a Mac with touch), "iPhone", else
+    "device" ("Saved on this iPad" / "Saved on this device"). */
+export function deviceWord(win) {
+  const nav = (win && win.navigator) || {};
+  const ua = String(nav.userAgent || "");
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && Number(nav.maxTouchPoints) > 1)) return "iPad";
+  if (/iPhone|iPod/.test(ua)) return "iPhone";
+  return "device";
 }
 
 /** The Floor Plans card for this device: a computer's opens takeoff-web's plans in a new tab (the Plans Archive and

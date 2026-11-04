@@ -40,21 +40,32 @@
    as a mix of two versions.
 
    The bytes come straight from OneDrive (the broker's plan_link: a pre-authenticated link, kept in memory only);
-   nothing goes through the broker. Nothing here is a page: the pages draw what list() and onChange() say. */
+   nothing goes through the broker. Nothing here is a page: the pages draw what list() and onChange() say.
+
+   And back (owner decisions Q1-Q3, 2026-11-04; contract C3 "Save-back", behind map/plans.js PLAN_SAVE_BACK): a Save in
+   the frame's takeoff app is kept on this device first (keepSave: the worker copies it into a new file, a record's
+   `local`), opens from there from then on, and is sent to OneDrive in place of the plan (sendSaved; or, when someone
+   saved the plan in the office meanwhile, as a separate file beside it) - see "the save back" below. */
 
 import * as onedrive from "./repo/onedrive.js";
 import { storedUserId, storedUserEmail } from "./sb.js";
 import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
+  hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS,
 } from "./map/plan-library.js";
-import { planFilesFor } from "./map/plans.js";
-import { openInTakeoff, iosHomeRefused, READY_KEY, IOS_HOME } from "./plan-handoff.js";
-import { say as frameSay } from "./plan-frame.js";
+import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord } from "./map/plans.js";
+import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
+import { say as frameSay, guard as frameGuard, isOpen as frameIsOpen } from "./plan-frame.js";
+import { createUploader, xhrTransport } from "./onedrive-upload.js";
+import { purgeTakeoffStores, noteTakeoffUser, takeoffUsers } from "./takeoff-stores.js";
 
 const DB_NAME = "dcr2-plan-library";
 const DB_VER = 1;
 const LOCK = "dcr2-plan-dl:";
+// a save being kept (spooled), and one being sent to OneDrive: one window at a time per plan
+const SPOOL_LOCK = "dcr2-plan-sp:";
+const SEND_LOCK = "dcr2-plan-up:";
 const OWNERS_KEY = "dcr2-plan-owners";
 const MAIL_KEY = "dcr2-plan-owner-mail";
 const SPACE_MARGIN = 64 * 1024 * 1024;         // never fill the last bit of the quota
@@ -275,24 +286,30 @@ if (channel) {
     } else if (m.t === "changed") {
       delete remote[m.key];
       emit(m);
+    } else if (m.t === "send") {
+      remoteSend[m.key] = { sent: m.sent, size: m.size, at: Date.now() };
+      emit(m);
     } else if (m.t === "pause" && jobs[m.key]) {
       pause(m.key, true);
     }
   };
 }
 
-/** fn({t: "changed" | "progress", key, done?, size?, rate?}) on every change here or in another window; -> unsubscribe. */
+/** fn({t: "changed" | "progress" | "send", key, done?, size?, rate?, sent?}) on every change here or in another window
+    ("send": a save on its way to OneDrive, `sent` of `size`); -> unsubscribe. */
 export function onChange(fn) {
   listeners.push(fn);
   return function () { const i = listeners.indexOf(fn); if (i !== -1) listeners.splice(i, 1); };
 }
 
-async function heldLocks() {
+/** The record keys whose lock `prefix` (a download's by default) is held in any window, or null (no Web Locks here). */
+async function heldLocks(prefix) {
+  const p = prefix || LOCK;
   if (!(HAS && navigator.locks && navigator.locks.query)) return null;
   try {
     const s = await navigator.locks.query();
     const held = {};
-    (s.held || []).forEach(function (l) { if (l.name && l.name.indexOf(LOCK) === 0) held[l.name.slice(LOCK.length)] = true; });
+    (s.held || []).forEach(function (l) { if (l.name && l.name.indexOf(p) === 0) held[l.name.slice(p.length)] = true; });
     return held;
   } catch (e) { return null; }
 }
@@ -304,15 +321,22 @@ export async function list() {
   const who = owner();
   if (!who || !supported()) return [];
   const held = await heldLocks();
+  const up = await heldLocks(SEND_LOCK);
+  const now = Date.now();
   // a copy saved from a project's sub-folder (a Backup's) is no plan of it: never shown (maybeCheck takes it off once a
   // check says OneDrive no longer lists it; one moved up into the project's folder meanwhile shows again)
   const all = (await getAll("plans")).filter((r) => r.owner === who && !inSubFolder(r.folder));
   return all.map(function (r) {
     const here = jobs[r.key];
-    const there = remote[r.key] && Date.now() - remote[r.key].at < 30000 ? remote[r.key] : null;
+    const there = remote[r.key] && now - remote[r.key].at < 30000 ? remote[r.key] : null;
     const running = !!(held ? held[r.key] : there);
     const job = here && here.worker ? { done: here.done, size: here.size, rate: here.rate } : running && there ? there : null;
-    return Object.assign({}, r, { status: statusOf(r, here && here.worker && !here.finished ? here : null, running), job });
+    // the person's own save: being sent here, or in another window (its lock; its last word of progress)
+    const mine = sending[r.key] ? { sent: sending[r.key].sent, size: sending[r.key].size } : null;
+    const far = !mine && (up ? !!up[r.key] : !!(remoteSend[r.key] && now - remoteSend[r.key].at < 30000));
+    const farLive = far && remoteSend[r.key] && now - remoteSend[r.key].at < 30000 ? remoteSend[r.key] : null;
+    return Object.assign({}, r, { status: statusOf(r, here && here.worker && !here.finished ? here : null, running), job,
+      save: saveStateOf(r, mine || farLive, now, far) });
   }).sort(function (a, b) {
     return String(a.number || "").localeCompare(String(b.number || ""), "en", { numeric: true }) ||
       String(a.folder || "").localeCompare(String(b.folder || "")) || String(a.name).localeCompare(String(b.name));
@@ -332,7 +356,7 @@ export async function usage() {
   try { est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; } catch (e) { est = null; }
   const mine = await list();
   return { usage: est ? est.usage : null, quota: est ? est.quota : null, plans: mine.length,
-    bytes: mine.reduce((n, r) => n + (r.file ? Number(r.size) || 0 : 0), 0) };
+    bytes: mine.reduce((n, r) => n + (r.file ? Number(r.size) || 0 : 0) + (hasLocal(r) ? Number(r.local.size) || 0 : 0), 0) };
 }
 
 export async function lastChecked() {
@@ -485,6 +509,9 @@ async function run(key, auto) {
     const job = jobs[key] || {};
     let r = await get("plans", key);
     if (!r) throw err("removed", "That saved plan was removed.");
+    // the person's own save waits here (kept, being sent, not sent): nothing is downloaded over it, whatever OneDrive
+    // holds - it opens as it is, and the send settles what the plan becomes
+    if (hasLocal(r)) return { local: true };
     // an automatic download looks again under the lock: a person may have paused it, or it may be waiting
     if (auto && !dueForWork(r, Date.now())) return { skipped: true };
     // a device already full needs no walk of OneDrive to say so (with a part on the device the check below is the
@@ -502,10 +529,12 @@ async function run(key, auto) {
     r = await get("plans", key);
     if (!r) throw err("removed", "That saved plan was removed.");
     const ver = { version: link.version, size: Number(link.size) || 0, modified: link.modified, name: link.name, folder: link.folder };
-    if (r.file && r.version === ver.version && (await fileOk(r.file, r.size))) {
-      // already the version OneDrive holds, and really on the device: nothing to fetch
+    if (r.file && (r.version === ver.version || keptAs(r, ver)) && (await fileOk(r.file, r.size))) {
+      // already the version OneDrive holds, and really on the device: nothing to fetch (a save of this device's that
+      // OneDrive now reports under its own hash: the version is taken, as the next check would)
       const part = r.dl && r.dl.file && r.dl.file !== r.file ? r.dl.file : "";
       await mutate("plans", key, (c) => (c ? Object.assign({}, c, { latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver),
+        version: keptAs(c, ver) ? ver.version : c.version, expect: keptAs(c, ver) ? null : c.expect || null,
         dl: null, fails: 0, retryAt: null, failCode: null, wide: false }) : undefined));
       if (part) await removeFile(part);
       return { already: true };
@@ -606,7 +635,7 @@ async function run(key, auto) {
       old = c.file;
       return Object.assign({}, c, { file: dl.file, name: ver.name || c.name, folder: ver.folder || c.folder, size: ver.size,
         modified: ver.modified, version: ver.version, savedAt: nowIso(), dl: null, fails: 0, retryAt: null, failCode: null, wide: false,
-        latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver) });
+        expect: null, latest: Object.assign({ status: "ok", checkedAt: nowIso() }, ver) });
     });
     if (!committed) { await removeFile(dl.file); return { removed: true }; }
     metaPut("autoHold:" + r.owner, null).catch(function () {});
@@ -700,6 +729,7 @@ function downloadReleased(key, ms) {
 export async function remove(itemId, opts) {
   const key = keyOf(itemId, opts && opts.owner);
   pause(key, true);
+  stopSend(key);                                           // a save on its way to OneDrive stops (nothing is deleted there)
   if (jobs[key] && jobs[key].promise) {
     try { await jobs[key].promise; } catch (e) { /* it stopped; that is all that was wanted */ }
   }
@@ -707,9 +737,11 @@ export async function remove(itemId, opts) {
   const r = await get("plans", key);
   if (!r) return;
   await del("plans", key);
+  delete tells[key];
   if (r.dl && r.dl.file && r.dl.file !== r.file) await removeFile(r.dl.file);
-  if (r.file) {
-    if (opts && opts.now) await removeFile(r.file); else await retire(r.file);
+  for (const n of [r.file, hasLocal(r) && r.local.file !== r.file ? r.local.file : ""]) {
+    if (!n) continue;
+    if (opts && opts.now) await removeFile(n); else await retire(n);
   }
   noteOwner(r.owner, (await getAll("plans")).some((x) => x.owner === r.owner) || (await hasCopies(r.owner)));
   changed(key);
@@ -734,6 +766,8 @@ export async function purgeOwner(who) {
   });
   // a file still open in a writer (a download in a tab the browser froze) stays: the next online page tries again
   noteOwner(who, await hasCopies(who));
+  // and what the takeoff app keeps of plans on this site (its drafts carry prices; contract C3): js/takeoff-stores.js
+  try { await purgeTakeoffStores(); } catch (e) { /* the next online page tries again (the hint stays) */ }
   return mine.length;
 }
 
@@ -746,6 +780,10 @@ export async function sweep() {
   if (!supported()) return;
   const held = await heldLocks();
   if ((held && Object.keys(held).length) || Object.keys(jobs).length) return;
+  // a save being kept writes a file no record names yet (here, or in another window)
+  if (spooling || Object.keys(sending).length) return;
+  const sp = await heldLocks(SPOOL_LOCK);
+  if (sp && Object.keys(sp).length) return;
   const all = await getAll("plans");
   const handed = await mutate("meta", "handed", (cur) => ({ key: "handed", value: pruneHanded(cur ? cur.value : {}, Date.now()) }));
   const keep = keepSet(all, handed ? handed.value : {}, Date.now());
@@ -765,6 +803,16 @@ export async function verifyFiles() {
     if (!(await fileOk(r.file, r.size))) {
       const cur = await mutate("plans", r.key, (c) => (c && c.file === r.file ? Object.assign({}, c, { file: "", version: "", savedAt: "" }) : undefined));
       if (cur && !cur.file) changed(r.key);
+    }
+  }
+  // a save kept here that the browser lost: nothing is left to send - the row says so (sent "lost")
+  for (const r of (await getAll("plans")).filter((x) => x.owner === who && hasLocal(x))) {
+    if (sending[r.key] || spooling) continue;
+    if (!(await fileOk(r.local.file, r.local.size))) {
+      const lost = r.local.file;
+      const cur = await mutate("plans", r.key, (c) => (c && hasLocal(c) && c.local.file === lost
+        ? Object.assign({}, c, { local: null, sent: { mode: "lost", at: nowIso() } }) : undefined));
+      if (cur && !cur.local) changed(r.key);
     }
   }
 }
@@ -798,8 +846,9 @@ export async function checkUpdates() {
         const a = applyCheck(c, answer[String(c.projectId)] || null, at);
         // and the folder OneDrive lists it in now (a file moved up out of a sub-folder is a plan again: inSubFolder)
         const folder = a.latest && a.latest.status === "ok" && a.latest.folder ? a.latest.folder : c.folder;
+        // (and a save of this device's under OneDrive's own hash now: its version, no download - map/plan-library.js keptAs)
         return Object.assign({}, c, { latest: a.latest, fails: a.fails !== undefined ? a.fails : c.fails, retryAt: a.retryAt !== undefined ? a.retryAt : c.retryAt,
-          folder });
+          folder, version: a.version, expect: a.expect || null });
       });
       if (!next || inSubFolder(next.folder)) continue;            // a Backup's copy: not one of the plans shown
       sum.checked++;
@@ -893,7 +942,8 @@ export async function maybeCheck(me, opts) {
     const who = owner();
     if (!who || (me && me.id && me.id !== who)) return;
     if (!planFilesFor(me)) {
-      if (o.fresh && ownersHere().indexOf(who) !== -1) await purgeOwner(who);
+      // (and one who opened the takeoff app here: its drafts and kept copies carry prices too - js/takeoff-stores.js)
+      if (o.fresh && (ownersHere().indexOf(who) !== -1 || takeoffUsers().indexOf(who) !== -1)) await purgeOwner(who);
       return;
     }
     const mine = (await getAll("plans")).filter((r) => r.owner === who);
@@ -918,6 +968,9 @@ export async function maybeCheck(me, opts) {
       }
     }
     await dropSubFolderCopies(who);                          // (a check that did not run now: what an earlier one found)
+    // the person's own saves waiting here go first (a page that may reach OneDrive's upload address: never the home
+    // page, whose policy does not name it - it asks with download: false)
+    if (o.download !== false && saveBackFor(me)) await sendWaiting();
     if (o.download !== false && !iosHomeRefused()) await autoWork();
     await sweep();
   } catch (e) { /* the next page asks again */ }
@@ -932,28 +985,40 @@ function noteReady() {
 }
 
 /** Open a saved copy in the takeoff app (a computer's new tab, a phone's or tablet's frame). Call IN the click.
-    onDone({ok, why, error, via}); opts.title: the frame's title (the plan's name). */
+    onDone({ok, why, error, via}); opts.title: the frame's title (the plan's name); opts.me: the person (in the frame,
+    one who may save back - map/plans.js saveBackFor - is offered it: canSave, and keepSave takes the app's Save).
+    The person's own save waiting on this device (not in OneDrive yet) is what opens, when there is one. */
 export function open(itemId, onDone, opts) {
   const key = keyOf(itemId);
+  const o = opts || {};
+  const frame = usesFrame();
+  const offer = frame && saveBackFor(o.me);
+  if (frame) noteTakeoffUser(owner());
+  const which = (c) => (hasLocal(c) ? c.local.file : c.file);
   openInTakeoff(async function () {
     // marked as handed over first, then read again: a new version committed in between (here or in another window)
     // would otherwise retire the very file being handed over
     let r = null;
     for (let i = 0; i < 2 && !r; i++) {
       const cur = await get("plans", key);
-      if (!cur || !cur.file) throw err("missing", "This plan has not finished downloading on this device yet.");
-      await markHanded(cur.file);
+      if (!cur || !which(cur)) throw err("missing", "This plan has not finished downloading on this device yet.");
+      await markHanded(which(cur));
       const again = await get("plans", key);
-      if (again && again.file === cur.file) r = again;
+      if (again && which(again) === which(cur)) r = again;
     }
     if (!r) throw err("missing", "This plan was just updated on this device. Tap Open again.");
-    const f = await fileOf(r.file);
-    if (!f) throw err("missing", "This saved plan is no longer on this device. Save it again from 📐 while online.");
-    if (Number(r.size) > 0 && f.size !== Number(r.size)) throw err("missing", "This saved plan did not finish downloading. It carries on while the portal is open and online.");
-    const t = Date.parse(r.modified || "");
-    return { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : f.lastModified, number: r.number,
-      updateAvailable: statusOf(r, null, false) === "outdated" };
-  }, null, onDone, noteReady, opts);
+    const mine = hasLocal(r);
+    const f = await fileOf(which(r));
+    if (!f) throw err("missing", mine ? "The save kept on this device is gone (the browser cleared this site's storage)." : "This saved plan is no longer on this device. Save it again from 📐 while online.");
+    const want = mine ? Number(r.local.size) : Number(r.size);
+    if (want > 0 && f.size !== want) throw err("missing", "This saved plan did not finish downloading. It carries on while the portal is open and online.");
+    // the save's own time (the app keeps a draft only when it is newer than the file it opens)
+    const t = Date.parse((mine ? r.local.savedAt : r.modified) || "");
+    const plan = { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : f.lastModified, number: r.number,
+      updateAvailable: !mine && statusOf(r, null, false) === "outdated" };
+    if (offer) plan.canSave = true;                          // (js/plan-handoff.js offers it to the frame only)
+    return plan;
+  }, null, onDone, noteReady, Object.assign({}, o, { onSave: offer ? function (save, tell) { return keepSave(itemId, save, tell); } : null }));
 }
 
 /** Open a plan in OneDrive in the takeoff app over byte ranges (online; nothing saved). Call IN the click. A fresh link
@@ -962,6 +1027,7 @@ export function open(itemId, onDone, opts) {
 export function openOnline(projectId, number, file, onDone, opts) {
   let version = null;
   let stale = false;                        // saved again in OneDrive since it was opened: no fresh link will match
+  if (usesFrame()) noteTakeoffUser(owner());
   openInTakeoff(async function () {
     const l = await onedrive.planLink(projectId, file.id);
     if (!(Number(l.size) > 0)) throw err("no_size", "OneDrive did not say how big this file is.");
@@ -988,7 +1054,10 @@ export function openOnline(projectId, number, file, onDone, opts) {
  *   · OneDrive busy, the file gone from OneDrive, the download stopped - with a copy here: that copy opens, and the
  *     person is told why it is not the newest; refused (Sees prices taken away): nothing opens;
  *   · paused by the person meanwhile, or `o.still()` false (the menu was closed): nothing opens.
- * o: {projectId, number, projectTitle, itemId, name, file (the plans_list file, when the 📐 menu has it), still()}.
+ *   · the person's own save waiting here (not in OneDrive yet): that opens, nothing is downloaded over it (and it is
+ *     sent, when it can be);
+ * o: {projectId, number, projectTitle, itemId, name, file (the plans_list file, when the 📐 menu has it), still(), me
+ * (the person: one who may save back is offered it - open())}.
  * onStep(text) says what happens meanwhile; onDone({ok, why, error, via, online, note}) - `note`: what the person is
  * told on the frame's bar too (online: why it opened online).
  */
@@ -1021,9 +1090,15 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
     frameSay(note, "warn");
   };
   const fromHere = function (note) {
-    open(itemId, function (res) { done(note ? Object.assign({ note }, res) : res); }, { title });
+    open(itemId, function (res) { done(note ? Object.assign({ note }, res) : res); }, { title, me: o.me });
     if (note) frameSay(note, "warn");
   };
+  if (r && hasLocal(r)) {
+    // the person's latest work, not in OneDrive yet: it opens as it is (with no signal too) - nothing is fetched over it
+    fromHere("");
+    if (online) sendSaved(itemId).catch(function () { /* the row says why */ });
+    return;
+  }
   const first = deviceOpenStep({ have: !!(r && r.file), online, writable });
   if (first === "offline") {
     done({ ok: false, why: "failed", error: err("offline", "You're offline, and this plan is not saved on this device yet. Open it once while online.") });
@@ -1051,4 +1126,490 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
   if (res && res.paused) { done({ ok: false, why: "paused" }); return; }
   if (res && res.removed) { done({ ok: false, why: "failed", error: err("removed", "That saved plan was removed.") }); return; }
   fromHere("");
+}
+
+/* ── the save back (owner decisions Q1-Q3, 2026-11-04; contract C3 "Save-back") ──────────────────────────────────
+
+   A Save in the frame's takeoff app, of a plan handed to it as a file and offered (canSave: map/plans.js saveBackFor,
+   PLAN_SAVE_BACK), comes here through the hand-over (js/plan-handoff.js ptt-save -> keepSave):
+     1. the saved project - a Blob of the app's, handed over by reference, file-backed slices of the plan plus its
+        changes - is copied into a NEW file of the library by the worker (op "spool": 8 MiB slices with the
+        synchronous access handle; nothing whole in memory), its size and the takeoff MAGIC checked;
+     2. the record gets its `local` (map/plan-library.js withSave): the save opens from now on - with no signal too -
+        and nothing downloads over it or retires it (needsWork, run);
+     3. the app is told "kept" - only then does it mark the project saved and drop its draft.
+   Then it is SENT (sendSaved) by the Files tab's uploader (js/onedrive-upload.js createUploader) over the broker's
+   plan_save_session / plan_save_done: chunks straight from this device's file to OneDrive's upload address (in this
+   page's memory only), the screen held awake (a Wake Lock) and the rows saying "keep this screen open". A send that
+   does not finish waits (5 min, doubling, up to 6 h) and goes again by itself while a portal page that may reach
+   OneDrive is open (maybeCheck: Search, a project, the Plans Library), or at the person's Retry. Once OneDrive has it
+   (adoptSent): a REPLACE - the saved bytes are the plan's version now (no download), the old copy retired (a week's
+   grace when handed to the app lately); a COPY - someone saved the plan in the office after this device got it (Q3):
+   the plan stays as it was, the save becomes a record of its own for the copy, and the person is told (copyTold).
+   A session whose end this device never heard (the page closed after the last byte) is settled with its ticket first
+   (settle: plan_save_done), so a save that landed is never sent twice, nor made into a copy of itself.
+
+   While a save is kept or sent the frame's Close asks first (plan-frame.js guard) and leaving the page asks too. */
+
+const sending = {};        // key -> {job, file, sent, size, told, meta}: a save being sent from THIS window
+const remoteSend = {};     // key -> {sent, size, at}: one being sent from another window (its last word)
+const parked = {};         // key -> {id, file, meta}: a send that failed with its session alive (resumed in this page)
+const tells = {};          // key -> the frame's news (js/plan-handoff.js), while the takeoff app is open on that plan
+const waiting = {};        // uploader job id -> resolve(the job, once it ended)
+const sendCalls = {};      // key -> a sendSaved running in this window (a second call is the same one)
+let spooling = 0;
+let upl = null;
+let transportFn = null;
+
+/** A test's stand-in for OneDrive's upload address (the page's: XMLHttpRequest, js/onedrive-upload.js xhrTransport). */
+export function useTransport(fn) {
+  transportFn = fn || null;
+  upl = null;
+}
+
+const here = () => (HAS ? window : null);
+
+/** A refusal of the broker's, in the words of a save (the broker's own for the rest). */
+function sendError(x) {
+  const code = x && x.code;
+  if (code === "too_large") {
+    const max = x.info && Number(x.info.max_bytes);
+    return err("too_large", "This plan is too large to send to OneDrive from here" + (max > 0 ? " (at most " + fmtSize(max) + ")" : "") +
+      ". It stays on this device.", { status: x.status });
+  }
+  if (code === "not_found") {
+    return err("not_found", "This plan is no longer in its project's folder in OneDrive, so the save cannot be sent there. It stays on this device.", { status: x.status });
+  }
+  // the takeoff folder's grant still read-only (the owner's step): no use asking again in a minute (the uploader would)
+  if (code === "not_authorized") {
+    return err("save_not_allowed", "OneDrive does not take plan saves from the portal yet (the owner turns it on). The save stays on this device and is sent later.",
+      { status: x.status, retryAfter: x.retryAfter });
+  }
+  return x;
+}
+
+/** The copies named `name` with `size` bytes among the project's plans now (a copy session whose last answer was lost). */
+async function copiesNamed(projectId, name, size) {
+  const got = await onedrive.plansList([projectId]);
+  const p = got[String(projectId)];
+  const want = String(name || "").normalize("NFC").toLowerCase();
+  return (p ? p.files : []).filter((f) => f.size === Number(size) && String(f.name).normalize("NFC").toLowerCase() === want);
+}
+
+/** The uploader's broker for a plan's save (js/onedrive-upload.js): the job's meta {key, itemId, base, file, savedAt}. */
+const planBroker = {
+  session: async function (j) {
+    const m = j.meta || {};
+    let s;
+    try {
+      s = await onedrive.planSaveSession({ projectId: j.projectId, itemId: m.itemId, version: m.base, size: j.size, modified: m.savedAt });
+    } catch (x) { throw sendError(x); }
+    m.ticket = s.ticket;
+    // what this session does, kept with the save - never its upload address - so a send whose end is never heard is
+    // settled with it before anything is sent again
+    try {
+      await mutate("plans", m.key, function (c) {
+        if (!c || !hasLocal(c) || c.local.file !== m.file) return undefined;
+        const sends = (Array.isArray(c.local.sends) ? c.local.sends : []).concat([{ file: m.file, ticket: s.ticket, mode: s.mode, name: s.name,
+          size: j.size, at: nowIso() }]).slice(-MAX_SENDS);
+        return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
+      });
+    } catch (e) { /* a note only: the send goes on */ }
+    return s;
+  },
+  done: function (j, itemId, ticket) { return onedrive.planSaveDone(j.projectId, itemId, ticket); },
+  // the session is gone (finished, or run out): does OneDrive hold this save? A replace: the plan itself (plan_save_done
+  // is the proof, not_saved when not); a copy: a file of the copy's name and size in the project's folder
+  find: function (j) {
+    const m = j.meta || {};
+    if (j.session && j.session.mode === "copy") return copiesNamed(j.projectId, j.session.name, j.size);
+    return Promise.resolve([{ id: m.itemId, name: (j.session && j.session.name) || "", size: j.size }]);
+  },
+};
+
+function uploader() {
+  if (upl) return upl;
+  upl = createUploader({ send: transportFn || xhrTransport(), broker: planBroker });
+  upl.onChange(onUploads);
+  return upl;
+}
+
+/** The uploader's word: a job that ended answers its waiter; a save's progress goes to the rows, the frame and the
+    other windows. */
+function onUploads(items) {
+  items.forEach(function (j) {
+    const w = waiting[j.id];
+    if (w && (j.state === "done" || j.state === "failed" || j.state === "cancelled")) { delete waiting[j.id]; w(j); }
+  });
+  Object.keys(sending).forEach(function (key) {
+    const s = sending[key];
+    const j = items.find((x) => x.id === s.job);
+    if (!j || ["starting", "sending", "finishing"].indexOf(j.state) === -1 || j.sent === s.sent) return;
+    s.sent = j.sent;
+    s.size = j.size;
+    const m = { t: "send", key, sent: s.sent, size: s.size };
+    emit(m);
+    if (channel) try { channel.postMessage(m); } catch (e) { /* closed */ }
+    const pct = s.size ? Math.min(99, Math.floor((s.sent / s.size) * 100)) : 0;
+    if (pct >= (s.told || 0) + 5) { s.told = pct; news(key, "sending", { pct }); }
+    if (frameIsOpen()) frameSay("Sending your save to OneDrive: " + pct + "% — keep this screen open.");
+  });
+}
+
+/** The job, once it ended (done, failed or cancelled). */
+function ended(id) {
+  return new Promise(function (resolve) { waiting[id] = resolve; });
+}
+
+/** The frame's news about this plan's save (the takeoff app shows it while it is open; it depends on none of it). */
+function news(key, state, extra) {
+  const t = tells[key];
+  if (typeof t !== "function") return;
+  try { t(state, extra || {}); } catch (e) { /* the frame went */ }
+  if (state === "sent" || state === "copy") delete tells[key];
+}
+
+function toastOf(text, kind) {
+  const t = HAS && window.DCR2 && window.DCR2.toast;
+  if (typeof t === "function") { try { t(text, { kind: kind || "info", ms: 12000 }); } catch (e) { /* words only */ } }
+}
+
+/* The screen kept awake while a save is sent (a phone that sleeps stops the page, and with it the upload). */
+let wakeWant = 0, wake = null, wakeAsking = false;
+function awake(on) {
+  wakeWant = Math.max(0, wakeWant + (on ? 1 : -1));
+  if (!wakeWant) {
+    if (wake) { try { wake.release(); } catch (e) { /* gone */ } wake = null; }
+    return;
+  }
+  holdAwake();
+}
+function holdAwake() {
+  if (wake || wakeAsking || !wakeWant || !(HAS && navigator.wakeLock && typeof navigator.wakeLock.request === "function")) return;
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+  wakeAsking = true;
+  Promise.resolve().then(function () { return navigator.wakeLock.request("screen"); }).then(function (s) {
+    wakeAsking = false;
+    if (!wakeWant || wake) { try { s.release(); } catch (e) { /* */ } return; }
+    wake = s;
+    if (typeof s.addEventListener === "function") s.addEventListener("release", function () { if (wake === s) wake = null; });
+  }, function () { wakeAsking = false; /* the browser said no (low power, a hidden page): the rows still say keep this screen open */ });
+}
+if (HAS && typeof document !== "undefined" && typeof document.addEventListener === "function") {
+  // a lock is let go when the page is hidden: asked again when it is back in front
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") holdAwake(); });
+}
+if (HAS && typeof window.addEventListener === "function") {
+  // leaving the page stops a save being kept or sent: the browser asks first, where it can
+  window.addEventListener("beforeunload", function (e) {
+    if (!spooling && !Object.keys(sending).length) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+}
+// the frame's Close asks first while a save is kept (closing the app can stop it) or sent (that goes on in this page)
+frameGuard(function () {
+  const d = deviceWord(here());
+  if (spooling) return "Your save is being kept on this " + d + ".";
+  const keys = Object.keys(sending);
+  if (!keys.length) return "";
+  const s = sending[keys[0]];
+  const pct = s.size ? Math.min(99, Math.floor((s.sent / s.size) * 100)) : 0;
+  return { title: "Still sending to OneDrive", okText: "Close the takeoff app", danger: false,
+    text: "Your save is on this " + d + " and is being sent to OneDrive (" + pct + "%). It carries on after the takeoff app closes: keep the portal open on this screen until it says Sent." };
+});
+
+/** Copy the app's Blob into the library file `name` (the worker's op "spool") -> {size, magic} | {error}. */
+function runSpool(key, name, blob, size) {
+  return new Promise(function (resolve) {
+    let w;
+    try { w = new Worker(new URL("./plan-library-worker.js", import.meta.url)); } catch (e) { resolve({ error: err("unsupported", UNSUPPORTED) }); return; }
+    let last = Date.now(), over = false;
+    // a worker that goes silent (it speaks at least every 10 seconds) is ended: the save is not kept
+    const dog = setInterval(function () {
+      if (Date.now() - last > 90000) end({ error: err("stalled", "Keeping the save on this device stopped responding. Save again.") });
+    }, 10000);
+    function end(v) {
+      if (over) return;
+      over = true;
+      clearInterval(dog);
+      try { w.terminate(); } catch (e) { /* gone */ }
+      resolve(v);
+    }
+    w.onmessage = function (ev) {
+      const m = ev.data || {};
+      last = Date.now();
+      if (m.type === "spooled") end({ size: m.size, magic: m.magic });
+      else if (m.type === "error") end({ error: err("spool", m.message || "The save could not be kept on this device.", { status: m.status }) });
+      else if (m.type === "cancelled") end({ error: err("spool", "Keeping the save stopped. Save again.") });
+    };
+    w.onerror = function (ev) { end({ error: err("spool", "Keeping the save stopped (" + ((ev && ev.message) || "the worker failed") + ").") }); };
+    w.postMessage({ op: "spool", id: key, file: name, blob, size });
+  });
+}
+
+/** A send of this plan's save `file` (or of any, without one) stops here: an earlier save a later one replaced, a
+    removed plan. Nothing is deleted in OneDrive (an unfinished upload session changes nothing there). */
+function stopSend(key, file) {
+  const s = sending[key];
+  if (s && (!file || s.file === file) && upl) upl.cancel(s.job);
+  const p = parked[key];
+  if (p && (!file || p.file === file)) {
+    if (upl) upl.remove(p.id);
+    delete parked[key];
+  }
+}
+
+/**
+ * The app's Save of the plan `itemId` (js/plan-handoff.js saveOf: {req, name, size, file}) kept on this device ->
+ * {state: "kept" | "refused" | "no-room" | "failed", why, sent} - the hand-over's answer to the app (`sent`: the send
+ * that follows at once, never rejecting: a test's to wait on). `tell(state, extra)`: the frame's news while it is open.
+ */
+export async function keepSave(itemId, save, tell) {
+  const key = keyOf(itemId);
+  const s = save || {};
+  spooling++;
+  try {
+    if (!PLAN_SAVE_BACK) return { state: "refused", why: "Saving plans back from here is switched off for now: use Save a copy to Files." };
+    const r = await get("plans", key);
+    if (!r || !(r.file || hasLocal(r))) return { state: "refused", why: "This plan is no longer saved on this device: use Save a copy to Files." };
+    const size = Number(s.size);
+    if (!s.file || typeof s.file.slice !== "function" || !(size > 0) || s.file.size !== size) return { state: "refused", why: "The save did not arrive whole: save again." };
+    if (!(await canWrite())) return { state: "failed", why: UNSUPPORTED };
+    try { await roomFor(size); } catch (x) { return { state: "no-room", why: x.message }; }
+    // a name never used before: never the plan's own copy (the app reads it still), never an earlier save
+    const name = fileNameFor(r.owner, r.itemId, "save:" + (r.version || ""), Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    const spool = function () { return runSpool(key, name, s.file, size); };
+    const w = HAS && navigator.locks && navigator.locks.request ? await navigator.locks.request(SPOOL_LOCK + key, spool) : await spool();
+    if (w.error) {
+      if (w.error.status === 507) return { state: "no-room", why: w.error.message };
+      return { state: w.error.status === 415 ? "refused" : "failed", why: w.error.message };
+    }
+    if (w.magic !== MAGIC) { await removeFile(name); return { state: "refused", why: "What the takeoff app saved is not a takeoff project file." }; }
+    if (w.size !== size) { await removeFile(name); return { state: "failed", why: "The save was not kept whole on this device. Save again." }; }
+    // the record as it is now (another window may have removed it meanwhile)
+    let old = "", kept = false;
+    await mutate("plans", key, function (c) {
+      if (!c) return undefined;
+      const a = withSave(c, name, w.size, nowIso());
+      old = a.old;
+      kept = true;
+      return a.rec;
+    });
+    if (!kept) { await removeFile(name); return { state: "refused", why: "This plan was removed from this device meanwhile: use Save a copy to Files." }; }
+    noteOwner(r.owner, true);
+    // the send's news goes to this conversation from now on (the app shows it while it is open)
+    if (typeof tell === "function") tells[key] = tell;
+    if (old) {
+      // the earlier save this one replaces: its send here stops (a session it opened stays with the save, to be
+      // settled), its file goes - kept the week's grace when it was handed to the app
+      stopSend(key, old);
+      await retire(old);
+    }
+    changed(key);
+    // sent at once when it can be - after the send of the save it replaces has stopped (never awaited here: the app is
+    // told "kept" now)
+    const sent = Promise.resolve(sendCalls[key]).catch(function () { return null; })
+      .then(function () { return sendSaved(itemId); }).catch(function () { return null; });
+    return { state: "kept", sent };
+  } catch (x) {
+    return { state: "failed", why: (x && x.message) || "The save could not be kept on this device." };
+  } finally {
+    spooling--;
+  }
+}
+
+/** A save that OneDrive did not take: the record says why, and when it goes again by itself. */
+async function failSend(key, file, x) {
+  try {
+    await mutate("plans", key, function (c) {
+      if (!c || !hasLocal(c) || c.local.file !== file) return undefined;
+      const fails = (Number(c.local.fails) || 0) + 1;
+      return Object.assign({}, c, { local: Object.assign({}, c.local, { state: "failed", error: String((x && x.message) || "The save was not sent."),
+        code: String((x && x.code) || ""), fails, retryAt: new Date(Date.now() + backoffMs(fails)).toISOString() }) });
+    });
+  } catch (e) { /* the message has reached the page */ }
+  changed(key);
+  news(key, "failed", { why: x && x.message });
+  if (frameIsOpen()) frameSay("Your save is kept on this " + deviceWord(here()) + " but was not sent to OneDrive: " + String((x && x.message) || "").replace(/[.\s]+$/, "") + ".", "warn");
+}
+
+/**
+ * OneDrive has save `file` of this plan (plan_save_done's answer `ans`; `size`: what was sent) - the records as
+ * map/plan-library.js adoptSent makes them, the old files retired, the person told. -> {sent, mode, name}.
+ */
+async function commitSent(key, file, ans, size) {
+  if (!ans || ans.saved !== true || Number(ans.size) !== Number(size)) {
+    throw err("not_saved", "OneDrive did not get the whole file - it is sent again.");
+  }
+  let a = null;
+  await mutate("plans", key, function (c) {
+    a = adoptSent(c, file, ans, nowIso());
+    return a.rec || undefined;
+  });
+  if (!a) a = { rec: null, copy: null, old: [file] };
+  if (a.copy) {
+    const copy = a.copy;
+    await mutate("plans", copy.key, function (cur) {
+      if (cur && cur.file && cur.file !== copy.file) a.old.push(cur.file);
+      if (cur && cur.dl && cur.dl.file) a.old.push(cur.dl.file);
+      return copy;
+    });
+    noteOwner(copy.owner, true);
+    changed(copy.key);
+  }
+  for (const n of a.old) await retire(n);
+  changed(key);
+  if (a.rec && ans.mode === "copy" && a.copy) {
+    const told = copyTold(ans.name, deviceWord(here()));
+    news(key, "copy", { name: ans.name });
+    if (frameIsOpen()) frameSay(told, "warn"); else toastOf(told, "info");
+  } else if (a.rec && ans.mode === "replace") {
+    news(key, "sent");
+    if (frameIsOpen()) frameSay("Your save is in OneDrive: it replaced the plan there.");
+  }
+  return { sent: true, mode: ans.mode, name: ans.name };
+}
+
+/** Did OneDrive get the save of an earlier session (`s`: one of local.sends)? -> plan_save_done's answer, or null. */
+async function landedSave(r, s) {
+  if (s.mode === "copy") {
+    for (const f of (await copiesNamed(r.projectId, s.name, s.size)).slice(0, 3)) {
+      try { return await onedrive.planSaveDone(r.projectId, f.id, s.ticket); } catch (x) { if (!(x && x.code === "not_saved")) throw x; }
+    }
+    return null;
+  }
+  return onedrive.planSaveDone(r.projectId, r.itemId, s.ticket);
+}
+
+/** The sessions this device opened for the plan's saves whose end it never heard (local.sends), settled before anything
+    is sent again: one OneDrive has is adopted (the current save's: done, nothing more to send), the others go.
+    `skip`: a session still alive in this page (resumed instead). -> {sent...} when the current save was one of them. */
+async function settle(key, skip) {
+  const r = await get("plans", key);
+  if (!r || !hasLocal(r)) return null;
+  for (const s of (Array.isArray(r.local.sends) ? r.local.sends : []).slice()) {
+    if (!s || !s.ticket || s.ticket === skip) continue;
+    let ans = null;
+    try {
+      ans = await landedSave(r, s);
+    } catch (x) {
+      const code = x && x.code;
+      // not there (not_saved), a ticket run out or a plan no longer there: the session is over; OneDrive or the
+      // connection: asked again next time
+      if (code !== "not_saved" && code !== "invalid" && code !== "not_found") throw x;
+    }
+    if (ans && Number(ans.size) === Number(s.size)) {
+      const out = await commitSent(key, s.file, ans, s.size);
+      if (s.file === r.local.file) return out;
+      continue;
+    }
+    await mutate("plans", key, function (c) {
+      if (!c || !hasLocal(c) || !Array.isArray(c.local.sends)) return undefined;
+      return Object.assign({}, c, { local: Object.assign({}, c.local, { sends: c.local.sends.filter((x) => x && x.ticket !== s.ticket) }) });
+    });
+  }
+  return null;
+}
+
+/** Under this plan's send lock: settle, then send the save as it is now. */
+async function sendNow(key) {
+  let r = await get("plans", key);
+  if (!r || !hasLocal(r)) return { none: true };
+  const park = parked[key] && parked[key].file === r.local.file ? parked[key] : null;
+  const done = await settle(key, park && park.meta ? park.meta.ticket : null);
+  if (done && done.sent) return done;
+  r = await get("plans", key);
+  if (!r || !hasLocal(r)) return { none: true };
+  const file = r.local.file;
+  if (!baseOk(r.local.base)) {
+    const x = err("bad_base", "This save cannot be matched to a version of the plan in OneDrive. It stays on this device: use Save a copy to Files in the takeoff app.");
+    await failSend(key, file, x);
+    throw x;
+  }
+  const f = await fileOf(file);
+  if (!f || f.size !== Number(r.local.size)) {
+    await mutate("plans", key, (c) => (c && hasLocal(c) && c.local.file === file ? Object.assign({}, c, { local: null, sent: { mode: "lost", at: nowIso() } }) : undefined));
+    changed(key);
+    throw err("lost", "The save kept on this device is gone (the browser cleared this site's storage).");
+  }
+  await mutate("plans", key, (c) => (c && hasLocal(c) && c.local.file === file
+    ? Object.assign({}, c, { local: Object.assign({}, c.local, { state: "sending", error: "", code: "" }) }) : undefined));
+  const up = uploader();
+  let id = "", meta = null;
+  if (park && up.retry(park.id)) { id = park.id; meta = park.meta; }
+  else {
+    if (park) up.remove(park.id);
+    meta = { key, itemId: r.itemId, base: r.local.base, file, savedAt: r.local.savedAt, ticket: "" };
+    id = up.add({ projectId: r.projectId, file: f, name: r.name, label: r.number || "", meta }).id;
+  }
+  delete parked[key];
+  sending[key] = { job: id, file, sent: 0, size: f.size, told: 0, meta };
+  awake(true);
+  changed(key);
+  let end;
+  try { end = await ended(id); } finally { delete sending[key]; awake(false); }
+  if (end.state === "done") {
+    up.remove(id);
+    try {
+      return await commitSent(key, file, end.result, f.size);
+    } catch (x) {
+      await failSend(key, file, x);
+      throw x;
+    }
+  }
+  if (end.state === "cancelled") { up.remove(id); changed(key); return { cancelled: true }; }
+  // not sent: its session kept for a resume in this page when it lives (a connection that did not come back)
+  if (end.canRetry && end.code !== "not_saved") parked[key] = { id, file, meta }; else up.remove(id);
+  const x = err(end.code || "not_sent", end.error || "The save was not sent to OneDrive.");
+  await failSend(key, file, x);
+  throw x;
+}
+
+/**
+ * Send this person's save of the plan `itemId` to OneDrive now (see above). opts.manual: the person's own Retry (no
+ * wait after earlier failures). Resolves {sent, mode, name} | {none} | {skipped} | {cancelled}; throws {code, message}
+ * when it was not sent ("offline", "off", "busy_here", the broker's codes) - the row says why.
+ */
+export function sendSaved(itemId, opts) {
+  const key = keyOf(itemId);
+  if (sendCalls[key]) return sendCalls[key];
+  const manual = !!(opts && opts.manual);
+  const p = (async function () {
+    if (!PLAN_SAVE_BACK) throw err("off", "Sending saves to OneDrive is switched off for now: the save stays on this device.");
+    if (HAS && navigator.onLine === false) throw err("offline", "You're offline: the save stays on this device and is sent when you're back online.");
+    const r = await get("plans", key);
+    if (!r || !hasLocal(r)) return { none: true };
+    if (!manual && !dueToSend(r, Date.now())) return { skipped: true };
+    if (HAS && navigator.locks && navigator.locks.request) {
+      return navigator.locks.request(SEND_LOCK + key, { ifAvailable: true }, function (lock) {
+        if (!lock) throw err("busy_here", "This save is being sent from another portal window.");
+        return sendNow(key);
+      });
+    }
+    return sendNow(key);
+  })();
+  sendCalls[key] = p;
+  const clear = function () { if (sendCalls[key] === p) delete sendCalls[key]; };
+  p.then(clear, clear);
+  return p;
+}
+
+/** This person's saves waiting here, sent one at a time (maybeCheck); a failure of OneDrive's or the connection's
+    stops the rest (they would fail too). -> how many were sent. */
+export async function sendWaiting() {
+  if (!PLAN_SAVE_BACK || !supported() || (HAS && navigator.onLine === false)) return 0;
+  const who = owner();
+  if (!who) return 0;
+  let n = 0;
+  for (const r of (await getAll("plans")).filter((x) => x.owner === who && dueToSend(x, Date.now()))) {
+    try {
+      const out = await sendSaved(r.itemId);
+      if (out && out.sent) n++;
+    } catch (x) {
+      const code = x && x.code;
+      if (code === "offline" || code === "off" || code === "save_not_allowed" || brokerWide(code)) break;
+    }
+  }
+  return n;
 }

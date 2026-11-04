@@ -13,11 +13,16 @@
    On a phone or a tablet (owner decision Q4, 2026-11-04) Open first brings the copy here up to the version OneDrive
    holds (when online), then opens it in the portal's own copy of the takeoff app, in a frame over this page
    (js/plan-library.js openOnDevice, js/plan-frame.js) - the home-screen app included: it shares this storage, so it is
-   no longer told to use Safari, and its saved plans download by themselves too. */
+   no longer told to use Safari, and its saved plans download by themselves too.
+
+   The save back (owner decisions Q1-Q3, 2026-11-04): a Save in the frame's takeoff app is kept on this device and sent
+   to OneDrive (js/plan-library.js keepSave / sendSaved); its row says "Saved on this iPad", "Sending 45% — keep this
+   screen open", "Sent", "Saved as a separate file" or "Not sent — tap to retry" (map/plan-library.js saveText), with
+   Send now / Retry; it is never downloaded over, and Remove says first that it is not in OneDrive yet. */
 
 import { boot, el, esc, confirmBox } from "./shell.js";
-import { planFilesFor } from "../map/plans.js";
-import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh, progressOf, progressHtml } from "../map/plan-library.js";
+import { planFilesFor, deviceWord } from "../map/plans.js";
+import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh, progressOf, progressHtml, saveText, sendBar, hasLocal } from "../map/plan-library.js";
 import { handoffProblem, lastReady, iosHomeRefused, usesFrame, IOS_HOME } from "../plan-handoff.js";
 import * as L from "../plan-library.js";
 
@@ -68,6 +73,8 @@ function paintNet() {
 }
 
 function stateLine(r, done, size) {
+  // the person's own save (kept here, on its way to OneDrive, sent, not sent) says more than the copy's status
+  if (r.save && r.status !== "downloading") return { text: saveText(r.save, deviceWord(window)), bar: sendBar(r.save) };
   const pct = size ? Math.min(99, Math.floor((done / size) * 100)) : null;
   let s = r.status === "downloading" && pct !== null ? "Downloading " + pct + "%" +
     (r.job && r.job.rate ? " · " + fmtSize(r.job.rate) + "/s" : "") : statusText(r.status, !!r.file);
@@ -89,11 +96,19 @@ function rowHtml(r) {
   const meta = [folderLabel(r.folder), r.size ? fmtSize(r.size) : r.latest && r.latest.size ? fmtSize(r.latest.size) : "",
     r.modified ? "version of " + day(r.modified) : ""].filter(Boolean).join(" · ");
   const line = stateLine(r, r.job ? r.job.done : 0, r.job ? r.job.size : 0);
-  const kind = r.status === "saved" ? " ok" : r.status === "stopped" || r.status === "gone" || r.status === "denied" ? " warn" : "";
+  const sv = r.save && r.status !== "downloading" ? r.save.state : "";
+  const kind = sv ? (sv === "sent" ? " ok" : sv === "failed" || sv === "lost" ? " warn" : "")
+    : r.status === "saved" ? " ok" : r.status === "stopped" || r.status === "gone" || r.status === "denied" ? " warn" : "";
   const b = [];
-  if (r.file) b.push('<button type="button" class="btn btn-sm" data-act="open" data-id="' + esc(r.itemId) + '">Open</button>');
+  if (r.file || hasLocal(r)) b.push('<button type="button" class="btn btn-sm" data-act="open" data-id="' + esc(r.itemId) + '">Open</button>');
   if (r.status === "downloading") b.push('<button type="button" class="btn btn-ghost btn-sm" data-act="pause" data-id="' + esc(r.itemId) + '">Pause</button>');
-  if (r.status === "paused" || r.status === "stopped" || r.status === "missing" || r.status === "outdated") {
+  if (hasLocal(r)) {
+    // the person's own save waits here: it is sent (Send now / Retry), never downloaded over
+    if (sv === "kept" || sv === "failed") {
+      b.push('<button type="button" class="btn btn-ghost btn-sm" data-act="send" data-id="' + esc(r.itemId) + '"' +
+        (navigator.onLine === false ? " disabled" : "") + ">" + (sv === "failed" ? "Retry" : "Send now") + "</button>");
+    }
+  } else if (r.status === "paused" || r.status === "stopped" || r.status === "missing" || r.status === "outdated") {
     b.push('<button type="button" class="btn btn-ghost btn-sm" data-act="resume" data-id="' + esc(r.itemId) + '"' +
       (navigator.onLine === false ? " disabled" : "") + ">" + (r.status === "stopped" ? "Try again" : r.status === "outdated" ? "Update now" : "Resume") + "</button>");
   }
@@ -103,6 +118,19 @@ function rowHtml(r) {
     (meta ? '<div class="lib-meta">' + esc(meta) + "</div>" : "") +
     '<div class="lib-state' + kind + '"><span class="lib-state-t">' + esc(line.text) + "</span>" + progressHtml(line.bar) + "</div>" +
     '<div class="lib-btns">' + b.join("") + "</div></div>";
+}
+
+/** A save on its way to OneDrive: only its row's line and bar change. */
+function paintSend(m) {
+  const r = state.rows.find((x) => x.key === m.key);
+  const row = Array.prototype.find.call(document.querySelectorAll(".lib-row"), (n) => n.getAttribute("data-key") === m.key);
+  if (!r || !row || !hasLocal(r)) { queueRender(); return; }
+  const was = r.save && r.save.state;
+  r.save = { state: "sending", pct: m.size ? Math.min(99, Math.floor((m.sent / m.size) * 100)) : 0 };
+  if (was !== "sending") { queueRender(); return; }               // its buttons change (no Send now while it goes)
+  const line = stateLine(r, 0, 0);
+  row.querySelector(".lib-state-t").textContent = line.text;
+  setBar(row.querySelector(".plan-prog"), line.bar);
 }
 
 /** Only the downloading row's line and bar change while it downloads: its buttons stay where the pointer is. */
@@ -230,8 +258,8 @@ function act(what, id) {
       // a phone or a tablet: the newest version on this device first (its green bar here), then the frame
       const r = state.rows.find((x) => x.itemId === id);
       say("Opening…");
-      L.openOnDevice({ projectId: r && r.projectId, number: r && r.number, projectTitle: r && r.projectTitle, itemId: id, name: r && r.name },
-        told, function (text) { say(text); });
+      L.openOnDevice({ projectId: r && r.projectId, number: r && r.number, projectTitle: r && r.projectTitle, itemId: id, name: r && r.name,
+        me: state.me }, told, function (text) { say(text); });
       return;
     }
     // in the click itself: the new tab opens now
@@ -240,13 +268,25 @@ function act(what, id) {
     return;
   }
   if (what === "pause") { L.pause(id); return; }
+  if (what === "send") {
+    // the person's own Retry / Send now (no wait after earlier failures)
+    say("Sending your save to OneDrive — keep this screen open…");
+    L.sendSaved(id, { manual: true }).then(function (r) {
+      if (r && r.sent) say(r.mode === "copy" ? "Saved in OneDrive as a separate file: " + r.name + " — nothing was overwritten." : "Sent to OneDrive.");
+      else say("");
+    }, function (e) { say((e && e.message) || "The save was not sent.", "warn"); }).finally(queueRender);
+    return;
+  }
   if (what === "resume") {
     L.resume(id).catch(function (e) { say((e && e.message) || "Could not download it.", "warn"); });
     return;
   }
   if (what === "remove") {
     const r = state.rows.find((x) => x.itemId === id);
-    confirmBox("Remove " + (r ? r.name : "this plan") + " from this device? It stays in OneDrive.", { title: "Remove", okText: "Remove", danger: true })
+    // a save of the person's own that is not in OneDrive yet goes with it: said first
+    const unsent = r && hasLocal(r);
+    confirmBox(unsent ? "Remove " + r.name + " from this device? Your save of it is NOT in OneDrive yet: removing it loses that work. The plan as it was stays in OneDrive."
+      : "Remove " + (r ? r.name : "this plan") + " from this device? It stays in OneDrive.", { title: "Remove", okText: "Remove", danger: true })
       .then(function (yes) { if (yes) return L.remove(id).then(function () { say("Removed from this device."); }); return null; })
       .catch(function (e) { say((e && e.message) || "Could not remove it.", "warn"); })
       .finally(queueRender);
@@ -280,6 +320,7 @@ async function main() {
   });
   L.onChange(function (m) {
     if (m.t === "progress") paintProgress(m);
+    else if (m.t === "send") paintSend(m);
     else if (m.t === "ready") paintTool();
     else queueRender();
   });

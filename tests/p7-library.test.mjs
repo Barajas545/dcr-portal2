@@ -259,7 +259,9 @@ test("the menu's rows and the library's draw the bar; it is green (the site's ow
   assert.match(read("js/pages/plan-buttons.js"), /"Downloading " \+ Math\.min\(99, /, "the menu's words never say 100% before it is saved");
   assert.match(read("js/pages/plans-library.js"), /const pct = size \? Math\.min\(99, /, "nor the library's");
   const pb = read("js/pages/plan-buttons.js");
-  assert.match(pb, /progressHtml\(s \? progressOf\(s, s\.job \? s\.job\.done : 0, s\.job \? s\.job\.size : 0\) : null\)/);
+  // (the save back, P4: a row whose own save waits shows that save's bar instead - map/plan-library.js sendBar)
+  assert.match(pb, /progressHtml\(barOf\(s, s && s\.job \? s\.job\.done : 0, s && s\.job \? s\.job\.size : 0\)\)/);
+  assert.match(pb, /function barOf\(s, done, size\) \{\s*if \(s && s\.save && s\.status !== "downloading"\) return sendBar\(s\.save\);\s*return s \? progressOf\(s, done, size\) : null;\s*\}/);
   assert.match(pb, /setBar\(row\.querySelector\("\.plan-prog"\), progressOf\(s, m\.done, m\.size\)\);/);
   const page = read("js/pages/plans-library.js");
   assert.match(page, /progressHtml\(line\.bar\)/);
@@ -660,4 +662,440 @@ test("demo plan_link: a link answering byte ranges whose bytes start PDFCACHE1; 
   ext.setPlanVersion(files[0].folder + "/" + files[0].name, "qx:demo-new-save");
   assert.equal((await onedrive.planLink(a267.id, files[0].id)).version, "qx:demo-new-save");
   ext.setPlanVersion(files[0].folder + "/" + files[0].name, null);
+});
+
+/* ── the save back (P4; owner decisions Q1-Q3, 2026-11-04; contract C3): the rules ──────────────────────────────── */
+
+const SAVE = "p1-x-2.takeoff";
+const local = (over) => Object.assign({ file: SAVE, base: "qx:AAA", savedAt: AT, size: 2000, state: "waiting", error: "", code: "", fails: 0,
+  retryAt: null, sends: [] }, over || {});
+
+test("the save back's rules: a save waiting here is never downloaded over, kept by a sweep, sent by itself once its wait is over", () => {
+  // kept on the device: its base is the version the work was done on; a later save before it is sent keeps that base
+  const a = lib.withSave(rec(), SAVE, 2000, AT);
+  assert.deepEqual(a.rec.local, local());
+  assert.equal(a.old, "", "nothing replaced");
+  assert.equal(a.rec.file, rec().file, "the plan's own copy stays (the app reads it still)");
+  const b = lib.withSave(Object.assign({}, a.rec, { version: "qx:CCC", local: local({ sends: [{ file: SAVE, ticket: "tk1" }] }) }), "p1-x-3.takeoff", 2100, AT);
+  assert.deepEqual([b.rec.local.base, b.rec.local.file, b.rec.local.size, b.old, b.rec.local.sends.length], ["qx:AAA", "p1-x-3.takeoff", 2100, SAVE, 1],
+    "the first save's base; the replaced save goes; its session stays to be settled");
+  assert.equal(lib.hasLocal(a.rec), true);
+  assert.equal(lib.hasLocal(rec({ local: { file: "../evil" } })), false, "only a library file name");
+  // never downloaded over, whatever OneDrive holds; never swept
+  const outdatedWithSave = Object.assign({}, a.rec, { latest: { status: "ok", version: "qx:BBB" } });
+  assert.equal(lib.needsWork(rec({ latest: { status: "ok", version: "qx:BBB" } })), true, "(without one: downloaded)");
+  assert.equal(lib.needsWork(outdatedWithSave), false);
+  assert.equal(lib.dueForWork(outdatedWithSave, NOW), false);
+  assert.ok(lib.keepSet([a.rec], {}, NOW).has(SAVE));
+  // sent by itself: at once, then after its wait; a refusal that waits for the person never by itself
+  assert.equal(lib.dueToSend(a.rec, NOW), true);
+  assert.equal(lib.dueToSend(rec(), NOW), false, "nothing to send");
+  assert.equal(lib.dueToSend(rec({ local: local({ state: "failed", retryAt: new Date(NOW + 60000).toISOString() }) }), NOW), false);
+  assert.equal(lib.dueToSend(rec({ local: local({ state: "failed", retryAt: new Date(NOW - 1).toISOString() }) }), NOW), true);
+  assert.equal(lib.dueToSend(rec({ local: local({ state: "failed", retryAt: new Date(NOW + lib.RETRY_CAP_MS * 3).toISOString() }) }), NOW), true, "a clock that was wrong");
+  for (const code of lib.SEND_FINAL) assert.equal(lib.dueToSend(rec({ local: local({ state: "failed", code }) }), NOW), false, code);
+  assert.equal(lib.baseOk("qx:AAA"), true);
+  assert.equal(lib.baseOk(""), false);
+});
+
+test("the save back's rules: once OneDrive has it - a replace adopts the saved bytes, a copy keeps the plan and gives the save a record of its own", () => {
+  const r = rec({ local: local(), latest: { status: "ok", version: "qx:AAA" } });
+  const ans = { saved: true, mode: "replace", id: F1.id, name: F1.name, size: 2000, modified: "2026-11-04T18:30:00.000Z", version: "qx:NEW" };
+  const rep = lib.adoptSent(r, SAVE, ans, AT);
+  assert.deepEqual([rep.rec.file, rep.rec.version, rep.rec.size, rep.rec.modified, rep.rec.local, rep.rec.expect, rep.rec.dl], [SAVE, "qx:NEW", 2000, ans.modified, null, null, null]);
+  assert.deepEqual(rep.rec.latest, { status: "ok", checkedAt: AT, version: "qx:NEW", size: 2000, modified: ans.modified, name: F1.name, folder: F1.folder });
+  assert.deepEqual(rep.rec.sent, { mode: "replace", name: F1.name, at: AT });
+  assert.deepEqual([rep.old, rep.copy], [[r.file], null], "the old copy is retired (its grace kept by retire)");
+  assert.equal(lib.statusOf(rep.rec), "saved");
+  // the "sm:" form (no hash yet): the size and time to know the bytes by later
+  const sm = lib.adoptSent(r, SAVE, Object.assign({}, ans, { version: "sm:2000:2026-11-04T18:30:00.000Z" }), AT);
+  assert.deepEqual(sm.rec.expect, { size: 2000, modified: ans.modified });
+  // a later save came while this one went: OneDrive moved to the sent bytes, so the later save builds on them
+  const later = rec({ local: local({ file: "p1-x-3.takeoff", sends: [{ file: SAVE, ticket: "tk1" }, { file: "p1-x-3.takeoff", ticket: "tk2" }] }) });
+  const moved = lib.adoptSent(later, SAVE, ans, AT);
+  assert.deepEqual([moved.rec.file, moved.rec.local.file, moved.rec.local.base, moved.rec.local.sends.map((s) => s.ticket), moved.old],
+    [later.file, "p1-x-3.takeoff", "qx:NEW", ["tk2"], [SAVE]]);
+  // a copy (Q3): the plan stays as it was; the save is the copy's own record, opening with no download
+  const copy = lib.adoptSent(r, SAVE, Object.assign({}, ans, { mode: "copy", id: "01FAKECOPY0001", name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }), AT);
+  assert.deepEqual([copy.rec.file, copy.rec.version, copy.rec.local, copy.rec.sent.mode, copy.rec.sent.name, copy.old],
+    [r.file, "qx:AAA", null, "copy", "A900 Bid - iPad 2026-11-04 1030.takeoff", []]);
+  assert.deepEqual([copy.copy.key, copy.copy.itemId, copy.copy.file, copy.copy.version, copy.copy.projectId, copy.copy.folder, copy.copy.from],
+    ["u|01FAKECOPY0001", "01FAKECOPY0001", SAVE, "qx:NEW", "7", F1.folder, F1.id]);
+  assert.equal(lib.statusOf(copy.copy), "saved");
+  assert.equal(lib.needsWork(Object.assign({}, copy.rec, { latest: { status: "ok", version: "qx:OFFICE" } })), true,
+    "once nothing waits here the plan downloads OneDrive's version by itself");
+  // removed meanwhile: nothing is kept
+  assert.deepEqual(lib.adoptSent(null, SAVE, ans, AT), { rec: null, copy: null, old: [SAVE] });
+});
+
+test("the save back's rules: OneDrive's own hash of bytes adopted with an 'sm:' version is taken without a download (the same size and time)", () => {
+  const kept = rec({ file: SAVE, version: "sm:2000:2026-11-04T18:30:00.000Z", size: 2000, expect: { size: 2000, modified: "2026-11-04T18:30:00.000Z" },
+    latest: { status: "ok", version: "sm:2000:2026-11-04T18:30:00.000Z" } });
+  const hashed = Object.assign({}, F1, { size: 2000, modified: "2026-11-04T18:30:00Z", version: "qx:HASHED" });
+  assert.equal(lib.keptAs(kept, hashed), true, "the same time however it is written");
+  const c = lib.applyCheck(kept, { files: [hashed] }, AT);
+  assert.deepEqual([c.version, c.expect, c.latest.version, lib.statusOf(c), lib.needsWork(c)], ["qx:HASHED", null, "qx:HASHED", "saved", false]);
+  // anything else is another version: downloaded as ever
+  for (const other of [Object.assign({}, hashed, { size: 2001 }), Object.assign({}, hashed, { modified: "2026-11-04T18:31:00Z" })]) {
+    const o = lib.applyCheck(kept, { files: [other] }, AT);
+    assert.deepEqual([o.version, lib.statusOf(o), lib.needsWork(o)], [kept.version, "outdated", true]);
+  }
+  assert.equal(lib.keptAs(rec(), hashed), false, "no adopted bytes, nothing to take");
+});
+
+test("the save back's words: Saved on this iPad, Sending 45%, Sent, Saved as a separate file, Not sent - tap to retry", () => {
+  const r = rec({ local: local() });
+  assert.deepEqual(lib.saveStateOf(r, null, NOW), { state: "kept" });
+  assert.deepEqual(lib.saveStateOf(r, { sent: 900, size: 2000 }, NOW), { state: "sending", pct: 45 });
+  assert.deepEqual(lib.saveStateOf(r, { sent: 2000, size: 2000 }, NOW), { state: "sending", pct: 99 }, "100 only once OneDrive has it");
+  assert.deepEqual(lib.saveStateOf(r, null, NOW, true), { state: "sending", pct: null }, "another window sends it");
+  assert.deepEqual(lib.saveStateOf(rec({ local: local({ state: "sending" }) }), null, NOW), { state: "kept" }, "a page closed while it went: waiting again");
+  assert.deepEqual(lib.saveStateOf(rec({ local: local({ state: "failed", error: "OneDrive is busy.", code: "busy" }) }), null, NOW),
+    { state: "failed", why: "OneDrive is busy.", final: false });
+  assert.deepEqual(lib.saveStateOf(rec({ sent: { mode: "replace", at: AT } }), null, NOW), { state: "sent" });
+  assert.deepEqual(lib.saveStateOf(rec({ sent: { mode: "copy", name: "A - iPad 2026-11-04 1030.takeoff", at: AT } }), null, NOW),
+    { state: "copy", name: "A - iPad 2026-11-04 1030.takeoff" });
+  assert.equal(lib.saveStateOf(rec({ sent: { mode: "replace", at: AT } }), null, NOW + lib.SENT_NOTE_MS), null, "said for a while only");
+  assert.equal(lib.saveStateOf(rec(), null, NOW), null);
+  assert.match(lib.saveText({ state: "kept" }, "iPad"), /^Saved on this iPad — not in OneDrive yet/);
+  assert.match(lib.saveText({ state: "kept" }), /^Saved on this device/);
+  assert.equal(lib.saveText({ state: "sending", pct: 45 }), "Sending 45% — keep this screen open");
+  assert.equal(lib.saveText({ state: "sending", pct: null }), "Sending to OneDrive…");
+  assert.equal(lib.saveText({ state: "failed", why: "OneDrive is busy." }), "Not sent — tap to retry (OneDrive is busy)");
+  assert.equal(lib.saveText({ state: "sent" }), "Sent to OneDrive");
+  assert.match(lib.saveText({ state: "copy", name: "A - iPad.takeoff" }), /^Saved as a separate file: A - iPad\.takeoff/);
+  assert.equal(lib.copyTold("A900 Bid - iPad 2026-11-04 1030.takeoff", "iPad"),
+    "Someone saved this plan in the office after your iPad got it. Your work was saved as 'A900 Bid - iPad 2026-11-04 1030.takeoff' next to it - nothing was overwritten.");
+  assert.deepEqual(lib.sendBar({ state: "sending", pct: 45 }), { pct: 45, kind: "run" });
+  assert.deepEqual(lib.sendBar({ state: "sent" }), { pct: 100, kind: "done" });
+  assert.equal(lib.sendBar({ state: "kept" }), null);
+  assert.equal(plans.deviceWord({ navigator: { userAgent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)" } }), "iPad");
+  assert.equal(plans.deviceWord({ navigator: { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 5 } }), "iPad");
+  assert.equal(plans.deviceWord({ navigator: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)" } }), "iPhone");
+  assert.equal(plans.deviceWord({ navigator: { userAgent: "Mozilla/5.0 (Linux; Android 14; SM-X710)" } }), "device");
+});
+
+test("who may save back (Q2): an admin, or Sees prices AND Can upload to OneDrive; the switch PLAN_SAVE_BACK", () => {
+  assert.equal(plans.PLAN_SAVE_BACK, true, "on in the code (the go-live keeps the owner's write grant first)");
+  const me = (o) => Object.assign({ id: "u", role: "manager", active: true, can_see_prices: false, can_upload_onedrive: false }, o);
+  assert.equal(plans.canSaveBack(me({ role: "admin" })), true, "an admin always");
+  assert.equal(plans.canSaveBack(me({ can_see_prices: true, can_upload_onedrive: true })), true);
+  assert.equal(plans.canSaveBack(me({ can_see_prices: true })), false, "prices without the upload switch");
+  assert.equal(plans.canSaveBack(me({ can_upload_onedrive: true })), false, "the switch without prices");
+  assert.equal(plans.canSaveBack(me({ role: "agents", can_see_prices: true, can_upload_onedrive: true })), false);
+  assert.equal(plans.canSaveBack(me({ active: false, can_see_prices: true, can_upload_onedrive: true })), false);
+  assert.equal(plans.canSaveBack(null), false);
+  assert.equal(plans.saveBackFor(me({ role: "admin" }), false), false, "the switch off: never offered");
+  assert.equal(plans.saveBackFor(me({ role: "admin" })), true);
+});
+
+/* ── the save back over a made-up phone (tests/plan-device.mjs): js/plan-library.js and its REAL worker ────────── */
+
+const { installDevice, savedProject } = await import("./plan-device.mjs");
+const { readFileSync: readSiteFile } = await import("node:fs");
+const read = (f) => readSiteFile(new URL("../site/" + f, import.meta.url), "utf8");
+const UNIT = 327680;
+const MiB = 1024 * 1024;
+// the made-up phone is installed by the first of these tests (the tests above keep their own globals), and the
+// library's module imported then - with no BroadcastChannel: a node one would keep the test running (the module reads
+// it once, at its import)
+let DEV = null, LIB = null;
+async function device() {
+  if (!DEV) {
+    DEV = installDevice();
+    LIB = await import("../site/js/plan-library.js");
+  } else DEV.apply();
+  DEV.store.setItem("dcr2-auth", JSON.stringify({ user: { id: "u1", email: "made-up@example.test" } }));
+  return DEV;
+}
+test.after(() => { if (DEV) DEV.uninstall(); });
+
+/** The broker and Microsoft's upload address for one made-up plan, as contract C1 has them. */
+function saveWorld(o) {
+  const w = Object.assign({ calls: [], sessions: new Map(), n: 0, refuse: null, hash: false, loseFinal: false, puts: 0, bytes: 0 }, o || {});
+  w.plan = Object.assign({ id: F1.id, name: F1.name, folder: F1.folder, size: 1500, modified: AT, version: "qx:AAA" }, (o && o.plan) || {});
+  w.files = [w.plan];
+  const file = (f) => ({ id: f.id, name: f.name, folder: f.folder, size: f.size, modified: f.modified, version: f.version });
+  useClient({ functions: { invoke: async (name, x) => {
+    const b = x.body;
+    w.calls.push(b.op);
+    if (b.op === "plans_list") return ok({ projects: { "7": { number: "A900", files: w.files.map(file), complete: true } } });
+    if (b.op === "plan_link") return ok(Object.assign({ url: "https://" + onedrive.ONEDRIVE_HOST + "/dl/" + b.item_id }, file(w.files.find((f) => f.id === b.item_id))));
+    if (b.op === "plan_save_session") {
+      w.sessionBody = b;
+      if (w.refuse) return http(w.refuse[0], { error: w.refuse[1], message: "made up" });
+      const f = w.files.find((x) => x.id === b.item_id);
+      if (!f) return http(404, { error: "not_found" });
+      const mode = b.mode !== "copy" && f.version === b.version ? "replace" : "copy";
+      const n = ++w.n;
+      const url = "https://" + onedrive.ONEDRIVE_HOST + "/up/" + n;
+      const s = { mode, item: f.id, name: mode === "replace" ? f.name : "A900 Bid - iPad 2026-11-04 1030.takeoff", size: b.size, offset: 0, parts: [], done: null, ticket: "tk" + n };
+      w.sessions.set(url, s);
+      return ok({ mode, upload_url: url, expires_at: AT, chunk_bytes: 4 * UNIT, chunk_multiple: UNIT, max_chunk_bytes: 191 * UNIT, max_bytes: 4096 * MiB,
+        ticket: s.ticket, name: s.name });
+    }
+    if (b.op === "plan_save_done") {
+      const s = Array.from(w.sessions.values()).find((x) => x.ticket === b.ticket);
+      const f = s && s.done ? w.files.find((x) => x.id === s.done) : null;
+      if (!f || f.id !== b.item_id) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
+      return ok(Object.assign({ saved: true, mode: s.mode }, file(f)));
+    }
+    return http(400, { error: "invalid" });
+  } } });
+  LIB.useTransport(async function (req) {
+    const res = (status, body) => ({ status, header: () => null, text: () => JSON.stringify(body) });
+    const s = w.sessions.get(req.url);
+    if (!s || s.done) return res(404, { error: { code: "itemNotFound" } });
+    if (req.method === "GET") return res(200, { nextExpectedRanges: [s.offset + "-"] });
+    assert.ok(!Object.keys(req.headers).some((k) => /authorization/i.test(k)), "no sign-in on Microsoft's address");
+    const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(req.headers["Content-Range"]);
+    if (Number(m[1]) !== s.offset) return res(416, { nextExpectedRanges: [s.offset + "-"] });
+    w.puts++;
+    w.bytes += req.body.size;
+    s.parts.push(req.body);
+    s.offset = Number(m[2]) + 1;
+    if (s.offset < s.size) return res(202, { nextExpectedRanges: [s.offset + "-"] });
+    // the last chunk: OneDrive has it - the plan replaced (same id), or a copy beside it
+    const at = new Date(NOW + 3600000 + w.n * 1000).toISOString();
+    const version = w.hash ? "qx:SAVED" + w.n : "sm:" + s.size + ":" + at;
+    let f;
+    if (s.mode === "replace") { f = w.files.find((x) => x.id === s.item); Object.assign(f, { size: s.size, modified: at, version }); }
+    else { f = { id: "01FAKECOPY000" + w.n, name: s.name, folder: w.plan.folder, size: s.size, modified: at, version }; w.files.push(f); }
+    w.saved = new Blob(s.parts);
+    s.done = f.id;
+    if (w.loseFinal) { w.loseFinal = false; throw Object.assign(new Error("No connection"), { code: "offline" }); }
+    return res(201, { id: f.id, name: f.name, size: f.size });
+  });
+  return w;
+}
+
+const KEY = "u1|" + F1.id;
+const PLANS = () => DEV.idb.rows("dcr2-plan-library", "plans");
+const ROW = (k) => PLANS().find((r) => r.key === (k || KEY)) || null;
+const LIBFILES = () => DEV.fs.files("plan-library");
+
+/** A clean device holding one saved plan (its copy's bytes on the device): the record as the library writes it. */
+async function devicePlan(over) {
+  await device();
+  await LIB.list();                                          // the library's database is there
+  const st = DEV.idb.dbs.get("dcr2-plan-library").stores;
+  st.forEach((s) => s.data.clear());
+  DEV.fs.root.entries.clear();
+  DEV.nav.onLine = true;
+  const copy = "p" + lib.hashOf("u1") + "-old-1.takeoff";
+  const d = await DEV.fs.root.getDirectoryHandle("plan-library", { create: true });
+  const h = await d.getFileHandle(copy, { create: true });
+  h.bytes = new TextEncoder().encode("PDFCACHE1 the plan as this device got it" + ".".repeat(1460));
+  const r = Object.assign({ key: KEY, owner: "u1", itemId: F1.id, projectId: "7", number: "A900", projectTitle: "Made Up Lane", name: F1.name,
+    folder: F1.folder, file: copy, size: h.bytes.length, modified: AT, version: "qx:AAA", savedAt: AT, dl: null,
+    latest: { status: "ok", checkedAt: AT, version: "qx:AAA", size: h.bytes.length, modified: AT, name: F1.name, folder: F1.folder },
+    fails: 0, retryAt: null, failCode: null }, over || {});
+  st.get("plans").data.set(KEY, structuredClone(r));
+  return r;
+}
+const saveOf = (p) => ({ req: "sAAAAAAAAA", name: F1.name, size: p.blob.size, file: p.blob });
+const same = async (a, b) => Buffer.compare(Buffer.from(await a.arrayBuffer()), Buffer.from(b)) === 0;
+
+test("keepSave: the takeoff app's Save is copied into a NEW file in slices of 8 MiB (never read whole), checked, and the record gets its save; it opens from then on and nothing downloads over it", async () => {
+  const before = await devicePlan({ latest: { status: "ok", checkedAt: AT, version: "qx:BBB", size: 9, modified: AT, name: F1.name, folder: F1.folder } });
+  const w = saveWorld();
+  DEV.nav.onLine = false;                                    // kept now, sent later (offline: nothing is asked)
+  const p = savedProject(17 * MiB + 123);
+  const out = await LIB.keepSave(F1.id, saveOf(p));
+  assert.equal(out.state, "kept", out.why);
+  await out.sent;
+  assert.equal(p.log.whole, 0, "never arrayBuffer() / text() of the whole save");
+  assert.ok(p.log.slices.length >= 3 && p.log.slices.every(([a, b]) => b - a <= 8 * MiB), JSON.stringify(p.log.slices));
+  const r = ROW();
+  assert.ok(r.local && r.local.file !== before.file && lib.FILE_RE.test(r.local.file), "a new library file");
+  assert.deepEqual([r.local.base, r.local.size, r.local.state, r.file, r.version], ["qx:AAA", p.blob.size, "waiting", before.file, "qx:AAA"]);
+  assert.ok(await same(new Blob([LIBFILES()[r.local.file]]), p.bytes), "the very bytes of the save");
+  assert.ok(LIBFILES()[before.file], "the plan's own copy stays (the app still reads it)");
+  assert.deepEqual(w.calls, [], "nothing asked of the broker offline");
+  // the row says so; and it is what a phone opens (map: open hands local.file)
+  const row = (await LIB.list())[0];
+  assert.deepEqual(row.save, { state: "kept" });
+  assert.equal(row.status, "outdated", "OneDrive has a newer version...");
+  DEV.nav.onLine = true;
+  await LIB.autoWork();
+  assert.deepEqual(w.calls, [], "...but nothing downloads over the save");
+  assert.deepEqual(await LIB.resume(F1.id), { local: true }, "not even the person's own Update");
+  await LIB.sweep();
+  assert.ok(LIBFILES()[r.local.file], "a sweep keeps the save");
+  const src = read("js/plan-library.js");
+  assert.match(src, /const which = \(c\) => \(hasLocal\(c\) \? c\.local\.file : c\.file\);/, "open() hands the save when one waits");
+});
+
+test("keepSave: not a takeoff project, not whole, not a plan saved here, no room - refused or no-room, nothing left behind", async () => {
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  const names = () => Object.keys(LIBFILES()).sort();
+  const start = names();
+  const bad = await LIB.keepSave(F1.id, saveOf(savedProject(3 * MiB, "NOTAPLAN!")));
+  assert.deepEqual([bad.state, bad.why], ["refused", "What the takeoff app saved is not a takeoff project file."]);
+  const half = savedProject(4096);
+  assert.equal((await LIB.keepSave(F1.id, { req: "s1", name: F1.name, size: 4097, file: half.blob })).state, "refused", "its size is not the file's");
+  assert.equal((await LIB.keepSave("01FAKEPLAN9999", saveOf(savedProject(64)))).state, "refused", "not a plan saved on this device");
+  // the room asked first (the quota), then the worker's own write running out of it: either way no-room
+  const quota = DEV.fs.quota;
+  DEV.fs.quota = DEV.fs.used() + 70 * MiB;
+  const full = await LIB.keepSave(F1.id, saveOf(savedProject(20 * MiB)));
+  assert.equal(full.state, "no-room", full.why);
+  const est = DEV.nav.storage.estimate;
+  DEV.nav.storage.estimate = async () => ({ quota: 64 * 1024 * MiB, usage: 0 });  // a browser that says there is room
+  DEV.fs.quota = DEV.fs.used() + 5 * MiB;
+  const short = await LIB.keepSave(F1.id, saveOf(savedProject(12 * MiB)));
+  assert.equal(short.state, "no-room", short.why);
+  DEV.nav.storage.estimate = est;
+  DEV.fs.quota = quota;
+  assert.deepEqual(names(), start, "no part of a save is ever left on the device");
+  assert.equal(ROW().local, undefined, "and the record has no save");
+});
+
+test("sent: a replace - the saved bytes ARE the plan's copy now (no download), the old copy retired, the screen kept awake meanwhile; OneDrive's hash of them later is taken without a download", async () => {
+  const before = await devicePlan();
+  const w = saveWorld();
+  const p = savedProject(3 * MiB + 77, "PDFCACHE1", 3);
+  const news = [];
+  const out = await LIB.keepSave(F1.id, saveOf(p), (state, extra) => news.push([state, extra]));
+  assert.equal(out.state, "kept");
+  const sent = await out.sent;
+  assert.deepEqual([sent.sent, sent.mode], [true, "replace"]);
+  assert.deepEqual(w.calls, ["plan_save_session", "plan_save_done"], "one session, then its check - no plan_link, no download");
+  assert.deepEqual([w.sessionBody.item_id, w.sessionBody.version, w.sessionBody.size, "mode" in w.sessionBody], [F1.id, "qx:AAA", p.blob.size, false]);
+  assert.ok(await same(w.saved, p.bytes), "OneDrive got exactly the save");
+  const r = ROW();
+  assert.equal(r.local, null);
+  assert.ok(r.file && r.file !== before.file && LIBFILES()[r.file], "the save's own file is the plan's copy");
+  assert.equal(r.version.indexOf("sm:" + p.blob.size + ":"), 0, "OneDrive had no hash yet: its sm: form");
+  assert.deepEqual(r.expect, { size: p.blob.size, modified: w.plan.modified });
+  assert.deepEqual([r.size, r.sent.mode, lib.statusOf(r)], [p.blob.size, "replace", "saved"]);
+  assert.equal(LIBFILES()[before.file], undefined, "the old copy went (not handed to the app lately)");
+  assert.deepEqual([DEV.wake.asked > 0, DEV.wake.held], [true, 0], "the screen was held awake while it went, and let go");
+  // the app hears how it went: the end (and "sending" on the way when the upload takes a while)
+  assert.deepEqual(news.map((n) => n[0]).filter((s) => s !== "sending"), ["sent"], JSON.stringify(news));
+  assert.deepEqual((await LIB.list())[0].save, { state: "sent" });
+  // the next check: OneDrive now gives its hash of the same bytes (the same size and time) - taken, nothing downloaded
+  w.plan.version = "qx:HASHEDNOW";
+  w.calls.length = 0;
+  await LIB.checkUpdates();
+  const c = ROW();
+  assert.deepEqual([c.version, c.expect, c.file, lib.statusOf(c)], ["qx:HASHEDNOW", null, r.file, "saved"]);
+  await LIB.autoWork();
+  assert.deepEqual(w.calls, ["plans_list"], "no plan_link, no download");
+});
+
+test("someone saved the plan in the office meanwhile (Q3): the save becomes a separate file beside it - the plan's record stays, the copy gets one of its own (no download), and the person is told", async () => {
+  const before = await devicePlan();
+  const w = saveWorld();
+  w.plan.version = "qx:OFFICE";                              // the office's save after this device got qx:AAA
+  w.hash = true;
+  const p = savedProject(2 * MiB + 5);
+  const news = [];
+  const out = await LIB.keepSave(F1.id, saveOf(p), (state, extra) => news.push([state, extra]));
+  const sent = await out.sent;
+  assert.deepEqual([sent.mode, sent.name], ["copy", "A900 Bid - iPad 2026-11-04 1030.takeoff"]);
+  const r = ROW();
+  assert.deepEqual([r.file, r.version, r.local, r.sent.mode, r.sent.name], [before.file, "qx:AAA", null, "copy", "A900 Bid - iPad 2026-11-04 1030.takeoff"],
+    "the plan's record keeps its copy (nothing overwritten anywhere)");
+  const c = ROW("u1|01FAKECOPY0001");
+  assert.ok(c && c.file && LIBFILES()[c.file] && (await same(new Blob([LIBFILES()[c.file]]), p.bytes)), "the save is the copy's own record");
+  assert.deepEqual([c.itemId, c.name, c.version, c.folder, lib.statusOf(c)], ["01FAKECOPY0001", "A900 Bid - iPad 2026-11-04 1030.takeoff", "qx:SAVED1", F1.folder, "saved"]);
+  assert.deepEqual(news.find((n) => n[0] === "copy"), ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }]);
+  const rows = await LIB.list();
+  assert.deepEqual(rows.find((x) => x.key === KEY).save, { state: "copy", name: "A900 Bid - iPad 2026-11-04 1030.takeoff" });
+  assert.ok(!w.calls.includes("plan_link"), "no download of the copy");
+  // once nothing waits here the plan itself is a plan like any other: OneDrive's newer version downloads by itself
+  await LIB.checkUpdates();
+  assert.equal(lib.needsWork(ROW()), true);
+});
+
+test("a send OneDrive did not take waits (Not sent - tap to retry); before the owner's write grant nothing is asked again and again; the person's Retry sends it", async () => {
+  await devicePlan();
+  const w = saveWorld({ refuse: [503, "onedrive_not_authorized"] });
+  const out = await LIB.keepSave(F1.id, saveOf(savedProject(1 * MiB)));
+  await out.sent;
+  const r = ROW();
+  assert.deepEqual([r.local.state, r.local.code, r.local.fails], ["failed", "save_not_allowed", 1]);
+  assert.match(r.local.error, /does not take plan saves from the portal yet/);
+  assert.ok(Date.parse(r.local.retryAt) > Date.now(), "it waits");
+  assert.equal(w.calls.filter((c) => c === "plan_save_session").length, 1, "asked once, not eight times");
+  assert.equal((await LIB.list())[0].save.state, "failed");
+  assert.equal(await LIB.sendWaiting(), 0);
+  assert.equal(w.calls.filter((c) => c === "plan_save_session").length, 1, "not again before its wait is over");
+  // the person's Retry (the grant is there now): sent
+  w.refuse = null;
+  const again = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([again.sent, again.mode, ROW().local], [true, "replace", null]);
+  // a plan no longer in its project's folder: final (no automatic resend), said plainly
+  await devicePlan();
+  const gone = saveWorld();
+  gone.files = [];
+  await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
+  assert.deepEqual([ROW().local.code, lib.dueToSend(ROW(), Date.now() + 365 * 86400000)], ["not_found", false]);
+  assert.match(ROW().local.error, /no longer in its project's folder/);
+});
+
+test("a send whose last answer was lost: in the page (the session gone) it is found, never sent twice; across pages (the page closed) it is settled with its ticket before anything is sent again", async () => {
+  await devicePlan();
+  const w = saveWorld({ loseFinal: true });
+  const p = savedProject(2 * MiB + 9);
+  const out = await LIB.keepSave(F1.id, saveOf(p));
+  const sent = await out.sent;
+  assert.equal(sent.sent, true);
+  assert.deepEqual([w.n, w.bytes], [1, p.blob.size], "one session, every byte once");
+  assert.equal(ROW().local, null);
+  // the page closed after the last byte: the save's session is in its record, OneDrive has the bytes
+  await devicePlan();
+  const w2 = saveWorld();
+  const q = savedProject(1 * MiB + 1);
+  DEV.nav.onLine = false;
+  await (await LIB.keepSave(F1.id, saveOf(q))).sent;
+  DEV.nav.onLine = true;
+  const r = ROW();
+  w2.sessions.set("https://" + onedrive.ONEDRIVE_HOST + "/up/99", { mode: "replace", item: F1.id, name: F1.name, size: q.blob.size, done: F1.id, ticket: "tk99" });
+  Object.assign(w2.plan, { size: q.blob.size, modified: "2026-11-04T19:00:00.000Z", version: "qx:LANDED" });
+  const st = DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+  st.set(KEY, Object.assign({}, r, { local: Object.assign({}, r.local, { sends: [{ file: r.local.file, ticket: "tk99", mode: "replace", name: F1.name, size: q.blob.size, at: AT }] }) }));
+  const settled = await LIB.sendSaved(F1.id, { manual: true });
+  assert.equal(settled.sent, true);
+  assert.deepEqual(w2.calls, ["plan_save_done"], "settled with its ticket: no new session, no byte sent again");
+  assert.deepEqual([ROW().local, ROW().version, ROW().file], [null, "qx:LANDED", r.local.file]);
+});
+
+test("the purge on lost prices: the saves waiting here go, and on this site the takeoff app's own drafts and kept copies", async () => {
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
+  assert.ok(ROW().local);
+  // what the takeoff app keeps here (made up): a kept copy, a draft, their indexes
+  const kept = await DEV.fs.root.getDirectoryHandle("plans-kept", { create: true });
+  (await kept.getFileHandle("kabc-1.takeoff", { create: true })).bytes = new Uint8Array(10);
+  await new Promise((done) => {
+    const r = DEV.idb.open("ptt-drafts", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("drafts");
+    r.onsuccess = () => { const t = r.result.transaction("drafts", "readwrite"); t.objectStore("drafts").put({ items: [{ unit_cost: 4.25 }] }, "A900 Bid.takeoff|1500"); t.oncomplete = () => { r.result.close(); done(); }; };
+  });
+  DEV.store.setItem("ptt.keptPlans.v1", JSON.stringify({ v: 1, entries: [{ file: "kabc-1.takeoff" }] }));
+  DEV.store.setItem("ptt.recent.v1", "[\"A900 Bid.takeoff\"]");
+  DEV.store.setItem("dcr2-takeoff-users", JSON.stringify(["u1"]));
+  DEV.store.setItem("ptt.settings.v1", "{}");
+  // Sees prices taken away, read online: everything of theirs goes
+  DEV.nav.onLine = true;
+  await LIB.maybeCheck({ id: "u1", role: "manager", active: true, can_see_prices: false }, { fresh: true });
+  assert.deepEqual([PLANS().length, Object.keys(LIBFILES()).length], [0, 0], "the record, its copy and the save");
+  assert.equal(DEV.fs.root.entries.has("plans-kept"), false, "the takeoff app's kept copies");
+  assert.equal(DEV.idb.dbs.has("ptt-drafts"), false, "its drafts (they carry unit costs)");
+  assert.deepEqual(["ptt.keptPlans.v1", "ptt.recent.v1", "dcr2-takeoff-users"].map((k) => DEV.store.getItem(k)), [null, null, null]);
+  assert.equal(DEV.store.getItem("ptt.settings.v1"), "{}", "its settings stay");
+});
+
+test("a turned-off account's purge also finds a person who only opened the takeoff app here (sb.js forgetSavedPlans); the 📐 pages ask for it", () => {
+  const sbjs = read("js/sb.js");
+  assert.match(sbjs, /users = JSON\.parse\(localStorage\.getItem\("dcr2-takeoff-users"\) \|\| "\[\]"\);/);
+  assert.match(sbjs, /if \(!id \|\| \(owners\.indexOf\(id\) === -1 && users\.indexOf\(id\) === -1\)\) return;/);
+  assert.match(read("js/pages/plan-buttons.js"), /\["dcr2-plan-owners", "dcr2-takeoff-users"\]\.forEach/);
+  assert.match(read("js/plan-library.js"), /if \(o\.fresh && \(ownersHere\(\)\.indexOf\(who\) !== -1 \|\| takeoffUsers\(\)\.indexOf\(who\) !== -1\)\) await purgeOwner\(who\);/);
 });

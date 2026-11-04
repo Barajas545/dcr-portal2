@@ -409,7 +409,7 @@ test("talk(): ready -> the plan, to the peer's origin only; a renewal answered f
     assert.equal(o, origin, via + ": to the peer's origin, never '*'");
     assert.deepEqual(Object.assign({}, m, { file: null }), Object.assign({}, plan, { file: null, type: "ptt-open", v: 1, nonce: WORD }));
     assert.equal(m.file, file, "the File itself (nothing copied)");
-    assert.ok(!("canSave" in m), "canSave is not offered yet (P4, behind PLAN_SAVE_BACK)");
+    assert.ok(!("canSave" in m), "no canSave unless the plan says so and a save is taken (P4: tests/p8-plan-save.test.mjs)");
     assert.deepEqual(s.said, [{ ok: true, via, kind: "file" }]);
     await s.emit(ready(s));
     assert.equal(s.win.posted.length, 1, "a second ready posts nothing");
@@ -610,7 +610,9 @@ test("a phone or a tablet opens a plan from a copy on the device: saved first, o
   assert.match(fn, /Not enough room on this device for this plan, so it opened online/);
   assert.match(fn, /openOnline\(o\.projectId, o\.number, \{ id: itemId \}/);
   assert.ok(fn.indexOf("open(itemId,") !== -1, "then the file itself");
-  assert.ok(!/canSave/.test(lib), "no save-back offered yet (P4)");
+  // the save back (P4): offered only in the frame, to a person who may save back (tests/p8-plan-save.test.mjs)
+  assert.match(lib, /const offer = frame && saveBackFor\(o\.me\);/);
+  assert.match(fn, /open\(itemId, function \(res\) \{ done\(note \? Object\.assign\(\{ note \}, res\) : res\); \}, \{ title, me: o\.me \}\);/);
 });
 
 test("the home-screen refusals are lifted on the frame path only: saving, resuming and the automatic downloads; the 📐 menu and the library page say IOS_HOME only with the frame off", () => {
@@ -621,7 +623,7 @@ test("the home-screen refusals are lifted on the frame path only: saving, resumi
   const pb = read("js/pages/plan-buttons.js");
   assert.match(pb, /const ios = iosHomeRefused\(\);/);
   assert.ok(!/iosHomeScreen/.test(pb));
-  assert.match(pb, /if \(usesFrame\(\)\) \{[\s\S]*?L\.openOnDevice\(\{ projectId: c\.o\.projectId,[\s\S]*?still: function \(\) \{ return current === c; \} \}/);
+  assert.match(pb, /if \(usesFrame\(\)\) \{[\s\S]*?L\.openOnDevice\(\{ projectId: c\.o\.projectId,[\s\S]*?still: function \(\) \{ return current === c; \}, me: c\.o\.me \}/);
   const page = read("js/pages/plans-library.js");
   assert.match(page, /if \(iosHomeRefused\(\)\) \{/);
   assert.match(page, /if \(!iosHomeRefused\(\)\) L\.autoWork\(\);/);

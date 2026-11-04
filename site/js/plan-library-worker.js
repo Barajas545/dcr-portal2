@@ -16,16 +16,26 @@
                                                  otherwise it goes on from the part's own length
                    {op: "url", url}              a fresh link, or "" when there is none
                    {op: "cancel", id}            pause: stop, keep what is written
+                   {op: "spool", id, file, blob, size}   keep a save of the takeoff app (the iPad's save back, owner
+                                                 decisions Q1-Q3 of 2026-11-04): copy `blob` - the whole saved project,
+                                                 handed over by reference - into the NEW file `file`, 8 MiB at a time
    worker -> page  {type: "probe", ok}
                    {type: "progress", id, done}
                    {type: "need-url", id}
                    {type: "done", id, size, magic}
+                   {type: "spooled", id, size, magic}
                    {type: "cancelled", id, done}
                    {type: "error", id, message, status, done}
 
    status 507 on an error means the device ran out of room (final, not a connection to retry); status 0 or 5xx means
    the connection (a pause). `done` is null on an error before the part was even opened: how far it had got is not
-   known then, and the page keeps the number it had. */
+   known then, and the page keeps the number it had.
+
+   A spool never holds more than one slice in memory (the saved project is file-backed slices of the plan the app was
+   handed, plus its own changes: a 2 GB plan is copied on a phone as well as on a desktop), never writes into a file
+   that is already there, and leaves nothing behind when it fails (a copy cut short is removed: the takeoff app keeps
+   the save until the page says "kept"). Its size is checked against the file it made, and its first bytes are
+   answered (the page checks the takeoff MAGIC). */
 "use strict";
 
 var DIR = "plan-library";
@@ -61,6 +71,12 @@ self.onmessage = function (ev) {
     return;
   }
   if (m.op === "probe") { probe(); return; }
+  if (m.op === "spool") {
+    spool(m).catch(function (e) {
+      post({ type: "error", id: m.id, message: (e && e.message) || "The save could not be kept on this device.", status: 0, done: null });
+    });
+    return;
+  }
   if (!job) return;
   if (m.op === "url" && job.urlWaiter) {
     var w = job.urlWaiter; job.urlWaiter = null; w(String(m.url || ""));
@@ -144,6 +160,69 @@ async function fetchRange(start, end) {
     }
     // OneDrive asks to slow down with 429 and says for how long.
     await sleep(res && res.status === 429 ? (retryAfterMs(res) || WAITS[fails - 1]) : WAITS[fails - 1]);
+  }
+}
+
+/* One slice of the saved project as bytes (a worker has FileReaderSync where a Blob has no arrayBuffer yet). */
+function readSlice(b) {
+  if (typeof b.arrayBuffer === "function") return b.arrayBuffer();
+  return Promise.resolve(new FileReaderSync().readAsArrayBuffer(b));
+}
+
+/* Keep a save of the takeoff app: the whole Blob into a file of its own, one slice at a time. */
+async function spool(m) {
+  if (job) { post({ type: "error", id: m.id, message: "This worker is already busy.", status: 0, done: null }); return; }
+  job = { id: m.id, url: "", size: 0, cancelled: false, pos: 0 };
+  var ah = null, dir = null, made = false, pos = 0;
+  var beat = setInterval(function () { if (job) post({ type: "progress", id: job.id, done: job.pos }); }, 10000);
+  try {
+    if (!NAME_RE.test(String(m.file || ""))) throw failure("That is not a library file name.");
+    var blob = m.blob;
+    var size = Number(m.size);
+    if (!blob || typeof blob.slice !== "function" || !(size > 0) || blob.size !== size) throw failure("The save did not arrive whole.", 400);
+    job.size = size;
+    var root = await navigator.storage.getDirectory();
+    dir = await root.getDirectoryHandle(DIR, { create: true });
+    // a NEW name only: a file already there (a kept copy, a download's part) is never written over
+    var there = false;
+    try { await dir.getFileHandle(m.file); there = true; } catch (e0) { there = false; }
+    if (there) throw failure("That library file is already there.", 409);
+    var fh = await dir.getFileHandle(m.file, { create: true });
+    made = true;
+    ah = await fh.createSyncAccessHandle();
+    if (typeof ah.getSize() !== "number") throw failure("This browser cannot keep a save here.");
+    ah.truncate(0);
+    var lastPost = 0;
+    while (pos < size) {
+      if (job.cancelled) throw cancelled();
+      var end = Math.min(pos + CHUNK, size);
+      var buf = new Uint8Array(await readSlice(blob.slice(pos, end)));
+      if (buf.byteLength !== end - pos) throw failure("The save could not be read whole.", 400);
+      var wrote;
+      try { wrote = ah.write(buf, { at: pos }); } catch (we) { throw noRoom(); }
+      if (typeof wrote === "number" && wrote !== buf.byteLength) throw noRoom();     // a short write: the device is full
+      pos = end;
+      job.pos = pos;
+      var now = Date.now();
+      if (now - lastPost > 250) { lastPost = now; post({ type: "progress", id: job.id, done: pos }); }
+    }
+    try { ah.flush(); } catch (e4) { throw noRoom(); }
+    var got = ah.getSize();
+    if (got !== size) throw failure("The save was not kept whole on this device.", 416);
+    var head = new Uint8Array(Math.min(9, got));
+    if (head.length) ah.read(head, { at: 0 });
+    var magic = String.fromCharCode.apply(null, Array.prototype.slice.call(head));
+    ah.close(); ah = null;
+    post({ type: "spooled", id: job.id, size: got, magic: magic });
+  } catch (e) {
+    try { if (ah) ah.close(); } catch (e2) { /* closed */ }
+    // a copy cut short is never kept (the takeoff app still has the save)
+    if (made && dir) { try { await dir.removeEntry(m.file); } catch (e3) { /* a sweep takes it */ } }
+    if (e && e.cancelled) post({ type: "cancelled", id: job.id, done: null });
+    else post({ type: "error", id: job.id, message: (e && e.message) || "The save could not be kept on this device.", status: (e && e.status) || 0, done: null });
+  } finally {
+    clearInterval(beat);
+    job = null;
   }
 }
 

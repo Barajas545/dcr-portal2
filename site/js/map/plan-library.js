@@ -20,6 +20,21 @@
    * keepSet(records, handed)   the files a sweep keeps: every record's copy and part, and every copy handed to the
                                 takeoff app lately (it may still be reading it: HANDED_GRACE_MS);
    * fmtSize, fmtAgo            the words.
+
+   The save back (owner decisions Q1-Q3, 2026-11-04; contract C3 "Save-back"; js/plan-library.js keepSave / sendSaved):
+   a Save in the frame's takeoff app is kept on this device first - a record's `local` - and then sent to OneDrive in
+   place of the plan (or, when someone saved the plan in the office meanwhile, as a separate file beside it):
+   * hasLocal(rec)              a save of the person's own is waiting on this device (never downloaded over, never
+                                retired: needsWork skips it, open() hands it);
+   * withSave(rec, file, size)  the record once a save is kept (its `base`: the version the work was done on);
+   * dueToSend(rec, now)        it is sent by itself now (not a failure that waits for the person, its wait over);
+   * adoptSent(rec, file, ans)  the records once OneDrive has it (plan_save_done's answer): replace - the saved bytes
+                                ARE the plan's current version (no download), the old copy retired; copy - the plan stays
+                                as it was, the save becomes a record of its own for the copy, and the person is told;
+   * keptAs(rec, f)             a version OneDrive reports now is the bytes adopted after a save (its hash given after
+                                the save's "sm:" answer): taken without a download;
+   * saveStateOf / saveText / copyTold / sendBar  what the rows say: Saved on this iPad, Sending 45%, Sent, Saved as a
+                                separate file, Not sent - tap to retry.
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -222,6 +237,9 @@ export function applyCheck(rec, answer, nowIso) {
   // try failed because the file kept changing (a file saved more often than it downloads would start over each time)
   const before = rec.latest && rec.latest.status === "ok" ? rec.latest.version : null;
   if (before !== f.version && rec.failCode !== "changed") { out.fails = 0; out.retryAt = null; }
+  // the bytes this device sent and kept (a save adopted with OneDrive's "sm:" version), now under OneDrive's own hash:
+  // the same file - its version is taken, nothing is downloaded again
+  if (keptAs(rec, f)) { out.version = f.version; out.expect = null; }
   out.latest = { status: "ok", checkedAt: nowIso, version: f.version, size: f.size, modified: f.modified, name: f.name, folder: f.folder };
   return out;
 }
@@ -236,6 +254,8 @@ export function dueForCheck(lastAt, now) {
     stopped, a first download that never finished - never one paused by the person, stopped for good, gone or denied. */
 export function needsWork(rec) {
   if (!rec) return false;
+  // the person's own save waiting here (kept, being sent, not sent): never downloaded over, whatever OneDrive holds
+  if (hasLocal(rec)) return false;
   if (rec.latest && (rec.latest.status === "gone" || rec.latest.status === "denied")) return false;
   if (rec.dl) return rec.dl.state !== "error" && !rec.dl.userPaused;
   return !rec.file || outdated(rec);
@@ -282,6 +302,7 @@ export function keepSet(records, handed, now) {
   (records || []).forEach(function (r) {
     if (r && r.file) keep.add(r.file);
     if (r && r.dl && r.dl.file) keep.add(r.dl.file);
+    if (hasLocal(r)) keep.add(r.local.file);
   });
   Object.keys(handed || {}).forEach(function (name) {
     const t = Date.parse(handed[name] || "");
@@ -310,6 +331,183 @@ export function projectBatches(records, n) {
   const out = [];
   for (let i = 0; i < ids.length; i += n) out.push(ids.slice(i, i + n));
   return out;
+}
+
+/* ── the save back (owner decisions Q1-Q3, 2026-11-04; contract C3 "Save-back") ─────────────────────────────────────
+
+   A record's `local` is the person's own save of the plan, kept on this device until OneDrive has it:
+     {file      the spooled copy's name in DIR (a NEW name: never the record's own copy, never a download's part);
+      base      the version of the plan the work was done on (the record's version when the first save of it came; a
+                later save before it is sent keeps it): the broker replaces the plan only while OneDrive still holds
+                that version, else the save becomes a separate file beside it (Q3);
+      savedAt, size;
+      state     "waiting" | "sending" | "failed" (a "sending" no window is running is waiting again);
+      error, code, fails, retryAt   the last failed send and when it is tried again by itself;
+      sends     [{file, ticket, mode, name, size, at}]: sessions this device opened whose end it never heard (the page
+                closed after the last byte, say) - settled with plan_save_done before anything is sent again, so a
+                save that landed is never sent twice (nor made into a copy of itself). The ticket is the broker's sealed
+                word for plan_save_done, never an upload address: those stay in the page's memory.}
+   and `sent` {mode: "replace" | "copy" | "lost", name, at} the last one's outcome, shown a while (SENT_NOTE_MS). */
+
+/** How long "Sent" / "Saved as a separate file" stays on a row after the send. */
+export const SENT_NOTE_MS = 3 * 24 * 3600 * 1000;
+/** A send that failed for one of these waits for the person (Retry): the plan is no longer in its project's folder,
+    it is too large for the broker, the kept copy is gone, or the save cannot be matched to a version. */
+export const SEND_FINAL = Object.freeze(["not_found", "too_large", "lost", "bad_base"]);
+/** At most this many unsettled sessions are kept with a save (each is settled, then dropped, before the next send). */
+export const MAX_SENDS = 4;
+
+/** The person's own save waiting on this device. */
+export function hasLocal(rec) {
+  return !!(rec && rec.local && typeof rec.local.file === "string" && FILE_RE.test(rec.local.file));
+}
+
+/** A version string as the broker gives one (plans_list's): the base a save is sent against. */
+export function baseOk(v) {
+  return typeof v === "string" && v.length > 0 && v.length <= 200;
+}
+
+/**
+ * The record once a save is kept here (`file`: its spooled copy, `size` its bytes) -> {rec, old}: `old` is an earlier
+ * save it replaces (its file goes; a session opened for it stays in `sends` to be settled). `base` stays the first
+ * save's: everything after it was done on that version too.
+ */
+export function withSave(rec, file, size, nowIso) {
+  const prev = hasLocal(rec) ? rec.local : null;
+  const sends = prev && Array.isArray(prev.sends) ? prev.sends.slice(-MAX_SENDS) : [];
+  return {
+    rec: Object.assign({}, rec, { sent: null, local: { file, base: prev ? prev.base : rec.version, savedAt: nowIso, size: Number(size) || 0,
+      state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends } }),
+    old: prev && prev.file !== file ? prev.file : "",
+  };
+}
+
+/** Sent by itself now: a save waiting here, not a failure that waits for the person, its wait over (a wait further
+    ahead than any is set - a clock that was wrong - is over). A person's own Retry never waits. */
+export function dueToSend(rec, now) {
+  if (!hasLocal(rec)) return false;
+  const l = rec.local;
+  if (l.state === "failed" && SEND_FINAL.indexOf(String(l.code || "")) !== -1) return false;
+  const t = Date.parse(l.retryAt || "");
+  return !isFinite(t) || t <= now || t > now + RETRY_CAP_MS + 60 * 1000;
+}
+
+/** {size, modified} of bytes adopted with the "sm:" form of a version (OneDrive had no hash of them yet), or null. */
+export function expectOf(ans) {
+  return ans && typeof ans.version === "string" && ans.version.indexOf("sm:") === 0 ? { size: Number(ans.size), modified: ans.modified || null } : null;
+}
+
+function sameTime(a, b) {
+  const x = Date.parse(a || ""), y = Date.parse(b || "");
+  return isFinite(x) && isFinite(y) && x === y;
+}
+
+/** A version OneDrive reports now (`f`: a plans_list / plan_link file) is the very bytes this record adopted after its
+    save was sent: another version string (OneDrive's hash, given after the "sm:" form the save's answer carried), the
+    same size, the same time. */
+export function keptAs(rec, f) {
+  return !!(rec && rec.expect && rec.file && f && typeof f.version === "string" && f.version && f.version !== rec.version &&
+    Number(f.size) === Number(rec.expect.size) && Number(rec.size) === Number(f.size) && sameTime(f.modified, rec.expect.modified));
+}
+
+/**
+ * The records once OneDrive has a save (`file`: the spooled copy that was sent; `ans`: plan_save_done's answer
+ * {mode, id, name, size, modified, version}) -> {rec, copy, old}:
+ *   replace, this record's waiting save: its bytes ARE the plan's current version - the record's copy from now on
+ *     (nothing downloaded), the old copy retired (`old`: kept a week when it was handed to the takeoff app lately);
+ *   replace, a save replaced since (a later Save came while this one was on its way): OneDrive's version moved to the
+ *     one sent, so the later save's base does too (it builds on it); the sent copy goes;
+ *   copy (someone saved the plan in the office after this device got it - Q3): the plan's record stays as it is (and
+ *     downloads OneDrive's version by itself once nothing waits here), the saved bytes become a record of their own for
+ *     the copy (`copy`: it opens on this device with no download), and `sent` says so;
+ *   no record (removed meanwhile): nothing kept, the sent copy goes.
+ */
+export function adoptSent(rec, file, ans, nowIso) {
+  if (!rec) return { rec: null, copy: null, old: [file] };
+  const mine = hasLocal(rec) && rec.local.file === file;
+  const replace = ans.mode === "replace" && ans.id === rec.itemId;
+  const ver = { version: ans.version, size: Number(ans.size), modified: ans.modified || null, name: ans.name || rec.name, folder: rec.folder };
+  // the sessions of this file are settled; another one's (an earlier save it replaced) stay to be
+  const rest = (l) => (Array.isArray(l.sends) ? l.sends.filter((s) => s && s.file !== file) : []);
+  if (replace) {
+    if (!mine) {
+      const local = hasLocal(rec) ? Object.assign({}, rec.local, { base: ans.version, sends: rest(rec.local) }) : rec.local || null;
+      return { rec: Object.assign({}, rec, { local, latest: Object.assign({ status: "ok", checkedAt: nowIso }, ver) }), copy: null,
+        old: file !== rec.file ? [file] : [] };
+    }
+    const old = [];
+    if (rec.file && rec.file !== file) old.push(rec.file);
+    if (rec.dl && rec.dl.file && rec.dl.file !== file) old.push(rec.dl.file);
+    return {
+      rec: Object.assign({}, rec, { file, name: ver.name, size: ver.size, modified: ver.modified, version: ver.version, savedAt: nowIso, dl: null,
+        fails: 0, retryAt: null, failCode: null, wide: false, expect: expectOf(ans), local: null,
+        latest: Object.assign({ status: "ok", checkedAt: nowIso }, ver), sent: { mode: "replace", name: ver.name, at: nowIso } }),
+      copy: null, old,
+    };
+  }
+  const sent = { mode: "copy", name: String(ans.name || ""), id: String(ans.id || ""), at: nowIso };
+  const local = mine ? null : hasLocal(rec) ? Object.assign({}, rec.local, { sends: rest(rec.local) }) : rec.local || null;
+  const copy = mine ? { key: rec.owner + "|" + ans.id, owner: rec.owner, itemId: ans.id, projectId: rec.projectId, number: rec.number,
+    projectTitle: rec.projectTitle, name: ver.name, folder: rec.folder, file, size: ver.size, modified: ver.modified, version: ver.version,
+    savedAt: nowIso, dl: null, latest: Object.assign({ status: "ok", checkedAt: nowIso }, ver), fails: 0, retryAt: null, failCode: null,
+    expect: expectOf(ans), local: null, sent: null, from: rec.itemId } : null;
+  return { rec: Object.assign({}, rec, { local, sent }), copy, old: mine ? [] : [file] };
+}
+
+/** A send in progress: 0-99 (100 only once OneDrive said it has it). */
+function pctOf(sent, size) {
+  return Number(size) > 0 ? Math.max(0, Math.min(99, Math.floor((Number(sent) / Number(size)) * 100))) : 0;
+}
+
+/**
+ * What a row says of the record's save: {state, pct?, why?, name?} or null (nothing to say).
+ *   kept     saved on this device, not in OneDrive yet (waiting; or a send that a closed page left half way);
+ *   sending  being sent here (`live`: {sent, size}) or in another window (`elsewhere`: pct null);
+ *   failed   not sent: `why`; `final` when it waits for the person;
+ *   sent / copy / lost   the last one's outcome, for SENT_NOTE_MS.
+ */
+export function saveStateOf(rec, live, now, elsewhere) {
+  if (!rec) return null;
+  if (hasLocal(rec)) {
+    const l = rec.local;
+    if (live) return { state: "sending", pct: pctOf(live.sent, live.size) };
+    if (elsewhere) return { state: "sending", pct: null };
+    if (l.state === "failed") return { state: "failed", why: String(l.error || ""), final: SEND_FINAL.indexOf(String(l.code || "")) !== -1 };
+    return { state: "kept" };
+  }
+  const s = rec.sent;
+  const t = Date.parse((s && s.at) || "");
+  if (!s || !isFinite(t) || now - t >= SENT_NOTE_MS || t > now + 60 * 1000) return null;
+  if (s.mode === "copy") return { state: "copy", name: String(s.name || "") };
+  if (s.mode === "lost") return { state: "lost" };
+  return { state: "sent" };
+}
+
+/** saveStateOf's words for a row (`device`: map/plans.js deviceWord - "iPad", "iPhone" or "device"). */
+export function saveText(st, device) {
+  const d = device || "device";
+  if (!st) return "";
+  if (st.state === "kept") return "Saved on this " + d + " — not in OneDrive yet: it is sent while the portal is open and online";
+  if (st.state === "sending") return typeof st.pct === "number" ? "Sending " + st.pct + "% — keep this screen open" : "Sending to OneDrive…";
+  if (st.state === "failed") return "Not sent — tap to retry" + (st.why ? " (" + String(st.why).replace(/[.\s]+$/, "") + ")" : "");
+  if (st.state === "sent") return "Sent to OneDrive";
+  if (st.state === "copy") return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — nothing was overwritten";
+  if (st.state === "lost") return "The save kept on this " + d + " was lost: the browser cleared this site's storage";
+  return "";
+}
+
+/** What the person is told when the save became a separate file (contract C3, the owner's Q3). */
+export function copyTold(name, device) {
+  return "Someone saved this plan in the office after your " + (device || "device") + " got it. Your work was saved as '" + String(name || "") +
+    "' next to it - nothing was overwritten.";
+}
+
+/** A row's bar for its save: filling while it is sent, full once OneDrive has it; none otherwise (progressHtml's). */
+export function sendBar(st) {
+  if (!st) return null;
+  if (st.state === "sending") return { pct: typeof st.pct === "number" ? st.pct : 0, kind: "run" };
+  if (st.state === "sent" || st.state === "copy") return { pct: 100, kind: "done" };
+  return null;
 }
 
 export function fmtSize(n) {

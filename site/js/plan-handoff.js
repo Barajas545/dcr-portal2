@@ -20,7 +20,16 @@
      4. for a link, the app asks {type: "ptt-renew", v: 1, nonce, req} when it expires; this window answers
         {type: "ptt-link", v: 1, nonce, req, url} ('' when there is none) for as long as the app is open;
      5. once the app really keeps itself on this device for offline use (its service worker and program), it says
-        {type: "ptt-offline", v: 1, nonce}: onOffline() - the Plans Library notes it (READY_KEY).
+        {type: "ptt-offline", v: 1, nonce}: onOffline() - the Plans Library notes it (READY_KEY);
+     6. the save back (owner decisions Q1-Q3, 2026-11-04; contract C2): a plan handed to the FRAME as a file, for a
+        person who may save it back (map/plans.js saveBackFor), comes with canSave: true. The app's Save then hands the
+        whole saved project over - {type: "ptt-save", v: 1, nonce, req, name, size, file} (saveOf: req at most 20
+        characters, the opened plan's file name, size === file.size) - and this window answers
+        {type: "ptt-save-state", v: 1, nonce, req, state, why?}: "kept" once the Plans Library has the bytes in its own
+        storage (spooled and checked: only then does the app mark the project saved), "refused", "no-room" or "failed";
+        later, while the app is open, the send to OneDrive's news: "sending" (pct), "sent", "copy" (name) or "failed".
+        Such a conversation lasts as long as the frame is open (a Save can come any time). A tab is never offered a
+        save, and a ptt-save there - or for a plan not offered - is refused.
    A message counts only from the peer's window, from the peer's origin, with its word (accepted()).
 
    With the frame switched off (map/plans.js PLAN_FRAME) a phone or a tablet opens the tab as a computer does, and an
@@ -90,17 +99,53 @@ export function accepted(ev, peer, word) {
   return d;
 }
 
+/** A save's own word (takeoff-web's newSaveReq: "s" and nine more; at most 20 of these characters). */
+export const REQ_RE = /^[A-Za-z0-9_-]{1,20}$/;
+/** The opened plan's file name, as takeoff-web sends it (never a path) - the rule of a plan's name (map/plan-library.js). */
+const SAVE_NAME = /^[^\u0000-\u001f\u007f/\\]{1,250}\.takeoff$/i;
+/** The words the app is told back, a sentence at most this long. */
+const WHY_MAX = 300;
+
+/**
+ * A ptt-save as the Plans Library takes it ({req, name, size, file}), {req, why} when it is not one to keep (answered
+ * "refused" with that why), or null when it carries no word to answer to (nothing is said). The file is the saved
+ * project itself - a Blob (or File) of exactly `size` bytes, handed over by reference: never read here.
+ */
+export function saveOf(d) {
+  if (!d || typeof d !== "object" || d.type !== "ptt-save" || typeof d.req !== "string" || !REQ_RE.test(d.req)) return null;
+  const req = d.req;
+  if (typeof d.name !== "string" || !SAVE_NAME.test(d.name)) return { req, why: "That is not a takeoff project file's name." };
+  if (!Number.isSafeInteger(d.size) || d.size <= 0) return { req, why: "The save did not say how big it is." };
+  const f = d.file;
+  const blob = !!f && typeof f === "object" && typeof f.slice === "function" && (typeof Blob === "undefined" || f instanceof Blob);
+  if (!blob || f.size !== d.size) return { req, why: "The save did not arrive whole: save again." };
+  return { req, name: d.name, size: d.size, file: f };
+}
+
+/** The answer about save `req` ({type: "ptt-save-state", v, nonce, req, state, why?, pct?, name?}). */
+export function saveState(word, req, state, extra) {
+  const x = extra || {};
+  const m = { type: "ptt-save-state", v: VERSION, nonce: word, req, state };
+  if (x.why) m.why = String(x.why).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, WHY_MAX);
+  if (state === "sending" && typeof x.pct === "number" && isFinite(x.pct)) m.pct = Math.max(0, Math.min(100, Math.round(x.pct)));
+  if (state === "copy" && typeof x.name === "string" && SAVE_NAME.test(x.name)) m.name = x.name;
+  return m;
+}
+
 /**
  * The conversation with the app in `peer` ({win, origin, via: "tab" | "frame", closed(), close()}), whose page was
  * opened at #portal=<word>. `host` is the window that hears the app's messages (this window; a test's stand-in).
- * plan(), renew(), done(), onOffline() as openInTakeoff's. -> {stop()}: this side stops listening (the frame closed).
+ * plan(), renew(), done(), onOffline(), onSave() as openInTakeoff's. -> {stop()}: this side stops listening (the frame
+ * closed).
  */
-export function talk(peer, word, plan, renew, done, onOffline, host) {
+export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
   const listen = host || window;
   const via = peer.via;
   const got = Promise.resolve().then(plan);
   got.catch(function () { /* said when the app asks */ });
-  let posted = false, finished = false, kind = "";
+  let posted = false, finished = false, kind = "", saving = false;
+  let saves = Promise.resolve();          // the saves, one at a time in the order they came
+  const heard = new Set();                // the save words answered (or being): one answer each
   // said first, then closed: closing the frame stops this conversation too (its onClose), which must not say "closed"
   let timer = setTimeout(function () {
     if (posted) return;
@@ -139,22 +184,47 @@ export function talk(peer, word, plan, renew, done, onOffline, host) {
         clearTimeout(slow);
       }
       if (finished) return;                                   // closed meanwhile: nothing to report as opened
+      // the save back: offered only to the frame, for a file, when the Plans Library takes it (onSave) and the plan
+      // says so (map/plans.js saveBackFor) - never to a tab, never for a link
+      saving = via === "frame" && p.kind === "file" && p.canSave === true && typeof onSave === "function";
+      const open = Object.assign({}, p, { type: "ptt-open", v: VERSION, nonce: word });
+      if (saving) open.canSave = true; else delete open.canSave;
       try {
-        peer.win.postMessage(Object.assign({}, p, { type: "ptt-open", v: VERSION, nonce: word }), peer.origin);
+        peer.win.postMessage(open, peer.origin);
       } catch (e) {
         finish({ ok: false, why: "failed", error: e, via });
         return;
       }
       kind = p.kind;
       done({ ok: true, via, kind });
-      // a saved copy needs nothing more but the "kept for offline use" word; a link may be asked again while the app
-      // is open
-      if (kind !== "link") timer = setTimeout(function () { finish(null); }, OFFLINE_WAIT_MS);
+      // a saved copy needs nothing more but the "kept for offline use" word - unless its saves are taken: then, as a
+      // link's renewals, for as long as the app is open; a link may be asked again while the app is open
+      if (kind !== "link" && !saving) timer = setTimeout(function () { finish(null); }, OFFLINE_WAIT_MS);
       return;
     }
     if (d.type === "ptt-offline" && posted) {
       if (typeof onOffline === "function") { try { onOffline(); } catch (e) { /* a note only */ } }
-      if (kind !== "link") finish(null);
+      if (kind !== "link" && !saving) finish(null);
+      return;
+    }
+    if (d.type === "ptt-save" && posted) {
+      const s = saveOf(d);
+      if (!s || heard.has(s.req)) return;                     // no word to answer to, or answered already
+      heard.add(s.req);
+      if (!saving || !s.file) {
+        tell(s.req, "refused", { why: s.why || "The portal does not take a save of this plan here: use Save a copy to Files in the takeoff app." });
+        return;
+      }
+      saves = saves.then(async function () {
+        let out = null;
+        try {
+          out = await onSave(s, function (state, extra) { tell(s.req, state, extra); });
+        } catch (e) {
+          out = { state: "failed", why: (e && e.message) || "The save could not be kept on this device." };
+        }
+        const state = out && ["kept", "refused", "no-room", "failed"].indexOf(out.state) !== -1 ? out.state : "failed";
+        tell(s.req, state, { why: out && out.why });
+      });
       return;
     }
     if (d.type === "ptt-renew" && posted && kind === "link" && typeof d.req === "string" && d.req.length <= 20) {
@@ -162,6 +232,11 @@ export function talk(peer, word, plan, renew, done, onOffline, host) {
       try { url = String((typeof renew === "function" ? await renew() : "") || ""); } catch (e) { url = ""; }
       try { peer.win.postMessage({ type: "ptt-link", v: VERSION, nonce: word, req: d.req, url }, peer.origin); } catch (e) { /* gone */ }
     }
+  }
+  /** A word about save `req` to the app (its answer, then the send's news while it is open). */
+  function tell(req, state, extra) {
+    if (finished) return;
+    try { peer.win.postMessage(saveState(word, req, state, extra), peer.origin); } catch (e) { /* the frame went */ }
   }
   listen.addEventListener("message", onMessage);
   return { stop: function () { finish(posted ? null : { ok: false, why: "closed", via }); } };
@@ -180,6 +255,10 @@ export function talk(peer, word, plan, renew, done, onOffline, host) {
  *            via: "tab" | "frame". (openOnDevice adds "paused": the person paused the plan's download.)
  *   onOffline()  the app said it keeps itself on this device for offline use
  *   opts.title   the frame's title (the plan's name)
+ *   opts.onSave(save, tell)  the frame only (a tab is never offered a save): the app's ptt-save ({req, name, size,
+ *            file}: saveOf) -> {state: "kept" | "refused" | "no-room" | "failed", why} - its answer; tell(state, extra)
+ *            says the send's news ("sending" {pct}, "sent", "copy" {name}, "failed" {why}) while the app is open. Only
+ *            a plan() that says canSave: true is offered it.
  */
 export function openInTakeoff(plan, renew, onDone, onOffline, opts) {
   const word = nonce();
@@ -194,7 +273,7 @@ export function openInTakeoff(plan, renew, onDone, onOffline, opts) {
     ctl = talk(peer, word, plan, renew, function (r) {
       if (r && !r.ok && r.why !== "closed") frame.say(handoffProblem(r), "warn");
       done(r);
-    }, onOffline);
+    }, onOffline, null, opts && opts.onSave);
     return;
   }
   if (iosHomeScreen()) { done({ ok: false, why: "ios_home", via: "tab" }); return; }
