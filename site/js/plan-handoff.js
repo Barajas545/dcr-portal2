@@ -273,6 +273,7 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
  *            via: "tab" | "frame". (openOnDevice adds "paused": the person paused the plan's download.)
  *   onOffline()  the app said it keeps itself on this device for offline use
  *   opts.title   the frame's title (the plan's name)
+ *   opts.onClose()  the frame closed (the frame only): the app no longer reads what it was handed
  *   opts.onSave(save, tell)  the frame only (a tab is never offered a save): the app's ptt-save ({req, name, size,
  *            file}: saveOf) -> {state: "kept" | "refused" | "no-room" | "failed", why} - its answer; tell(state, extra)
  *            says the send's news ("sending" {pct}, "sent", "copy" {name}, "failed" {why}) while the app is open. Only
@@ -283,7 +284,11 @@ export function openInTakeoff(plan, renew, onDone, onOffline, opts) {
   const done = typeof onDone === "function" ? onDone : function () {};
   if (usesFrame()) {
     let ctl = null;
-    const peer = frame.open(frameLink(word), { title: (opts && opts.title) || "", onClose: function () { if (ctl) ctl.stop(); } });
+    const peer = frame.open(frameLink(word), { title: (opts && opts.title) || "", onClose: function () {
+      if (ctl) ctl.stop();
+      // the Plans Library lets go of the file the app was reading (js/plan-library.js holdForFrame)
+      if (opts && typeof opts.onClose === "function") { try { opts.onClose(); } catch (e) { /* a note only */ } }
+    } });
     // none: no page to show it on, or the takeoff app already open with something that would be lost
     if (!peer) { done({ ok: false, why: frame.isOpen() ? "busy" : "blocked", via: "frame" }); return; }
     // the page under the frame cannot be read while it is open: a problem is said on the frame's bar too (the frame

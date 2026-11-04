@@ -585,7 +585,7 @@ test("plan-frame.js: a same-site frame of the copy, over everything, with Close;
   assert.match(js, /z-index:100000;/);
   // the hand-over opens it with the copy's address and stops when it closes
   const ho = read("js/plan-handoff.js");
-  assert.match(ho, /const peer = frame\.open\(frameLink\(word\), \{ title: \(opts && opts\.title\) \|\| "", onClose: function \(\) \{ if \(ctl\) ctl\.stop\(\); \} \}\);/);
+  assert.match(ho, /const peer = frame\.open\(frameLink\(word\), \{ title: \(opts && opts\.title\) \|\| "", onClose: function \(\) \{\s*if \(ctl\) ctl\.stop\(\);/);
   assert.ok(read("sw.js").includes('"js/plan-frame.js"'), "kept for offline use (the menu opens it with no signal)");
 });
 

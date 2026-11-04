@@ -792,6 +792,49 @@ test("the save back's rules: once OneDrive has it - a replace adopts the saved b
   assert.deepEqual(lib.adoptSent(null, SAVE, ans, AT), { rec: null, copy: null, old: [SAVE] });
 });
 
+test("the save back's rules for one opening of the frame: the base is the version the app's work was done on; a copy's later saves go on in the copy; handed with the save's own time", () => {
+  const A = rec().file;
+  const line = { file: A, base: "qx:AAA" };
+  // the record still holds what the app has: its own version (a save sent and adopted moves both on together)
+  assert.equal(lib.saveBase(rec(), line), "");
+  assert.equal(lib.saveBase(rec({ file: SAVE, version: "qx:NEW" }), { file: SAVE, base: "qx:AAA" }), "", "after its own save was adopted");
+  // a newer version downloaded while the app was open (the office's): the app's work still goes against what it had (Q3)
+  assert.equal(lib.saveBase(rec({ file: "p1-office-1.takeoff", version: "qx:OFFICE" }), line), "qx:AAA");
+  assert.equal(lib.withSave(rec({ file: "p1-office-1.takeoff", version: "qx:OFFICE" }), SAVE, 9, AT, lib.saveBase(rec({ file: "p1-office-1.takeoff" }), line)).rec.local.base, "qx:AAA");
+  // a save waiting here keeps its own base (withSave); no line (a test's, an older caller): the record's version
+  assert.equal(lib.saveBase(rec({ local: local() }), line), "");
+  assert.equal(lib.saveBase(rec({ file: "p1-office-1.takeoff" }), null), "");
+  assert.equal(lib.withSave(rec(), SAVE, 9, AT, "").rec.local.base, "qx:AAA");
+  // the record a Save of the opening goes on: the one whose waiting save is the app's, else whose copy is
+  const plan = rec({ owner: "u1" });
+  const copyRec = rec({ owner: "u1", key: "u1|01FAKECOPY0001", itemId: "01FAKECOPY0001", file: SAVE });
+  const other = rec({ owner: "u2", key: "u2|" + F1.id, file: SAVE });
+  assert.equal(lib.recordOfLine([plan, other, copyRec], "u1", SAVE), copyRec, "the copy (never another person's)");
+  const waiting = rec({ owner: "u1", local: local({ file: "p1-x-3.takeoff" }) });
+  assert.equal(lib.recordOfLine([copyRec, waiting], "u1", "p1-x-3.takeoff"), waiting);
+  assert.equal(lib.recordOfLine([plan], "u1", "p1-gone-9.takeoff"), null);
+  // adopted after a send: handed with the time the save was KEPT, not OneDrive's upload time (takeoff-web compares its
+  // drafts with it); a copy's record too; a later download of another version: OneDrive's time again
+  const r = rec({ local: local({ savedAt: "2026-11-04T18:00:00.000Z" }) });
+  const ans = { saved: true, mode: "replace", id: F1.id, name: F1.name, size: 2000, modified: "2026-11-04T19:02:00.000Z", version: "qx:NEW" };
+  const rep = lib.adoptSent(r, SAVE, ans, AT).rec;
+  assert.deepEqual(rep.adopted, { file: SAVE, keptAt: "2026-11-04T18:00:00.000Z" });
+  assert.equal(lib.handedTime(rep), Date.parse("2026-11-04T18:00:00.000Z"));
+  assert.equal(lib.handedTime(Object.assign({}, rep, { file: "p1-office-1.takeoff", modified: "2026-11-05T08:00:00.000Z" })), Date.parse("2026-11-05T08:00:00.000Z"));
+  assert.equal(lib.handedTime(r), Date.parse("2026-11-04T18:00:00.000Z"), "a save waiting here: its own time");
+  assert.equal(lib.handedTime(rec({ modified: "2026-10-01T10:00:00.000Z" })), Date.parse("2026-10-01T10:00:00.000Z"));
+  assert.ok(Number.isNaN(lib.handedTime(null)));
+  const cp = lib.adoptSent(r, SAVE, Object.assign({}, ans, { mode: "copy", id: "01FAKECOPY0001", name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }), AT).copy;
+  assert.equal(lib.handedTime(cp), Date.parse("2026-11-04T18:00:00.000Z"));
+  // OneDrive's hash of bytes it named "sm:" (the save before was taken before the hash): the same size and time
+  assert.equal(lib.hashedBase("sm:2000:2026-11-04T18:30:00.000Z", { size: 2000, modified: "2026-11-04T18:30:00Z", version: "qx:HASHED" }), "qx:HASHED");
+  assert.equal(lib.hashedBase("sm:2000:2026-11-04T18:30:00.000Z", { size: 2001, modified: "2026-11-04T18:30:00Z", version: "qx:HASHED" }), "", "other bytes");
+  assert.equal(lib.hashedBase("sm:2000:2026-11-04T18:30:00.000Z", { size: 2000, modified: "2026-11-04T18:31:00Z", version: "qx:HASHED" }), "", "saved again since");
+  assert.equal(lib.hashedBase("sm:2000:2026-11-04T18:30:00.000Z", { size: 2000, modified: "2026-11-04T18:30:00Z", version: "sm:2000:2026-11-04T18:30:00.000Z" }), "");
+  assert.equal(lib.hashedBase("qx:AAA", { size: 2000, modified: AT, version: "qx:B" }), "", "only an sm: base");
+  assert.equal(lib.hashedBase("sm:?:?", { size: 2000, modified: AT, version: "qx:B" }), "", "nothing to know the bytes by");
+});
+
 test("the save back's rules: OneDrive's own hash of bytes adopted with an 'sm:' version is taken without a download (the same size and time)", () => {
   const kept = rec({ file: SAVE, version: "sm:2000:2026-11-04T18:30:00.000Z", size: 2000, expect: { size: 2000, modified: "2026-11-04T18:30:00.000Z" },
     latest: { status: "ok", version: "sm:2000:2026-11-04T18:30:00.000Z" } });
@@ -1021,6 +1064,15 @@ test("keepSave's heartbeat (takeoff-web's 'keeping'): from the worker's own prog
     assert.equal(out2.state, "kept", out2.why);
     assert.equal(fast.filter((b) => b[0] === "keeping").length, 1, JSON.stringify(fast));
     await out2.sent;
+    // a worker that reports every slice (each clock reading 0.3 s on: over its 250 ms) - the app hears far fewer words
+    t = real();
+    Date.now = () => (t += 300);
+    const mid = [];
+    const out3 = await LIB.keepSave(F1.id, saveOf(savedProject(48 * MiB + 5)), (state, extra) => mid.push([state, extra]));
+    assert.equal(out3.state, "kept", out3.why);
+    const n = mid.filter((b) => b[0] === "keeping").length;
+    assert.ok(n >= 1 && n <= 3, "7 slices reported, at most one word every 2 s: " + n);
+    await out3.sent;
   } finally {
     Date.now = real;
   }
@@ -1116,6 +1168,114 @@ test("someone saved the plan in the office meanwhile (Q3): the save becomes a se
   // once nothing waits here the plan itself is a plan like any other: OneDrive's newer version downloads by itself
   await LIB.checkUpdates();
   assert.equal(lib.needsWork(ROW()), true);
+});
+
+test("one opening, Save after Save: each replaces the plan (also once OneDrive hashed the bytes it first named sm:); never a copy of the person's own save", async () => {
+  const before = await devicePlan();
+  const w = saveWorld();                                      // OneDrive answers "sm:" (no hash yet) after each save
+  const line = { file: before.file, base: "qx:AAA" };         // what open() hands the frame's app
+  const p1 = savedProject(1 * MiB + 3, "PDFCACHE1", 5);
+  const o1 = await LIB.keepSave(F1.id, saveOf(p1), null, line);
+  assert.equal(o1.state, "kept");
+  assert.equal((await o1.sent).mode, "replace");
+  const r1 = ROW();
+  assert.deepEqual([line.file, r1.file, r1.version.indexOf("sm:")], [r1.file, r1.file, 0], "the app's work is that save, adopted as the plan's copy");
+  // meanwhile OneDrive works out its hash of those bytes (the same size and time)
+  w.plan.version = "qx:HASHOFSAVE1";
+  w.calls.length = 0;
+  const p2 = savedProject(1 * MiB + 9, "PDFCACHE1", 6);
+  const o2 = await LIB.keepSave(F1.id, { req: "sBBBBBBBBB", name: F1.name, size: p2.blob.size, file: p2.blob }, null, line);
+  assert.equal(o2.state, "kept");
+  const s2 = await o2.sent;
+  assert.deepEqual([s2.sent, s2.mode], [true, "replace"], "the second Save replaced the plan too");
+  assert.deepEqual([w.sessionBody.version, w.calls], ["qx:HASHOFSAVE1", ["plans_list", "plan_save_session", "plan_save_done"]],
+    "sent against OneDrive's hash of the bytes it built on (one plans_list asked first)");
+  assert.equal(w.files.length, 1, "no copy anywhere");
+  assert.ok(await same(w.saved, p2.bytes));
+  // and again without the hash: the sm: base is already OneDrive's current version - nothing more to ask
+  w.calls.length = 0;
+  const p3 = savedProject(1 * MiB + 15, "PDFCACHE1", 7);
+  const o3 = await LIB.keepSave(F1.id, { req: "sCCCCCCCCC", name: F1.name, size: p3.blob.size, file: p3.blob }, null, line);
+  const keptAt = ROW().local.savedAt;
+  const s3 = await o3.sent;
+  assert.equal(s3.mode, "replace");
+  assert.equal(w.files.length, 1);
+  // handed again later: the time the last save was kept, not OneDrive's upload time
+  const r3 = ROW();
+  assert.deepEqual([r3.adopted.keptAt, lib.handedTime(r3)], [keptAt, Date.parse(keptAt)]);
+  assert.notEqual(r3.modified, keptAt, "(OneDrive's own time of the upload is another)");
+});
+
+test("the office saved while the frame was open and the portal downloaded it: the app's Save still goes against what it had - a copy, never over the office's save (Q3); the next Save of that opening goes on in the copy", async () => {
+  const before = await devicePlan();
+  const w = saveWorld();
+  w.hash = true;
+  const line = { file: before.file, base: "qx:AAA" };
+  // the office's save, and the library's own download of it while the app is open (its commit, as run() makes it)
+  w.plan.version = "qx:OFFICE";
+  const d = await DEV.fs.root.getDirectoryHandle("plan-library", { create: true });
+  const newer = "p" + lib.hashOf("u1") + "-office-1.takeoff";
+  (await d.getFileHandle(newer, { create: true })).bytes = new TextEncoder().encode("PDFCACHE1 the office's version" + ".".repeat(1470));
+  const st = DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+  st.set(KEY, Object.assign(structuredClone(st.get(KEY)), { file: newer, version: "qx:OFFICE", size: 1500 }));
+  const p = savedProject(2 * MiB + 1, "PDFCACHE1", 8);
+  const out = await LIB.keepSave(F1.id, saveOf(p), null, line);
+  assert.equal(out.state, "kept");
+  assert.equal(ROW().local.base, "qx:AAA", "the version the app's work was done on, not the one downloaded meanwhile");
+  const sent = await out.sent;
+  assert.equal(sent.mode, "copy", "a separate file: the office's save is not overwritten");
+  assert.equal(w.sessionBody.version, "qx:AAA");
+  const plan = ROW();
+  assert.deepEqual([plan.file, plan.version, plan.local], [newer, "qx:OFFICE", null], "the plan's record keeps the office's version");
+  const copyKey = "u1|01FAKECOPY0001";
+  assert.equal(ROW(copyKey).file, line.file, "the app's work is the copy now");
+  // the next Save of the same opening: the copy is replaced (one copy, not a copy of a copy)
+  w.calls.length = 0;
+  const q = savedProject(2 * MiB + 7, "PDFCACHE1", 9);
+  const o2 = await LIB.keepSave(F1.id, { req: "sDDDDDDDDD", name: F1.name, size: q.blob.size, file: q.blob }, null, line);
+  assert.equal(o2.state, "kept");
+  assert.ok(ROW(copyKey).local, "kept on the copy's record");
+  const s2 = await o2.sent;
+  assert.deepEqual([s2.mode, w.sessionBody.item_id, w.sessionBody.version], ["replace", "01FAKECOPY0001", "qx:SAVED1"]);
+  assert.equal(w.files.length, 2, "the plan and one copy");
+  assert.deepEqual([ROW().file, ROW().version], [newer, "qx:OFFICE"], "the plan untouched");
+  assert.ok(await same(w.saved, q.bytes));
+});
+
+test("a copy the frame's app has open is never removed while it is open, however long (the person's Remove, a newer version, a sweep); after it closes it gets the week's grace", async () => {
+  const before = await devicePlan();
+  saveWorld();
+  let close;
+  const closed = new Promise((r) => { close = r; });
+  LIB.holdForFrame(before.file, closed);
+  // handed more than a week ago: the grace alone would no longer keep it
+  const meta = DEV.idb.dbs.get("dcr2-plan-library").stores.get("meta").data;
+  meta.set("handed", { key: "handed", value: { [before.file]: new Date(Date.now() - 8 * 86400000).toISOString() } });
+  assert.ok((await DEV.locks.query()).held.some((l) => l.name === "dcr2-plan-rd:" + before.file + "|" + l.name.split("|")[1]), "a Web Lock other windows see");
+  await LIB.remove(F1.id);                                   // the person's Remove (retire)
+  assert.equal(ROW(), null);
+  await LIB.sweep();
+  assert.ok(LIBFILES()[before.file], "still there while the frame reads it");
+  close();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await DEV.locks.query()).held.some((l) => l.name.indexOf("dcr2-plan-rd:") === 0), false, "let go when the frame closed");
+  await LIB.sweep();
+  assert.ok(LIBFILES()[before.file], "the week's grace from the Remove");
+  meta.set("handed", { key: "handed", value: { [before.file]: new Date(Date.now() - 8 * 86400000).toISOString() } });
+  await LIB.sweep();
+  assert.equal(LIBFILES()[before.file], undefined, "gone at a sweep after it");
+  // another window's frame (only its Web Lock is seen here): kept too
+  const other = await devicePlan();
+  let release;
+  const held = new Promise((r) => { release = r; });
+  DEV.locks.request("dcr2-plan-rd:" + other.file + "|elsewhere", () => held);
+  await new Promise((r) => setTimeout(r, 5));
+  await LIB.remove(F1.id, { });
+  meta.set("handed", { key: "handed", value: {} });
+  await LIB.sweep();
+  assert.ok(LIBFILES()[other.file], "another window's frame reads it");
+  release();
+  await new Promise((r) => setTimeout(r, 5));
 });
 
 test("a send OneDrive did not take waits (Not sent - tap to retry); before the owner's write grant nothing is asked again and again; the person's Retry sends it", async () => {

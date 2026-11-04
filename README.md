@@ -706,6 +706,13 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   and its bytes become the device's copy with no download (OneDrive's hash of them, given later, is taken without a
   download too). Changed in the office meanwhile: the save becomes a separate file beside it, `<stem> - iPad
   YYYY-MM-DD HHMM.takeoff`, the person is told, and nothing is overwritten.
+- **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against
+  the version the app's work was done on (`map/plan-library.js` `saveBase`) - so a newer version the portal downloaded
+  while the app was open never turns older work into a replace (it becomes a copy), the next Save after a copy goes on
+  in that copy, and a base OneDrive first named `sm:` is sent against its hash of the same bytes. While a save is kept
+  the app hears `keeping` (pct) at most every 2 s, from the spool worker's own progress, so a big plan never runs out
+  its 2-minute wait. The file the app was handed is never removed while the frame is open (a Web Lock
+  `dcr2-plan-rd:<file>|<word>` other windows see), and gets the week's grace after.
 - **Rows.** The Plans Library and the 📐 menu say Saved on this iPad / Sending 45% / Sent / Saved as a separate file /
   Not sent — tap to retry, with Send now / Retry. A purge on lost prices takes the saves waiting here too, and on this
   site the takeoff app's own drafts (`ptt-drafts`) and kept copies (`plans-kept`).

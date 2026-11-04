@@ -33,6 +33,10 @@
                                 as it was, the save becomes a record of its own for the copy, and the person is told;
    * keptAs(rec, f)             a version OneDrive reports now is the bytes adopted after a save (its hash given after
                                 the save's "sm:" answer): taken without a download;
+   * saveBase(rec, line)        the version a Save in the frame was done on (its record's, a save's waiting here, or -
+                                the record moved on while the app was open - the one the app was handed: Q3);
+   * handedTime(rec)            the time a copy is handed to the takeoff app as (a save's own time, not OneDrive's);
+   * hashedBase(base, f)        OneDrive's hash of the bytes a save's "sm:" base names (sent against it);
    * saveStateOf / saveText / copyTold / sendBar  what the rows say: Saved on this iPad, Sending 45%, Sent, Saved as a
                                 separate file, Not sent - tap to retry.
    Pure module (node tests import it). */
@@ -372,14 +376,53 @@ export function baseOk(v) {
  * save it replaces (its file goes; a session opened for it stays in `sends` to be settled). `base` stays the first
  * save's: everything after it was done on that version too.
  */
-export function withSave(rec, file, size, nowIso) {
+export function withSave(rec, file, size, nowIso, base) {
   const prev = hasLocal(rec) ? rec.local : null;
   const sends = prev && Array.isArray(prev.sends) ? prev.sends.slice(-MAX_SENDS) : [];
   return {
-    rec: Object.assign({}, rec, { sent: null, local: { file, base: prev ? prev.base : rec.version, savedAt: nowIso, size: Number(size) || 0,
+    rec: Object.assign({}, rec, { sent: null, local: { file, base: prev ? prev.base : base || rec.version, savedAt: nowIso, size: Number(size) || 0,
       state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends } }),
     old: prev && prev.file !== file ? prev.file : "",
   };
+}
+
+/**
+ * The version the takeoff app's work was done on, for a Save of it kept on record `rec` (withSave's base when no save
+ * waits there). `line` {file, base}: what the frame's app has - the file it was handed, then each of its saves kept
+ * here - and the version that file was. While the record still holds that file, the record's version (a save sent and
+ * adopted moved both on together); once it holds another (a newer version downloaded while the app was open), the
+ * version the app's work really started from: never the newer one, so a save of older work becomes a separate file
+ * instead of replacing someone else's newer save (the owner's Q3). -> a version, or "" (the record's own).
+ */
+export function saveBase(rec, line) {
+  if (!rec || hasLocal(rec) || !line || !line.file || !line.base) return "";
+  return rec.file === line.file ? "" : String(line.base);
+}
+
+/** OneDrive's hash form of a base it gave as "sm:<size>:<time>" (the bytes a save builds on, taken before OneDrive
+    had their hash): `f` (a plans_list file now) has a "qx:" version, that size and that time - the same bytes, so a save
+    is sent against f.version (the broker compares versions exactly: against "sm:" it would make a copy of the
+    person's own save). -> f.version, or "". */
+export function hashedBase(base, f) {
+  const m = /^sm:([0-9]{1,16}):(.+)$/.exec(String(base || ""));
+  if (!m || !f || typeof f.version !== "string" || f.version.indexOf("qx:") !== 0) return "";
+  return Number(f.size) === Number(m[1]) && sameTime(f.modified, m[2]) ? f.version : "";
+}
+
+/** The record a frame's Save goes on (`file`: line.file): the one whose waiting save, else whose copy, is that file. */
+export function recordOfLine(records, who, file) {
+  const mine = (records || []).filter((r) => r && r.owner === who);
+  return mine.find((r) => hasLocal(r) && r.local.file === file) || mine.find((r) => r.file === file) || null;
+}
+
+/** The time (ms, NaN when none) a copy is handed to the takeoff app as - its File's lastModified, which the app
+    compares its drafts with: a save waiting here, or one OneDrive took and this record adopted, is the time the save
+    was KEPT (the work's own time; OneDrive's upload time is later); any other copy is OneDrive's time of its version. */
+export function handedTime(rec) {
+  if (!rec) return NaN;
+  if (hasLocal(rec)) return Date.parse(rec.local.savedAt || "");
+  if (rec.adopted && rec.adopted.file === rec.file && rec.file) return Date.parse(rec.adopted.keptAt || "");
+  return Date.parse(rec.modified || "");
 }
 
 /** Sent by itself now: a save waiting here, not a failure that waits for the person, its wait over (a wait further
@@ -440,7 +483,7 @@ export function adoptSent(rec, file, ans, nowIso) {
     if (rec.dl && rec.dl.file && rec.dl.file !== file) old.push(rec.dl.file);
     return {
       rec: Object.assign({}, rec, { file, name: ver.name, size: ver.size, modified: ver.modified, version: ver.version, savedAt: nowIso, dl: null,
-        fails: 0, retryAt: null, failCode: null, wide: false, expect: expectOf(ans), local: null,
+        fails: 0, retryAt: null, failCode: null, wide: false, expect: expectOf(ans), local: null, adopted: { file, keptAt: rec.local.savedAt || nowIso },
         latest: Object.assign({ status: "ok", checkedAt: nowIso }, ver), sent: { mode: "replace", name: ver.name, at: nowIso } }),
       copy: null, old,
     };
@@ -450,7 +493,7 @@ export function adoptSent(rec, file, ans, nowIso) {
   const copy = mine ? { key: rec.owner + "|" + ans.id, owner: rec.owner, itemId: ans.id, projectId: rec.projectId, number: rec.number,
     projectTitle: rec.projectTitle, name: ver.name, folder: rec.folder, file, size: ver.size, modified: ver.modified, version: ver.version,
     savedAt: nowIso, dl: null, latest: Object.assign({ status: "ok", checkedAt: nowIso }, ver), fails: 0, retryAt: null, failCode: null,
-    expect: expectOf(ans), local: null, sent: null, from: rec.itemId } : null;
+    expect: expectOf(ans), local: null, sent: null, from: rec.itemId, adopted: { file, keptAt: rec.local.savedAt || nowIso } } : null;
   return { rec: Object.assign({}, rec, { local, sent }), copy, old: mine ? [] : [file] };
 }
 

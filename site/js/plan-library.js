@@ -53,7 +53,7 @@ import { storedUserId, storedUserEmail } from "./sb.js";
 import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
-  hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS,
+  hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -67,6 +67,9 @@ const LOCK = "dcr2-plan-dl:";
 // a save being kept (spooled), and one being sent to OneDrive: one window at a time per plan
 const SPOOL_LOCK = "dcr2-plan-sp:";
 const SEND_LOCK = "dcr2-plan-up:";
+// a copy the takeoff app in a frame has open (it reads unviewed sheets from it for as long as it is open): held by the
+// window that shows the frame, "<file>|<a word of that opening>", until the frame closes - no window removes it meanwhile
+const READ_LOCK = "dcr2-plan-rd:";
 const OWNERS_KEY = "dcr2-plan-owners";
 const MAIL_KEY = "dcr2-plan-owner-mail";
 const SPACE_MARGIN = 64 * 1024 * 1024;         // never fill the last bit of the quota
@@ -247,12 +250,38 @@ function markHanded(name) {
   });
 }
 /** An old version or a removed copy: gone now - or, handed to the takeoff app lately, kept a week from now (the replace
-    or the remove; up to a week of an old copy per plan opened) and gone at a sweep after that. A takeoff tab still open
-    on it longer than that loses it (its save check then keeps the work as a draft). */
+    or the remove; up to a week of an old copy per plan opened) and gone at a sweep after that. One a frame's takeoff app
+    has open NOW is never removed while it is (framesReading: however long the frame stays open), and gets its week
+    after. A takeoff tab (a computer's) still open on it longer than the week loses it (its save check then keeps the
+    work as a draft). */
 async function retire(name) {
   if (!name) return;
-  if (await handedLately(name)) await markHanded(name);
+  if ((await handedLately(name)) || (await framesReading()).has(name)) await markHanded(name);
   else await removeFile(name);
+}
+
+const readingHere = new Map();      // file name -> how many frames of this window have it open
+/** The library files a takeoff app in a frame has open now: this window's, and other windows' (their Web Locks). */
+async function framesReading() {
+  const out = new Set(readingHere.keys());
+  const held = await heldLocks(READ_LOCK);
+  Object.keys(held || {}).forEach(function (k) { out.add(k.split("|")[0]); });
+  return out;
+}
+/** The frame's takeoff app reads `name` until `closed` settles (the frame closed): held so meanwhile (open(); a test's too). */
+export function holdForFrame(name, closed) {
+  if (!FILE_RE.test(String(name || ""))) return;
+  readingHere.set(name, (readingHere.get(name) || 0) + 1);
+  const let_go = function () {
+    const n = (readingHere.get(name) || 1) - 1;
+    if (n > 0) readingHere.set(name, n); else readingHere.delete(name);
+  };
+  closed.then(let_go, let_go);
+  if (HAS && navigator.locks && navigator.locks.request) {
+    const word = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    navigator.locks.request(READ_LOCK + name + "|" + word, function () { return closed.catch(function () { /* closed */ }); })
+      .catch(function () { /* this window's own count still holds it */ });
+  }
 }
 
 /** This person still has a file of theirs here (a copy kept for the takeoff app after a Remove counts). */
@@ -788,6 +817,8 @@ export async function sweep() {
   const all = await getAll("plans");
   const handed = await mutate("meta", "handed", (cur) => ({ key: "handed", value: pruneHanded(cur ? cur.value : {}, Date.now()) }));
   const keep = keepSet(all, handed ? handed.value : {}, Date.now());
+  // and whatever a frame's takeoff app has open now, however long ago it was handed over
+  (await framesReading()).forEach(function (n) { keep.add(n); });
   const d = await dir();
   const names = [];
   for await (const name of d.keys()) names.push(name);
@@ -997,6 +1028,11 @@ export function open(itemId, onDone, opts) {
   const offer = frame && saveBackFor(o.me);
   if (frame) noteTakeoffUser(owner());
   const which = (c) => (hasLocal(c) ? c.local.file : c.file);
+  // the frame's app reads the file it is handed for as long as it is open: held until the frame closes (holdForFrame)
+  let closeNow = function () {};
+  const closed = new Promise(function (resolve) { closeNow = resolve; });
+  // what the frame's app has (map/plan-library.js saveBase): the file handed over, then each save of it kept here
+  const line = { file: "", base: "" };
   openInTakeoff(async function () {
     // marked as handed over first, then read again: a new version committed in between (here or in another window)
     // would otherwise retire the very file being handed over
@@ -1014,13 +1050,18 @@ export function open(itemId, onDone, opts) {
     if (!f) throw err("missing", mine ? "The save kept on this device is gone (the browser cleared this site's storage)." : "This saved plan is no longer on this device. Save it again from 📐 while online.");
     const want = mine ? Number(r.local.size) : Number(r.size);
     if (want > 0 && f.size !== want) throw err("missing", "This saved plan did not finish downloading. It carries on while the portal is open and online.");
-    // the save's own time (the app keeps a draft only when it is newer than the file it opens)
-    const t = Date.parse((mine ? r.local.savedAt : r.modified) || "");
+    if (frame) holdForFrame(which(r), closed);
+    line.file = which(r);
+    line.base = String((mine ? r.local.base : r.version) || "");
+    // the save's own time - also once OneDrive has it (the work's time, not the upload's: the app compares its drafts
+    // with it)
+    const t = handedTime(r);
     const plan = { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : f.lastModified, number: r.number,
       updateAvailable: !mine && statusOf(r, null, false) === "outdated" };
     if (offer) plan.canSave = true;                          // (js/plan-handoff.js offers it to the frame only)
     return plan;
-  }, null, onDone, noteReady, Object.assign({}, o, { onSave: offer ? function (save, tell) { return keepSave(itemId, save, tell); } : null }));
+  }, null, onDone, noteReady, Object.assign({}, o, { onSave: offer ? function (save, tell) { return keepSave(itemId, save, tell, line); } : null,
+    onClose: function () { closeNow(); } }));
 }
 
 /** Open a plan in OneDrive in the takeoff app over byte ranges (online; nothing saved). Call IN the click. A fresh link
@@ -1370,14 +1411,19 @@ function stopSend(key, file) {
  * The app's Save of the plan `itemId` (js/plan-handoff.js saveOf: {req, name, size, file}) kept on this device ->
  * {state: "kept" | "refused" | "no-room" | "failed", why, sent} - the hand-over's answer to the app (`sent`: the send
  * that follows at once, never rejecting: a test's to wait on). `tell(state, extra)`: the frame's news while it is open.
+ * `line` {file, base} (open()'s, one per opening): what the frame's app has - so the Saves of one opening go on the
+ * record that holds its work (the plan's; once a save of it became a separate file, that copy's), against the version
+ * the work was done on (map/plan-library.js saveBase); it moves on to each save kept.
  */
-export async function keepSave(itemId, save, tell) {
-  const key = keyOf(itemId);
+export async function keepSave(itemId, save, tell, line) {
+  let key = keyOf(itemId);
   const s = save || {};
   spooling++;
   try {
     if (!PLAN_SAVE_BACK) return { state: "refused", why: "Saving plans back from here is switched off for now: use Save a copy to Files." };
-    const r = await get("plans", key);
+    let r = await get("plans", key);
+    const ours = line && line.file ? recordOfLine(await getAll("plans"), owner(), line.file) : null;
+    if (ours) { r = ours; key = ours.key; }
     if (!r || !(r.file || hasLocal(r))) return { state: "refused", why: "This plan is no longer saved on this device: use Save a copy to Files." };
     const size = Number(s.size);
     if (!s.file || typeof s.file.slice !== "function" || !(size > 0) || s.file.size !== size) return { state: "refused", why: "The save did not arrive whole: save again." };
@@ -1404,15 +1450,18 @@ export async function keepSave(itemId, save, tell) {
     if (w.magic !== MAGIC) { await removeFile(name); return { state: "refused", why: "What the takeoff app saved is not a takeoff project file." }; }
     if (w.size !== size) { await removeFile(name); return { state: "failed", why: "The save was not kept whole on this device. Save again." }; }
     // the record as it is now (another window may have removed it meanwhile)
-    let old = "", kept = false;
+    let old = "", kept = false, base = "";
     await mutate("plans", key, function (c) {
       if (!c) return undefined;
-      const a = withSave(c, name, w.size, nowIso());
+      const a = withSave(c, name, w.size, nowIso(), saveBase(c, line));
       old = a.old;
+      base = a.rec.local.base;
       kept = true;
       return a.rec;
     });
     if (!kept) { await removeFile(name); return { state: "refused", why: "This plan was removed from this device meanwhile: use Save a copy to Files." }; }
+    // the app's work is this save now (the next Save of this opening builds on it)
+    if (line) { line.file = name; line.base = String(base || ""); }
     noteOwner(r.owner, true);
     // the send's news goes to this conversation from now on (the app shows it while it is open)
     if (typeof tell === "function") tells[key] = tell;
@@ -1426,7 +1475,7 @@ export async function keepSave(itemId, save, tell) {
     // sent at once when it can be - after the send of the save it replaces has stopped (never awaited here: the app is
     // told "kept" now)
     const sent = Promise.resolve(sendCalls[key]).catch(function () { return null; })
-      .then(function () { return sendSaved(itemId); }).catch(function () { return null; });
+      .then(function () { return sendSaved(r.itemId); }).catch(function () { return null; });
     return { state: "kept", sent };
   } catch (x) {
     return { state: "failed", why: (x && x.message) || "The save could not be kept on this device." };
@@ -1531,6 +1580,25 @@ async function settle(key, skip) {
   return null;
 }
 
+/** A save built on bytes OneDrive gave as "sm:" (its hash was not ready when the save before it landed) goes against
+    OneDrive's hash of those bytes once it has one - asked once, here, before the session (a failure leaves the base as
+    it is: the broker then makes a copy, nothing is lost). Another Save of the same opening, minutes after the first,
+    would otherwise become a copy of the person's own save. */
+async function hashBase(key) {
+  const r = await get("plans", key);
+  if (!r || !hasLocal(r) || String(r.local.base || "").indexOf("sm:") !== 0) return;
+  let f = null;
+  try {
+    const got = await onedrive.plansList([Number(r.projectId)]);
+    const p = got[String(r.projectId)];
+    f = p ? p.files.find((x) => x.id === r.itemId) || null : null;
+  } catch (e) { return; }
+  const v = hashedBase(r.local.base, f);
+  if (!v) return;
+  await mutate("plans", key, (c) => (c && hasLocal(c) && c.local.file === r.local.file && c.local.base === r.local.base
+    ? Object.assign({}, c, { local: Object.assign({}, c.local, { base: v }) }) : undefined));
+}
+
 /** Under this plan's send lock: settle, then send the save as it is now. */
 async function sendNow(key) {
   let r = await get("plans", key);
@@ -1538,6 +1606,7 @@ async function sendNow(key) {
   const park = parked[key] && parked[key].file === r.local.file ? parked[key] : null;
   const done = await settle(key, park && park.meta ? park.meta.ticket : null);
   if (done && done.sent) return done;
+  if (!park) await hashBase(key);
   r = await get("plans", key);
   if (!r || !hasLocal(r)) return { none: true };
   const file = r.local.file;
