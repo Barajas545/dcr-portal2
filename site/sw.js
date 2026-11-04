@@ -1,7 +1,8 @@
 /* DCR Employee Portal 2 service worker (BLUEPRINT 2.2.6).
 
-   - Cache "dcr-portal2-v4". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
-     portal's "dcr-portal-*" nor anything else on the device.
+   - Cache "dcr-portal2-v5". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
+     portal's "dcr-portal-*", nor the takeoff copy's "ptt-web-*", nor anything else on the device.
+   - Never touches takeoff/ (the takeoff app's copy: its own worker keeps it; see v5 below).
    - Network FIRST for the site's own pages and files (always up to date online; the last copy
      offline). A copy is kept under its path only, never with a query string: an address such as
      "index.html?email=…&password=…" (a sign-in form sent by the browser itself) is never stored,
@@ -46,8 +47,16 @@
    v4 (check-off notes, DCR Desktop 2.26 - the owner's request of 2026-11-02): the three log views draw a box on every
    note and tick it through set_note_done (js/pages/note-ticks.js joins the list; the map and repo modules they share
    changed): a new name, so every installed copy takes the new log code at once instead of on its next visit; activate
-   carries the pinned libraries over as before. */
-const CACHE = "dcr-portal2-v4";
+   carries the pinned libraries over as before.
+   v5 (the takeoff app inside the portal on a phone or tablet - owner decision Q4, 2026-11-04): the portal's own copy of
+   takeoff-web lives at takeoff/ (tools/vendor-takeoff.mjs) with its OWN service worker (takeoff/sw.js, scope takeoff/,
+   caches "ptt-web-*"), and this worker never answers, keeps or serves anything under takeoff/ (TAKEOFF below) - not
+   even on a first visit, when the frame's page is still this worker's (scope "./" covers it) until takeoff's worker
+   has installed: kept here, the copy's files would sit in "dcr-portal2-*" beside the ones its own worker keeps, and an
+   offline start could mix two versions of one program. The two workers' caches stay apart (each deletes only its own
+   names). The frame (js/plan-frame.js) joins the list; the takeoff copy itself never does. A new name, so every
+   installed copy takes the pass-through and the plan pages' new routing at once. */
+const CACHE = "dcr-portal2-v5";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
 // tests/core-sw.test.mjs checks it), so the installed app also opens offline from a cold start (a
@@ -159,10 +168,18 @@ function sameOriginWithQuery(href) {
 /** The cache key of one of the site's own files: its path, never its query string. */
 function keyOf(url) { return url.origin + url.pathname; }
 
+/** The takeoff app's copy (site/takeoff/): its own worker's, never this one's (v5). */
+const TAKEOFF = "takeoff/";
+function inTakeoff(url) {
+  return url.origin === self.location.origin && url.pathname.indexOf(new URL(TAKEOFF, self.registration.scope).pathname) === 0;
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  if (req.method !== "GET") return;
   const url = new URL(req.url);
+  // first of all: the takeoff copy goes to the network (or to its own worker) as if this worker were not here
+  if (inTakeoff(url)) return;
+  if (req.method !== "GET") return;
   if (/\.supabase\.(co|in|net)$/i.test(url.hostname)) return;          // the database: never cached
 
   if (url.origin !== self.location.origin) {

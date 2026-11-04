@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import * as V from "../tools/vendor-takeoff.mjs";
 
 const SITE = fileURLToPath(new URL("../site/", import.meta.url));
@@ -190,4 +191,76 @@ test("the demo server serves the copy as published (no demo stand-in in its page
   await new Promise((r) => server.once("listening", r));
   const page = await (await fetch("http://127.0.0.1:" + server.address().port + "/takeoff/index.html")).text();
   assert.equal(page, read("takeoff/index.html"));
+});
+
+/* ── the portal's service worker (site/sw.js v5) ─────────────────────────────────────────────────────────────── */
+
+/** site/sw.js in a node vm with Cache Storage in memory (as tests/core-sw.test.mjs runs it), at `scope`. */
+function portalWorker(scope) {
+  const SRC = read("sw.js");
+  const ORIGIN = new URL(scope).origin;
+  const stores = new Map();
+  const handlers = {};
+  const calls = [];
+  const keyOf = (r) => (typeof r === "string" ? r : r.url);
+  const cacheOf = (name) => {
+    if (!stores.has(name)) stores.set(name, new Map());
+    const m = stores.get(name);
+    return { async put(r, res) { m.set(keyOf(r), res); }, async match(r) { return m.get(keyOf(r)); },
+      async keys() { return Array.from(m.keys()).map((url) => ({ url })); }, async delete(r) { return m.delete(keyOf(r)); } };
+  };
+  const caches = { async open(n) { return cacheOf(n); }, async keys() { return Array.from(stores.keys()); }, async delete(n) { return stores.delete(n); },
+    async match(r) { for (const n of stores.keys()) { const v = await cacheOf(n).match(r); if (v) return v; } return undefined; } };
+  const response = (url) => ({ ok: true, type: url.startsWith(ORIGIN) ? "basic" : "cors", url, clone() { return response(url); } });
+  const self = { location: new URL(ORIGIN + "/sw.js"), registration: { scope, showNotification: async () => {} },
+    clients: { claim: async () => {}, matchAll: async () => [] }, skipWaiting() {}, addEventListener(t, fn) { handlers[t] = fn; } };
+  const ctx = { self, caches, URL, Promise, console, fetch: async (r) => { calls.push(keyOf(r)); return response(keyOf(r)); } };
+  vm.runInContext(SRC, vm.createContext(ctx));
+  async function fire(type, event) {
+    let done = Promise.resolve();
+    const ev = Object.assign({ waitUntil(p) { done = p; }, respondWith(p) { done = p; ev.responded = true; } }, event);
+    handlers[type](ev);
+    await done;
+    await new Promise((r) => setTimeout(r, 5));
+    return !!ev.responded;
+  }
+  return { stores, calls, fire, get: (url, mode, method) => fire("fetch", { request: { url, method: method || "GET", mode: mode || "no-cors" } }) };
+}
+
+test("site/sw.js v5: the takeoff copy is never answered, kept or precached by the portal's worker (its own worker, scope takeoff/, does); everything else as before", async () => {
+  const sw = read("sw.js");
+  assert.match(sw, /^const CACHE = "dcr-portal2-v5";$/m);
+  const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(sw)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
+  assert.ok(!shell.some((f) => /^takeoff\//.test(f)), "no takeoff file in the portal's list");
+  // the pass-through comes before anything else the fetch handler decides
+  const handler = sw.slice(sw.indexOf('self.addEventListener("fetch"'));
+  assert.ok(handler.indexOf("if (inTakeoff(url)) return;") !== -1 && handler.indexOf("if (inTakeoff(url)) return;") < handler.indexOf("respondWith"));
+  for (const scope of ["https://portal.example.test/", "https://made-up.example.test/portal/"]) {
+    const w = portalWorker(scope);
+    await w.fire("install", {});
+    await w.fire("activate", {});
+    assert.ok(!w.calls.some((u) => /\/takeoff\//.test(u)), "install fetched no takeoff file");
+    const base = new URL("takeoff/", scope).href;
+    for (const [url, mode] of [[base + "index.html#portal=Zk3pQ9_x-7LmN2aBcD4e", "navigate"], [base + "index.html", "navigate"], [base, "navigate"],
+      [base + "js/main.js", "cors"], [base + "sw.js", "same-origin"], [base + "vendor/pdfjs/build/pdf.worker.min.js", "same-origin"],
+      [base + "vendor/pdfjs/cmaps/Add-H.bcmap", "cors"], [base + "data/materials_catalog.json?x=1", "cors"]]) {
+      assert.equal(await w.get(url, mode), false, url + ": passed through");
+    }
+    assert.equal(await w.get(base + "index.html", "navigate", "POST"), false);
+    for (const [name, m] of w.stores) for (const k of m.keys()) assert.ok(!/\/takeoff\//.test(k), name + " keeps " + k);
+    // the site's own pages as before (a name that only starts like the folder is no part of it)
+    assert.equal(await w.get(new URL("search.html", scope).href, "navigate"), true);
+    assert.equal(await w.get(new URL("takeoff.html", scope).href, "navigate"), true);
+    assert.equal(await w.get(new URL("report-takeoff.html", scope).href, "navigate"), true);
+  }
+  // the takeoff copy's own caches are never the portal's to delete (and its worker deletes only "ptt-web-*")
+  const w = portalWorker("https://portal.example.test/");
+  w.stores.set("ptt-web-v16", new Map([["https://portal.example.test/takeoff/index.html", { ok: true }]]));
+  w.stores.set("dcr-portal2-v4", new Map());
+  await w.fire("activate", {});
+  assert.ok(w.stores.has("ptt-web-v16"), "the takeoff copy's cache is left alone");
+  assert.ok(!w.stores.has("dcr-portal2-v4"), "the portal's older cache goes");
+  const tw = read("takeoff/sw.js");
+  assert.match(tw, /n\.startsWith\('ptt-web-'\) && n !== CACHE/, "the copy's worker deletes only its own names");
+  assert.match(tw, /const CACHE = 'ptt-web-v\d+';/);
 });

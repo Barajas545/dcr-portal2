@@ -220,5 +220,5 @@ test("sw: the Accounting page and its money-message modules stay OUT of the offl
     "accounting.html", "js/pages/accounting.js", "js/repo/books.js", "js/map/books.js"]) {
     assert.ok(!shell.includes(f), f + " is not precached");
   }
-  assert.equal(CACHE, "dcr-portal2-v4", "the cache name (v4: check-off notes) is unchanged by the Books pages");
+  assert.equal(CACHE, "dcr-portal2-v5", "the cache name (v5: the takeoff frame; v4: check-off notes) - the Books pages never changed it");
 });
