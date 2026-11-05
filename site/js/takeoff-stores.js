@@ -14,8 +14,12 @@
                                        /takeoff/ opened as a tab of its own on a computer's Chrome or Edge writes it here.
    (takeoff-web's own list of them: its iPad review notes for the portal, 2026-11-04.)
    These are the DEVICE's, not one person's (the app has no sign-in): on a shared tablet they go for everyone - the
-   only way the prices in them leave with the person who lost them - but only for a person on USERS_KEY below, one who
-   could have put prices in them (js/plan-library.js purgeOwner; review PRICE-2). Its settings and its own price catalog
+   only way the prices in them leave with the person who lost them - and only in a purge for a person with a trace
+   here (js/plan-library.js purgeOwner; review PRICE-2, contract addendum 3 D8): one on USERS_KEY below (they opened
+   the takeoff app in the frame here); or one with plans kept here (the Plans Library's owners) while stores are here
+   that only /takeoff/ opened as a page of its own writes (standaloneStores: "ptt.keptPlans.v1", the "plans-kept"
+   folder, "ptt-plans-archive" - the frame never writes those, and nothing on this site tells whose they are). Never
+   for a person with no trace here: their purge takes nothing of anyone's. Its settings and its own price catalog
    ("ptt.catalog.user.v1") are left as they are (no plan's detail; the owner decides).
 
    Whose: localStorage USERS_KEY holds only the user ids that opened the takeoff app in the frame here (no file, name
@@ -85,6 +89,40 @@ function dropDb(idb, name, wait) {
     // blocked (the app holds it open): the request stays queued and deletes it once the app's connection closes - so
     // nothing more is asked of it here (an open now would wait behind the delete, then make an empty database)
   });
+}
+
+/**
+ * Stores are here that only /takeoff/ opened as a page of its own writes - never the frame (see the header): the kept
+ * plans' index ("ptt.keptPlans.v1"), their folder ("plans-kept"), or the Plans Archive's database ("ptt-plans-archive",
+ * asked of indexedDB.databases() only: opening a database to look would make it). env as purgeTakeoffStores'. Read
+ * only; never throws (a store that cannot be asked counts as not there). -> Promise<boolean>.
+ */
+export async function standaloneStores(env) {
+  const e = env || {};
+  const store = e.store || local();
+  try { if (store && store.getItem(TAKEOFF_KEYS[0]) !== null) return true; } catch (x) { /* not readable: next */ }
+  try {
+    const root = e.root ? await e.root : (typeof navigator !== "undefined" && navigator.storage && navigator.storage.getDirectory
+      ? await navigator.storage.getDirectory() : null);
+    if (root) {
+      try { await root.getDirectoryHandle(KEPT_DIR); return true; } catch (x) { /* not there */ }
+    }
+  } catch (x) { /* no private file system here */ }
+  const f = e.idb || (typeof indexedDB !== "undefined" ? indexedDB : null);
+  if (f && typeof f.databases === "function") {
+    try { if ((await f.databases()).some((d) => d && d.name === ARCHIVE_DB)) return true; } catch (x) { /* not answered */ }
+  }
+  return false;
+}
+
+/** How a purge of the takeoff app's stores went, in one word (purgeTakeoffStores' answer `out`; js/plan-library.js
+    purgeOwner's `takeoff`, contract addendum 3 D8): "failed" - a part could not go (the next online page tries again);
+    "waiting" - a database the app holds open goes once it closes; else "removed". */
+export function purgeOutcome(out) {
+  const o = out || {};
+  if (o.kept === "failed" || o.drafts === "failed" || o.archive === "failed") return "failed";
+  if (o.drafts === "waiting" || o.archive === "waiting") return "waiting";
+  return "removed";
 }
 
 /**

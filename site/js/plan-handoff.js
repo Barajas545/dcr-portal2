@@ -112,17 +112,18 @@ const WHY_MAX = 300;
 
 /**
  * A ptt-save as the Plans Library takes it ({req, name, size, file}), {req, why} when it is not one to keep (answered
- * "refused" with that why), or null when it carries no word to answer to (nothing is said). The file is the saved
+ * "refused" with that why: one plain clause, which the app puts in its own "Not saved: the portal did not take this
+ * save (<why>)..." - contract addendum 3 D7), or null when it carries no word to answer to (nothing is said). The file is the saved
  * project itself - a Blob (or File) of exactly `size` bytes, handed over by reference: never read here.
  */
 export function saveOf(d) {
   if (!d || typeof d !== "object" || d.type !== "ptt-save" || typeof d.req !== "string" || !REQ_RE.test(d.req)) return null;
   const req = d.req;
-  if (typeof d.name !== "string" || !SAVE_NAME.test(d.name)) return { req, why: "That is not a takeoff project file's name." };
-  if (!Number.isSafeInteger(d.size) || d.size <= 0) return { req, why: "The save did not say how big it is." };
+  if (typeof d.name !== "string" || !SAVE_NAME.test(d.name)) return { req, why: "that is not a takeoff project file's name" };
+  if (!Number.isSafeInteger(d.size) || d.size <= 0) return { req, why: "the save did not say how big it is" };
   const f = d.file;
   const blob = !!f && typeof f === "object" && typeof f.slice === "function" && (typeof Blob === "undefined" || f instanceof Blob);
-  if (!blob || f.size !== d.size) return { req, why: "The save did not arrive whole: save again." };
+  if (!blob || f.size !== d.size) return { req, why: "the save did not arrive whole" };
   return { req, name: d.name, size: d.size, file: f };
 }
 
@@ -226,7 +227,7 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
       if (!s || heard.has(s.req)) return;                     // no word to answer to, or answered already
       heard.add(s.req);
       if (!saving || !s.file) {
-        tell(s.req, "refused", { why: s.why || "The portal does not take a save of this plan here: use Save a copy to Files in the takeoff app." });
+        tell(s.req, "refused", { why: s.why || "the portal does not take a save of this plan here" });
         return;
       }
       queued.add(s.req);

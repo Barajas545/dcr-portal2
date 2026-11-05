@@ -133,6 +133,10 @@ export function fakeIndexedDB() {
       });
       return r;
     },
+    /** the databases there now, as a browser's indexedDB.databases() answers ([{name, version}]); never opens one */
+    async databases() {
+      return Array.from(dbs.entries()).map(([name, e]) => ({ name, version: e.version }));
+    },
     /** every value of a store, as kept (a test's look) */
     rows(name, store) {
       const e = dbs.get(name);

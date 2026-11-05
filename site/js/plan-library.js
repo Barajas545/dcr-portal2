@@ -62,7 +62,7 @@ import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord } from "
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
 import { say as frameSay, guard as frameGuard, isOpen as frameIsOpen } from "./plan-frame.js";
 import { createUploader, xhrTransport } from "./onedrive-upload.js";
-import { purgeTakeoffStores, noteTakeoffUser, takeoffUsers } from "./takeoff-stores.js";
+import { purgeTakeoffStores, noteTakeoffUser, takeoffUsers, standaloneStores, purgeOutcome } from "./takeoff-stores.js";
 
 const DB_NAME = "dcr2-plan-library";
 const DB_VER = 1;
@@ -871,16 +871,21 @@ export async function remove(itemId, opts) {
   changed(key);
 }
 
-/** Everything this person saved on this device goes, at once (Sees prices taken away: plan files carry prices) - and,
-    when they opened the takeoff app in the frame here, what that app keeps on this site (its stores are the device's,
-    not one person's: they go only for a person who could have put prices in them - review PRICE-2). -> {plans: how
-    many plans went, unsent: how many of them had a save not yet in OneDrive (that work went too), takeoff: the takeoff
-    app's own stores were purged} (map/plan-library.js purgeText says so). */
+/** Everything this person saved on this device goes, at once (Sees prices taken away: plan files carry prices) - and
+    what the takeoff app keeps on this site (its stores are the device's, not one person's: they go only for a person
+    with a trace here who could have put prices in them - review PRICE-2, contract addendum 3 D8): one who opened the
+    takeoff app in the frame here, or one with plans kept here while stores are here that only /takeoff/ opened as a
+    page of its own writes (js/takeoff-stores.js standaloneStores). -> {plans: how many plans went, unsent: how many of
+    them had a save not yet in OneDrive (that work went too), takeoff: what became of the takeoff app's own stores -
+    "removed", "waiting" (the app holds its drafts open: they go once it closes), "failed" (the next online page tries
+    again), or false (not purged)} (map/plan-library.js purgeText says so). */
 export async function purgeOwner(who) {
   if (!who || !supported()) return { plans: 0, unsent: 0, takeoff: false };
   // read first, before anything here changes the list
   const opened = takeoffUsers().indexOf(who) !== -1;
   const mine = (await getAll("plans")).filter((r) => r.owner === who);
+  const owner = mine.length > 0 || ownersHere().indexOf(who) !== -1;
+  const app = opened || (owner && (await standaloneStores()));
   const unsent = mine.filter(hasLocal).length;
   for (const r of mine) await remove(r.itemId, { owner: who, now: true });
   // and the older copies of theirs still kept for the takeoff app (no record points at them): every name is theirs by
@@ -896,12 +901,18 @@ export async function purgeOwner(who) {
     return { key: "handed", value: handed };
   });
   // and what the takeoff app keeps of plans on this site (its drafts carry prices; contract C3): js/takeoff-stores.js -
-  // for a person who opened it here only
-  if (opened) { try { await purgeTakeoffStores(); } catch (e) { /* the next online page tries again (the hint stays) */ } }
+  // for a person with a trace here only (above), and said as it went
+  let takeoff = false;
+  if (app) {
+    try { takeoff = purgeOutcome(await purgeTakeoffStores()); } catch (e) { takeoff = "failed"; /* the next online page tries again (the hint stays) */ }
+    // not all gone yet: the person stays on the takeoff app's list, so the next online page asks again (an owner whose
+    // trace was only the plans just removed would otherwise leave none)
+    if (takeoff !== "removed") noteTakeoffUser(who);
+  }
   // a file still open in a writer (a download in a tab the browser froze) stays: the next online page tries again (and
   // the e-mail hints of the takeoff app's people go once its list went)
   noteOwner(who, await hasCopies(who));
-  return { plans: mine.length, unsent, takeoff: opened };
+  return { plans: mine.length, unsent, takeoff };
 }
 
 /* ── housekeeping ──────────────────────────────────────────────────────── */
@@ -1679,9 +1690,17 @@ function stopSend(key, file) {
 function otherOpening(c, line) {
   return !!(line && line.file && hasLocal(c) && c.local.file !== line.file);
 }
+/** Why a Save of another opening was refused, for the takeoff app (contract addendum 3 D7): one plain clause - the app
+    puts it in its own words, "Not saved: the portal did not take this save (<why>). Your changes are still in this
+    window - use Save a copy to Files to keep them." - so it never gives that advice itself, and never says that opening
+    the plan again brings these changes back (it hands the other opening's save then: only the app's own offer of an
+    earlier version's draft may). Every refused why here is such a clause (refused()). */
 function otherSaveWhy() {
-  return "This plan has a save from another window or tab on this " + deviceWord(here()) + " that is not in OneDrive yet, so this one was not " +
-    "kept over it. Your changes stay in the takeoff app: use Save a copy to Files to keep them.";
+  return "this plan has a save from another window or tab on this " + deviceWord(here()) + " that is not in OneDrive yet";
+}
+/** A refusal's answer to the app: {state: "refused", why} with `why` one plain clause (otherSaveWhy). */
+function refused(why) {
+  return { state: "refused", why: String(why || "").replace(/[.\s]+$/, "") };
 }
 
 /**
@@ -1697,16 +1716,16 @@ export async function keepSave(itemId, save, tell, line) {
   const s = save || {};
   spooling++;
   try {
-    if (!PLAN_SAVE_BACK) return { state: "refused", why: "Saving plans back from here is switched off for now: use Save a copy to Files." };
+    if (!PLAN_SAVE_BACK) return refused("saving plans back from here is switched off for now");
     let r = await get("plans", key);
     const ours = line && line.file ? recordOfLine(await getAll("plans"), owner(), line.file) : null;
     if (ours) { r = ours; key = ours.key; }
-    if (!r || !(r.file || hasLocal(r))) return { state: "refused", why: "This plan is no longer saved on this device: use Save a copy to Files." };
+    if (!r || !(r.file || hasLocal(r))) return refused("this plan is no longer saved on this device");
     // another opening's save waits there (a second window or tab on this plan): never superseded - this one is refused,
     // so its app keeps its draft (review LW-1)
-    if (otherOpening(r, line)) return { state: "refused", why: otherSaveWhy() };
+    if (otherOpening(r, line)) return refused(otherSaveWhy());
     const size = Number(s.size);
-    if (!s.file || typeof s.file.slice !== "function" || !(size > 0) || s.file.size !== size) return { state: "refused", why: "The save did not arrive whole: save again." };
+    if (!s.file || typeof s.file.slice !== "function" || !(size > 0) || s.file.size !== size) return refused("the save did not arrive whole");
     if (!(await canWrite())) return { state: "failed", why: UNSUPPORTED };
     try { await roomFor(size); } catch (x) { return { state: "no-room", why: x.message }; }
     // a name never used before: never the plan's own copy (the app reads it still), never an earlier save
@@ -1745,12 +1764,12 @@ export async function keepSave(itemId, save, tell, line) {
       // a re-Save at once would find that part using the room it needs
       if (w.cut) await dropPart(name);
       if (w.error.status === 507) return { state: "no-room", why: w.error.message };
-      return { state: w.error.status === 415 ? "refused" : "failed", why: w.error.message };
+      return w.error.status === 415 ? refused(w.error.message) : { state: "failed", why: w.error.message };
     }
-    if (w.magic !== MAGIC) { await removeFile(name); return { state: "refused", why: "What the takeoff app saved is not a takeoff project file." }; }
+    if (w.magic !== MAGIC) { await removeFile(name); return refused("what the takeoff app saved is not a takeoff project file"); }
     if (w.size !== size) { await removeFile(name); return { state: "failed", why: "The save was not kept whole on this device. Save again." }; }
-    if (other) { await removeFile(name); return { state: "refused", why: otherSaveWhy() }; }
-    if (!kept) { await removeFile(name); return { state: "refused", why: "This plan was removed from this device meanwhile: use Save a copy to Files." }; }
+    if (other) { await removeFile(name); return refused(otherSaveWhy()); }
+    if (!kept) { await removeFile(name); return refused("this plan was removed from this device meanwhile"); }
     // the app's work is this save now (the next Save of this opening builds on it)
     if (line) { line.file = name; line.base = String(base || ""); }
     noteOwner(r.owner, true);

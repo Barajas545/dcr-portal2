@@ -1226,10 +1226,13 @@ test("keepSave: not a takeoff project, not whole, not a plan saved here, no room
   const names = () => Object.keys(LIBFILES()).sort();
   const start = names();
   const bad = await LIB.keepSave(F1.id, saveOf(savedProject(3 * MiB, "NOTAPLAN!")));
-  assert.deepEqual([bad.state, bad.why], ["refused", "What the takeoff app saved is not a takeoff project file."]);
+  assert.deepEqual([bad.state, bad.why], ["refused", "what the takeoff app saved is not a takeoff project file"],
+    "one plain clause: the app says it inside its own words (contract addendum 3 D7)");
   const half = savedProject(4096);
-  assert.equal((await LIB.keepSave(F1.id, { req: "s1", name: F1.name, size: 4097, file: half.blob })).state, "refused", "its size is not the file's");
-  assert.equal((await LIB.keepSave("01FAKEPLAN9999", saveOf(savedProject(64)))).state, "refused", "not a plan saved on this device");
+  assert.deepEqual(await LIB.keepSave(F1.id, { req: "s1", name: F1.name, size: 4097, file: half.blob }), { state: "refused", why: "the save did not arrive whole" },
+    "its size is not the file's");
+  assert.deepEqual(await LIB.keepSave("01FAKEPLAN9999", saveOf(savedProject(64))), { state: "refused", why: "this plan is no longer saved on this device" },
+    "not a plan saved on this device");
   // the room asked first (the quota), then the worker's own write running out of it: either way no-room
   const quota = DEV.fs.quota;
   DEV.fs.quota = DEV.fs.used() + 70 * MiB;
@@ -1541,7 +1544,7 @@ test("a purge for a person with no trace here takes nothing of anyone's - the ta
   // A, once A's Sees prices is turned off: A opened the app here, so its stores go (everyone's: the device's)
   signedIn("uA");
   assert.equal(LIB.tracesHere("uA"), true);
-  assert.deepEqual(await LIB.purgeOwner("uA"), { plans: 0, unsent: 0, takeoff: true });
+  assert.deepEqual(await LIB.purgeOwner("uA"), { plans: 0, unsent: 0, takeoff: "removed" });
   assert.deepEqual([DEV.idb.dbs.has("ptt-drafts"), DEV.store.getItem("dcr2-takeoff-users"), DEV.store.getItem("ptt.recent.v1")], [false, null, null]);
   signedIn("u1", "made-up@example.test");
 });
@@ -1577,12 +1580,20 @@ test("a person who only opened the takeoff app in the frame here (no plan kept, 
 test("the purge's words (LW-4): the plans, the saves not yet in OneDrive deleted with them, the takeoff app's own - said on the page that purged (a toast on Search, a project, home; the Plans Library's own)", async () => {
   assert.equal(lib.purgeText(null), "");
   assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: false }, "iPad"), "");
-  assert.equal(lib.purgeText({ plans: 2, unsent: 1, takeoff: true }, "iPad"), "Your account no longer sees prices, so the 2 plans you had saved on this iPad were removed from it. " +
+  assert.equal(lib.purgeText({ plans: 2, unsent: 1, takeoff: "removed" }, "iPad"), "Your account no longer sees prices, so the 2 plans you had saved on this iPad were removed from it. " +
     "1 save of yours that was not in OneDrive yet was deleted with them. What the takeoff app kept on this iPad (unsaved work, kept plans) was removed too.");
+  // ...and only what really went (contract addendum 3 D8): a delete still waiting for the app, or one that failed
+  assert.equal(lib.purgeText({ plans: 2, unsent: 0, takeoff: "waiting" }, "iPad"), "Your account no longer sees prices, so the 2 plans you had saved on this iPad were removed from it. " +
+    "What the takeoff app kept on this iPad (unsaved work, kept plans) is removed once the takeoff app closes.");
+  assert.equal(lib.purgeText({ plans: 1, unsent: 0, takeoff: "failed" }, "iPad"), "Your account no longer sees prices, so the 1 plan you had saved on this iPad was removed from it. " +
+    "What the takeoff app kept on this iPad (unsaved work, kept plans) could not be removed now - the next online page tries again.");
+  assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: "waiting" }, "iPad"), "Your account no longer sees prices, so what the takeoff app kept on this iPad (unsaved work, kept plans) is removed once the takeoff app closes.");
+  assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: "failed" }), "Your account no longer sees prices, so what the takeoff app kept on this device (unsaved work, kept plans) could not be removed now - the next online page tries again.");
+  assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: true }, "iPad"), "", "only the three words of how it went count");
   assert.equal(lib.purgeText({ plans: 1, unsent: 1, takeoff: false }), "Your account no longer sees prices, so the 1 plan you had saved on this device was removed from it. " +
     "1 save of yours that was not in OneDrive yet was deleted with it.");
   assert.equal(lib.purgeText({ plans: 3, unsent: 2, takeoff: false }, "iPhone").split(". ")[1], "2 saves of yours that were not in OneDrive yet were deleted with them.");
-  assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: true }, "iPad"), "Your account no longer sees prices, so what the takeoff app kept on this iPad (unsaved work, kept plans) was removed.");
+  assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: "removed" }, "iPad"), "Your account no longer sees prices, so what the takeoff app kept on this iPad (unsaved work, kept plans) was removed.");
   // the made-up phone: a save waiting here, then Sees prices taken away (a page that read the profile online)
   await devicePlan();
   saveWorld();
@@ -1621,6 +1632,69 @@ test("the purge's words (LW-4): the plans, the saves not yet in OneDrive deleted
   assert.match(read("js/pages/plans-library.js"), /const said = purgeText\(gone, deviceWord\(window\)\);/);
 });
 
+test("the purge's takeoff app part (contract addendum 3 D8): also for an owner with plans here when stores that only /takeoff/ as a page of its own writes are here (its kept plans, their index, its Plans Archive) - never for a person with no trace here - and it says how it went: removed, waiting for the app to close, or failed (the next page asks again)", async () => {
+  const archive = () => new Promise((done) => { const r = DEV.idb.open("ptt-plans-archive", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => { r.result.close(); done(); }; });
+  const stores = () => [DEV.idb.dbs.has("ptt-drafts"), DEV.idb.dbs.has("ptt-plans-archive"), DEV.fs.root.entries.has("plans-kept"), DEV.store.getItem("ptt.keptPlans.v1")];
+  // u1 keeps a plan here and never opened the frame here (not on the takeoff app's list); no standalone store: the
+  // takeoff app's drafts (the frame's: anyone's work) are not u1's to take
+  await devicePlan();
+  freshHints();
+  await putDraft("A900 Bid.takeoff|1500|@someoneELSE1", { by: "frame" });
+  assert.deepEqual(await LIB.purgeOwner("u1"), { plans: 1, unsent: 0, takeoff: false });
+  assert.equal(DEV.idb.rows("ptt-drafts", "drafts").length, 1, "no store of a standalone /takeoff/ here: the drafts stay");
+  // each such store alone is enough: the kept plans' index, their folder, the Plans Archive's database (asked of
+  // indexedDB.databases(), never opened)
+  for (const kind of ["index", "folder", "archive"]) {
+    await devicePlan();
+    freshHints();
+    await putDraft("A900 Bid.takeoff|1500", { items: [{ unit_cost: 4.25 }] });
+    if (kind === "index") DEV.store.setItem("ptt.keptPlans.v1", JSON.stringify({ v: 1, entries: [] }));
+    if (kind === "folder") await DEV.fs.root.getDirectoryHandle("plans-kept", { create: true });
+    if (kind === "archive") await archive();
+    assert.deepEqual(await LIB.purgeOwner("u1"), { plans: 1, unsent: 0, takeoff: "removed" }, kind);
+    assert.deepEqual(stores(), [false, false, false, null], kind);
+    assert.equal(DEV.store.getItem("dcr2-takeoff-users"), null, kind + ": all gone, nobody left on the list");
+  }
+  // a person with no trace here: never, whatever is here
+  await devicePlan();
+  freshHints();
+  await putDraft("A900 Bid.takeoff|1500", { items: [{ unit_cost: 4.25 }] });
+  DEV.store.setItem("ptt.keptPlans.v1", "{}");
+  await archive();
+  assert.deepEqual(await LIB.purgeOwner("uZ"), { plans: 0, unsent: 0, takeoff: false });
+  assert.deepEqual(stores(), [true, true, false, "{}"], "nothing of anyone's taken");
+  // waiting: the takeoff app holds its drafts open (a frame of another window) - said so, and u1 stays on the takeoff
+  // app's list, so the next online page asks again (the plans, u1's other trace, are gone)
+  const held = await new Promise((done) => { const r = DEV.idb.open("ptt-drafts", 1); r.onsuccess = () => done(r.result); });
+  const w = await LIB.purgeOwner("u1");
+  assert.deepEqual(w, { plans: 1, unsent: 0, takeoff: "waiting" });
+  assert.match(lib.purgeText(w, "iPad"), /is removed once the takeoff app closes.$/);
+  assert.deepEqual([LIB.tracesHere("u1"), DEV.store.getItem("dcr2-takeoff-users")], [true, "[\"u1\"]"]);
+  held.close();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(DEV.idb.dbs.has("ptt-drafts"), false, "the queued delete ran once the app let go");
+  assert.deepEqual(await LIB.purgeOwner("u1"), { plans: 0, unsent: 0, takeoff: "removed" }, "the next page: the rest goes");
+  assert.equal(LIB.tracesHere("u1"), false);
+  // failed: the kept plans' folder would not go - said so, and asked again next time
+  await devicePlan();
+  freshHints();
+  await DEV.fs.root.getDirectoryHandle("plans-kept", { create: true });
+  const rm = DEV.fs.root.removeEntry;
+  DEV.fs.root.removeEntry = async function (n, o) {
+    if (n === "plans-kept") throw Object.assign(new Error("made up"), { name: "InvalidStateError" });
+    return rm.call(this, n, o);
+  };
+  try {
+    const f = await LIB.purgeOwner("u1");
+    assert.deepEqual(f, { plans: 1, unsent: 0, takeoff: "failed" });
+    assert.match(lib.purgeText(f, "iPad"), /could not be removed now - the next online page tries again.$/);
+    assert.equal(LIB.tracesHere("u1"), true, "the next page asks again");
+  } finally { DEV.fs.root.removeEntry = rm; }
+  assert.deepEqual(await LIB.purgeOwner("u1"), { plans: 0, unsent: 0, takeoff: "removed" });
+  // the header no longer says "only for a person on USERS_KEY"
+  assert.match(read("js/takeoff-stores.js"), /standaloneStores: "ptt\.keptPlans\.v1", the "plans-kept"\s+folder, "ptt-plans-archive"/);
+});
+
 /** A second portal window on the made-up phone: the library's module again, with its own state (its own spooling,
     sending, jobs), the same storage and Web Locks. */
 let LIB2 = null;
@@ -1646,7 +1720,15 @@ test("two openings of one plan (two windows or tabs): a Save never supersedes th
   // B (another window) saves work that has none of A's: refused, A's save untouched, nothing of B's left
   const oB = await W2.keepSave(F1.id, { req: "sBBBBBBBBB", name: F1.name, size: 2 * MiB + 7, file: savedProject(2 * MiB + 7, "PDFCACHE1", 9).blob }, null, lineB);
   assert.equal(oB.state, "refused");
-  assert.match(oB.why, /^This plan has a save from another window or tab on this iPad that is not in OneDrive yet, so this one was not kept over it\. .*Save a copy to Files/);
+  // one plain clause (contract addendum 3 D7): the app says it in its own words - "Not saved: the portal did not take
+  // this save (<why>). Your changes are still in this window - use Save a copy to Files to keep them." - so the why
+  // gives no advice of its own, and never says that opening the plan again brings these changes back
+  assert.equal(oB.why, "this plan has a save from another window or tab on this iPad that is not in OneDrive yet");
+  assert.ok(!/Save a copy|again|reopen|offer|back/i.test(oB.why), "no promise, no advice of its own");
+  const { portalRefusedWords } = await import("../site/takeoff/js/core/save-route.js");
+  assert.equal(portalRefusedWords({ portalWhy: oB.why, dirty: true }), "Not saved: the portal did not take this save (this plan has a save from another " +
+    "window or tab on this iPad that is not in OneDrive yet). Your changes are still in this window - use Save a copy to Files to keep them.",
+    "what the vendored takeoff app says with it: one sentence of the portal's, inside the app's, no promise");
   assert.ok(oB.why.length <= 300, "whole in the app's answer");
   assert.deepEqual([ROW().local.file, !!LIBFILES()[fileA], Object.keys(LIBFILES()).sort(), lineB.file], [fileA, true, names, before.file]);
   // A's own next Save goes on (its line is its save now)

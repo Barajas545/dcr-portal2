@@ -53,6 +53,9 @@ test("saveOf: a save to keep, a refusal with why, or nothing to answer (no word)
     ["a string", { file: "PDFCACHE1" }]]) {
     const out = H.saveOf(Object.assign({ type: "ptt-save", req: "s1", name: NAME, size: 10, file: f }, d));
     assert.ok(out && out.req === "s1" && typeof out.why === "string" && !out.file, label + ": refused with why");
+    // one plain clause (contract addendum 3 D7): the app puts it inside its own "Not saved: the portal did not take this
+    // save (<why>). Your changes are still in this window - use Save a copy to Files to keep them."
+    assert.ok(/^[a-z]/.test(out.why) && !/[.]$/.test(out.why) && !/Save a copy to Files/.test(out.why), label + ": " + out.why);
   }
   // the answers: the contract's fields only; the why plain and short
   assert.deepEqual(H.saveState(WORD, "s1", "kept"), { type: "ptt-save-state", v: 1, nonce: WORD, req: "s1", state: "kept" });
@@ -126,7 +129,7 @@ test("talk(): never offered to a tab, for a link, without the Library's taker, o
     await s.emit(s.from({ type: "ptt-save", req: "s1", name: NAME, size: 9, file: blob(9) }));
     assert.equal(kept, 0, label);
     assert.deepEqual(s.states().map((x) => x.state), ["refused"], label);
-    assert.match(s.states()[0].why, /Save a copy to Files/, label);
+    assert.equal(s.states()[0].why, "the portal does not take a save of this plan here", label + ": one plain clause (the app says the rest: D7)");
     ctl.stop();
   }
   // before the plan was handed over: nothing (no plan, no save)
@@ -343,7 +346,7 @@ test("the Plans Library offers a save only in the frame, to a person who may sav
     "held while the frame's app reads it (before the record is read again); only a tab's copy is marked for the week");
   assert.match(lib, /const t = handedTime\(r\);/, "handed with the save's own time");
   assert.match(code(read("js/plan-handoff.js")), /if \(opts && typeof opts\.onClose === "function"\) \{ try \{ opts\.onClose\(\); \}/);
-  assert.match(lib, /if \(!PLAN_SAVE_BACK\) return \{ state: "refused",/, "keepSave refuses with the switch off");
+  assert.match(lib, /if \(!PLAN_SAVE_BACK\) return refused\(/, "keepSave refuses with the switch off");
   assert.match(lib, /if \(!PLAN_SAVE_BACK\) throw err\("off",/, "and nothing is sent");
   assert.match(lib, /if \(o\.download !== false && saveBackFor\(me\)\) await sendWaiting\(\);/, "sent on the pages that may reach OneDrive");
   // a save waiting here is never taken away by the library's own housekeeping (only by the person's Remove, a purge)

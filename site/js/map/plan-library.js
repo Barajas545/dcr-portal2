@@ -42,7 +42,8 @@
    * hashedBase(base, f)        OneDrive's hash of the bytes a save's "sm:" base names (sent against it);
    * saveStateOf / saveText / copyTold / sendBar  what the rows say: Saved on this iPad, Sending 45%, Sent, Saved as a
                                 separate file, Not sent - tap to retry;
-   * purgeText(p, device)       what a purge on lost prices took (the plans, the saves not yet sent, the takeoff app's).
+   * purgeText(p, device)       what a purge on lost prices took (the plans, the saves not yet sent, the takeoff app's:
+                                removed, waiting for the app to close, or failed - TAKEOFF_PURGE);
    * sendWaitMs(code, fails)    how long a failed send waits (LONG_WAIT: the broker's switch off, a broker not deployed);
    * refusedTold / saveBackOffWords  the words of a copy OneDrive would not replace, and of a save the switch holds.
    Pure module (node tests import it). */
@@ -625,22 +626,33 @@ export function saveBackOffWords(device) {
   return "Saving back to OneDrive is turned off for now - this save waits on this " + (device || "device") + ".";
 }
 
+/** How the takeoff app's own stores went in a purge (js/plan-library.js purgeOwner's `takeoff`; contract addendum 3
+    D8): removed; waiting - the app holds its drafts open (a frame), the delete runs once it closes; failed - the next
+    online page tries again. */
+export const TAKEOFF_PURGE = Object.freeze({
+  removed: "was removed",
+  waiting: "is removed once the takeoff app closes",
+  failed: "could not be removed now - the next online page tries again",
+});
+
 /**
  * What the person is told when a purge on lost prices took their things from this device (js/plan-library.js
  * purgeOwner's {plans, unsent, takeoff}; review LW-4): the plans, the saves of theirs not yet in OneDrive that went with
- * them (that work is gone), and what the takeoff app kept here. "" when nothing went. `device`: map/plans.js deviceWord.
+ * them (that work is gone), and what became of what the takeoff app kept here (`takeoff`: "removed" | "waiting" |
+ * "failed" - TAKEOFF_PURGE - or false: not purged). "" when nothing went. `device`: map/plans.js deviceWord.
  */
 export function purgeText(p, device) {
   const d = device || "device";
   const n = (p && Number(p.plans)) || 0;
   const u = (p && Number(p.unsent)) || 0;
-  const app = !!(p && p.takeoff);
+  const app = p && Object.prototype.hasOwnProperty.call(TAKEOFF_PURGE, p.takeoff) ? p.takeoff : "";
   if (!n && !app) return "";
+  const kept = "what the takeoff app kept on this " + d + " (unsaved work, kept plans) ";
   const out = ["Your account no longer sees prices, so " + (n
     ? "the " + n + " plan" + (n === 1 ? "" : "s") + " you had saved on this " + d + (n === 1 ? " was" : " were") + " removed from it."
-    : "what the takeoff app kept on this " + d + " (unsaved work, kept plans) was removed.")];
+    : kept + TAKEOFF_PURGE[app] + ".")];
   if (u) out.push((u === 1 ? "1 save of yours that was not in OneDrive yet was" : u + " saves of yours that were not in OneDrive yet were") + " deleted with " + (n === 1 ? "it" : "them") + ".");
-  if (n && app) out.push("What the takeoff app kept on this " + d + " (unsaved work, kept plans) was removed too.");
+  if (n && app) out.push("W" + kept.slice(1) + TAKEOFF_PURGE[app] + (app === "removed" ? " too" : "") + ".");
   return out.join(" ");
 }
 
