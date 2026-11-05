@@ -667,7 +667,7 @@ async function main() {
         const said2 = await T2.eval(APP + ".document.body.innerText");
         const rec2 = (await records(T2)).find((r) => r.itemId === fc.id);
         check("tablet (ix-d): the second opening's Save is refused in plain words - its app keeps its work and says it was not saved - and the first's save is still the one waiting",
-          !!ref && /another window or tab on this iPad that is not in OneDrive yet/.test(ref.why || "") && /The portal did not take this save/.test(said2) &&
+          !!ref && /another window or tab on this iPad that is not in OneDrive yet/.test(ref.why || "") && /Not saved: the portal did not take this save \(/.test(said2) && !/offers? (them|it) back/.test(said2) &&
           s2.dirty === true && !!rec2 && rec2.local && rec2.local.file === firstFile, JSON.stringify({ states: s2.states, dirty: s2.dirty, local: rec2 && rec2.local && rec2.local.file, firstFile }));
         await shotOf(T2, "plans_frame_refused_tablet.png");
         const intact = await T.eval("(async () => { const f = await (await (await (await navigator.storage.getDirectory()).getDirectoryHandle('plan-library')).getFileHandle(" +

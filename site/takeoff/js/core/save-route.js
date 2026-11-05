@@ -386,6 +386,27 @@ export const REPLACE_WARNING = 'If Files asks whether to replace a file of the s
   + 'over anything saved into that file elsewhere since you opened it here.';
 
 /**
+ * The status line when the portal refused a save handed to it
+ * ('ptt-save-state' 'refused': contract addendum 3 D7), in the contract's
+ * own words. The portal refuses when another window or tab has a save of
+ * the plan waiting there (review LW-1) — and reopening the plan then hands
+ * THAT save, at another size, so the draft keyed to this opening's files is
+ * not the file's own: the words never promise that reopening offers the
+ * changes back (it may: findDraft's earlier version, but nothing here can
+ * know). The draft is kept all the same (afterSave never drops it).
+ *
+ *   portalWhy  the portal's own short words for it, '' for none
+ *   dirty      there were unsaved changes when Save was tapped
+ */
+export function portalRefusedWords({ portalWhy = '', dirty = true } = {}) {
+  const said = portalWhy ? ` (${String(portalWhy).replace(/[.\s]+$/, '')})` : '';
+  return `Not saved: the portal did not take this save${said}. `
+    + (dirty
+      ? 'Your changes are still in this window - use Save a copy to Files to keep them.'
+      : 'There were no unsaved changes, so nothing is lost.');
+}
+
+/**
  * After the file has gone (or not): whether the project is now saved, whether
  * its draft may go, and the words for the status line. Unknown outcomes keep
  * everything — the rule is that only a confirmed save loses the safety net.
@@ -453,9 +474,13 @@ export function afterSave(outcome, {
       // The portal did not take it (or never answered): nothing is saved,
       // the draft stays, and the person is told plainly — in a dialog that
       // also offers a copy to Files (main.js), since the status line clears.
+      // A refusal never promises that reopening offers the work back
+      // (portalRefusedWords).
+      if (why === 'refused') {
+        return { markSaved: false, dropDraft: false, tell: true, confirmed, status: portalRefusedWords({ portalWhy, dirty }) };
+      }
       const said = portalWhy ? `: ${portalWhy.replace(/[.\s]+$/, '')}` : '';
       const reason = {
-        refused: `The portal did not take this save${said}.`,
         'no-room': `This ${device} has no room for the portal to keep the save${said}. Free some space — the portal's `
           + 'Plans Library can remove plans you no longer need — and Save again.',
         failed: `The portal could not keep the save${said || ': it did not say why'}.`,
@@ -857,12 +882,24 @@ export function portalCopyDraftKey(copy, size, keys, who = '') {
  * A draft written before the portal said who (a key with no person) is still
  * found for a person who has none of their own — `legacy`: offered, never
  * dropped (it may be another person's, and dropping it would lose their
- * work), for this release.
+ * work), for this release — at the file's own name and size only.
  *
- * → { key, draft, own, legacy } or null — `own` the key the file's own
- * draft goes under now.
+ *   embedded    this page is inside the portal (js/core/embedded.js): with
+ *               no draft of this person's for the file (name, size, who), the
+ *               newest of THEIR drafts of the same plan name at another size
+ *               is offered — `earlier` (contract addendum 3 D7). Two openings
+ *               of one plan: the other one's save was kept, this one's was
+ *               refused, and reopening hands the other's save, at a size this
+ *               opening never drafted under. The keys are listed first and
+ *               only this person's drafts of that name are read (to find the
+ *               newest); it is offered with earlierDraftWords, never dropped
+ *               unasked. Never another person's, never one of no person.
+ *
+ * → { key, draft, own, legacy, earlier, twins } or null — `own` the key the
+ * file's own draft goes under now; `twins` (an earlier one's only, else [])
+ * the other keys that hold exactly the same work (earlierDraft).
  */
-export async function findDraft({ name, size, portal = false, who = '' } = {}, { get, keys } = {}) {
+export async function findDraft({ name, size, portal = false, who = '', embedded = false } = {}, { get, keys } = {}) {
   const me = draftWho(who);
   const own = draftKey(name, size, me);
   const plan = portal ? planOfPortalCopy(name) : '';
@@ -881,10 +918,57 @@ export async function findDraft({ name, size, portal = false, who = '' } = {}, {
     return d && d.payload ? { key: k, draft: d } : null;
   };
   const mine = await look(me);
-  if (mine) return { ...mine, own, legacy: false };
+  if (mine) return { ...mine, own, legacy: false, earlier: false, twins: [] };
   if (!me) return null;
+  const before = embedded ? await earlierDraft(name, size, me, { get, keys }) : null;
+  if (before) return { ...before, own, legacy: false, earlier: true };
   const old = await look('');
-  return old ? { ...old, own, legacy: true } : null;
+  return old ? { ...old, own, legacy: true, earlier: false, twins: [] } : null;
+}
+
+/**
+ * This person's newest draft of the plan `name` at a size other than `size`
+ * (findDraft's `earlier`): the keys "<name>|<n>|@<who>", n a whole number of
+ * bytes that is not `size`, picked from the list of keys alone — no other
+ * plan's draft and no other person's is ever read — then the newest of those
+ * by when it was written. null when there is none.
+ *
+ * `twins`: the other keys of those that hold exactly the same work (a draft
+ * is written under every file it may come back from at once, so one opening
+ * leaves the same work under two or three sizes). They go only with the one
+ * offered, by the person's answer (main.js offerDraftRestore) — never one
+ * that holds anything else.
+ */
+async function earlierDraft(name, size, who, { get, keys }) {
+  const head = `${name || 'untitled'}|`;
+  const tail = `|@${who}`;
+  const all = await keys();
+  const found = [];
+  for (const k of Array.isArray(all) ? all : []) {
+    if (typeof k !== 'string' || !k.startsWith(head) || !k.endsWith(tail)) continue;
+    const n = k.slice(head.length, k.length - tail.length);
+    if (!/^[1-9]\d*$/.test(n) || Number(n) === Number(size)) continue;
+    const d = await get(k);
+    if (d && d.payload) found.push({ key: k, draft: d });
+  }
+  if (!found.length) return null;
+  const at = f => Number(f.draft.savedAt) || 0;
+  const best = found.reduce((b, f) => (at(f) > at(b) ? f : b));
+  const work = f => {
+    try { return JSON.stringify([f.draft.payload, f.draft.pageCount ?? null]); } catch { return null; }
+  };
+  const same = work(best);
+  return { ...best, twins: same === null ? [] : found.filter(f => f !== best && work(f) === same).map(f => f.key) };
+}
+
+/**
+ * Said when findDraft offers a draft of an earlier version of the plan
+ * (`earlier`), in the contract's own words (addendum 3 D7). `date` is when
+ * the draft was written, as the person reads it.
+ */
+export function earlierDraftWords(date) {
+  return `These are your unsaved changes from an earlier version of this plan (${date}). `
+    + 'Restoring them replaces what is open now.';
 }
 
 /**

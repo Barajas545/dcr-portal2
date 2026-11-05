@@ -22,6 +22,7 @@ import {
   deliverFile, afterSave, saveFileName, isStandalone, downloadUrlKeepMs, lateArrival, STILL_COMING,
   savedStill, nextDraftHomes, draftHomeFor, HANDHELD_SAVE, REPLACE_WARNING, savesToPortal, portalNewsWords,
   draftFate, afterLateKept, findDraft, draftKeptNow, remoteSaveBytes, remoteSaveRefused, remoteSaveRefusedWords,
+  earlierDraftWords,
 } from './core/save-route.js';
 import {
   HANDOFF_WAIT_MS, RENEW_WAIT_MS, SAVE_WAIT_MS, parsePortalHash, readyMessage, renewMessage,
@@ -3255,17 +3256,22 @@ async function keepDraftForPortal() {
  * portalCopyDraftKey). Inside the portal only the signed-in person's drafts
  * are found (app.draftWho); one kept before the portal said who is offered
  * with a word that it may be someone else's, and never dropped (`legacy`:
- * findDraft).
+ * findDraft). With none of this person's for the file, inside the portal,
+ * their newest draft of the plan at another size is offered, said to be of
+ * an earlier version, and never dropped unasked (`earlier`: findDraft).
  */
 async function offerDraftRestore(file, { portal = false } = {}) {
-  const found = await findDraft({ name: file.name, size: file.size, portal, who: app.draftWho },
+  const found = await findDraft({ name: file.name, size: file.size, portal, who: app.draftWho, embedded },
     { get: getDraft, keys: listDraftKeys });
   if (!found) return;
-  const { key, draft, own, legacy } = found;
+  const { key, draft, own, legacy, earlier, twins } = found;
+  // An earlier version's draft goes, when the person's answer lets it go,
+  // with the other keys that hold exactly the same work (findDraft twins).
+  const keysOfIt = [key, ...twins];
 
   // A draft older than the file has already been saved into it — when the
   // file's date is this app's own save (draftFate).
-  if (!legacy && draftFate({ savedAt: draft.savedAt, fileModified: file.lastModified, byDate: !portal }) === 'drop') {
+  if (!legacy && !earlier && draftFate({ savedAt: draft.savedAt, fileModified: file.lastModified, byDate: !portal }) === 'drop') {
     await dropDraft(key);
     return;
   }
@@ -3283,13 +3289,15 @@ async function offerDraftRestore(file, { portal = false } = {}) {
   const when = new Date(draft.savedAt).toLocaleString();
   const ok = await D.confirmDialog(
     'Unsaved work found',
-    `There is takeoff for "${file.name}" from ${when} that was never saved `
-    + `into the file — the tab was most likely closed or reloaded first.`
-    + (legacy ? `\n\n${DRAFT_OF_ANYONE}` : '')
-    + `\n\nRestore it?`,
+    earlier
+      ? `${earlierDraftWords(when)}\n\nRestore them?`
+      : `There is takeoff for "${file.name}" from ${when} that was never saved `
+        + `into the file — the tab was most likely closed or reloaded first.`
+        + (legacy ? `\n\n${DRAFT_OF_ANYONE}` : '')
+        + `\n\nRestore it?`,
     { okLabel: 'Restore it' });
   if (!ok) {
-    if (!legacy) await dropDraft(key);
+    if (!legacy) for (const k of keysOfIt) await dropDraft(k);
     return;
   }
 
@@ -3314,8 +3322,8 @@ async function offerDraftRestore(file, { portal = false } = {}) {
   // Found under the plan a copy was made from: kept under this file's own
   // keys from now on — written there first, then taken from the plan's.
   // One kept before the portal said who is written under this person's
-  // keys too, and left where it was.
-  if (key !== own && await saveDraftNow() && !legacy) await dropDraft(key);
+  // keys too, and left where it was. An earlier version's, with its twins.
+  if (key !== own && await saveDraftNow() && !legacy) for (const k of keysOfIt) await dropDraft(k);
 }
 
 // Hidden, not unloading: this is the event a discarded tab actually gets.
