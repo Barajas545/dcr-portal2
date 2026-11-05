@@ -42,6 +42,12 @@
      "unproved" from plan_save_commit (plan_changed) and plan_save_done (not_saved), nothing put back - a retried commit
      after the check's 503 with Microsoft keeping the committed session usable (checked as a commit and put back, never
      the same upload as a copy: E3) and an identical re-save found landed without its commit (verified, nothing put back);
+     and, once the broker has the final checker's round 3b (handler.ts shownUnder), the check's own 503 with why
+     "checking" - read by repo/onedrive.js, map/plan-library.js checkWaitOf and the uploader's job (checking, never "not
+     sent") -, a newer office save on top of an iPad save that went over one (the retry after OneDrive's late hash; a
+     later page's plan_save_done) answering "unproved" with the admin's line, nothing put back - the iPad's bytes right on
+     the base the plain plan_changed -, and two commits of one save overlapping (Microsoft's 412 to the second: read
+     afresh, checked, a replace - never the same bytes as a copy);
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -51,7 +57,7 @@
      repo/files.js and merged onto the OneDrive row; a lost last answer never makes a second file; the takeoff rule (a
      lead 415, a manager with prices recorded and read with prices only); a program never opened.
    Made-up people, project and files only. */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -116,6 +122,9 @@ export async function run(h) {
   const HAS_R2 = typeof fn.HASH_WAIT_MS === "number" && typeof fn.CHECK_RETRY_S === "number";
   // and its repair round 3 (contract addendum 4: no hash, no deferred replace; "unproved"; the retried commit)
   const HAS_R3 = HAS_R2 && typeof fn.PLAN_UNPROVED === "string" && typeof fn.NEED_HASH === "string";
+  // and the final checker's round 3b (DCR Desktop 2 9969d61: a newer office save on top is "unproved", the check's own
+  // 503 says why "checking", a commit's 412 is decided on a fresh walk) - no new export: its listing rule is the mark
+  const HAS_R3B = HAS_R3 && /function shownUnder\(/.test(readFileSync(path.join(FN, "handler.ts"), "utf8"));
   let onFetch = null;                  // a check's: run before a request reaches the fake Graph (an office save just then)
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   let planSave;                        // ONEDRIVE_PLAN_SAVE for a check (undefined: test_world.ts's own)
@@ -138,7 +147,7 @@ export async function run(h) {
       try { return await sql("select id, number from public.projects where id = any($1::bigint[]) and deleted_at is null", [ids]); }
       catch (e) { throw Object.assign(new Error("database"), { code: e.code, hint: e.hint ?? null }); }
     }, subOf(jwt)),
-    fetch: (url, init) => { if (onFetch) onFetch(url, init || {}); return g.fetch(url, init); },
+    fetch: async (url, init) => { if (onFetch) await onFetch(url, init || {}); return g.fetch(url, init); },
     now: () => clock.t,
     sleep: async (ms) => { clock.t += ms; },
     log: (m) => { logs.push(String(m)); if (logs.length > 500) logs.shift(); },
@@ -819,6 +828,131 @@ export async function run(h) {
             const vBefore = (await planOf()).version;
             const d5 = await od.planSaveDone(pid, it.id, u5.s.ticket, QX.quickXorHash(b4));
             same([d5.mode, d5.verified, (await planOf()).version], ["replace", true, vBefore], "verified, nothing put back");
+          } finally {
+            reset();
+            atLast = null;
+            onFetch = null;
+          }
+          client.as(null);
+        });
+      }
+      if (!HAS_R3B) {
+        results.push({ section, name: "the save back's final check round 3b: the broker has no listing rule (shownUnder) yet - its check waits for it", ok: true });
+      } else {
+        await check("the save back's final check round 3b through Portal 2's parts over the REAL broker: the version check's own 503 says why \"checking\" (Retry-After 30) and Portal 2 reads it as the check (checkWaitOf; the uploader's job checking - never 'not sent'); a newer office save on top of an iPad save that went over one - the retry after OneDrive's late hash and a later page's plan_save_done - unproved with the admin's line, nothing put back (the iPad's bytes right on the base: the plain changed); two commits of one save overlapping - the second one's 412 read afresh: checked, a replace, never the same bytes as a copy", async () => {
+          client.as(id("admin"));
+          const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)]; };
+          const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+          ok(!!tf, "the made-up project's takeoff folder");
+          const it = g.file(tf.id, made.number + " Deck.takeoff", 10);
+          const planOf = async () => (await files()).files.find((x) => x.id === it.id);
+          const reset = () => Object.assign(g.script, { deferCommit: "honoured", putCommit: "accepted", putIfMatch: "honoured", postIfMatch: "honoured", postStatus: 0,
+            versions: "on", versionsStatus: 403, restoreStatus: 0, hashLater: false, afterCommit: "gone" });
+          const bytesN = (n, v) => new Uint8Array(n).fill(v);
+          const upOnly = async (bytes) => {
+            const plan = await planOf();
+            const s = await od.planSaveSession({ projectId: pid, itemId: it.id, version: plan.version, size: bytes.length, name: plan.name });
+            same([s.mode, s.commit], ["replace", "broker"], "a deferred replace");
+            const put = (a, z) => transport({ method: "PUT", url: s.uploadUrl, headers: { "Content-Range": "bytes " + a + "-" + z + "/" + bytes.length }, body: new Blob([bytes.subarray(a, z + 1)]) });
+            same((await put(0, OD.CHUNK_UNIT - 1)).status, 202, "a chunk");
+            return { s, base: plan.version, last: await put(OD.CHUNK_UNIT, bytes.length - 1) };
+          };
+          const restores = () => g.calls.filter((c) => c.method === "POST" && /\/restoreVersion$/.test(new URL(c.url).pathname)).length;
+          const BY_HAND = "crossed: not put back (newer save): check the plan's version history by hand";
+          try {
+            // (N1) OneDrive committed at the last chunk over an office save X and has no hash of it yet: the check's own
+            // 503, why "checking", Retry-After 30 - Portal 2's parts read it as the check
+            reset();
+            Object.assign(g.script, { deferCommit: "ignored", hashLater: true });
+            clock.t += 5000;
+            const b1 = bytesN(OD.CHUNK_UNIT + 31, 61);
+            atLast = () => { clock.t += 5000; g.write(it.id, 77); };
+            const u1 = await upOnly(b1);
+            same(u1.last.status, 200, "OneDrive committed it at the last chunk (over the office save X)");
+            const c1 = { projectId: pid, itemId: it.id, ticket: u1.s.ticket, uploadUrl: u1.s.uploadUrl, hash: QX.quickXorHash(b1), landed: true };
+            const w1 = await refused(() => od.planSaveCommit(c1), "busy", "the check waits on OneDrive's hash");
+            same([w1.status, w1.retryAfter, w1.info && w1.info.why, PL.checkWaitOf(w1)], [503, fn.CHECK_RETRY_S, "checking", true], "the check's own 503, read as the check");
+            // ...the uploader's job: in the check while it is asked again, and once its tries are spent - never "not sent"
+            const marks = [];
+            const up = createUploader({ send: async () => ({ status: 202, header: () => null, text: () => JSON.stringify({ nextExpectedRanges: [] }) }),
+              broker: { session: async () => ({ uploadUrl: u1.s.uploadUrl, ticket: u1.s.ticket, name: it.name, commit: "broker", chunkBytes: OD.CHUNK_UNIT, maxChunkBytes: OD.MAX_CHUNK }),
+                commit: async () => { throw w1; }, done: async () => { throw new Error("never done()"); }, find: async () => [] },
+              maxTries: 2, setTimeout: (f) => setTimeout(f, 0), wait: () => 1 });
+            up.onChange((items, evt) => { if (evt && evt.type === "checking") marks.push(evt.job.checking); });
+            up.add({ projectId: pid, file: new File([new Uint8Array(5)], it.name), name: it.name, meta: {} });
+            const [job] = await settle(up);
+            same([job.state, job.checking, job.retryAfter, marks], ["failed", true, fn.CHECK_RETRY_S, [true]], "the uploader's job: checking");
+            ok(!/not sent|did not get through|retry/i.test(job.error) && !/not sent|retry|overwritten|replaced/i.test(PL.saveText({ state: "checking" }, "iPad")), "never 'not sent': " + job.error);
+            // ...then the office saves again (Y) before the check could finish: the retry answers "unproved" - never the
+            // plain "changed" whose copy words say nothing was overwritten; nothing put back over Y
+            g.script.hashLater = false;
+            clock.t += 2 * 60 * 1000;
+            g.write(it.id, 88);
+            clock.t += fn.CHECK_RETRY_S * 1000;
+            const r0 = restores();
+            logs.length = 0;
+            const e1 = await refused(() => od.planSaveCommit(c1), "plan_changed", "the retry");
+            same([e1.status, e1.info && e1.info.why, e1.info && e1.info.retry, e1.message], [409, "unproved", "copy", fn.PLAN_UNPROVED], "unproved");
+            ok(logs.includes("onedrive plan_save_commit: " + BY_HAND), "the admin's line: " + JSON.stringify(logs));
+            same([restores() - r0, (await planOf()).size], [0, 88], "nothing put back: Y stays the plan");
+            ok(!/nothing was overwritten/.test(PL.unprovedTold("x.takeoff", "iPad")), "Portal 2's words for it never say nothing was overwritten");
+            // (N4) the page closed before its commit's check; Y lands; the later page's plan_save_done: not_saved {why:
+            // "unproved"} with the admin's line
+            reset();
+            Object.assign(g.script, { deferCommit: "ignored" });
+            clock.t += 5000;
+            const b4 = bytesN(OD.CHUNK_UNIT + 33, 62);
+            atLast = () => { clock.t += 5000; g.write(it.id, 77); };
+            const u4 = await upOnly(b4);
+            same(u4.last.status, 200, "N4: committed at the last chunk over X");
+            clock.t += 20 * 60 * 1000;
+            g.write(it.id, 89);
+            clock.t += 60 * 60 * 1000;
+            logs.length = 0;
+            const r4 = restores();
+            const e4 = await refused(() => od.planSaveDone(pid, it.id, u4.s.ticket, QX.quickXorHash(b4)), "not_saved", "N4: a later page");
+            same([e4.status, e4.info && e4.info.why], [409, "unproved"], "N4: unproved");
+            ok(logs.includes("onedrive plan_save_done: " + BY_HAND), "N4: " + JSON.stringify(logs));
+            same([restores() - r4, (await planOf()).size], [0, 89], "N4: nothing put back");
+            // the control: the iPad's bytes right on the base, then Y - the plain "changed" is true (no admin's line)
+            reset();
+            Object.assign(g.script, { deferCommit: "ignored" });
+            clock.t += 5000;
+            const b5 = bytesN(OD.CHUNK_UNIT + 35, 63);
+            const u5 = await upOnly(b5);
+            same(u5.last.status, 200, "the control: committed at the last chunk, right on the base");
+            clock.t += 60 * 1000;
+            g.write(it.id, 90);
+            logs.length = 0;
+            const e5 = await refused(() => od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u5.s.ticket, uploadUrl: u5.s.uploadUrl, hash: QX.quickXorHash(b5), landed: true }), "plan_changed", "the control");
+            same(e5.info && e5.info.why, "changed", "the control: the plain changed");
+            ok(!logs.some((l) => /by hand/.test(l)), "the control: no admin's line " + JSON.stringify(logs));
+            // (N6) two commits of one save overlap: request 1's PUT lands just before request 2's - Microsoft's 412 (the
+            // session usable) or 404 (gone) to the second: read afresh, the plan holds this save - checked, a replace
+            for (const afterCommit of ["usable", "gone"]) {
+              reset();
+              g.script.afterCommit = afterCommit;
+              clock.t += 5000;
+              const b6 = bytesN(OD.CHUNK_UNIT + 37, afterCommit === "usable" ? 64 : 65);
+              const u6 = await upOnly(b6);
+              same(u6.last.status, 202, afterCommit + ": the last chunk commits nothing");
+              const count = (await files()).files.length;
+              let first = 0;
+              onFetch = async (url, init) => {
+                if (!first && String(init.method || "").toUpperCase() === "PUT" && new RegExp("/items/" + encodeURIComponent(it.id) + "$").test(new URL(url).pathname)) {
+                  first = (await g.fetch(url, init)).status;
+                  clock.t += 1000;
+                }
+              };
+              logs.length = 0;
+              let c6;
+              try {
+                c6 = await od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u6.s.ticket, uploadUrl: u6.s.uploadUrl, hash: QX.quickXorHash(b6) });
+              } finally { onFetch = null; }
+              same([first, c6.mode, c6.id, c6.version, c6.verified], [200, "replace", it.id, "qx:" + QX.quickXorHash(b6), true], afterCommit + ": request 1's commit landed; request 2 answers replace, verified " + JSON.stringify(logs));
+              ok(!logs.some((l) => /committed as a copy/.test(l)), afterCommit + ": never the same bytes as a copy " + JSON.stringify(logs));
+              same([(await files()).files.length, (await planOf()).size], [count, b6.length], afterCommit + ": no copy; the plan is the save");
+            }
           } finally {
             reset();
             atLast = null;
