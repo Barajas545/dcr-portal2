@@ -14,11 +14,11 @@
  *
  * A draft is keyed to the file it came from (name and byte length), so
  * reopening that file is what offers it back. It is never restored silently.
- * Inside the portal it is keyed to the person too (draftWho), and carries
- * the plan's project number (draftNumber).
+ * Inside the portal it is keyed to the person too (draftWho), and to the
+ * plan (draftPlan).
  */
 
-import { WHO_RE } from './portal-handoff.js';
+import { WHO_RE, PLAN_RE } from './portal-handoff.js';
 
 const DB_NAME = 'ptt-drafts';
 const STORE = 'drafts';
@@ -70,34 +70,39 @@ export function draftWho(who) {
 }
 
 /**
- * The plan a draft is of, inside the portal: the project number the portal
- * handed it with (ptt-open's `number`, e.g. "A000T1"), trimmed — or '' for
- * anything else. Kept in the draft (its `number`), never in its key: the key
- * is "<name>|<size>|@<who>" for the portal too. Two jobs can share a plan's
- * name, so a draft of that name at another size is an earlier version of
- * THIS plan only when it carries this plan's number (js/core/save-route.js
- * findDraft). Compared in any case, as the portal's broker compares numbers.
+ * The plan a draft is of, inside the portal: its opaque word for the plan
+ * handed over (ptt-open's `plan`, js/core/portal-handoff.js PLAN_RE — the
+ * same for every version of that plan, another for a plan of the same name
+ * in another folder or job), or '' for anything else. Two lots' folders can
+ * hold one house model's plan, the same name and the same bytes: one lot's
+ * unsaved work is never offered on, dropped by or written over by the
+ * other's (contract addendum 4 E4).
  */
-export function draftNumber(number) {
-  if (typeof number !== 'string') return '';
-  const n = number.normalize('NFC').trim();
-  return n.length >= 1 && n.length <= 40 && !/[\u0000-\u001f\u007f]/.test(n) ? n : '';
+export function draftPlan(plan) {
+  return typeof plan === 'string' && PLAN_RE.test(plan) ? plan : '';
 }
 
-/** The end of a draft's key after the file's name: "|<size>", and "|@<who>" for a person's (draftWho). */
-export function draftKeyTail(fileSize, who = '') {
+/**
+ * The end of a draft's key after the file's name: "|<size>", then "|@<who>"
+ * for a person's (draftWho), and after that "|#<plan>" for a person's draft
+ * of a plan the portal named (draftPlan) — never a plan without a person.
+ */
+export function draftKeyTail(fileSize, who = '', plan = '') {
   const w = draftWho(who);
-  return `|${fileSize || 0}${w ? `|@${w}` : ''}`;
+  const p = w ? draftPlan(plan) : '';
+  return `|${fileSize || 0}${w ? `|@${w}` : ''}${p ? `|#${p}` : ''}`;
 }
 
 /**
  * The key for a project file. Name plus size, because a phone has no path
  * and two jobs can share a name across folders but rarely a byte length too
- * — and, inside the portal, the person's word (draftWho): "<name>|<size>|@<who>".
- * Its end is never a number, so it can never be a key without one.
+ * — and, inside the portal, the person's word (draftWho) and the plan's
+ * (draftPlan): "<name>|<size>|@<who>|#<plan>", or "<name>|<size>|@<who>"
+ * when the portal named no plan. Its end is never a number, so it can never
+ * be a key without one.
  */
-export function draftKey(fileName, fileSize, who = '') {
-  return `${fileName || 'untitled'}${draftKeyTail(fileSize, who)}`;
+export function draftKey(fileName, fileSize, who = '', plan = '') {
+  return `${fileName || 'untitled'}${draftKeyTail(fileSize, who, plan)}`;
 }
 
 /**
@@ -136,7 +141,7 @@ export async function dropDraft(key) {
   } catch { /* nothing to do about it */ }
 }
 
-/** Every draft's key (draftKey's "<name>|<size>[|@<who>]"), and nothing of any draft read — for finding the one a file's own
+/** Every draft's key (draftKey's "<name>|<size>[|@<who>[|#<plan>]]"), and nothing of any draft read — for finding the one a file's own
  *  name does not lead to (a copy the portal made of a save: js/core/save-route.js portalCopyDraftKey). */
 export async function listDraftKeys() {
   try {

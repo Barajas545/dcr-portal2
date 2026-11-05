@@ -60,7 +60,7 @@
  * the real download and the real "Your file is ready" dialog.
  */
 
-import { draftKey, draftKeyTail, draftWho, draftNumber } from './drafts.js';
+import { draftKey, draftKeyTail, draftWho, draftPlan } from './drafts.js';
 
 /**
  * Above this the share sheet is not offered at all: the file downloads.
@@ -844,13 +844,15 @@ export function portalCopyKind(copy, plan) {
  * than one could be: a wrong match would need a plan of that beginning AND
  * of exactly those bytes' size, and two of them give none, never a guess.
  * `who`: only that person's drafts (draftKey's "|@<who>"), or with none,
- * only the drafts of no person.
+ * only the drafts of no person; `plan`: with a person, only their drafts of
+ * that plan (draftKey's "|@<who>|#<plan>"), or with none, only their drafts
+ * of no plan.
  */
-export function portalCopyDraftKey(copy, size, keys, who = '') {
+export function portalCopyDraftKey(copy, size, keys, who = '', plan = '') {
   const n = Number(size);
   if (typeof copy !== 'string' || !PORTAL_COPY_RE.test(copy.normalize('NFC'))) return '';
   if (!Number.isSafeInteger(n) || n <= 0 || !Array.isArray(keys)) return '';
-  const tail = draftKeyTail(n, who);
+  const tail = draftKeyTail(n, who, plan);
   const found = { whole: [], cut: [] };
   for (const k of keys) {
     if (typeof k !== 'string' || !k.endsWith(tail)) continue;
@@ -885,61 +887,59 @@ export function portalCopyDraftKey(copy, size, keys, who = '') {
  * work), for this release — at the file's own name and size only.
  *
  *   embedded    this page is inside the portal (js/core/embedded.js): with
- *   number      no draft of this person's for the file (name, size, who), the
- *               newest of THEIR drafts of the same plan at another size is
- *               offered — `earlier` (contract addendum 3 D7). Two openings
- *               of one plan: the other one's save was kept, this one's was
- *               refused, and reopening hands the other's save, at a size this
- *               opening never drafted under. The same plan: the same name AND
- *               the project number the portal handed it with (`number`,
- *               js/core/drafts.js draftNumber), kept in the draft — two jobs
- *               can share a plan's name, and another job's work is never
- *               offered as this plan's (the re-check of D7). No number for the
- *               plan, or none in a draft: no earlier version at all. The keys
- *               are listed first, and only this person's drafts of that name
- *               are read, one at a time (the number and the date are in the
- *               draft, not its key); it is offered with earlierDraftWords,
- *               never dropped unasked. Never another person's, never one of no
- *               person.
+ *   plan        a person's word, the portal's word for the plan (`plan`,
+ *               js/core/drafts.js draftPlan) is in the key — the drafts are
+ *               that plan's, and a draft of another plan's word (another
+ *               lot's copy of the same house model: the same name, the same
+ *               bytes) is never offered, read, dropped or written over
+ *               (contract addendum 4 E4). With no draft of this person's for
+ *               the file (name, size, who, plan), the newest of THEIR drafts
+ *               of the same plan (name and word) at another size is offered —
+ *               `earlier` (contract addendum 3 D7). Two openings of one plan:
+ *               the other one's save was kept, this one's was refused, and
+ *               reopening hands the other's save, at a size this opening
+ *               never drafted under. Picked from the keys, then read one at a
+ *               time; offered with earlierDraftWords, never dropped unasked.
+ *               Never another person's, never one of no person. With no word
+ *               for the plan: the file's own key "<name>|<size>|@<who>" only,
+ *               and no earlier version at all.
  *
  * → { key, draft, own, legacy, earlier } or null — `own` the key the file's
  * own draft goes under now. The other keys that hold the same work are found
  * once the person has answered (draftTwins).
  */
-export async function findDraft({ name, size, portal = false, who = '', embedded = false, number = '' } = {}, { get, keys } = {}) {
+export async function findDraft({ name, size, portal = false, who = '', embedded = false, plan = '' } = {}, { get, keys } = {}) {
   const me = draftWho(who);
-  const own = draftKey(name, size, me);
-  const plan = portal ? planOfPortalCopy(name) : '';
-  const look = async w => {
-    const exact = [draftKey(name, size, w)];
-    if (plan) exact.push(draftKey(plan, size, w));
+  const word = embedded && me ? draftPlan(plan) : '';
+  const own = draftKey(name, size, me, word);
+  const from = portal ? planOfPortalCopy(name) : '';
+  const look = async (w, p) => {
+    const exact = [draftKey(name, size, w, p)];
+    if (from) exact.push(draftKey(from, size, w, p));
     for (const k of exact) {
       const d = await get(k);
       if (d && d.payload) return { key: k, draft: d };
     }
     // A copy whose name does not give its plan's back: the broker cut a long
     // name to fit (or tidied its end) — looked for among the keys.
-    if (!plan) return null;
-    const k = portalCopyDraftKey(name, size, await keys(), w);
+    if (!from) return null;
+    const k = portalCopyDraftKey(name, size, await keys(), w, p);
     const d = k ? await get(k) : null;
     return d && d.payload ? { key: k, draft: d } : null;
   };
-  const mine = await look(me);
+  const mine = await look(me, word);
   if (mine) return { ...mine, own, legacy: false, earlier: false };
   if (!me) return null;
-  const before = embedded ? await earlierDraft(name, size, me, number, { get, keys }) : null;
+  const before = word ? await earlierDraft(name, size, me, word, { get, keys }) : null;
   if (before) return { ...before, own, legacy: false, earlier: true };
-  const old = await look('');
+  const old = await look('', '');
   return old ? { ...old, own, legacy: true, earlier: false } : null;
 }
 
-/** A draft's number as findDraft compares them: draftNumber's, in any case. */
-const numberKey = n => draftNumber(n).toLowerCase();
-
-/** This person's keys of the plan `name` at a size other than `size` ("<name>|<n>|@<who>", n a whole number of bytes), from the keys alone. */
-function otherSizeKeys(all, name, size, who) {
+/** This person's keys of the plan `name` and word `plan` at a size other than `size` ("<name>|<n>|@<who>|#<plan>", n a whole number of bytes), from the keys alone. */
+function otherSizeKeys(all, name, size, who, plan) {
   const head = `${name || 'untitled'}|`;
-  const tail = `|@${who}`;
+  const tail = `|@${who}|#${plan}`;
   const out = [];
   for (const k of Array.isArray(all) ? all : []) {
     if (typeof k !== 'string' || !k.startsWith(head) || !k.endsWith(tail)) continue;
@@ -950,21 +950,18 @@ function otherSizeKeys(all, name, size, who) {
 }
 
 /**
- * This person's newest draft of the plan `name` at a size other than `size`
- * (findDraft's `earlier`) that carries the plan's project `number`: the
- * keys "<name>|<n>|@<who>", n a whole number of bytes that is not `size`,
- * picked from the list of keys alone — no other plan name's draft and no
- * other person's is ever read — then read one at a time, and only the newest
- * of those of this number kept. null when there is none, and at once (no
- * key listed, no draft read) when the plan has no number.
+ * This person's newest draft of the plan `name` and word `plan` at a size
+ * other than `size` (findDraft's `earlier`): the keys
+ * "<name>|<n>|@<who>|#<plan>", n a whole number of bytes that is not `size`,
+ * picked from the list of keys alone — no other plan's draft and no other
+ * person's is ever read — then read one at a time, and only the newest kept.
+ * null when there is none.
  */
-async function earlierDraft(name, size, who, number, { get, keys }) {
-  const want = numberKey(number);
-  if (!want) return null;
+async function earlierDraft(name, size, who, plan, { get, keys }) {
   let best = null;
-  for (const k of otherSizeKeys(await keys(), name, size, who)) {
+  for (const k of otherSizeKeys(await keys(), name, size, who, plan)) {
     const d = await get(k);
-    if (!d || !d.payload || numberKey(d.number) !== want) continue;
+    if (!d || !d.payload) continue;
     if (!best || (Number(d.savedAt) || 0) > (Number(best.draft.savedAt) || 0)) best = { key: k, draft: d };
   }
   return best;
@@ -976,25 +973,28 @@ async function earlierDraft(name, size, who, number, { get, keys }) {
  * person has answered: one opening writes its draft under every file it may
  * come back from (its homes), so declining or restoring one leaves the same
  * work under another size, offered again later as an earlier version's (the
- * re-check of D7). Only this person's (`who`) keys of the same plan name at
- * another size, and of those only the ones whose work, sheets and plan
- * number are the same as the one offered — never one that holds anything
- * else, and never the file's own key (`found.own`). Read only after the
- * answer, one at a time. [] for a draft of no person (legacy: never dropped).
+ * re-check of D7). Only this person's (`who`) keys of the same plan (its
+ * name and the portal's word for it, `plan`) at another size, and of those
+ * only the ones whose work and sheets are the same as the one offered —
+ * never one that holds anything else, and never the file's own key
+ * (`found.own`). Read only after the answer, one at a time. [] for a draft
+ * of no person (legacy: never dropped), and for any draft when the portal
+ * named no plan (another job's plan may have the same name).
  */
-export async function draftTwins(found, { get, keys } = {}, who = '') {
+export async function draftTwins(found, { get, keys } = {}, who = '', plan = '') {
   const me = draftWho(who);
-  if (!me || !found || typeof found.key !== 'string' || !found.draft || found.legacy) return [];
-  const tail = `|@${me}`;
+  const word = me ? draftPlan(plan) : '';
+  if (!word || !found || typeof found.key !== 'string' || !found.draft || found.legacy) return [];
+  const tail = `|@${me}|#${word}`;
   const m = found.key.endsWith(tail) ? /^(.*)\|([1-9]\d*)$/.exec(found.key.slice(0, -tail.length)) : null;
   if (!m) return [];
   const work = d => {
-    try { return JSON.stringify([d.payload, d.pageCount ?? null, numberKey(d.number)]); } catch { return null; }
+    try { return JSON.stringify([d.payload, d.pageCount ?? null]); } catch { return null; }
   };
   const same = work(found.draft);
   if (same === null) return [];
   const out = [];
-  for (const k of otherSizeKeys(await keys(), m[1], m[2], me)) {
+  for (const k of otherSizeKeys(await keys(), m[1], m[2], me, word)) {
     if (k === found.own) continue;
     const d = await get(k);
     if (d && d.payload && work(d) === same) out.push(k);

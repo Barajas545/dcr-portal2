@@ -26,6 +26,8 @@
  *          through a pre-authenticated link (js/core/remote-file.js);
  *      either may carry `who`, the portal's opaque word for the person
  *      signed in (WHO_RE): inside the portal, drafts are kept per person;
+ *      and `plan`, its opaque word for the plan (PLAN_RE): inside the
+ *      portal, drafts are kept per plan;
  *   4. when that link expires (about an hour) this app asks the portal tab
  *      for a fresh one: `{type: 'ptt-renew', v, nonce, req}`, answered
  *      `{type: 'ptt-link', v, nonce, req, url}` ('' when there is none);
@@ -95,6 +97,15 @@ const NAME_RE = /^[^\u0000-\u001f\u007f/\\]{1,250}\.takeoff$/i;
  * the portal, drafts are this person's (js/core/drafts.js draftWho).
  */
 export const WHO_RE = /^[A-Za-z0-9_-]{12}$/;
+/**
+ * The portal's word for the plan, in 'ptt-open' (`plan`, optional, contract addendum 4 E4): the base64url of the first
+ * 9 bytes of a sha256 the portal makes of the plan's project number, folder and file name — the same for every version
+ * of that plan, and another for a plan of the same name in another folder or job (one house model copied into two
+ * lots' folders: the same name, the same bytes). Exactly 12 characters of A-Z, a-z, 0-9, '-' and '_', no padding.
+ * Opaque here: only told apart. Anything else is no word at all. Inside the portal, drafts are this plan's
+ * (js/core/drafts.js draftPlan).
+ */
+export const PLAN_RE = /^[A-Za-z0-9_-]{12}$/;
 
 /** The nonce in `#portal=<nonce>` (alone, or among other hash parts), or null. */
 export function parsePortalHash(hash) {
@@ -205,21 +216,23 @@ function common(d, nonce) {
  * {kind: 'link', url, name, size, number, lastModified} — or null for anything
  * else. `canSave` (the portal will take a save of THIS plan) only when it says
  * exactly true, and only for a copy on this device: a link never has it.
- * `who` (either kind) only when the portal gave one of WHO_RE's shape.
+ * `who` (either kind) only when the portal gave one of WHO_RE's shape, and
+ * `plan` (either kind) only when it gave one of PLAN_RE's.
  */
 export function openFromMessage(d, nonce) {
   const c = common(d, nonce);
   if (!c) return null;
-  // The person, for either kind — only when the portal gave a word of exactly that shape.
+  // The person and the plan, for either kind — only when the portal gave a word of exactly that shape.
   const who = typeof d.who === 'string' && WHO_RE.test(d.who) ? { who: d.who } : {};
+  const plan = typeof d.plan === 'string' && PLAN_RE.test(d.plan) ? { plan: d.plan } : {};
   if (d.kind === 'file') {
     const f = d.file;
     if (typeof Blob === 'undefined' || !(f instanceof Blob) || f.size !== c.size) return null;
-    return { kind: 'file', file: f, ...c, updateAvailable: d.updateAvailable === true, canSave: d.canSave === true, ...who };
+    return { kind: 'file', file: f, ...c, updateAvailable: d.updateAvailable === true, canSave: d.canSave === true, ...who, ...plan };
   }
   if (d.kind === 'link') {
     if (!linkOk(d.url)) return null;
-    return { kind: 'link', url: d.url, ...c, ...who };
+    return { kind: 'link', url: d.url, ...c, ...who, ...plan };
   }
   return null;
 }

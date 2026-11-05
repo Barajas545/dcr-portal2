@@ -17,7 +17,9 @@
      3. this window posts the plan, to the peer's origin only: {type: "ptt-open", v: 1, nonce, kind: "file", file, ...}
         (a copy saved on this device: a File out of the Plans Library, nothing copied) or {kind: "link", url, ...}
         (a plan in OneDrive, opened over byte ranges) - in the frame with `who` too (map/plans.js whoWord: an opaque
-        word for the person, so the app keeps one person's drafts apart from another's on a shared tablet; C2b);
+        word for the person, so the app keeps one person's drafts apart from another's on a shared tablet; C2b) and
+        `plan` (map/plans.js planWord: an opaque word for the plan - its project's number, folder and name - so one
+        plan copied into two lots' folders never shares a draft; contract addendum 4 E4);
      4. for a link, the app asks {type: "ptt-renew", v: 1, nonce, req} when it expires; this window answers
         {type: "ptt-link", v: 1, nonce, req, url} ('' when there is none) for as long as the app is open;
      5. once the app really keeps itself on this device for offline use (its service worker and program), it says
@@ -39,7 +41,7 @@
    With the frame switched off (map/plans.js PLAN_FRAME) a phone or a tablet opens the tab as a computer does, and an
    iPhone or iPad home-screen app is told to open the portal in Safari (handoffProblem). */
 
-import { TAKEOFF_ORIGIN, handoffLink, frameLink, planRoute, WHO_RE } from "./map/plans.js";
+import { TAKEOFF_ORIGIN, handoffLink, frameLink, planRoute, WHO_RE, PLAN_RE } from "./map/plans.js";
 import * as frame from "./plan-frame.js";
 
 /** The frame is open (a page's own keys - the 📐 menu's Escape - wait while it is). */
@@ -204,6 +206,9 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
       // the person's opaque word (map/plans.js whoWord, contract C2b): the frame's app keys its drafts by it - only to
       // the frame (a tab's drafts are on another site), only in its own shape
       if (!(via === "frame" && typeof p.who === "string" && WHO_RE.test(p.who))) delete open.who;
+      // and the plan's (map/plans.js planWord, contract addendum 4 E4): its drafts are this plan's, not every file of
+      // its name's - the same rules
+      if (!(via === "frame" && typeof p.plan === "string" && PLAN_RE.test(p.plan))) delete open.plan;
       try {
         peer.win.postMessage(open, peer.origin);
       } catch (e) {
@@ -269,7 +274,8 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
  * Open the takeoff app and hand it a plan: in the frame on a phone or a tablet, else in a new tab - call it IN the click
  * (a tab must open at once).
  *   plan()   async -> {kind: "file", file, name, size, lastModified, number, updateAvailable}
- *                  | {kind: "link", url, name, size, lastModified, number}; asked at once (it runs while the app loads)
+ *                  | {kind: "link", url, name, size, lastModified, number}; asked at once (it runs while the app loads);
+ *                  either with who? and plan? (the frame only: the person's and the plan's words)
  *   renew()  async -> a fresh link ("" when none) - for kind "link"
  *   onDone({ok, why, error, via})  the plan was posted (ok), or why not: "blocked" (no tab: a popup blocker),
  *            "no_answer" (the app did not answer: offline before it was ever kept on this device), "failed" (plan()

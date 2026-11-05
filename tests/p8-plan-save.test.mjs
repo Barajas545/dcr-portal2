@@ -539,6 +539,60 @@ test("the takeoff app's own price catalog and settings stay on the device when a
   assert.deepEqual(TS.TAKEOFF_KEYS.filter((k) => k === "ptt.catalog.user.v1" || k === "ptt.settings.v1"), []);
 });
 
+test("plan (contract addendum 4 E4): an opaque 12-character word per plan - its project's number, folder and name - the same for every version, another for the same file in another lot's folder; told to the frame's app on every opening (a file and a link), never to a tab, only in its own shape", async () => {
+  const { createHash } = await import("node:crypto");
+  const P = await import("../site/js/map/plans.js");
+  // the rule, against node's own sha256 (and fixed vectors, worked out here with Python's hashlib and unicodedata too)
+  const ref = (n, f, x) => createHash("sha256").update("dcr2-plan:" + (n + "/" + f + "/" + x).toLowerCase().normalize("NFC")).digest().subarray(0, 9).toString("base64url");
+  const LOT1 = ["A267", "A267 - 12 Made Up Lane - Testville", "Roof.takeoff"];
+  const LOT2 = ["A268", "A268 - 14 Made Up Lane - Testville", "Roof.takeoff"];
+  assert.equal(await P.planWord(...LOT1), "JD61UWkJoOhW");
+  assert.equal(await P.planWord(...LOT2), "5y5uXBome3gS");
+  assert.equal(await P.planWord("A900", "A900 - 12 Made Up Lane", "A900 Bid.takeoff"), "vCGyDu-CeA80");
+  assert.equal(await P.planWord("a900", "A900 - 12 MADE UP LANE", "a900 bid.TAKEOFF"), "vCGyDu-CeA80", "any case");
+  assert.equal(await P.planWord("A900", "A900 - Café", "Plan.takeoff"), "5os8Sie_jxbv", "NFC: a decomposed accent is the same word");
+  assert.equal(await P.planWord("A900", "A900 - Café", "Plan.takeoff"), "5os8Sie_jxbv");
+  for (const [n, f, x] of [LOT1, LOT2, ["A024-B", "A024-B - Made Up Rd/Rev 2", "Ü-ñ plan.takeoff"], ["A900", "", "A900 Bid.takeoff"]]) {
+    const w = await P.planWord(n, f, x);
+    assert.equal(w, ref(n, f, x), n + "/" + f + "/" + x);
+    assert.match(w, P.PLAN_RE);
+    assert.ok(!w.includes(n) && !/roof|takeoff|lane/i.test(w), "never the number, folder or name in the clear");
+  }
+  assert.notEqual(await P.planWord(...LOT1), await P.planWord(...LOT2), "the house model in two lots' folders: two plans");
+  assert.notEqual(await P.planWord("A267", "A267 - 12 Made Up Lane - Testville", "Roof.takeoff"), await P.planWord("A267", "A267 - older plans", "Roof.takeoff"),
+    "another folder of the same project: another plan");
+  for (const [n, x] of [["", "Roof.takeoff"], [null, "Roof.takeoff"], ["  ", "Roof.takeoff"], ["A267", ""], ["A267", null], [undefined, undefined]]) {
+    assert.equal(await P.planWord(n, "A267 - x", x), "", JSON.stringify([n, x]));
+  }
+  assert.equal(await P.planWord(...LOT1, { digest: async () => { throw new Error("made up"); } }), "", "no crypto: no word (never a throw)");
+  // the hand-over: to the frame as given (a file, a link); never to a tab; a word of another shape is not passed on
+  const word = await P.planWord(...LOT1);
+  for (const [label, via, origin, kind, w, want] of [["the frame, a file", "frame", HERE, "file", word, word], ["the frame, a link", "frame", HERE, "link", word, word],
+    ["a tab, a file", "tab", "https://barajas545.github.io", "file", word, undefined], ["a tab, a link", "tab", "https://barajas545.github.io", "link", word, undefined],
+    ["the frame, a word of another shape", "frame", HERE, "file", word + "x", undefined], ["the frame, a name in the clear", "frame", HERE, "file", "Roof.takeoff", undefined],
+    ["the frame, padded", "frame", HERE, "file", word.slice(0, 10) + "==", undefined], ["the frame, not text", "frame", HERE, "file", 12, undefined],
+    ["the frame, none", "frame", HERE, "file", undefined, undefined]]) {
+    const s = stage(via, origin);
+    const base = kind === "file" ? { kind: "file", file: blob(9), name: "Roof.takeoff", size: 9, lastModified: 1, number: "A267" }
+      : { kind: "link", url: "https://made-up-my.sharepoint.com/x", name: "Roof.takeoff", size: 9, lastModified: 0, number: "A267" };
+    const plan = async () => Object.assign({}, base, w === undefined ? {} : { plan: w });
+    const ctl = H.talk(s.peer, WORD, plan, async () => "", () => {}, null, s.host);
+    try {
+      await s.emit(s.from({ type: "ptt-ready" }));
+      assert.equal(s.win.posted[0].m.plan, want, label);
+      if (want === undefined) assert.ok(!("plan" in s.win.posted[0].m), label);
+    } finally { ctl.stop(); }
+  }
+  // the Plans Library puts it on the plan for the frame on every opening: a file of the device (the record's number,
+  // folder and name) and a link online (plan_link's folder and name, the project's number)
+  const lib = code(read("js/plan-library.js"));
+  assert.match(lib, /const word = frame \? await planWord\(r\.number, r\.folder, r\.name\) : "";\s*if \(word\) plan\.plan = word;/);
+  assert.match(lib, /const word = usesFrame\(\) \? await planWord\(number, l\.folder, l\.name\) : "";\s*if \(word\) plan\.plan = word;/);
+  // the vendored takeoff app takes it (its ptt-open `plan`, the draft key '<name>|<size>|@<who>|#<plan>')
+  assert.match(read("takeoff/js/core/portal-handoff.js"), /PLAN_RE = \/\^\[A-Za-z0-9_-\]\{12\}\$\//);
+  assert.match(read("takeoff/js/core/drafts.js"), /export function draftPlan\(/);
+});
+
 test("Close has the takeoff app keep its draft first (contract C2b TakeoffApp.saveDraftNow, at most 3 s; review FRAME-1); an app without it, or none, closes as before", async () => {
   assert.equal(F.DRAFT_WAIT_MS, 3000);
   const app = (fn) => ({ TakeoffApp: { app: { project: { dirty: true } }, saveDraftNow: fn } });

@@ -40,7 +40,9 @@
                                   OneDrive" - the broker asks the same (403 forbidden otherwise);
    * saveBackFor(me, on)          the switch and the person together: whether the frame offers a save of the plan;
    * deviceWord(win)              "iPad", "iPhone" or "device": what the words call this device ("Saved on this iPad");
-   * whoWord(id)                  the opaque per-person word the frame's app keys its drafts by (ptt-open's `who`).
+   * whoWord(id)                  the opaque per-person word the frame's app keys its drafts by (ptt-open's `who`);
+   * planWord(number, folder, name)  the opaque per-plan word it keys them by too (ptt-open's `plan`, contract addendum
+                                  4 E4: one plan copied into two lots' folders never shares a draft).
 
    Pure module (node tests import it). */
 
@@ -199,6 +201,32 @@ export async function whoWord(id, subtle) {
     for (let i = 0; i < 9; i++) bin += String.fromCharCode(d[i]);
     const w = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     return WHO_RE.test(w) ? w : "";
+  } catch (e) { return ""; }
+}
+
+/** The opaque word for a plan the frame's takeoff app keys its drafts by, beside the person's (contract addendum 4 E4:
+    the house model copied into two lots' folders - the same name, the same bytes - is two plans, and one lot's unsaved
+    work is never offered, dropped or overwritten on the other's): base64url of the first 9 bytes of
+    sha256("dcr2-plan:" + NFC(lower(number + "/" + folder + "/" + name))) - 12 characters, the same for every version of
+    the plan (never its item id, version or size), never its number, folder or name in the clear (both repos are
+    public). `number`: the project's DCR number; `folder`: the plan's folder as plans_list words it; `name`: its file
+    name. */
+export const PLAN_RE = /^[A-Za-z0-9_-]{12}$/;
+/** planWord(number, folder, name) -> Promise of that word, or "" (no number or name, or no crypto here). `subtle`:
+    crypto.subtle (a test's). */
+export async function planWord(number, folder, name, subtle) {
+  const s = subtle || (typeof crypto !== "undefined" && crypto && crypto.subtle) || null;
+  const n = String(number == null ? "" : number);
+  const f = String(folder == null ? "" : folder);
+  const p = String(name == null ? "" : name);
+  if (!n.trim() || !p || !s || typeof s.digest !== "function") return "";
+  try {
+    const text = "dcr2-plan:" + (n + "/" + f + "/" + p).toLowerCase().normalize("NFC");
+    const d = new Uint8Array(await s.digest("SHA-256", new TextEncoder().encode(text)));
+    let bin = "";
+    for (let i = 0; i < 9; i++) bin += String.fromCharCode(d[i]);
+    const w = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return PLAN_RE.test(w) ? w : "";
   } catch (e) { return ""; }
 }
 
