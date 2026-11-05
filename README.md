@@ -702,7 +702,11 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 
 - **Who and when.** A plan opened in the frame from the Plans Library (as a file) is offered a save back (`canSave` in
   `ptt-open`) to an admin, or a person with Sees prices AND "Can upload to OneDrive" (`map/plans.js canSaveBack`; the
-  broker asks the same). `PLAN_SAVE_BACK` in `map/plans.js` switches it off (nothing offered, nothing sent).
+  broker asks the same) - and only while the plan's record says the broker takes it: `saveBack`, the latest
+  `plans_list` / `plan_link` answer's `save_back` (contract addendum 3 D1), kept on the record (offline: the last one
+  known). That is the broker's own switch, `ONEDRIVE_PLAN_SAVE` (off by default; `only:<DCR number>,...`; `all`): an
+  older broker never says `save_back`, so nothing is offered. `PLAN_SAVE_BACK` in `map/plans.js` stays the portal's own
+  kill switch (nothing offered, nothing sent).
 - **Kept first.** The app's Save comes as `ptt-save` (from the frame's own window, this site, the word, `req` of at most
   20 characters, `size === file.size`); the Plans Library's worker copies it into a NEW file of its own (op `spool`,
   8 MiB slices, never the whole file in memory, MAGIC and size checked), the record gets `local`, and only then is the
@@ -726,6 +730,22 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   save whose last answer was lost is settled with its ticket (the broker takes it 30 days) and the hash, and past that
   by the hash alone in `plans_list` - never sent again as a copy of itself. A broker refusal (400) and a second
   `not_saved` wait for the person instead of sending the whole plan again by itself.
+- **Every replace checked by the plan's version history** (contract addendum 3; DCR Desktop 2's broker since its repair
+  round). Microsoft documents no atomic commit of a deferred session on a work or school OneDrive, so after the commit
+  (its PUT, or - refused - its zero-length POST) the broker reads the plan's versions: this save the newest with the
+  base right under it is `verified: true`; an office save under it (it crossed the commit) is put back and the save is
+  sent again as a copy; no history to read is `verified: false` (the go-live self-test looks for that line). A last
+  chunk that answers 200 / 201 with the file (OneDrive did not wait for the broker) is never adopted: the commit is
+  asked with `landed: true` and only checks; a session found gone after its last byte is asked of the broker's commit
+  too, never of `plan_save_done`. A copy made because OneDrive would not replace the plan (`plan_changed` `why:
+  "refused"`) is told without blaming anyone: "OneDrive would not replace the plan, so your work was saved as '<name>'
+  next to it - nothing was overwritten." (and the takeoff app is not sent its "copy" news, whose words say the office
+  saved); a changed plan, or an older broker with no `why`, keeps the copy words. A kept save without its hash (the
+  spool could not load `js/quickxor.js`) is hashed again in a second worker pass before it is sent or settled; one the
+  broker settles only with a hash (`not_saved` `need: "hash"`, a deferred replace past 48 hours) is never settled
+  without it - it waits and is tried again. The broker's switch turned off after a save was kept (503 `save_back_off`)
+  and a broker older than this page (400 `invalid` for the field `op`: "not deployed") wait at least 30 minutes and
+  are never final; the row says "Saving back to OneDrive is turned off for now - this save waits on this iPad."
 - **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against
   the version the app's work was done on (`map/plan-library.js` `saveBase`) - so a newer version the portal downloaded
   while the app was open never turns older work into a replace (it becomes a copy), the next Save after a copy goes on
@@ -737,24 +757,51 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - **Rows.** The Plans Library and the 📐 menu say Saved on this iPad / Sending 45% / Sent / Saved as a separate file /
   Not sent — tap to retry, with Send now / Retry. A purge on lost prices takes the saves waiting here too, and - for a
   person who opened the takeoff app in the frame here - on this site the takeoff app's own drafts (`ptt-drafts`) and
-  kept copies (`plans-kept`); the page says how many plans and unsent saves went. A second window's Save never
-  replaces another opening's waiting save (it is refused, the app keeps its draft), and a passing storage error never
-  counts as a lost save.
-- **Before the owner's write grant** on the takeoff folder the broker answers 503 and a save just waits on the device.
+  kept copies (`plans-kept`) - also for a person with plans here when stores that only `/takeoff/` opened as a page of
+  its own writes are on this site (`ptt.keptPlans.v1`, `plans-kept`, `ptt-plans-archive`); never for a person with no
+  trace here. The page says how many plans and unsent saves went, and what became of the takeoff app's stores:
+  "was removed", "is removed once the takeoff app closes", or "could not be removed now - the next online page tries
+  again". A second window's Save never replaces another opening's waiting save (it is refused in one plain clause - the
+  app says "Not saved: the portal did not take this save (<why>). Your changes are still in this window - use Save a
+  copy to Files to keep them.", and its draft is offered back on reopening as an earlier version's), and a passing
+  storage error never counts as a lost save.
+- **The go-live, in order - broker first** (contract addendum 3 D1 and D6; DCR Desktop 2's `docs/ONEDRIVE.md` 18c
+  "Order of the day" says the same; each step with the owner's OK):
+  1. DCR Desktop 2 deploys its broker with `ONEDRIVE_PLAN_SAVE` NOT set: off for everyone (every save answers 503
+     `save_back_off`, `save_back` is false everywhere, and this site offers no save back).
+  2. The owner's write grant on `Projects-Takeoff-Files` (ONEDRIVE.md 18c, steps 1-6). Before it a save answers 503
+     `onedrive_not_authorized` and just waits on the device.
+  3. `ONEDRIVE_PLAN_SAVE=only:A000T1` (ONEDRIVE.md 18c, step 8 - the made-up plan lives in an `A000T1` folder inside
+     `Projects-Takeoff-Files`).
+  4. Publish takeoff-web and this site the same day: the save back shows only on A000T1's plans, only for price people
+     with Can upload to OneDrive. (Published before the broker, this site would find `plan_save_*` unknown - 400
+     `invalid` for the field `op` - and wait as "not deployed": never final, but the broker always goes first.)
+  5. The go-live self-test, lines 1-10 of ONEDRIVE.md 18c, on A000T1 (line 10: with `only:A000T1`, a price person sees no
+     Save to OneDrive on any other project's plan).
+  6. `ONEDRIVE_PLAN_SAVE=all` only after every line passed.
 - **Tests.** `tests/p7-library.test.mjs` (the rules, and the library over a made-up phone: `tests/plan-device.mjs` with
   the REAL worker), `tests/p8-plan-save.test.mjs`, `tests/p7-onedrive-repo.test.mjs`, `tests/p7-onedrive-upload.test.mjs`;
   `tests/p8-quickxor.test.mjs` (the broker's vectors, a port of Microsoft's C#, and the broker's own module when DCR
   Desktop 2 is on the machine); `tools/schema-check-p7-onedrive.mjs` runs these parts over the REAL broker (the
-  deferred commit, an office save during the upload, a desktop-style save, an identical re-save, a lost commit answer);
+  deferred commit, an office save during the upload, a desktop-style save, an identical re-save, a lost commit answer;
+  and since the broker's repair round the switch, the version check - a crossing put back, landed, the POST commit,
+  both commits refused, no history - and need hash);
   `tools/e2e-p7-plans.mjs` 4b drives the REAL vendored takeoff app in the frame (a made-up but real .takeoff as the
   demo plan): its own Save is kept, marks the project saved, is sent (the broker's commit) and adopted with no
   download, and after an office save the next one becomes a copy, said in both; 4d: an office save during the upload
   and a desktop save become copies, an identical re-save is saved, a second tab's Save on the same plan is refused
   while the first's waits, Close while dirty during a send keeps the draft (offered again on reopening), and a second
-  price person on the same tablet is not offered the first's draft; 4c: prices without the upload switch saves to the
-  share sheet only. The demo broker (`tools/fake/p7-onedrive.js`) answers as the real one (deferred commit, the real
-  hash of what it is sent, the name, 30-day tickets) and has the hooks `desktopSave`, `duringUpload`,
-  `refuseCopyCommits` and `hashed`; `DCR2Demo.setUploadDelay(ms)` makes the demo's uploads slow.
+  price person on the same tablet is not offered the first's draft, and the refused second tab's work is offered back
+  on reopening as an earlier version's; 4e: the broker's switch off (no Save to OneDrive offered: the share sheet) and
+  `only:A267` (offered on A267's plans, never A024's), OneDrive ignoring the deferral with an office save during the
+  upload (the office save stays the plan, the work a copy in the copy words), the PUT refused (the POST commits it) and
+  both refused (a copy in neutral words); 4c: prices without the upload switch saves to the share sheet only. The demo
+  broker (`tools/fake/p7-onedrive.js`) answers as the real one (deferred commit, the switch and `save_back`, the two
+  commit forms, the version check and restore, `landed`, `why`, `need: "hash"`, the real hash of what it is sent,
+  the name, 30-day tickets) and has the hooks `desktopSave`, `duringUpload`, `refuseCopyCommits`, `hashed`,
+  `setPlanSave` (or localStorage `dcr2-demo-plan-save` in a browser; the demo's default is `all`), `graphModes`
+  (`deferCommit`, `putCommit`, `putIfMatch`, `postIfMatch`, `postStatus`, `versions`, `restoreStatus`),
+  `betweenWalkAndCommit`, `versionsOf` and `logLines`; `DCR2Demo.setUploadDelay(ms)` makes the demo's uploads slow.
 
 ## Rules for every page
 
