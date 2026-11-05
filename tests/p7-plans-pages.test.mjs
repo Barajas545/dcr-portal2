@@ -116,7 +116,7 @@ test("the Plans Library page: offline sign-in, the people who see prices only, t
   const js = code(read("js/pages/plans-library.js"));
   assert.match(js, /state\.me = await boot\("", \{ offline: true \}\);\s*const fresh = !!\(window\.DCR2 && window\.DCR2\.offline === false\);\s*if \(!planFilesFor\(state\.me\)\)/);
   // Sees prices taken away: the plans saved here go, but only on a profile read online (never an old copy of it)
-  assert.match(js, /if \(fresh && L\.supported\(\)\) \{ try \{ gone = await L\.purgeOwner\(L\.owner\(\)\); \}/);
+  assert.match(js, /if \(fresh && L\.supported\(\) && L\.tracesHere\(L\.owner\(\)\)\) \{ try \{ gone = await L\.purgeOwner\(L\.owner\(\)\); \}/);
   assert.ok(!/functions\.invoke|\.rpc\(|\.from\(|sb\(\)/.test(js), "the data only through the library and repo/");
   // the hand-over: only to the peer's address, only from the peer's window, with its word - ONE conversation for a
   // computer's tab (the takeoff app's site) and a phone's or tablet's frame (this site's own origin: js/plan-frame.js

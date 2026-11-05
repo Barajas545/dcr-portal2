@@ -38,7 +38,8 @@
    * handedTime(rec)            the time a copy is handed to the takeoff app as (a save's own time, not OneDrive's);
    * hashedBase(base, f)        OneDrive's hash of the bytes a save's "sm:" base names (sent against it);
    * saveStateOf / saveText / copyTold / sendBar  what the rows say: Saved on this iPad, Sending 45%, Sent, Saved as a
-                                separate file, Not sent - tap to retry.
+                                separate file, Not sent - tap to retry;
+   * purgeText(p, device)       what a purge on lost prices took (the plans, the saves not yet sent, the takeoff app's).
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -543,6 +544,25 @@ export function saveText(st, device) {
 export function copyTold(name, device) {
   return "Someone saved this plan in the office after your " + (device || "device") + " got it. Your work was saved as '" + String(name || "") +
     "' next to it - nothing was overwritten.";
+}
+
+/**
+ * What the person is told when a purge on lost prices took their things from this device (js/plan-library.js
+ * purgeOwner's {plans, unsent, takeoff}; review LW-4): the plans, the saves of theirs not yet in OneDrive that went with
+ * them (that work is gone), and what the takeoff app kept here. "" when nothing went. `device`: map/plans.js deviceWord.
+ */
+export function purgeText(p, device) {
+  const d = device || "device";
+  const n = (p && Number(p.plans)) || 0;
+  const u = (p && Number(p.unsent)) || 0;
+  const app = !!(p && p.takeoff);
+  if (!n && !app) return "";
+  const out = ["Your account no longer sees prices, so " + (n
+    ? "the " + n + " plan" + (n === 1 ? "" : "s") + " you had saved on this " + d + (n === 1 ? " was" : " were") + " removed from it."
+    : "what the takeoff app kept on this " + d + " (unsaved work, kept plans) was removed.")];
+  if (u) out.push((u === 1 ? "1 save of yours that was not in OneDrive yet was" : u + " saves of yours that were not in OneDrive yet were") + " deleted with " + (n === 1 ? "it" : "them") + ".");
+  if (n && app) out.push("What the takeoff app kept on this " + d + " (unsaved work, kept plans) was removed too.");
+  return out.join(" ");
 }
 
 /** A row's bar for its save: filling while it is sent, full once OneDrive has it; none otherwise (progressHtml's). */

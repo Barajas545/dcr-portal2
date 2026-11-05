@@ -54,6 +54,7 @@ import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
+  purgeText,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -148,15 +149,35 @@ function noteOwner(who, has) {
     const set = ownersHere().filter((x) => x !== who);
     if (has) set.push(who);
     if (set.length) localStorage.setItem(OWNERS_KEY, JSON.stringify(set)); else localStorage.removeItem(OWNERS_KEY);
+    mendMail(who, has);
+  } catch (e) { /* a hint only */ }
+}
+/** The e-mail hint (MAIL_KEY): `who`'s own written again when `mine` (this sign-in's e-mail), and every entry kept only
+    while its id is an owner here OR opened the takeoff app here (js/takeoff-stores.js takeoffUsers: its drafts carry
+    prices too - review PRICE-3). A person's hint goes only when they are on neither list (a purge cut short keeps
+    them, so their next refused sign-in finds them again), or when a fresh e-mail of theirs replaces it. */
+function mendMail(who, mine) {
+  try {
     let mail = {};
     try { mail = JSON.parse(localStorage.getItem(MAIL_KEY) || "{}") || {}; } catch (e) { mail = {}; }
-    // a person's hint goes only when they leave the owners list (a purge cut short keeps it, so their next refused
-    // sign-in finds them again), or when a fresh e-mail of theirs replaces it
-    const email = has && who === storedUserId() ? String(storedUserEmail() || "").trim().toLowerCase() : "";
-    Object.keys(mail).forEach(function (k) { if (set.indexOf(mail[k]) === -1 || (email && mail[k] === who)) delete mail[k]; });
+    const keep = ownersHere().concat(takeoffUsers());
+    const email = mine && who === storedUserId() ? String(storedUserEmail() || "").trim().toLowerCase() : "";
+    Object.keys(mail).forEach(function (k) { if (keep.indexOf(mail[k]) === -1 || (email && mail[k] === who)) delete mail[k]; });
     if (email) mail[hashOf(email)] = who;
     if (Object.keys(mail).length) localStorage.setItem(MAIL_KEY, JSON.stringify(mail)); else localStorage.removeItem(MAIL_KEY);
   } catch (e) { /* a hint only */ }
+}
+/** This person opened the takeoff app in the frame here: on the takeoff app's list, with the e-mail hint a sign-in
+    refused for a turned-off account finds them by (sb.js planOwnerFor) - so their drafts go too. */
+function noteFrameUser(who) {
+  if (!who) return;
+  noteTakeoffUser(who);
+  mendMail(who, true);
+}
+/** This person left a trace on this device: plans saved here, or the takeoff app opened in the frame here - the only
+    people a purge on lost prices is for (a page that reads a profile online asks this before it purges). */
+export function tracesHere(who) {
+  return !!who && (ownersHere().indexOf(who) !== -1 || takeoffUsers().indexOf(who) !== -1);
 }
 
 /* ── the records ───────────────────────────────────────────────────────── */
@@ -777,10 +798,17 @@ export async function remove(itemId, opts) {
   changed(key);
 }
 
-/** Everything this person saved on this device goes, at once (Sees prices taken away: plan files carry prices). */
+/** Everything this person saved on this device goes, at once (Sees prices taken away: plan files carry prices) - and,
+    when they opened the takeoff app in the frame here, what that app keeps on this site (its stores are the device's,
+    not one person's: they go only for a person who could have put prices in them - review PRICE-2). -> {plans: how
+    many plans went, unsent: how many of them had a save not yet in OneDrive (that work went too), takeoff: the takeoff
+    app's own stores were purged} (map/plan-library.js purgeText says so). */
 export async function purgeOwner(who) {
-  if (!who || !supported()) return 0;
+  if (!who || !supported()) return { plans: 0, unsent: 0, takeoff: false };
+  // read first, before anything here changes the list
+  const opened = takeoffUsers().indexOf(who) !== -1;
   const mine = (await getAll("plans")).filter((r) => r.owner === who);
+  const unsent = mine.filter(hasLocal).length;
   for (const r of mine) await remove(r.itemId, { owner: who, now: true });
   // and the older copies of theirs still kept for the takeoff app (no record points at them): every name is theirs by
   // its first part (map/plan-library.js fileNameFor)
@@ -794,11 +822,13 @@ export async function purgeOwner(who) {
     Object.keys(handed).forEach(function (n) { if (n.indexOf(mark) === 0) delete handed[n]; });
     return { key: "handed", value: handed };
   });
-  // a file still open in a writer (a download in a tab the browser froze) stays: the next online page tries again
+  // and what the takeoff app keeps of plans on this site (its drafts carry prices; contract C3): js/takeoff-stores.js -
+  // for a person who opened it here only
+  if (opened) { try { await purgeTakeoffStores(); } catch (e) { /* the next online page tries again (the hint stays) */ } }
+  // a file still open in a writer (a download in a tab the browser froze) stays: the next online page tries again (and
+  // the e-mail hints of the takeoff app's people go once its list went)
   noteOwner(who, await hasCopies(who));
-  // and what the takeoff app keeps of plans on this site (its drafts carry prices; contract C3): js/takeoff-stores.js
-  try { await purgeTakeoffStores(); } catch (e) { /* the next online page tries again (the hint stays) */ }
-  return mine.length;
+  return { plans: mine.length, unsent, takeoff: opened };
 }
 
 /* ── housekeeping ──────────────────────────────────────────────────────── */
@@ -851,8 +881,9 @@ export async function verifyFiles() {
 
 /* ── new versions ──────────────────────────────────────────────────────── */
 
-/** Ask OneDrive for the version of every saved plan of this person -> {checked, updates, gone, denied, revoked}. A
-    refusal of plans_list itself (Sees prices taken away) removes this person's plans from the device. */
+/** Ask OneDrive for the version of every saved plan of this person -> {checked, updates, gone, denied, revoked,
+    purged?}. A refusal of plans_list itself (Sees prices taken away) removes this person's plans from the device
+    (`purged`: purgeOwner's answer, `revoked` its plans). */
 export async function checkUpdates() {
   const who = owner();
   if (!who) throw err("signin", "Sign in first.");
@@ -866,7 +897,8 @@ export async function checkUpdates() {
       answer = await onedrive.plansList(ids);
     } catch (x) {
       if (x && x.code === "forbidden" && x.info && x.info.error === "forbidden") {
-        sum.revoked = await purgeOwner(who);
+        sum.purged = await purgeOwner(who);
+        sum.revoked = sum.purged.plans;
         return sum;
       }
       throw x;
@@ -975,8 +1007,9 @@ export async function maybeCheck(me, opts) {
     const who = owner();
     if (!who || (me && me.id && me.id !== who)) return;
     if (!planFilesFor(me)) {
-      // (and one who opened the takeoff app here: its drafts and kept copies carry prices too - js/takeoff-stores.js)
-      if (o.fresh && (ownersHere().indexOf(who) !== -1 || takeoffUsers().indexOf(who) !== -1)) await purgeOwner(who);
+      // (and one who opened the takeoff app here: its drafts and kept copies carry prices too - js/takeoff-stores.js);
+      // said on the page (Search, a project, home: nothing else there says it)
+      if (o.fresh && tracesHere(who)) tellPurge(await purgeOwner(who));
       return;
     }
     const mine = (await getAll("plans")).filter((r) => r.owner === who);
@@ -991,7 +1024,8 @@ export async function maybeCheck(me, opts) {
     const ch = await metaGet("checkHold:" + who, null);
     if (o.force || (dueForCheck(await lastChecked(), Date.now()) && !(ch && holding(ch.until, Date.now(), RETRY_CAP_MS)))) {
       try {
-        await checkUpdates();
+        const sum = await checkUpdates();
+        if (sum && sum.purged) { tellPurge(sum.purged); return; }
       } catch (e) {
         if (e && e.code === "offline") {
           if (!(HAS && navigator.onLine === false)) await metaPut("checkHold:" + who, { until: Date.now() + FLAT_HOLD_MS, n: 0 });
@@ -1026,7 +1060,7 @@ export function open(itemId, onDone, opts) {
   const o = opts || {};
   const frame = usesFrame();
   const offer = frame && saveBackFor(o.me);
-  if (frame) noteTakeoffUser(owner());
+  if (frame) noteFrameUser(owner());
   const which = (c) => (hasLocal(c) ? c.local.file : c.file);
   // the frame's app reads the file it is handed for as long as it is open: held until the frame closes (holdForFrame)
   let closeNow = function () {};
@@ -1070,7 +1104,7 @@ export function open(itemId, onDone, opts) {
 export function openOnline(projectId, number, file, onDone, opts) {
   let version = null;
   let stale = false;                        // saved again in OneDrive since it was opened: no fresh link will match
-  if (usesFrame()) noteTakeoffUser(owner());
+  if (usesFrame()) noteFrameUser(owner());
   openInTakeoff(async function () {
     const l = await onedrive.planLink(projectId, file.id);
     if (!(Number(l.size) > 0)) throw err("no_size", "OneDrive did not say how big this file is.");
@@ -1317,6 +1351,14 @@ function news(key, state, extra) {
 function toastOf(text, kind) {
   const t = HAS && window.DCR2 && window.DCR2.toast;
   if (typeof t === "function") { try { t(text, { kind: kind || "info", ms: 12000 }); } catch (e) { /* words only */ } }
+}
+
+/** A purge on lost prices said on the page (map/plan-library.js purgeText: the plans, the saves not yet in OneDrive,
+    the takeoff app's own stores - review LW-4): on the frame's bar while it is open, else a toast. */
+function tellPurge(p) {
+  const text = purgeText(p, deviceWord(here()));
+  if (!text) return;
+  if (frameIsOpen()) frameSay(text, "warn"); else toastOf(text, "warn");
 }
 
 /* The screen kept awake while a save is sent (a phone that sleeps stops the page, and with it the upload). */

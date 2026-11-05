@@ -1387,5 +1387,126 @@ test("a turned-off account's purge also finds a person who only opened the takeo
   assert.match(sbjs, /users = JSON\.parse\(localStorage\.getItem\("dcr2-takeoff-users"\) \|\| "\[\]"\);/);
   assert.match(sbjs, /if \(!id \|\| \(owners\.indexOf\(id\) === -1 && users\.indexOf\(id\) === -1\)\) return;/);
   assert.match(read("js/pages/plan-buttons.js"), /\["dcr2-plan-owners", "dcr2-takeoff-users"\]\.forEach/);
-  assert.match(read("js/plan-library.js"), /if \(o\.fresh && \(ownersHere\(\)\.indexOf\(who\) !== -1 \|\| takeoffUsers\(\)\.indexOf\(who\) !== -1\)\) await purgeOwner\(who\);/);
+  assert.match(read("js/plan-library.js"), /if \(o\.fresh && tracesHere\(who\)\) tellPurge\(await purgeOwner\(who\)\);/);
+  assert.match(read("js/plan-library.js"), /return !!who && \(ownersHere\(\)\.indexOf\(who\) !== -1 \|\| takeoffUsers\(\)\.indexOf\(who\) !== -1\);/);
+});
+
+/* ── round A of the review (2026-11-04): the purge's reach and words, the e-mail hint of the takeoff app's people ── */
+
+const HINTS = ["dcr2-plan-owners", "dcr2-plan-owner-mail", "dcr2-takeoff-users", "ptt.recent.v1", "ptt.keptPlans.v1"];
+/** A clean set of hints, and no takeoff-app database on the made-up phone. */
+function freshHints() {
+  HINTS.forEach((k) => DEV.store.removeItem(k));
+  DEV.idb.dbs.delete("ptt-drafts");
+  DEV.idb.dbs.delete("ptt-plans-archive");
+}
+/** A draft of the takeoff app's in ptt-drafts (its connection closed again, as when its frame closed). */
+function putDraft(key, value) {
+  return new Promise((done) => {
+    const r = DEV.idb.open("ptt-drafts", 1);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains("drafts")) r.result.createObjectStore("drafts"); };
+    r.onsuccess = () => { const t = r.result.transaction("drafts", "readwrite"); t.objectStore("drafts").put(value, key); t.oncomplete = () => { r.result.close(); done(); }; };
+  });
+}
+const signedIn = (id, email) => DEV.store.setItem("dcr2-auth", JSON.stringify({ user: { id, email: email || id + "@example.test" } }));
+
+test("a purge for a person with no trace here takes nothing of anyone's - the takeoff app's stores and the other people's ids stay; for a person who opened the app here they go (PRICE-2)", async () => {
+  await devicePlan();                                        // u1's plan, saved here
+  saveWorld();
+  freshHints();
+  // A, a price person, worked in the frame here and left unsaved work: only the takeoff app's draft has it
+  await putDraft("A900 Bid.takeoff|1500", { by: "A", items: [{ unit_cost: 4.25 }] });
+  DEV.store.setItem("dcr2-takeoff-users", JSON.stringify(["uA"]));
+  DEV.store.setItem("ptt.recent.v1", "[\"A900 Bid.takeoff\"]");
+  // B (no prices, never saved a plan here, never opened the app) reaches the Plans Library page: B's own purge
+  signedIn("uB");
+  assert.equal(LIB.tracesHere("uB"), false, "nothing of B's here");
+  assert.deepEqual(await LIB.purgeOwner("uB"), { plans: 0, unsent: 0, takeoff: false });
+  await LIB.maybeCheck({ id: "uB", role: "lead", active: true, can_see_prices: false }, { fresh: true });
+  assert.deepEqual(DEV.idb.rows("ptt-drafts", "drafts"), [{ by: "A", items: [{ unit_cost: 4.25 }] }], "A's unsaved work stays");
+  assert.deepEqual([DEV.store.getItem("dcr2-takeoff-users"), DEV.store.getItem("ptt.recent.v1")], ["[\"uA\"]", "[\"A900 Bid.takeoff\"]"], "A's id and the app's own keys stay");
+  assert.ok(ROW(), "u1's plan is u1's: untouched");
+  // the page asks the same before it purges
+  assert.match(read("js/pages/plans-library.js"), /if \(fresh && L\.supported\(\) && L\.tracesHere\(L\.owner\(\)\)\) \{ try \{ gone = await L\.purgeOwner\(L\.owner\(\)\); \}/);
+  // A, once A's Sees prices is turned off: A opened the app here, so its stores go (everyone's: the device's)
+  signedIn("uA");
+  assert.equal(LIB.tracesHere("uA"), true);
+  assert.deepEqual(await LIB.purgeOwner("uA"), { plans: 0, unsent: 0, takeoff: true });
+  assert.deepEqual([DEV.idb.dbs.has("ptt-drafts"), DEV.store.getItem("dcr2-takeoff-users"), DEV.store.getItem("ptt.recent.v1")], [false, null, null]);
+  signedIn("u1", "made-up@example.test");
+});
+
+test("a person who only opened the takeoff app in the frame here (no plan kept, say a device with no room: online) is found by e-mail when a turned-off account's sign-in is refused - their drafts go (PRICE-3)", async () => {
+  const { planOwnerFor, forgetSavedPlans } = await import("../site/js/sb.js");
+  await devicePlan();
+  saveWorld();
+  freshHints();
+  DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data.clear();      // nothing of u1's saved here
+  signedIn("u1", "Made-Up@Example.test");
+  // opened online in the frame (no room to keep it): nothing saved, but the app's drafts may now carry u1's prices
+  const said = [];
+  LIB.openOnline("7", "A900", { id: F1.id }, (r) => said.push(r), { title: F1.name });
+  assert.deepEqual(JSON.parse(DEV.store.getItem("dcr2-takeoff-users")), ["u1"]);
+  await putDraft("A900 Bid.takeoff|1500", { items: [{ unit_cost: 9.5 }] });
+  assert.equal(planOwnerFor(" made-up@example.TEST "), "u1", "the e-mail hint names them");
+  // a page with no plans of theirs mends the hints (noteOwner(u1, false)): kept while they are on the takeoff app's list
+  await LIB.maybeCheck({ id: "u1", role: "manager", active: true, can_see_prices: true }, {});
+  assert.equal(planOwnerFor("made-up@example.test"), "u1");
+  // and the same from a plan opened from the device (open(): the frame)
+  freshHints();
+  LIB.open(F1.id, () => {}, { title: F1.name });
+  assert.equal(planOwnerFor("made-up@example.test"), "u1");
+  await putDraft("A900 Bid.takeoff|1500", { items: [{ unit_cost: 9.5 }] });
+  // the account is turned off and its session has lapsed: the refused sign-in (user_banned) finds whose they were
+  await forgetSavedPlans(planOwnerFor("made-up@example.test"));
+  assert.equal(DEV.idb.dbs.has("ptt-drafts"), false, "the drafts with u1's prices went");
+  assert.deepEqual([DEV.store.getItem("dcr2-takeoff-users"), planOwnerFor("made-up@example.test")], [null, null], "and the hints with them");
+  signedIn("u1", "made-up@example.test");
+});
+
+test("the purge's words (LW-4): the plans, the saves not yet in OneDrive deleted with them, the takeoff app's own - said on the page that purged (a toast on Search, a project, home; the Plans Library's own)", async () => {
+  assert.equal(lib.purgeText(null), "");
+  assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: false }, "iPad"), "");
+  assert.equal(lib.purgeText({ plans: 2, unsent: 1, takeoff: true }, "iPad"), "Your account no longer sees prices, so the 2 plans you had saved on this iPad were removed from it. " +
+    "1 save of yours that was not in OneDrive yet was deleted with them. What the takeoff app kept on this iPad (unsaved work, kept plans) was removed too.");
+  assert.equal(lib.purgeText({ plans: 1, unsent: 1, takeoff: false }), "Your account no longer sees prices, so the 1 plan you had saved on this device was removed from it. " +
+    "1 save of yours that was not in OneDrive yet was deleted with it.");
+  assert.equal(lib.purgeText({ plans: 3, unsent: 2, takeoff: false }, "iPhone").split(". ")[1], "2 saves of yours that were not in OneDrive yet were deleted with them.");
+  assert.equal(lib.purgeText({ plans: 0, unsent: 0, takeoff: true }, "iPad"), "Your account no longer sees prices, so what the takeoff app kept on this iPad (unsaved work, kept plans) was removed.");
+  // the made-up phone: a save waiting here, then Sees prices taken away (a page that read the profile online)
+  await devicePlan();
+  saveWorld();
+  freshHints();
+  DEV.nav.onLine = false;
+  await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
+  DEV.nav.onLine = true;
+  DEV.store.setItem("dcr2-takeoff-users", JSON.stringify(["u1"]));
+  const toasts = [];
+  globalThis.DCR2 = { toast: (t, o) => toasts.push([t, o && o.kind]) };
+  try {
+    await LIB.maybeCheck({ id: "u1", role: "manager", active: true, can_see_prices: false }, { fresh: true });
+  } finally { delete globalThis.DCR2; }
+  assert.deepEqual(toasts, [["Your account no longer sees prices, so the 1 plan you had saved on this iPad was removed from it. 1 save of yours that was not in " +
+    "OneDrive yet was deleted with it. What the takeoff app kept on this iPad (unsaved work, kept plans) was removed too.", "warn"]]);
+  // the broker's own refusal (plans_list 403: the check of a page whose profile was older) says what went too
+  const refused = async () => {
+    await devicePlan();
+    freshHints();
+    DEV.nav.onLine = false;
+    await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
+    DEV.nav.onLine = true;
+    useClient({ functions: { invoke: async (name, x) => (x.body.op === "plans_list" ? http(403, { error: "forbidden", message: "made up" }) : http(400, { error: "invalid" })) } });
+  };
+  await refused();
+  toasts.length = 0;
+  globalThis.DCR2 = { toast: (t, o) => toasts.push([t, o && o.kind]) };
+  try {
+    await LIB.maybeCheck({ id: "u1", role: "manager", active: true, can_see_prices: true }, { force: true });
+  } finally { delete globalThis.DCR2; }
+  assert.deepEqual([toasts, PLANS().length], [[[lib.purgeText({ plans: 1, unsent: 1, takeoff: false }, "iPad"), "warn"]], 0], "said on the page whose check it was");
+  await refused();
+  const s = await LIB.checkUpdates();
+  assert.deepEqual([s.revoked, s.purged], [1, { plans: 1, unsent: 1, takeoff: false }]);
+  assert.match(read("js/pages/plans-library.js"), /say\(purgeText\(s\.purged, deviceWord\(window\)\) \|\|/);
+  assert.match(read("js/pages/plans-library.js"), /const said = purgeText\(gone, deviceWord\(window\)\);/);
 });

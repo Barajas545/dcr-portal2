@@ -22,7 +22,7 @@
 
 import { boot, el, esc, confirmBox } from "./shell.js";
 import { planFilesFor, deviceWord } from "../map/plans.js";
-import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh, progressOf, progressHtml, saveText, sendBar, hasLocal } from "../map/plan-library.js";
+import { folderLabel, fmtSize, fmtAgo, statusText, readyFresh, progressOf, progressHtml, saveText, sendBar, hasLocal, purgeText } from "../map/plan-library.js";
 import { handoffProblem, lastReady, iosHomeRefused, usesFrame, IOS_HOME } from "../plan-handoff.js";
 import * as L from "../plan-library.js";
 
@@ -234,7 +234,7 @@ async function checkNow() {
     const s = await L.checkUpdates();
     await L.clearHolds();
     if (s.revoked) {
-      say("Your account no longer opens plan files, so the plans saved here were removed from this device.", "warn");
+      say(purgeText(s.purged, deviceWord(window)) || "Your account no longer opens plan files, so the plans saved here were removed from this device.", "warn");
       return;
     }
     const bits = ["Checked " + s.checked + " plan" + (s.checked === 1 ? "" : "s") + ":"];
@@ -298,12 +298,14 @@ async function main() {
   const fresh = !!(window.DCR2 && window.DCR2.offline === false);
   if (!planFilesFor(state.me)) {
     // Sees prices taken away: what this person saved here goes (plan files carry prices) - once the profile was read
-    // online, never on an old copy of it
-    let gone = 0;
-    if (fresh && L.supported()) { try { gone = await L.purgeOwner(L.owner()); } catch (e) { gone = 0; } }
+    // online, never on an old copy of it, and only for a person with a trace here (plans saved, the takeoff app opened:
+    // the takeoff app's stores are the device's - anyone else reaching this page takes nothing from anyone; PRICE-2)
+    let gone = null;
+    if (fresh && L.supported() && L.tracesHere(L.owner())) { try { gone = await L.purgeOwner(L.owner()); } catch (e) { gone = null; } }
     if (fresh) import("../plan-pictures.js").then(function (P) { return P.forgetAll(L.owner()); }).catch(function () { /* none kept */ });
+    const said = purgeText(gone, deviceWord(window));
     el("libList").innerHTML = '<div class="lib-empty">The Plans Library is for the people who see prices: plan files carry prices.' +
-      (gone ? "<br>The " + gone + " plan" + (gone === 1 ? "" : "s") + " you had saved on this device " + (gone === 1 ? "was" : "were") + " removed." : "") + "</div>";
+      (said ? "<br>" + esc(said) : "") + "</div>";
     el("libBar").textContent = "";
     return;
   }

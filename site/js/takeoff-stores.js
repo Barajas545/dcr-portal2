@@ -14,7 +14,8 @@
                                        /takeoff/ opened as a tab of its own on a computer's Chrome or Edge writes it here.
    (takeoff-web's own list of them: its iPad review notes for the portal, 2026-11-04.)
    These are the DEVICE's, not one person's (the app has no sign-in): on a shared tablet they go for everyone - the
-   only way the prices in them leave with the person who lost them. Its settings and its own price catalog
+   only way the prices in them leave with the person who lost them - but only for a person on USERS_KEY below, one who
+   could have put prices in them (js/plan-library.js purgeOwner; review PRICE-2). Its settings and its own price catalog
    ("ptt.catalog.user.v1") are left as they are (no plan's detail; the owner decides).
 
    Whose: localStorage USERS_KEY holds only the user ids that opened the takeoff app in the frame here (no file, name
