@@ -46,18 +46,32 @@
    * planLink(projectId, itemId)     op "plan_link" -> {url, id, name, folder, size, modified, version}: one of them and a
                                      download link (minutes; kept in memory only: js/plan-library.js reads it in ranges
                                      into this device's storage, or the takeoff app opens it over ranges);
-   * planSaveSession(o)              op "plan_save_session" {itemId, version, size, modified?, mode?} (the iPad's save
-                                     back, owner decisions Q1-Q3 of 2026-11-04; contract C1) -> {mode: "replace" |
-                                     "copy", uploadUrl, ticket, name, chunkBytes, chunkMultiple, maxChunkBytes, maxBytes,
-                                     expiresAt}: upload_session's answer plus the mode the broker chose - "replace" (the
-                                     plan itself, by its id, while OneDrive still holds `version`) or "copy" (a separate
-                                     file "<stem> - iPad <date> <time>.takeoff" beside it: someone saved the plan
-                                     meanwhile). The upload URL (https on ONEDRIVE_HOST, checked) is kept in memory only.
-                                     Only an admin, or Sees prices AND "Can upload to OneDrive" (403 forbidden);
-   * planSaveDone(projectId, itemId, ticket)  op "plan_save_done" -> {saved, mode, id, name, size, modified, version}:
-                                     the file as plans_list lists it now (its version in plans_list's form: "sm:..."
-                                     while OneDrive has no hash of the new bytes yet); 409 not_saved when OneDrive did
-                                     not get the whole file (send it again);
+   * planSaveSession(o)              op "plan_save_session" {itemId, version, size, modified?, mode?, name?} (the iPad's
+                                     save back, owner decisions Q1-Q3 of 2026-11-04; contract C1, addendum 2 C1b) ->
+                                     {mode: "replace" | "copy", commit?: "broker", uploadUrl, ticket, name, chunkBytes,
+                                     chunkMultiple, maxChunkBytes, maxBytes, expiresAt}: upload_session's answer plus the
+                                     mode the broker chose - "replace" (the plan itself, by its id, while OneDrive still
+                                     holds `version`; then also commit "broker": the session is DEFERRED - its last chunk
+                                     commits nothing, and planSaveCommit does, onto that version only) or "copy" (a
+                                     separate file "<stem> - iPad <date> <time>.takeoff" beside it, committed by its last
+                                     chunk: someone saved the plan meanwhile - or an office desktop save made the plan a
+                                     new item, found by `name`: the plan's file name as the record has it). The upload
+                                     URL (https on ONEDRIVE_HOST, checked) is kept in memory only. Only an admin, or Sees
+                                     prices AND "Can upload to OneDrive" (403 forbidden);
+   * planSaveCommit(o)               op "plan_save_commit" {itemId, ticket, uploadUrl, hash?} (addendum 2 C1b.2): after
+                                     the last chunk of a commit "broker" session - the broker walks OneDrive afresh and
+                                     commits the upload onto the plan only while it still has the session's tag, else
+                                     the SAME upload as the copy beside it -> planSaveDone's answer (mode "replace" or
+                                     "copy"); 409 plan_changed {retry: "copy"}: Microsoft would not commit it as the copy,
+                                     the session is dropped - send the save again with mode "copy" and the old base. The
+                                     upload URL goes to the broker (its own sessions' only: it checks it against the
+                                     ticket) and nowhere else;
+   * planSaveDone(projectId, itemId, ticket, hash?)  op "plan_save_done" -> {saved, mode, id, name, size, modified,
+                                     version}: the file as plans_list lists it now (its version in plans_list's form:
+                                     "sm:..." while OneDrive has no hash of the new bytes yet); 409 not_saved when
+                                     OneDrive did not get the whole file (send it again). `hash`: the save's quickXorHash
+                                     (js/quickxor.js) - with OneDrive's own, the broker's proof (a byte-identical re-save
+                                     is saved, an office save of the same size is not); the ticket settles for 30 days;
    * call(body)                    any op; errors are {code, status, message, field, info, retryAfter}: the
                                      broker's own codes (its messages are a fixed map), "not_deployed" (the gateway's
                                      own 404: no such function), the 503s by name, "offline" (no answer).
@@ -81,8 +95,8 @@ export const SELF_TEST_PROJECT = "A000T2";
 export const ITEM_ID = /^[A-Za-z0-9!_.-]{8,128}$/;
 
 // the broker's own error codes (handler.ts ERRORS): a 404 whose body carries one is the broker's answer, not the gateway's
-// (not_saved: plan_save_done's "OneDrive did not get the whole file"; plan_changed is reserved by the contract - a plan
-// that changed since the device got it becomes a copy, never this error)
+// (not_saved: plan_save_done's / plan_save_commit's "OneDrive did not get the whole file"; plan_changed: plan_save_commit's
+// "the plan changed while the save was sent" with {retry: "copy"} - the save is sent again as a separate file)
 export const CONTRACT = Object.freeze(["invalid", "unauthorized", "forbidden", "not_downloadable", "not_found", "method_not_allowed",
   "other_folder", "not_a_folder", "not_this_upload", "too_large", "file_type", "server_error", "onedrive_failed",
   "onedrive_not_configured", "onedrive_not_authorized", "busy", "projects_root_missing", "onedrive_full",
@@ -356,10 +370,15 @@ export async function planLink(projectId, itemId) {
   return Object.assign({ url: String(d.url) }, f);
 }
 
-/* ── the iPad's save back (ops plan_save_session, plan_save_done; owner decisions Q1-Q3, 2026-11-04) ── */
+/* ── the iPad's save back (ops plan_save_session, plan_save_commit, plan_save_done; owner decisions Q1-Q3, 2026-11-04;
+   contract addendum 2 C1b) ── */
+
+/** A quickXorHash as Graph reports it (base64, 28 characters) - the only form the broker takes (else not sent). */
+const QX = /^[A-Za-z0-9+/]{27}=$/;
 
 /** An upload session for a plan saved on this device (o: {projectId, itemId, version: the version the device got,
-    size, modified?: Date | ISO, mode?: "copy"}) - see the header. "replace" is the broker's default and is not sent. */
+    size, modified?: Date | ISO, mode?: "copy", name?: the plan's file name as the record has it}) - see the header.
+    "replace" is the broker's default and is not sent. */
 export async function planSaveSession(o) {
   if (typeof o.itemId !== "string" || !ITEM_ID.test(o.itemId)) throw failure("That plan file was not found.", "not_found", 404);
   const body = { op: "plan_save_session", project_id: pidOf(o.projectId), item_id: o.itemId, version: String(o.version || ""), size: Number(o.size) };
@@ -368,12 +387,15 @@ export async function planSaveSession(o) {
     if (!isNaN(t.getTime())) body.modified = t.toISOString();
   }
   if (o.mode === "copy") body.mode = "copy";
+  // the way back to the plan when an office save made it a new item (the broker finds the one plan of that name)
+  if (typeof o.name === "string" && o.name && Array.from(o.name).length <= 255) body.name = o.name;
   const d = (await call(body)) || {};
   if (!linkOk(d.upload_url) || !/^https:/.test(String(d.upload_url))) throw failure("OneDrive sent an upload address this page does not use.", "bad_link", 502);
   if (typeof d.ticket !== "string" || !d.ticket) throw failure("OneDrive could not do that just now.", "failed", 502);
   if (d.mode !== "replace" && d.mode !== "copy") throw failure("OneDrive could not do that just now.", "failed", 502);
-  return {
+  return Object.assign({
     mode: d.mode,
+  }, d.mode === "replace" && d.commit === "broker" ? { commit: "broker" } : {}, {
     uploadUrl: String(d.upload_url),
     ticket: d.ticket,
     name: typeof d.name === "string" && d.name ? d.name : "",
@@ -382,19 +404,37 @@ export async function planSaveSession(o) {
     maxChunkBytes: Number(d.max_chunk_bytes) || 0,
     maxBytes: Number(d.max_bytes) || 0,
     expiresAt: typeof d.expires_at === "string" ? d.expires_at : null,
-  };
+  });
 }
 
-/** OneDrive has the whole save: the file as plans_list lists it now (see the header). `itemId`: what the upload's last
-    chunk answered (a replace: the plan's own id). */
-export async function planSaveDone(projectId, itemId, ticket) {
-  if (typeof itemId !== "string" || !ITEM_ID.test(itemId)) throw failure("OneDrive did not say which file it made.", "failed", 502);
-  const d = (await call({ op: "plan_save_done", project_id: pidOf(projectId), item_id: itemId, ticket: String(ticket || "") })) || {};
+/** plan_save_done's / plan_save_commit's answer: the saved file as plans_list lists it now. */
+function savedOf(d) {
   const f = planFileOf(Object.assign({}, d, { folder: "" }));
   if (d.saved !== true || !f || (d.mode !== "replace" && d.mode !== "copy") || typeof f.size !== "number") {
     throw failure("OneDrive did not say the plan was saved.", "failed", 502);
   }
   return { saved: true, mode: d.mode, id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version };
+}
+
+/** OneDrive has the whole save: the file as plans_list lists it now (see the header). `itemId`: what the upload's last
+    chunk answered (a replace: the plan's own id); `hash`: the save's quickXorHash (sent only in its form). */
+export async function planSaveDone(projectId, itemId, ticket, hash) {
+  if (typeof itemId !== "string" || !ITEM_ID.test(itemId)) throw failure("OneDrive did not say which file it made.", "failed", 502);
+  const body = { op: "plan_save_done", project_id: pidOf(projectId), item_id: itemId, ticket: String(ticket || "") };
+  if (typeof hash === "string" && QX.test(hash)) body.hash = hash;
+  return savedOf((await call(body)) || {});
+}
+
+/** Every byte of a commit "broker" session is in OneDrive's upload session: the broker commits it (see the header) ->
+    planSaveDone's answer. o: {projectId, itemId: the plan's id (the session's), ticket, uploadUrl: the session's own -
+    from this page's memory, never stored -, hash?}. */
+export async function planSaveCommit(o) {
+  if (typeof o.itemId !== "string" || !ITEM_ID.test(o.itemId)) throw failure("That plan file was not found.", "not_found", 404);
+  // only ever the session's own address on the owner's OneDrive host (the broker checks it is this ticket's too)
+  if (!linkOk(o.uploadUrl) || !/^https:/.test(String(o.uploadUrl))) throw failure("OneDrive sent an upload address this page does not use.", "bad_link", 502);
+  const body = { op: "plan_save_commit", project_id: pidOf(o.projectId), item_id: o.itemId, ticket: String(o.ticket || ""), upload_url: String(o.uploadUrl) };
+  if (typeof o.hash === "string" && QX.test(o.hash)) body.hash = o.hash;
+  return savedOf((await call(body)) || {});
 }
 
 /* ── the plan buttons (op plans_for) ── */

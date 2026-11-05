@@ -230,7 +230,7 @@ test("repo/onedrive: the save's upload address must be https on the owner's OneD
     name: "A900 Bid - iPad 2026-11-04 1030.takeoff", size: 2000, modified: "2026-11-04T18:30:00Z", version: "sm:2000:2026-11-04T18:30:00.000Z" }, "nothing more");
 });
 
-test("repo/onedrive: the save's errors - not_saved (send it again), too_large with its limit, forbidden naming the switch, the takeoff folder's grant still read-only; plan_changed is reserved", async () => {
+test("repo/onedrive: the save's errors - not_saved (send it again), too_large with its limit, forbidden naming the switch, the takeoff folder's grant still read-only; plan_changed is in the contract (plan_save_commit)", async () => {
   assert.ok(onedrive.CONTRACT.includes("not_saved") && onedrive.CONTRACT.includes("plan_changed"));
   const cases = [
     [http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." }), "not_saved", 409, /send it again/],
@@ -252,4 +252,67 @@ test("repo/onedrive: the save's errors - not_saved (send it again), too_large wi
   }
   stub(() => http(413, { error: "too_large", message: "x", max_bytes: 4294967296 }));
   assert.equal((await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:A", size: 1 }))).info.max_bytes, 4294967296);
+});
+
+const QXH = "PbG6uWfEwQF5DpbKoNh7NwBgQ+0=";
+test("repo/onedrive (contract addendum 2): the plan's name to the session, commit 'broker' read for a replace only; plan_save_commit's exact body; the hash in its form only, to done and commit", async () => {
+  const deferred = Object.assign({}, SESSION, { commit: "broker" });
+  const calls = stub((b) => (b.op === "plan_save_session" ? ok(b.mode === "copy" ? Object.assign({}, deferred, { mode: "copy", name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }) : deferred)
+    : b.op === "plan_save_commit" || b.op === "plan_save_done" ? ok(DONE) : http(400, { error: "invalid" })));
+  const s = await onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 2000, name: "A900 Bid.takeoff" });
+  assert.deepEqual(s, { mode: "replace", commit: "broker", uploadUrl: UP, ticket: "v1.plan.sealed", name: "A900 Bid.takeoff", chunkBytes: 10485760,
+    chunkMultiple: 327680, maxChunkBytes: 62586880, maxBytes: 4294967296, expiresAt: "2026-11-05T00:00:00Z" });
+  // a copy never carries commit "broker" (its last chunk commits it), whatever an answer says
+  const c = await onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 2000, mode: "copy", name: "A900 Bid.takeoff" });
+  assert.equal(c.mode, "copy");
+  assert.ok(!("commit" in c), "a copy is committed by its last chunk");
+  // a name out of the broker's shape is not sent (the session goes on without it)
+  await onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 9, name: "x".repeat(256) });
+  await onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 9, name: "" });
+  const m = await onedrive.planSaveCommit({ projectId: "7", itemId: PLAN, ticket: "v1.plan.sealed", uploadUrl: UP, hash: QXH });
+  assert.deepEqual(m, { saved: true, mode: "replace", id: PLAN, name: "A900 Bid.takeoff", size: 2000, modified: "2026-11-04T18:30:00Z",
+    version: "sm:2000:2026-11-04T18:30:00.000Z" });
+  await onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP, hash: "not a hash" });
+  await onedrive.planSaveDone(7, PLAN, "t", QXH);
+  await onedrive.planSaveDone(7, PLAN, "t", "AAAA");
+  assert.deepEqual(calls.map((x) => x.body), [
+    { op: "plan_save_session", project_id: 7, item_id: PLAN, version: "qx:AAA", size: 2000, name: "A900 Bid.takeoff" },
+    { op: "plan_save_session", project_id: 7, item_id: PLAN, version: "qx:AAA", size: 2000, mode: "copy", name: "A900 Bid.takeoff" },
+    { op: "plan_save_session", project_id: 7, item_id: PLAN, version: "qx:AAA", size: 9 },
+    { op: "plan_save_session", project_id: 7, item_id: PLAN, version: "qx:AAA", size: 9 },
+    { op: "plan_save_commit", project_id: 7, item_id: PLAN, ticket: "v1.plan.sealed", upload_url: UP, hash: QXH },
+    { op: "plan_save_commit", project_id: 7, item_id: PLAN, ticket: "t", upload_url: UP },
+    { op: "plan_save_done", project_id: 7, item_id: PLAN, ticket: "t", hash: QXH },
+    { op: "plan_save_done", project_id: 7, item_id: PLAN, ticket: "t" },
+  ]);
+  // the upload address goes to the broker only when it is one this page uses (https on the owner's host)
+  for (const url of ["https://evil.example.com/up", "http://" + HOST + "/up", "", null]) {
+    assert.equal((await refusal(onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: url }))).code, "bad_link", String(url));
+  }
+  assert.equal((await refusal(onedrive.planSaveCommit({ projectId: 7, itemId: "../x", ticket: "t", uploadUrl: UP }))).code, "not_found");
+  assert.equal(calls.length, 8, "nothing sent for those");
+  // the commit's answer is read as plan_save_done's (a copy of the same upload: its own id and name)
+  stub(() => ok(Object.assign({}, DONE, { mode: "copy", id: "01FAKECOPY0001", name: "A900 Bid - iPad 2026-11-04 1030.takeoff" })));
+  assert.deepEqual((await onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP })).id, "01FAKECOPY0001");
+  for (const bad of [{ saved: false }, { mode: "x" }, null]) {
+    stub(() => ok(bad === null ? null : Object.assign({}, DONE, bad)));
+    assert.equal((await refusal(onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP }))).code, "failed", JSON.stringify(bad));
+  }
+});
+
+test("repo/onedrive: plan_save_commit's errors - plan_changed with {retry: 'copy'} (send it again as a copy), not_saved, the ticket or the address refused (invalid, its field)", async () => {
+  const cases = [
+    [http(409, { error: "plan_changed", message: "OneDrive's plan changed while the save was sent: it is sent again as a separate file.", retry: "copy" }), "plan_changed", 409, /sent again as a separate file/],
+    [http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." }), "not_saved", 409, /send it again/],
+    [http(400, { error: "invalid", message: "That is not the upload URL of this save's session.", field: "upload_url" }), "invalid", 400, /upload URL/],
+    [http(400, { error: "invalid", message: "This save's ticket is not valid or has run out: save the plan again.", field: "ticket" }), "invalid", 400, /ticket/],
+  ];
+  for (const [answer, code, status, words] of cases) {
+    stub(() => answer);
+    const e = await refusal(onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP, hash: QXH }));
+    assert.deepEqual([e.code, e.status], [code, status], code);
+    assert.match(e.message, words, code);
+    if (code === "plan_changed") assert.equal(e.info.retry, "copy", "the broker's word to send it again as a copy");
+    if (code === "invalid") assert.ok(e.field === "upload_url" || e.field === "ticket", "its field");
+  }
 });

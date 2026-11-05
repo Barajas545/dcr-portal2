@@ -355,7 +355,11 @@ test("the Plans Library offers a save only in the frame, to a person who may sav
   assert.match(worker, /if \(made && dir\) \{ try \{ await dir\.removeEntry\(m\.file\); \}/, "nothing left of a failed copy");
   // the upload address in memory only; the ticket (the broker's sealed word) kept with the save in IndexedDB
   assert.ok(!/localStorage\.setItem\([^)]*(ticket|uploadUrl|upload_url)/i.test(lib));
-  assert.ok(!/uploadUrl/.test(lib.replace(/\(j\.session && j\.session\.name\)/g, "")), "the library never touches an upload address itself");
+  // its one use: a deferred replace's commit, handed from the uploader's job (memory) to the broker (plan_save_commit) -
+  // never written anywhere (local.sends keeps the ticket, never the address)
+  assert.equal(lib.replace(/\(j\.session && j\.session\.name\)/g, "").split("\n").filter((l) => /uploadUrl/.test(l)).length, 1, "the library touches an upload address on one line only");
+  assert.match(lib, /return await onedrive\.planSaveCommit\(\{ projectId: j\.projectId, itemId: m\.itemId, ticket: j\.session\.ticket, uploadUrl: j\.session\.uploadUrl, hash: m\.hash \}\);/,
+    "the commit's, from the job's session to the broker");
   // the pages: the person is offered save back through openOnDevice (me), and Send now / Retry
   assert.match(code(read("js/pages/plan-buttons.js")), /L\.sendSaved\(id, \{ manual: true \}\)/);
   assert.match(code(read("js/pages/plans-library.js")), /L\.sendSaved\(id, \{ manual: true \}\)/);

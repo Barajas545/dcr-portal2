@@ -1316,15 +1316,25 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
         and nothing downloads over it or retires it (needsWork, run);
      3. the app is told "kept" - only then does it mark the project saved and drop its draft.
    Then it is SENT (sendSaved) by the Files tab's uploader (js/onedrive-upload.js createUploader) over the broker's
-   plan_save_session / plan_save_done: chunks straight from this device's file to OneDrive's upload address (in this
-   page's memory only), the screen held awake (a Wake Lock) and the rows saying "keep this screen open". A send that
+   plan_save_session / plan_save_commit / plan_save_done: chunks straight from this device's file to OneDrive's upload
+   address (in this page's memory only), the screen held awake (a Wake Lock) and the rows saying "keep this screen
+   open". A replace is DEFERRED (contract addendum 2, C1b; review Q3-2, BRK-1): its last chunk commits nothing, and
+   the broker's plan_save_commit commits it only onto the version the session was made for - an office save that
+   landed while it went up makes the same upload a copy instead (or, when Microsoft will not, plan_changed: it is sent
+   again at once as a copy). The session names the plan's file name too, so a plan the office's desktop app saved as a
+   new item (the old one moved into Backups) is found by its name - a copy beside it (review Q3-1, BRK-4). The save's
+   quickXorHash (local.hash, from the spool worker) goes to the commit and to plan_save_done: with OneDrive's own hash
+   it is the broker's proof - a byte-identical re-save is saved, an office save of the same size is not (BRK-2, BRK-5).
+   A send that
    does not finish waits (5 min, doubling, up to 6 h) and goes again by itself while a portal page that may reach
    OneDrive is open (maybeCheck: Search, a project, the Plans Library), or at the person's Retry. Once OneDrive has it
    (adoptSent): a REPLACE - the saved bytes are the plan's version now (no download), the old copy retired (a week's
    grace when handed to the app lately); a COPY - someone saved the plan in the office after this device got it (Q3):
    the plan stays as it was, the save becomes a record of its own for the copy, and the person is told (copyTold).
    A session whose end this device never heard (the page closed after the last byte) is settled with its ticket first
-   (settle: plan_save_done), so a save that landed is never sent twice, nor made into a copy of itself.
+   (settle: plan_save_done, with the save's hash; the broker takes the ticket for 30 days - review BRK-3, TICKET-1,
+   LW-7 - and past that the save is looked for by its hash alone), so a save that landed is never sent twice, nor made
+   into a copy of itself.
 
    While a save is kept or sent the frame's Close asks first (plan-frame.js guard) and leaving the page asks too. */
 
@@ -1357,7 +1367,8 @@ function sendError(x) {
       ". It stays on this device.", { status: x.status });
   }
   if (code === "not_found") {
-    return err("not_found", "This plan is no longer in its project's folder in OneDrive, so the save cannot be sent there. It stays on this device.", { status: x.status });
+    // the broker looked by the item and by the plan's name (review Q3-1): neither is one plan of the project's folder now
+    return err("not_found", "OneDrive no longer has this plan in its project's folder (not as it was, and not one file of its name), so the save cannot be sent there. It stays on this device: open it and use Save a copy to Files in the takeoff app.", { status: x.status });
   }
   // the takeoff folder's grant still read-only (the owner's step): no use asking again in a minute (the uploader would)
   if (code === "not_authorized") {
@@ -1375,13 +1386,17 @@ async function copiesNamed(projectId, name, size) {
   return (p ? p.files : []).filter((f) => f.size === Number(size) && String(f.name).normalize("NFC").toLowerCase() === want);
 }
 
-/** The uploader's broker for a plan's save (js/onedrive-upload.js): the job's meta {key, itemId, base, file, savedAt}. */
+/** The uploader's broker for a plan's save (js/onedrive-upload.js): the job's meta {key, itemId, base, file, savedAt,
+    name, hash, mode?} - name: the plan's file name as the record has it (the broker's way to the plan when an office
+    save made it a new item: review Q3-1); hash: the save's quickXorHash; mode "copy" once the broker dropped a replace
+    (plan_changed). */
 const planBroker = {
   session: async function (j) {
     const m = j.meta || {};
     let s;
     try {
-      s = await onedrive.planSaveSession({ projectId: j.projectId, itemId: m.itemId, version: m.base, size: j.size, modified: m.savedAt });
+      s = await onedrive.planSaveSession({ projectId: j.projectId, itemId: m.itemId, version: m.base, size: j.size, modified: m.savedAt, name: m.name,
+        mode: m.mode === "copy" ? "copy" : undefined });
     } catch (x) { throw sendError(x); }
     m.ticket = s.ticket;
     // what this session does, kept with the save - never its upload address - so a send whose end is never heard is
@@ -1389,14 +1404,31 @@ const planBroker = {
     try {
       await mutate("plans", m.key, function (c) {
         if (!c || !hasLocal(c) || c.local.file !== m.file) return undefined;
-        const sends = (Array.isArray(c.local.sends) ? c.local.sends : []).concat([{ file: m.file, ticket: s.ticket, mode: s.mode, name: s.name,
-          size: j.size, at: nowIso() }]).slice(-MAX_SENDS);
+        const sends = (Array.isArray(c.local.sends) ? c.local.sends : []).concat([Object.assign({ file: m.file, ticket: s.ticket, mode: s.mode, name: s.name,
+          size: j.size, at: nowIso(), hash: hashOk(m.hash) ? m.hash : null }, s.commit === "broker" ? { commit: "broker" } : {})]).slice(-MAX_SENDS);
         return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
       });
     } catch (e) { /* a note only: the send goes on */ }
     return s;
   },
-  done: function (j, itemId, ticket) { return onedrive.planSaveDone(j.projectId, itemId, ticket); },
+  done: function (j, itemId, ticket) { return onedrive.planSaveDone(j.projectId, itemId, ticket, (j.meta || {}).hash); },
+  // every byte of a deferred replace is in OneDrive's session: the broker commits it onto the plan - or, the plan
+  // changed (or left its folder) while it went up, as the copy beside it (contract addendum 2, C1b.2). The upload
+  // address goes to the broker for this one call, from this page's memory (never stored).
+  commit: async function (j) {
+    const m = j.meta || {};
+    try {
+      return await onedrive.planSaveCommit({ projectId: j.projectId, itemId: m.itemId, ticket: j.session.ticket, uploadUrl: j.session.uploadUrl, hash: m.hash });
+    } catch (x) {
+      if (x && x.code === "plan_changed") {
+        // Microsoft would not commit it as the copy and the broker dropped the session: sent again at once as a
+        // separate file, against the same base (the broker's {retry: "copy"})
+        m.mode = "copy";
+        x.restart = true;
+      }
+      throw x;
+    }
+  },
   // the session is gone (finished, or run out): does OneDrive hold this save? A replace: the plan itself (plan_save_done
   // is the proof, not_saved when not); a copy: a file of the copy's name and size in the project's folder
   find: function (j) {
@@ -1677,8 +1709,10 @@ async function failSend(key, file, x) {
     await mutate("plans", key, function (c) {
       if (!c || !hasLocal(c) || c.local.file !== file) return undefined;
       const fails = (Number(c.local.fails) || 0) + 1;
+      // how often OneDrive said it did not get this save whole: past NOT_SAVED_MAX it waits for the person (BRK-5)
+      const notSaved = (Number(c.local.notSaved) || 0) + (x && x.code === "not_saved" ? 1 : 0);
       return Object.assign({}, c, { local: Object.assign({}, c.local, { state: "failed", error: String((x && x.message) || "The save was not sent."),
-        code: String((x && x.code) || ""), fails, retryAt: new Date(Date.now() + backoffMs(fails)).toISOString() }) });
+        code: String((x && x.code) || ""), fails, notSaved, retryAt: new Date(Date.now() + backoffMs(fails)).toISOString() }) });
     });
   } catch (e) { /* the message has reached the page */ }
   changed(key);
@@ -1726,15 +1760,34 @@ async function commitSent(key, file, ans, size) {
   return { sent: true, mode: ans.mode, name: ans.name };
 }
 
-/** Did OneDrive get the save of an earlier session (`s`: one of local.sends)? -> plan_save_done's answer, or null. */
+/** Did OneDrive get the save of an earlier session (`s`: one of local.sends)? -> plan_save_done's answer, or null.
+    The save's hash goes with it: the broker's proof, and its way to the copy a deferred replace's commit made. */
 async function landedSave(r, s) {
   if (s.mode === "copy") {
     for (const f of (await copiesNamed(r.projectId, s.name, s.size)).slice(0, 3)) {
-      try { return await onedrive.planSaveDone(r.projectId, f.id, s.ticket); } catch (x) { if (!(x && x.code === "not_saved")) throw x; }
+      try { return await onedrive.planSaveDone(r.projectId, f.id, s.ticket, s.hash); } catch (x) { if (!(x && x.code === "not_saved")) throw x; }
     }
     return null;
   }
-  return onedrive.planSaveDone(r.projectId, r.itemId, s.ticket);
+  return onedrive.planSaveDone(r.projectId, r.itemId, s.ticket, s.hash);
+}
+
+/** The save of an earlier session whose ticket the broker no longer takes (past its 30 days: review LW-7, TICKET-1),
+    found by its quickXorHash alone in plans_list - the plan itself holding exactly those bytes (a replace), or a file of
+    the session's name (a copy), or a copy a deferred replace's commit made beside the plan ("<stem> - iPad ...") ->
+    plan_save_done's answer, or null (never by a size or a time: an office save could have those). */
+async function landedByHash(r, s) {
+  if (!hashOk(s.hash)) return null;
+  const got = await onedrive.plansList([Number(r.projectId)]);
+  const p = got[String(r.projectId)];
+  const same = (a, b) => String(a || "").normalize("NFC").toLowerCase() === String(b || "").normalize("NFC").toLowerCase();
+  const stem = String(r.name || "").normalize("NFC").replace(/\.takeoff$/i, "").toLowerCase();
+  const mine = (p ? p.files : []).filter((x) => x.version === "qx:" + s.hash && Number(x.size) === Number(s.size));
+  const hit = s.mode === "copy" ? mine.find((x) => same(x.name, s.name)) : mine.find((x) => x.id === r.itemId);
+  const made = !hit && s.mode !== "copy" && s.commit === "broker"
+    ? mine.find((x) => x.folder === r.folder && x.id !== r.itemId && x.name.normalize("NFC").toLowerCase().indexOf(stem + " - ipad ") === 0) : null;
+  const f = hit || made;
+  return f ? { saved: true, mode: hit ? s.mode : "copy", id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version } : null;
 }
 
 /** The sessions this device opened for the plan's saves whose end it never heard (local.sends), settled before anything
@@ -1750,9 +1803,11 @@ async function settle(key, skip) {
       ans = await landedSave(r, s);
     } catch (x) {
       const code = x && x.code;
+      // a ticket past the broker's 30 days: looked for by the save's hash alone (else the session is over)
+      if (code === "invalid" && x.field === "ticket") ans = await landedByHash(r, s);
       // not there (not_saved), a ticket run out or a plan no longer there: the session is over; OneDrive or the
       // connection: asked again next time
-      if (code !== "not_saved" && code !== "invalid" && code !== "not_found") throw x;
+      else if (code !== "not_saved" && code !== "invalid" && code !== "not_found") throw x;
     }
     if (ans && Number(ans.size) === Number(s.size)) {
       const out = await commitSent(key, s.file, ans, s.size);
@@ -1769,8 +1824,8 @@ async function settle(key, skip) {
 
 /** A save built on bytes OneDrive gave as "sm:" (its hash was not ready when the save before it landed) goes against
     OneDrive's hash of those bytes once it has one - asked once, here, before the session (a failure leaves the base as
-    it is: the broker then makes a copy, nothing is lost). Another Save of the same opening, minutes after the first,
-    would otherwise become a copy of the person's own save. */
+    it is). The broker also takes an "sm:" base of the plan's own size and time since contract addendum 2 (review
+    BRK-7); this keeps the base in OneDrive's own form all the same. */
 async function hashBase(key) {
   const r = await get("plans", key);
   if (!r || !hasLocal(r) || String(r.local.base || "").indexOf("sm:") !== 0) return;
@@ -1821,7 +1876,7 @@ async function sendNow(key) {
   if (park && up.retry(park.id)) { id = park.id; meta = park.meta; }
   else {
     if (park) up.remove(park.id);
-    meta = { key, itemId: r.itemId, base: r.local.base, file, savedAt: r.local.savedAt, ticket: "" };
+    meta = { key, itemId: r.itemId, base: r.local.base, file, savedAt: r.local.savedAt, ticket: "", name: r.name, hash: hashOk(r.local.hash) ? r.local.hash : null };
     id = up.add({ projectId: r.projectId, file: f, name: r.name, label: r.number || "", meta }).id;
   }
   delete parked[key];

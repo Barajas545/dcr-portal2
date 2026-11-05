@@ -316,3 +316,150 @@ test("uploader, a plan's save: plan_save_done's not_saved is never 'the file is 
   const [j3] = await settle(up3);
   assert.deepEqual([j3.state, j3.code, j3.canRetry], ["failed", "too_large", true]);
 });
+
+/* ── a plan's replace the broker commits (contract addendum 2, C1b: deferCommit; review Q3-2 / BRK-1) ── */
+/** Microsoft's side of a DEFERRED session: every chunk answers 202, the last one too (nothing is committed), and the
+    upload URL's GET says it wants nothing more once every byte is in; commit(url) is the broker's commit of it. */
+function deferredGraph() {
+  const g = graph();
+  g.last = [];                                                     // what the last chunk does (g.script: the others)
+  const open = g.open;
+  g.open = (name, size) => { const url = open(name, size); g.sessions.get(url).deferred = true; return url; };
+  const send = g.send;
+  g.send = async (req) => {
+    const s = g.sessions.get(req.url);
+    if (!s || !s.deferred || s.done) return send(req);
+    if (req.method === "GET" && !g.script.length) {
+      g.requests.push({ method: "GET", url: req.url, headers: {}, size: 0 });
+      return { status: 200, header: () => null, text: () => JSON.stringify({ nextExpectedRanges: s.offset < s.size ? [s.offset + "-"] : [] }) };
+    }
+    if (req.method !== "PUT") return send(req);
+    const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(req.headers["Content-Range"]);
+    if (Number(m[2]) + 1 < s.size) return send(req);               // not the last chunk: as any session
+    const step = g.last.shift();
+    g.requests.push({ method: "PUT", url: req.url, headers: Object.assign({}, req.headers), size: req.body.size });
+    if (Number(m[1]) !== s.offset) return { status: 416, header: () => null, text: () => JSON.stringify({ nextExpectedRanges: [s.offset + "-"] }) };
+    s.offset = s.size;
+    if (step === "lose-answer") throw Object.assign(new Error("No connection"), { code: "offline" });
+    // what Graph does not document for a deferred session's last chunk: 202 (expected), or a 201 the uploader must not believe
+    if (step === 201) return { status: 201, header: () => null, text: () => JSON.stringify({ id: "01NOTTHIS0001", name: s.name, size: s.size }) };
+    return { status: 202, header: () => null, text: () => JSON.stringify({ expirationDateTime: "2026-11-05T00:00:00Z", nextExpectedRanges: [] }) };
+  };
+  g.commit = (url) => {
+    const s = g.sessions.get(url);
+    if (!s || s.done || s.offset !== s.size) return null;
+    s.done = "01ITEM" + String(g.n).padStart(6, "0");
+    g.items.set(s.done, { id: s.done, name: s.name, size: s.size });
+    return s.done;
+  };
+  return g;
+}
+function deferredBroker(g) {
+  const b = planBroker(g);
+  b.commits = [];
+  b.cscript = [];                                                  // what the commits answer (b.script: the session and done)
+  b.dones = 0;
+  const session = b.session;
+  b.session = async (j) => {
+    const s = await session(j);
+    // the second session of a plan_changed is the copy the broker makes (its last chunk commits it)
+    if (j.meta.mode === "copy") {
+      g.sessions.get(s.uploadUrl).deferred = false;
+      return Object.assign(s, { mode: "copy", name: "A900 Bid - iPad 2026-11-04 1030.takeoff" });
+    }
+    return Object.assign(s, { commit: "broker" });
+  };
+  b.done = ((done) => async (j, itemId, ticket) => { b.dones++; return done(j, itemId, ticket); })(b.done);
+  b.commit = async (j) => {
+    b.commits.push({ url: j.session.uploadUrl, ticket: j.session.ticket });
+    const step = b.cscript.shift();
+    if (step && step.code === "plan_changed") { j.meta.mode = "copy"; throw Object.assign(new Error(step.message || "x"), step, { restart: true }); }
+    if (step) throw Object.assign(new Error(step.message || "x"), step);
+    const id = g.commit(j.session.uploadUrl);
+    if (!id) throw Object.assign(new Error("OneDrive did not get the whole file - send it again."), { code: "not_saved", status: 409 });
+    return { saved: true, mode: "replace", id, name: j.name, size: j.size, modified: "2026-11-04T18:30:00Z", version: "qx:NEW" };
+  };
+  return b;
+}
+const bytesSent = (g) => g.requests.filter((r) => r.method === "PUT").reduce((n, r) => n + r.size, 0);
+
+test("uploader, a replace the broker commits (commit 'broker'): every chunk, the last one too, answers 202; then broker.commit - never done(); every byte once", async () => {
+  const g = deferredGraph(), b = deferredBroker(g);
+  const up = make(g, b);
+  const size = 3 * CHUNK_UNIT + 11;
+  up.add({ projectId: 7, file: file(size, "A900 Bid.takeoff"), name: "A900 Bid.takeoff", meta: {} });
+  const [job] = await settle(up);
+  assert.equal(job.state, "done", job.error);
+  assert.deepEqual([b.sessions, b.commits.length, b.dones], [1, 1, 0], "one session, its commit, no plan_save_done");
+  assert.equal(b.commits[0].url, g.requests[0].url, "the session's own upload address, to the broker's commit");
+  assert.equal(bytesSent(g), size, "every byte sent once");
+  assert.ok(g.requests.filter((r) => r.method === "PUT").every((r) => !Object.keys(r.headers).some((k) => /authorization/i.test(k))));
+  assert.deepEqual([job.result.mode, job.result.version, job.sent], ["replace", "qx:NEW", size]);
+  // a last chunk that answers 200/201 all the same (the docs do not say what it answers): still the broker's commit
+  const g2 = deferredGraph(), b2 = deferredBroker(g2);
+  g2.last = [201];
+  const up2 = make(g2, b2);
+  up2.add({ projectId: 7, file: file(CHUNK_UNIT + 1, "A.takeoff"), name: "A.takeoff", meta: {} });
+  const [j2] = await settle(up2);
+  assert.equal(j2.state, "done", j2.error);
+  assert.deepEqual([b2.commits.length, b2.dones, j2.result.id !== "01NOTTHIS0001"], [1, 0, true], "the 201's item is never taken: the commit's answer is");
+});
+
+test("uploader, a commit 'broker' session: the last chunk's answer lost - the upload URL says it wants nothing more, so the broker commits it (nothing sent again); a commit that does not get through is asked again, never re-sent", async () => {
+  const g = deferredGraph(), b = deferredBroker(g);
+  g.last = ["lose-answer"];
+  const up = make(g, b);
+  const size = 2 * CHUNK_UNIT + 3;
+  up.add({ projectId: 7, file: file(size, "A.takeoff"), name: "A.takeoff", meta: {} });
+  const [job] = await settle(up);
+  assert.equal(job.state, "done", job.error);
+  assert.equal(bytesSent(g), size, "the last chunk was not sent again");
+  assert.ok(g.requests.some((r) => r.method === "GET"), "it asked the upload URL first");
+  assert.deepEqual([b.sessions, b.commits.length], [1, 1]);
+  // the commit itself offline: tried again; given up after maxTries -> failed, Retry commits again - no byte, no session
+  const g2 = deferredGraph(), b2 = deferredBroker(g2);
+  const offline = { code: "offline", status: 0, message: "No connection to DCR just now." };
+  b2.cscript = [offline, offline];
+  const up2 = make(g2, b2, { maxTries: 2 });
+  up2.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "B.takeoff"), name: "B.takeoff", meta: {} });
+  const [j2] = await settle(up2);
+  assert.deepEqual([j2.state, j2.code, j2.canRetry, b2.commits.length], ["failed", "offline", true, 2], j2.error);
+  const puts = g2.requests.filter((r) => r.method === "PUT").length;
+  assert.ok(up2.retry(j2.id));
+  const [again] = await settle(up2);
+  assert.equal(again.state, "done", again.error);
+  assert.deepEqual([b2.sessions, b2.commits.length, g2.requests.filter((r) => r.method === "PUT").length], [1, 3, puts], "committed on Retry, nothing sent again");
+  // not_saved at the commit: nothing of that session counts - Retry sends it again from a new session
+  const g3 = deferredGraph(), b3 = deferredBroker(g3);
+  b3.cscript = [{ code: "not_saved", status: 409, message: "OneDrive did not get the whole file - send it again." }];
+  const up3 = make(g3, b3);
+  up3.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "C.takeoff"), name: "C.takeoff", meta: {} });
+  const [j3] = await settle(up3);
+  assert.deepEqual([j3.state, j3.code, j3.canRetry], ["failed", "not_saved", true]);
+  assert.ok(up3.retry(j3.id));
+  const [j3b] = await settle(up3);
+  assert.deepEqual([j3b.state, b3.sessions, b3.commits.length], ["done", 2, 2], j3b.error);
+});
+
+test("uploader, a commit 'broker' session: the broker dropped it (plan_changed, retry copy) - a new session at once, which the plan's broker makes a copy; its last chunk commits it and done() checks it", async () => {
+  const g = deferredGraph(), b = deferredBroker(g);
+  b.cscript = [{ code: "plan_changed", status: 409, message: "OneDrive's plan changed while the save was sent: it is sent again as a separate file.", info: { retry: "copy" } }];
+  const up = make(g, b);
+  const size = CHUNK_UNIT + 9;
+  const meta = {};
+  up.add({ projectId: 7, file: file(size, "A900 Bid.takeoff"), name: "A900 Bid.takeoff", meta });
+  const [job] = await settle(up);
+  assert.equal(job.state, "done", job.error);
+  assert.deepEqual([b.sessions, b.commits.length, b.dones, meta.mode], [2, 1, 1, "copy"], "the replace's commit, then a copy session checked by done()");
+  assert.equal(bytesSent(g), 2 * size, "the save sent again, as the copy");
+  // a broker that keeps dropping it gives up (never for ever)
+  const g2 = deferredGraph(), b2 = deferredBroker(g2);
+  b2.session = ((s) => async (j) => Object.assign(await s(j), { mode: "replace", commit: "broker" }))(b2.session);
+  const changed = { code: "plan_changed", status: 409, message: "x", info: { retry: "copy" } };
+  b2.cscript = [changed, changed, changed, changed];
+  const up2 = make(g2, b2);
+  up2.add({ projectId: 7, file: file(10, "D.takeoff"), name: "D.takeoff", meta: {} });
+  const [j2] = await settle(up2);
+  assert.equal(j2.state, "failed");
+  assert.ok(b2.sessions <= 3, "at most three sessions: " + b2.sessions);
+});

@@ -943,35 +943,89 @@ async function device() {
 }
 test.after(() => { if (DEV) DEV.uninstall(); });
 
-/** The broker and Microsoft's upload address for one made-up plan, as contract C1 has them. */
+/** The broker and Microsoft's upload address for one made-up plan, as contract C1 has them - and, with o.deferred, as
+    addendum 2 C1b has them (DCR Desktop 2's handler.ts since the review round): a replace session answers commit
+    "broker", its last chunk answers 202 and commits nothing, plan_save_commit commits it onto the plan only while the
+    plan still has the session's tag (else the SAME upload becomes the copy, or - w.commitRefuse - plan_changed), the
+    session finds the plan by its name when its id is gone (a desktop save), and plan_save_done takes the device's hash
+    (with OneDrive's: they alone decide) and a ticket for 30 days (w.expired: one past them). w.realHash: OneDrive's
+    version of saved bytes is their real quickXorHash. w.during(s): run when a session's last chunk arrives (an office
+    save while it goes up). */
 function saveWorld(o) {
-  const w = Object.assign({ calls: [], sessions: new Map(), n: 0, refuse: null, hash: false, loseFinal: false, puts: 0, bytes: 0 }, o || {});
-  w.plan = Object.assign({ id: F1.id, name: F1.name, folder: F1.folder, size: 1500, modified: AT, version: "qx:AAA" }, (o && o.plan) || {});
+  const w = Object.assign({ calls: [], bodies: [], sessions: new Map(), n: 0, refuse: null, hash: false, loseFinal: false, puts: 0, bytes: 0,
+    deferred: false, realHash: false, commitRefuse: false, loseCommit: false, expired: false, during: null }, o || {});
+  w.plan = Object.assign({ id: F1.id, name: F1.name, folder: F1.folder, size: 1500, modified: AT, version: "qx:AAA", rev: 1 }, (o && o.plan) || {});
   w.files = [w.plan];
   const file = (f) => ({ id: f.id, name: f.name, folder: f.folder, size: f.size, modified: f.modified, version: f.version });
+  const nameKey = (n) => String(n).normalize("NFC").toLowerCase();
+  const smMatch = (v, f) => { const m = /^sm:([0-9]+):(.+)$/.exec(v); return !!m && Number(m[1]) === f.size && Date.parse(m[2]) === Date.parse(f.modified); };
+  /** the last chunk's bytes landed: the plan replaced (same id), or a copy beside it */
+  const land = async (s, asCopy) => {
+    const at = new Date(NOW + 3600000 + w.n * 1000).toISOString();
+    const blob = new Blob(s.parts);
+    const version = w.realHash ? "qx:" + QX.quickXorHash(new Uint8Array(await blob.arrayBuffer())) : w.hash ? "qx:SAVED" + w.n : "sm:" + s.size + ":" + at;
+    let f;
+    if (!asCopy) { f = w.files.find((x) => x.id === s.item); Object.assign(f, { size: s.size, modified: at, version, rev: (f.rev || 1) + 1 }); }
+    else { f = { id: "01FAKECOPY000" + w.n, name: asCopy, folder: w.plan.folder, size: s.size, modified: at, version, rev: 1 }; w.files.push(f); }
+    w.saved = blob;
+    s.done = f.id;
+    return f;
+  };
+  const copyName = (n) => "A900 Bid - iPad 2026-11-04 1030" + (n > 1 ? " (" + n + ")" : "") + ".takeoff";
+  const freeCopyName = () => { for (let n = 1; ; n++) if (!w.files.some((x) => nameKey(x.name) === nameKey(copyName(n)))) return copyName(n); };
+  const saved = (mode, f) => ok(Object.assign({ saved: true, mode }, file(f)));
   useClient({ functions: { invoke: async (name, x) => {
     const b = x.body;
     w.calls.push(b.op);
+    w.bodies.push(b);
     if (b.op === "plans_list") return ok({ projects: { "7": { number: "A900", files: w.files.map(file), complete: true } } });
     if (b.op === "plan_link") return ok(Object.assign({ url: "https://" + onedrive.ONEDRIVE_HOST + "/dl/" + b.item_id }, file(w.files.find((f) => f.id === b.item_id))));
     if (b.op === "plan_save_session") {
       w.sessionBody = b;
       if (w.refuse) return http(w.refuse[0], { error: w.refuse[1], message: "made up" });
-      const f = w.files.find((x) => x.id === b.item_id);
+      let f = w.files.find((x) => x.id === b.item_id), byName = false;
+      if (!f && w.deferred && b.name) {
+        const same = w.files.filter((x) => nameKey(x.name) === nameKey(b.name));
+        if (same.length === 1) [f, byName] = [same[0], true];
+      }
       if (!f) return http(404, { error: "not_found" });
-      const mode = b.mode !== "copy" && f.version === b.version ? "replace" : "copy";
+      const match = f.version === b.version || (w.deferred && smMatch(b.version, f));
+      const mode = !byName && b.mode !== "copy" && match ? "replace" : "copy";
       const n = ++w.n;
       const url = "https://" + onedrive.ONEDRIVE_HOST + "/up/" + n;
-      const s = { mode, item: f.id, name: mode === "replace" ? f.name : "A900 Bid - iPad 2026-11-04 1030.takeoff", size: b.size, offset: 0, parts: [], done: null, ticket: "tk" + n };
+      const s = { mode, item: f.id, name: mode === "replace" ? f.name : freeCopyName(), size: b.size, offset: 0, parts: [], done: null, ticket: "tk" + n,
+        deferred: w.deferred && mode === "replace", rev: f.rev, url };
       w.sessions.set(url, s);
-      return ok({ mode, upload_url: url, expires_at: AT, chunk_bytes: 4 * UNIT, chunk_multiple: UNIT, max_chunk_bytes: 191 * UNIT, max_bytes: 4096 * MiB,
-        ticket: s.ticket, name: s.name });
+      return ok(Object.assign({ mode }, s.deferred ? { commit: "broker" } : {}, { upload_url: url, expires_at: AT, chunk_bytes: 4 * UNIT, chunk_multiple: UNIT,
+        max_chunk_bytes: 191 * UNIT, max_bytes: 4096 * MiB, ticket: s.ticket, name: s.name }));
+    }
+    if (b.op === "plan_save_commit") {
+      const s = Array.from(w.sessions.values()).find((x) => x.ticket === b.ticket);
+      if (!s || !s.deferred) return http(400, { error: "invalid", field: "ticket", message: "made up" });
+      if (b.upload_url !== s.url) return http(400, { error: "invalid", field: "upload_url", message: "That is not the upload URL of this save's session." });
+      if (s.done) {
+        // gone: committed earlier, its answer lost - plan_save_done's checks
+        const g = w.files.find((f) => f.id === s.done);
+        return g && (!b.hash || !w.realHash || g.version.indexOf("qx:") !== 0 || g.version === "qx:" + b.hash) ? saved(g.id === s.item ? "replace" : "copy", g)
+          : http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
+      }
+      if (s.offset !== s.size || w.notSaved) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
+      const plan = w.files.find((f) => f.id === s.item);
+      let f;
+      if (plan && plan.rev === s.rev) f = await land(s, null);
+      else if (w.commitRefuse) { w.sessions.delete(s.url); return http(409, { error: "plan_changed", retry: "copy", message: "OneDrive's plan changed while the save was sent: it is sent again as a separate file." }); }
+      else f = await land(s, freeCopyName());
+      if (w.loseCommit) { w.loseCommit = false; return { data: null, error: { name: "FunctionsFetchError", message: "Failed to send", context: new TypeError("offline") } }; }
+      return saved(f.id === s.item ? "replace" : "copy", f);
     }
     if (b.op === "plan_save_done") {
+      if (w.expired) return http(400, { error: "invalid", field: "ticket", message: "This save's ticket is not valid or has run out: save the plan again." });
       const s = Array.from(w.sessions.values()).find((x) => x.ticket === b.ticket);
       const f = s && s.done ? w.files.find((x) => x.id === s.done) : null;
       if (!f || f.id !== b.item_id) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
-      return ok(Object.assign({ saved: true, mode: s.mode }, file(f)));
+      // the hashes decide when both are there (only real ones: w.realHash - a made-up "qx:SAVED" is no hash of anything)
+      if (b.hash && w.realHash && f.version.indexOf("qx:") === 0 && f.version !== "qx:" + b.hash) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
+      return ok(Object.assign({ saved: true, mode: s.mode === "replace" && f.id === s.item ? "replace" : "copy" }, file(f)));
     }
     return http(400, { error: "invalid" });
   } } });
@@ -979,7 +1033,7 @@ function saveWorld(o) {
     const res = (status, body) => ({ status, header: () => null, text: () => JSON.stringify(body) });
     const s = w.sessions.get(req.url);
     if (!s || s.done) return res(404, { error: { code: "itemNotFound" } });
-    if (req.method === "GET") return res(200, { nextExpectedRanges: [s.offset + "-"] });
+    if (req.method === "GET") return res(200, { nextExpectedRanges: s.offset < s.size ? [s.offset + "-"] : [] });
     assert.ok(!Object.keys(req.headers).some((k) => /authorization/i.test(k)), "no sign-in on Microsoft's address");
     const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(req.headers["Content-Range"]);
     if (Number(m[1]) !== s.offset) return res(416, { nextExpectedRanges: [s.offset + "-"] });
@@ -988,19 +1042,18 @@ function saveWorld(o) {
     s.parts.push(req.body);
     s.offset = Number(m[2]) + 1;
     if (s.offset < s.size) return res(202, { nextExpectedRanges: [s.offset + "-"] });
+    if (typeof w.during === "function") { const d = w.during; w.during = null; d(s); }
+    // a deferred replace: the last chunk commits nothing (the broker's plan_save_commit does)
+    if (s.deferred) return res(202, { expirationDateTime: AT, nextExpectedRanges: [] });
     // the last chunk: OneDrive has it - the plan replaced (same id), or a copy beside it
-    const at = new Date(NOW + 3600000 + w.n * 1000).toISOString();
-    const version = w.hash ? "qx:SAVED" + w.n : "sm:" + s.size + ":" + at;
-    let f;
-    if (s.mode === "replace") { f = w.files.find((x) => x.id === s.item); Object.assign(f, { size: s.size, modified: at, version }); }
-    else { f = { id: "01FAKECOPY000" + w.n, name: s.name, folder: w.plan.folder, size: s.size, modified: at, version }; w.files.push(f); }
-    w.saved = new Blob(s.parts);
-    s.done = f.id;
+    const f = await land(s, s.mode === "replace" ? null : s.name);
     if (w.loseFinal) { w.loseFinal = false; throw Object.assign(new Error("No connection"), { code: "offline" }); }
     return res(201, { id: f.id, name: f.name, size: f.size });
   });
   return w;
 }
+/** An office save of the plan in place (its tag moves): other bytes, another version. */
+const officeSave = (w) => Object.assign(w.plan, { size: w.plan.size + 7, version: "qx:OFFICE" + (++w.n), modified: new Date(NOW + 1800000).toISOString(), rev: w.plan.rev + 1 });
 
 const KEY = "u1|" + F1.id;
 const PLANS = () => DEV.idb.rows("dcr2-plan-library", "plans");
@@ -1327,7 +1380,7 @@ test("a send OneDrive did not take waits (Not sent - tap to retry); before the o
   gone.files = [];
   await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
   assert.deepEqual([ROW().local.code, lib.dueToSend(ROW(), Date.now() + 365 * 86400000)], ["not_found", false]);
-  assert.match(ROW().local.error, /no longer in its project's folder/);
+  assert.match(ROW().local.error, /no longer has this plan in its project's folder/);
 });
 
 test("a send whose last answer was lost: in the page (the session gone) it is found, never sent twice; across pages (the page closed) it is settled with its ticket before anything is sent again", async () => {
@@ -1883,4 +1936,182 @@ test("the frame's copies never pile up (STORE-1): a day's open, save and send le
   await keeping;
   await LIB.sweep();
   assert.equal(LIBFILES()[b.file], undefined, "a sweep takes it after");
+});
+
+/* ── the broker protocol of contract addendum 2 (C1b, C3b): the deferred commit, the plan's name, the hash ── */
+const UPS = (n) => "https://" + onedrive.ONEDRIVE_HOST + "/up/" + n;
+
+test("a replace the broker commits (addendum 2; review Q3-2, BRK-1): the session names the plan, its last chunk commits nothing, plan_save_commit commits it with the session's own address and the save's hash; the session is kept with the save, never its address", async () => {
+  const before = await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true });
+  const p = savedProject(3 * MiB + 77, "PDFCACHE1", 3);
+  const hash = QX.quickXorHash(p.bytes);
+  let sends = null;
+  w.during = () => { sends = ROW().local.sends; };               // what the record holds while the save goes up
+  const out = await LIB.keepSave(F1.id, saveOf(p));
+  const sent = await out.sent;
+  assert.deepEqual([sent && sent.sent, sent && sent.mode], [true, "replace"]);
+  assert.deepEqual(w.calls, ["plan_save_session", "plan_save_commit"], "the session, then the broker's commit - its answer is the proof");
+  assert.deepEqual(w.sessionBody, { op: "plan_save_session", project_id: 7, item_id: F1.id, version: "qx:AAA", size: p.blob.size,
+    modified: w.sessionBody.modified, name: F1.name }, "the plan's file name goes with it (the way to it after a desktop save)");
+  assert.deepEqual(w.bodies[1], { op: "plan_save_commit", project_id: 7, item_id: F1.id, ticket: "tk1", upload_url: UPS(1), hash },
+    "the session's own address and OneDrive's quickXorHash of the save");
+  assert.deepEqual([w.bytes, w.plan.version], [p.blob.size, "qx:" + hash], "every byte once; OneDrive holds exactly the save");
+  assert.ok(await same(w.saved, p.bytes));
+  assert.deepEqual(sends.map((x) => Object.keys(x).sort()), [["at", "commit", "file", "hash", "mode", "name", "size", "ticket"]]);
+  assert.deepEqual([sends[0].commit, sends[0].hash, sends[0].ticket], ["broker", hash, "tk1"]);
+  assert.ok(!JSON.stringify(PLANS()).includes("/up/"), "the upload address is never stored");
+  const r = ROW();
+  assert.deepEqual([r.local, r.sent.mode, r.version, r.file !== before.file], [null, "replace", "qx:" + hash, true]);
+});
+
+test("an office save that lands WHILE the iPad's replace goes up is never overwritten (Q3-2, BRK-1): the broker commits the same upload as a copy beside it - the plan's record keeps the plan, the person is told; or, Microsoft refusing that (plan_changed), it is sent again at once as a copy against the old base", async () => {
+  const before = await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true });
+  w.during = () => officeSave(w);
+  const p = savedProject(2 * MiB + 5, "PDFCACHE1", 4);
+  const news = [];
+  const out = await LIB.keepSave(F1.id, saveOf(p), (state, extra) => news.push([state, extra]));
+  const sent = await out.sent;
+  assert.deepEqual([sent && sent.mode, sent && sent.name], ["copy", "A900 Bid - iPad 2026-11-04 1030.takeoff"]);
+  assert.deepEqual([w.calls, w.bytes], [["plan_save_session", "plan_save_commit"], p.blob.size], "the same upload became the copy: nothing sent twice");
+  assert.equal(w.plan.version.indexOf("qx:OFFICE"), 0, "the office's save is still the plan");
+  const r = ROW();
+  assert.deepEqual([r.file, r.version, r.local, r.sent.mode], [before.file, "qx:AAA", null, "copy"], "the plan's record keeps its copy");
+  const c = ROW("u1|01FAKECOPY0002");
+  assert.ok(c && (await same(new Blob([LIBFILES()[c.file]]), p.bytes)), "the save is the copy's own record");
+  assert.deepEqual(news.find((n) => n[0] === "copy"), ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }]);
+  // Microsoft would not commit the session as the copy: the broker dropped it (plan_changed, retry copy) - the save goes
+  // again at once as a copy, against the version the work was done on, and that copy is checked by plan_save_done
+  await devicePlan();
+  const w2 = saveWorld({ deferred: true, realHash: true, commitRefuse: true });
+  w2.during = () => officeSave(w2);
+  const q = savedProject(1 * MiB + 9, "PDFCACHE1", 5);
+  const s2 = await (await LIB.keepSave(F1.id, saveOf(q))).sent;
+  assert.deepEqual([s2 && s2.mode, w2.calls], ["copy", ["plan_save_session", "plan_save_commit", "plan_save_session", "plan_save_done"]]);
+  const second = w2.bodies[2];
+  assert.deepEqual([second.mode, second.version, second.item_id, second.name], ["copy", "qx:AAA", F1.id, F1.name], "a copy, the OLD base");
+  assert.equal(w2.bodies[3].hash, QX.quickXorHash(q.bytes), "the copy's check carries the hash");
+  assert.equal(w2.bytes, 2 * q.blob.size, "sent twice: the replace dropped, then the copy");
+  assert.deepEqual([ROW().local, ROW().sent.mode], [null, "copy"]);
+});
+
+test("an office desktop save made the plan a NEW item (the old one moved into Backups; review Q3-1, BRK-4): the session's plan name finds it, the save becomes a copy beside it - never a 404 left on the device", async () => {
+  const before = await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true });
+  // the desktop app moved the item the device has into Backups and put a new item on the name
+  Object.assign(w.plan, { id: "01FAKEPLANNEW1", version: "qx:DESKTOP", rev: 9 });
+  const p = savedProject(1 * MiB + 1, "PDFCACHE1", 6);
+  const news = [];
+  const sent = await (await LIB.keepSave(F1.id, saveOf(p), (state, extra) => news.push([state, extra]))).sent;
+  assert.deepEqual([sent && sent.mode, sent && sent.name], ["copy", "A900 Bid - iPad 2026-11-04 1030.takeoff"]);
+  assert.deepEqual([w.sessionBody.item_id, w.sessionBody.name, w.calls], [F1.id, F1.name, ["plan_save_session", "plan_save_done"]],
+    "the old id and the plan's name: a copy session (its last chunk commits it), then its check");
+  assert.equal(w.bodies[1].hash, QX.quickXorHash(p.bytes));
+  const r = ROW();
+  assert.deepEqual([r.file, r.local, r.sent.mode], [before.file, null, "copy"]);
+  assert.ok(ROW("u1|01FAKECOPY0001"), "the save is the copy's own record");
+  assert.ok(news.some((n) => n[0] === "copy"), "the person is told");
+  // without a plan of that name either: final, in plain words (not a resend for ever)
+  await devicePlan();
+  const w2 = saveWorld({ deferred: true });
+  Object.assign(w2.plan, { id: "01FAKEPLANNEW2", name: "Another name.takeoff" });
+  await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
+  assert.deepEqual([ROW().local.code, lib.dueToSend(ROW(), Date.now() + 365 * 86400000)], ["not_found", false]);
+  assert.match(ROW().local.error, /not one file of its name/);
+});
+
+test("a commit whose answer was lost: in the page the commit is asked again (nothing sent again); across pages the save is settled with plan_save_done and its hash (review BRK-3, TICKET-1, LW-7) - and past the broker's 30 days it is found by its hash alone, never sent again as a copy of itself", async () => {
+  await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true, loseCommit: true });
+  const p = savedProject(2 * MiB + 3, "PDFCACHE1", 7);
+  const sent = await (await LIB.keepSave(F1.id, saveOf(p))).sent;
+  assert.deepEqual([sent && sent.mode, w.calls, w.bytes], ["replace", ["plan_save_session", "plan_save_commit", "plan_save_commit"], p.blob.size]);
+  assert.equal(ROW().local, null);
+  // the page closed after the commit landed: the session is in the save's record (its ticket and hash), OneDrive has it
+  const setUp = async (seed) => {
+    await devicePlan();
+    const w2 = saveWorld({ deferred: true, realHash: true });
+    const q = savedProject(1 * MiB + seed, "PDFCACHE1", seed);
+    DEV.nav.onLine = false;
+    await (await LIB.keepSave(F1.id, saveOf(q))).sent;
+    DEV.nav.onLine = true;
+    const r = ROW();
+    const hash = QX.quickXorHash(q.bytes);
+    w2.sessions.set(UPS(99), { mode: "replace", item: F1.id, name: F1.name, size: q.blob.size, done: F1.id, ticket: "tk99", deferred: true, url: UPS(99) });
+    Object.assign(w2.plan, { size: q.blob.size, modified: "2026-11-04T19:00:00.000Z", version: "qx:" + hash, rev: 2 });
+    const st = DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+    st.set(KEY, Object.assign({}, r, { local: Object.assign({}, r.local, { sends: [{ file: r.local.file, ticket: "tk99", mode: "replace", name: F1.name,
+      size: q.blob.size, at: AT, hash, commit: "broker" }] }) }));
+    return { w2, q, r, hash };
+  };
+  const a = await setUp(11);
+  const settled = await LIB.sendSaved(F1.id, { manual: true });
+  assert.equal(settled.sent, true);
+  assert.deepEqual(a.w2.calls, ["plan_save_done"], "settled with its ticket: no new session, no byte sent again");
+  assert.equal(a.w2.bodies[0].hash, a.hash, "and the save's hash");
+  assert.deepEqual([ROW().local, ROW().version, ROW().sent.mode], [null, "qx:" + a.hash, "replace"]);
+  // the broker no longer takes the ticket (past its 30 days): plans_list's hash of the plan is the save's - adopted as
+  // the replace it was; no session, no copy, no word about the office
+  const b = await setUp(12);
+  b.w2.expired = true;
+  const late = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([late.sent, late.mode, b.w2.calls], [true, "replace", ["plan_save_done", "plans_list"]], JSON.stringify(b.w2.calls));
+  assert.deepEqual([ROW().local, ROW().version, ROW().sent.mode, b.w2.files.length], [null, "qx:" + b.hash, "replace", 1]);
+  // ...and when OneDrive does not hold those bytes (the commit never happened), the session is over: sent again
+  const c = await setUp(13);
+  c.w2.expired = true;
+  // (an office save of the very same size there: only the hash tells it is not this save - review BRK-2)
+  Object.assign(c.w2.plan, { version: "qx:AAA", size: c.q.blob.size, modified: AT, rev: 1 });
+  c.w2.sessions.get(UPS(99)).done = null;
+  const again = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([again.sent, again.mode, c.w2.calls], [true, "replace", ["plan_save_done", "plans_list", "plan_save_session", "plan_save_commit"]]);
+  assert.deepEqual(ROW().local, null);
+});
+
+test("a byte-identical re-save is saved, never a loop (review BRK-5): the hash is the proof; and OneDrive saying not_saved twice, or the broker refusing what it was sent (invalid), waits for the person - never the whole plan again by itself", async () => {
+  await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true });
+  const p = savedProject(1 * MiB + 21, "PDFCACHE1", 8);
+  const line = { file: ROW().file, base: "qx:AAA" };
+  assert.equal((await (await LIB.keepSave(F1.id, saveOf(p), null, line)).sent).mode, "replace");
+  const v1 = ROW().version;
+  w.calls.length = 0;
+  // Save again with nothing changed: the same bytes
+  const again = { req: "sBBBBBBBBB", name: F1.name, size: p.blob.size, file: new Blob([p.bytes]) };
+  const s2 = await (await LIB.keepSave(F1.id, again, null, line)).sent;
+  assert.deepEqual([s2 && s2.sent, s2 && s2.mode, w.calls, ROW().version, ROW().local], [true, "replace", ["plan_save_session", "plan_save_commit"], v1, null],
+    "a replace onto its own bytes, saved once");
+  assert.equal(w.files.length, 1, "no copy");
+  // OneDrive says not_saved: sent again after its wait - once; the second not_saved waits for the person
+  await devicePlan();
+  const w2 = saveWorld({ deferred: true, realHash: true, notSaved: true });
+  await (await LIB.keepSave(F1.id, saveOf(savedProject(4096, "PDFCACHE1", 9)))).sent;
+  assert.deepEqual([ROW().local.code, ROW().local.notSaved, lib.dueToSend(ROW(), Date.now() + 365 * 86400000)], ["not_saved", 1, true]);
+  const st = DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+  st.set(KEY, Object.assign({}, ROW(), { local: Object.assign({}, ROW().local, { retryAt: new Date(Date.now() - 1000).toISOString() }) }));
+  await LIB.sendWaiting();
+  assert.equal(w2.calls.filter((c) => c === "plan_save_session").length, 2, "sent once more by itself");
+  assert.deepEqual([ROW().local.notSaved, lib.dueToSend(ROW(), Date.now() + 365 * 86400000), (await LIB.list())[0].save.final], [2, false, true],
+    "then it waits for the person's Retry");
+  st.set(KEY, Object.assign({}, ROW(), { local: Object.assign({}, ROW().local, { retryAt: new Date(Date.now() - 1000).toISOString() }) }));
+  await LIB.sendWaiting();
+  assert.equal(w2.calls.filter((c) => c === "plan_save_session").length, 2, "never again by itself");
+  // a 400 from the broker (a name or a field it does not take): final at once
+  await devicePlan();
+  saveWorld({ refuse: [400, "invalid"] });
+  await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
+  assert.deepEqual([ROW().local.code, lib.dueToSend(ROW(), Date.now() + 365 * 86400000)], ["invalid", false]);
+});
+
+test("the save-back rules (addendum 2): a send waits for the person on SEND_FINAL (invalid now too) or on NOT_SAVED_MAX not_saved answers; hashOk is the broker's form", () => {
+  const l = (over) => ({ local: Object.assign({ file: "p1-x-2.takeoff", state: "failed", retryAt: null }, over) });
+  assert.deepEqual(["not_found", "too_large", "lost", "bad_base", "invalid"].map((code) => lib.dueToSend(l({ code }), NOW)), [false, false, false, false, false]);
+  assert.deepEqual([lib.dueToSend(l({ code: "not_saved", notSaved: 1 }), NOW), lib.dueToSend(l({ code: "not_saved", notSaved: lib.NOT_SAVED_MAX }), NOW)], [true, false]);
+  assert.deepEqual([lib.dueToSend(l({ code: "offline", notSaved: 5 }), NOW), lib.dueToSend(l({ code: "not_saved" }), NOW)], [true, true], "only a not_saved counts");
+  assert.equal(lib.saveStateOf(l({ code: "not_saved", notSaved: 2, error: "x" }), null, NOW).final, true);
+  assert.deepEqual([lib.hashOk("PbG6uWfEwQF5DpbKoNh7NwBgQ+0="), lib.hashOk("PbG6uWfEwQF5DpbKoNh7NwBgQ+0"), lib.hashOk("qx:PbG6uWfEwQF5DpbKoNh7NwBgQ+0="), lib.hashOk(null)],
+    [true, false, false, false]);
+  assert.equal(lib.withSave({ version: "qx:A" }, "p1-x-2.takeoff", 9, AT, "", "PbG6uWfEwQF5DpbKoNh7NwBgQ+0=").rec.local.hash, "PbG6uWfEwQF5DpbKoNh7NwBgQ+0=");
+  assert.equal(lib.withSave({ version: "qx:A" }, "p1-x-2.takeoff", 9, AT, "", "not one").rec.local.hash, null);
 });

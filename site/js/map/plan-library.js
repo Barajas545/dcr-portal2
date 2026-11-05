@@ -28,7 +28,9 @@
    * hasLocal(rec)              a save of the person's own is waiting on this device (never downloaded over, never
                                 retired: needsWork skips it, open() hands it);
    * withSave(rec, file, size)  the record once a save is kept (its `base`: the version the work was done on);
-   * dueToSend(rec, now)        it is sent by itself now (not a failure that waits for the person, its wait over);
+   * hashOk(h)                  a quickXorHash in the broker's form (a save's `local.hash`);
+   * dueToSend(rec, now)        it is sent by itself now (not a failure that waits for the person - sendFinal -, its wait
+                                over);
    * adoptSent(rec, file, ans)  the records once OneDrive has it (plan_save_done's answer): replace - the saved bytes
                                 ARE the plan's current version (no download), the old copy retired; copy - the plan stays
                                 as it was, the save becomes a record of its own for the copy, and the person is told;
@@ -366,7 +368,8 @@ export function projectBatches(records, n) {
                 the item, the broker's proof that it holds exactly these bytes (contract addendum 2, C3b);
       state     "waiting" | "sending" | "failed" (a "sending" no window is running is waiting again);
       error, code, fails, retryAt   the last failed send and when it is tried again by itself;
-      sends     [{file, ticket, mode, name, size, at}]: sessions this device opened whose end it never heard (the page
+      notSaved  how often OneDrive said it did not get this save whole (409 not_saved): past NOT_SAVED_MAX it waits;
+      sends     [{file, ticket, mode, name, size, at, hash, commit}]: sessions this device opened whose end it never heard (the page
                 closed after the last byte, say) - settled with plan_save_done before anything is sent again, so a
                 save that landed is never sent twice (nor made into a copy of itself). The ticket is the broker's sealed
                 word for plan_save_done, never an upload address: those stay in the page's memory.}
@@ -376,10 +379,21 @@ export function projectBatches(records, n) {
 /** How long "Sent" / "Saved as a separate file" stays on a row after the send. */
 export const SENT_NOTE_MS = 3 * 24 * 3600 * 1000;
 /** A send that failed for one of these waits for the person (Retry): the plan is no longer in its project's folder,
-    it is too large for the broker, the kept copy is gone, or the save cannot be matched to a version. */
-export const SEND_FINAL = Object.freeze(["not_found", "too_large", "lost", "bad_base"]);
+    it is too large for the broker, the kept copy is gone, the save cannot be matched to a version, or the broker
+    refused what it was sent (400 invalid: a name, a ticket or an address it does not take - asking again by itself
+    would only be refused again; review BRK-6). */
+export const SEND_FINAL = Object.freeze(["not_found", "too_large", "lost", "bad_base", "invalid"]);
+/** OneDrive said this often that it did not get a save whole (not_saved): the save waits for the person - never the
+    whole plan sent again and again by itself, every backoff, with the screen held awake (review BRK-5). */
+export const NOT_SAVED_MAX = 2;
 /** At most this many unsettled sessions are kept with a save (each is settled, then dropped, before the next send). */
 export const MAX_SENDS = 4;
+
+/** A save's failed send waits for the person (a `local`): SEND_FINAL, or not_saved NOT_SAVED_MAX times. */
+export function sendFinal(l) {
+  const code = String((l && l.code) || "");
+  return SEND_FINAL.indexOf(code) !== -1 || (code === "not_saved" && Number(l.notSaved) >= NOT_SAVED_MAX);
+}
 
 /** The person's own save waiting on this device. */
 export function hasLocal(rec) {
@@ -463,7 +477,7 @@ export function handedTime(rec) {
 export function dueToSend(rec, now) {
   if (!hasLocal(rec)) return false;
   const l = rec.local;
-  if (l.state === "failed" && SEND_FINAL.indexOf(String(l.code || "")) !== -1) return false;
+  if (l.state === "failed" && sendFinal(l)) return false;
   const t = Date.parse(l.retryAt || "");
   return !isFinite(t) || t <= now || t > now + RETRY_CAP_MS + 60 * 1000;
 }
@@ -548,7 +562,7 @@ export function saveStateOf(rec, live, now, elsewhere) {
     const l = rec.local;
     if (live) return { state: "sending", pct: pctOf(live.sent, live.size) };
     if (elsewhere) return { state: "sending", pct: null };
-    if (l.state === "failed") return { state: "failed", why: String(l.error || ""), final: SEND_FINAL.indexOf(String(l.code || "")) !== -1 };
+    if (l.state === "failed") return { state: "failed", why: String(l.error || ""), final: sendFinal(l) };
     return { state: "kept" };
   }
   const s = rec.sent;

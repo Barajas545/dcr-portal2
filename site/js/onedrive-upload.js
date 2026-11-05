@@ -18,9 +18,10 @@
    * one file at a time; ✕ stops one (the session is left to run out on Microsoft's side: nothing is ever deleted).
 
    createUploader(parts) over injected parts (the tests give a stub transport and broker):
-     broker  {session(job) -> {uploadUrl, ticket, name, chunkBytes, maxChunkBytes, maxBytes},
+     broker  {session(job) -> {uploadUrl, ticket, name, chunkBytes, maxChunkBytes, maxBytes, commit?},
               done(job, itemId, ticket) -> the upload_done answer,
-              find(job) -> [{id, name, size}] the folder's files with this name and size}
+              find(job) -> [{id, name, size}] the folder's files with this name and size,
+              commit?(job) -> the answer, for a session whose answer said commit: "broker" (below)}
      send    transport(req) -> {status, header(name), text()}; req {method, url, headers, body, onProgress, signal}
      now(), setTimeout, clearTimeout, maxTries (8), wait(tries) -> ms
    -> {add(spec) -> job, cancel(id), retry(id), remove(id), list(), active(), wake(), onChange(cb) -> off}
@@ -34,6 +35,15 @@
    what that broker needs (the plan's item id, the version the work was done on), never shown. Its done answers 409
    not_saved when OneDrive did not get the whole file: never "the bytes are in OneDrive" (as upload_done's refusals
    are) - the next try sends it again from a new session.
+
+   A session whose answer says commit: "broker" (a plan's replace: contract addendum 2, C1b - the upload is DEFERRED,
+   so an office save that lands while it goes up is never overwritten) is committed by the broker, not by its last
+   chunk: every chunk, the last one too, answers 202; once the final range is in - a 202 that wants no more, an
+   unexpected 200/201, or the upload URL's own GET saying it wants nothing more - the uploader calls broker.commit(job)
+   (plan_save_commit: the broker needs the upload URL for that one call; it goes nowhere else), never done(). A commit
+   that did not get through is asked again (the bytes are there: never sent again); one refused with not_saved starts
+   a new session on Retry; one the broker answers with an error marked `restart` (plan_changed: it dropped the
+   session) starts a new session at once, which the broker's session() makes a copy.
 
    xhrTransport() is the page's transport (XMLHttpRequest for upload progress, no credentials). */
 
@@ -146,7 +156,11 @@ export function createUploader(parts) {
     });
   }
 
-  /** How far Microsoft got: the next byte it wants, "gone" (404 / 410), or null (could not ask). */
+  /** A session the broker commits (its answer said commit: "broker"): its last chunk commits nothing. */
+  function deferred(j) { return !!(j.session && j.session.commit === "broker" && typeof d.broker.commit === "function"); }
+
+  /** How far Microsoft got: the next byte it wants, "gone" (404 / 410), or null (could not ask). A session the broker
+      commits that wants no more (nextExpectedRanges empty: every byte is in) answers the size. */
   async function where(j) {
     try {
       const res = await d.send({ method: "GET", url: j.session.uploadUrl, headers: {}, signal: j.ctl.signal });
@@ -155,6 +169,7 @@ export function createUploader(parts) {
         const body = jsonOf(res);
         const next = body ? parseNext(body.nextExpectedRanges) : null;
         if (next !== null) return next;
+        if (deferred(j) && body && Array.isArray(body.nextExpectedRanges) && !body.nextExpectedRanges.length) return j.size;
       }
       return null;
     } catch (e) { return null; }
@@ -225,6 +240,7 @@ export function createUploader(parts) {
     for (;;) {
       if (stopped(j)) return null;
       const plan = chunkPlan(j.size, j.offset, j.chunk);
+      if (!plan && deferred(j)) return { commit: true };          // the final range is in: the broker commits it
       if (!plan) {
         // everything was sent but no answer said which file: ask where it is
         const w = await where(j);
@@ -258,6 +274,9 @@ export function createUploader(parts) {
       if (s === 200 || s === 201) {
         const item = jsonOf(res);
         j.sent = j.size;
+        // a session the broker commits answered as a committed one: all its bytes are sent - the broker's commit says
+        // what became of them (never taken as done here)
+        if (deferred(j)) return { commit: true };
         if (item && typeof item.id === "string" && ITEM_ID.test(item.id)) return { itemId: item.id };
         const w = await where(j);
         return w === "gone" ? { gone: true } : { fail: "OneDrive did not say which file it made." };
@@ -306,6 +325,36 @@ export function createUploader(parts) {
     }
   }
 
+  /** Every byte of a session the broker commits is in: the broker commits it -> null (the job ended: done or failed),
+      or "restart" (the broker dropped the session - plan_changed: a new session from the start, a copy). */
+  async function commit(j) {
+    setState(j, "finishing", { sent: j.size });
+    for (;;) {
+      try {
+        const r = await d.broker.commit(j);
+        setState(j, "done", { result: r, error: "" });
+        return null;
+      } catch (e) {
+        if (stopped(j)) return null;
+        const code = String((e && e.code) || "");
+        if (e && e.restart) { j.session = null; return "restart"; }
+        if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
+        if (stopped(j)) return null;
+        if (RETRYABLE.indexOf(code) !== -1) {
+          // the bytes are in the session: Retry asks the broker to commit them again (never a second upload: the session
+          // and its offset are kept, so the chunk loop finds every byte sent and goes straight to the commit)
+          setState(j, "failed", { error: "Your save is sent; OneDrive's last step did not get through. Retry.", code });
+          return null;
+        }
+        // not_saved, or a refusal (a ticket or an address the broker does not take): nothing of this session counts -
+        // Retry sends it again from a new session
+        j.session = null;
+        setState(j, "failed", { error: (e && e.message) || "OneDrive did not get the whole file - send it again.", code });
+        return null;
+      }
+    }
+  }
+
   async function run(j) {
     j.ctl = typeof AbortController === "function" ? new AbortController() : { signal: null, abort: function () {} };
     let restarts = 0;
@@ -315,6 +364,13 @@ export function createUploader(parts) {
       if (stopped(j)) return;
       const r = await sendAll(j);
       if (!r || stopped(j)) return;
+      if (r.commit) {
+        if ((await commit(j)) !== "restart" || stopped(j)) return;
+        if (++restarts > 2) { setState(j, "failed", { error: "OneDrive kept closing the upload. Retry in a few minutes." }); return; }
+        if (!(await openSession(j))) return;
+        setState(j, "sending");
+        continue;
+      }
       if (r.itemId) { j.itemId = r.itemId; await finish(j, r.itemId); return; }
       if (r.fail) {
         // a refusal starts a new session on Retry; a connection that did not come back resumes this one
