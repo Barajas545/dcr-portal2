@@ -1103,7 +1103,7 @@ test("keepSave's heartbeat (takeoff-web's 'keeping'): from the worker's own prog
   // derived from the worker's messages only: no timer of the page's own for it
   const src = read("js/plan-library.js");
   assert.match(src, /if \(m\.type === "progress"\) \{ if \(!over && typeof onProgress === "function"\)/);
-  assert.match(src, /const spool = function \(\) \{ return runSpool\(key, name, s\.file, size, beat\); \};/);
+  assert.match(src, /const spool = async function \(\) \{\s*const w = await runSpool\(key, name, s\.file, size, beat\);/);
   assert.ok(!/setInterval\([^)]*keeping/.test(src) && !/setTimeout\([^)]*keeping/.test(src));
 });
 
@@ -1509,4 +1509,169 @@ test("the purge's words (LW-4): the plans, the saves not yet in OneDrive deleted
   assert.deepEqual([s.revoked, s.purged], [1, { plans: 1, unsent: 1, takeoff: false }]);
   assert.match(read("js/pages/plans-library.js"), /say\(purgeText\(s\.purged, deviceWord\(window\)\) \|\|/);
   assert.match(read("js/pages/plans-library.js"), /const said = purgeText\(gone, deviceWord\(window\)\);/);
+});
+
+/** A second portal window on the made-up phone: the library's module again, with its own state (its own spooling,
+    sending, jobs), the same storage and Web Locks. */
+let LIB2 = null;
+async function window2() {
+  await device();                                            // the made-up phone first: the module reads it at its import
+  if (!LIB2) LIB2 = await import("../site/js/plan-library.js?window2");
+  assert.equal(LIB2.supported(), true, "window 2 sees the made-up phone");
+  return LIB2;
+}
+
+test("two openings of one plan (two windows or tabs): a Save never supersedes the other opening's save waiting here - it is refused in plain words, so its app keeps its draft (LW-1)", async () => {
+  const W2 = await window2();
+  const before = await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;                                    // kept, not sent: the saves wait here
+  const lineA = { file: before.file, base: "qx:AAA" };       // what open() hands each opening
+  const lineB = { file: before.file, base: "qx:AAA" };
+  const oA = await LIB.keepSave(F1.id, saveOf(savedProject(2 * MiB + 1, "PDFCACHE1", 3)), null, lineA);
+  assert.equal(oA.state, "kept");
+  await oA.sent;
+  const fileA = ROW().local.file;
+  const names = Object.keys(LIBFILES()).sort();
+  // B (another window) saves work that has none of A's: refused, A's save untouched, nothing of B's left
+  const oB = await W2.keepSave(F1.id, { req: "sBBBBBBBBB", name: F1.name, size: 2 * MiB + 7, file: savedProject(2 * MiB + 7, "PDFCACHE1", 9).blob }, null, lineB);
+  assert.equal(oB.state, "refused");
+  assert.match(oB.why, /^This plan has a save from another window or tab on this iPad that is not in OneDrive yet, so this one was not kept over it\. .*Save a copy to Files/);
+  assert.ok(oB.why.length <= 300, "whole in the app's answer");
+  assert.deepEqual([ROW().local.file, !!LIBFILES()[fileA], Object.keys(LIBFILES()).sort(), lineB.file], [fileA, true, names, before.file]);
+  // A's own next Save goes on (its line is its save now)
+  const oA2 = await LIB.keepSave(F1.id, { req: "sCCCCCCCCC", name: F1.name, size: 2 * MiB + 3, file: savedProject(2 * MiB + 3, "PDFCACHE1", 4).blob }, null, lineA);
+  assert.equal(oA2.state, "kept");
+  await oA2.sent;
+  assert.equal(ROW().local.file, lineA.file);
+  // the other way round: C opened after A's save (handed it), A saved again meanwhile - C's Save is refused too
+  const lineC = { file: ROW().local.file, base: "qx:AAA" };
+  const oA3 = await LIB.keepSave(F1.id, { req: "sDDDDDDDDD", name: F1.name, size: 1 * MiB + 1, file: savedProject(1 * MiB + 1, "PDFCACHE1", 5).blob }, null, lineA);
+  await oA3.sent;
+  const oC = await W2.keepSave(F1.id, { req: "sEEEEEEEEE", name: F1.name, size: 1 * MiB + 2, file: savedProject(1 * MiB + 2, "PDFCACHE1", 6).blob }, null, lineC);
+  assert.deepEqual([oC.state, ROW().local.file], ["refused", lineA.file]);
+  // both at once, before either was kept: the one whose record write comes second is refused there (its copy removed)
+  const fresh = await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  const l1 = { file: fresh.file, base: "qx:AAA" }, l2 = { file: fresh.file, base: "qx:AAA" };
+  const [o1, o2] = await Promise.all([
+    LIB.keepSave(F1.id, { req: "sFFFFFFFFF", name: F1.name, size: 3 * MiB + 1, file: savedProject(3 * MiB + 1, "PDFCACHE1", 7).blob }, null, l1),
+    W2.keepSave(F1.id, { req: "sGGGGGGGGG", name: F1.name, size: 3 * MiB + 2, file: savedProject(3 * MiB + 2, "PDFCACHE1", 8).blob }, null, l2)]);
+  assert.deepEqual([o1.state, o2.state], ["kept", "refused"]);
+  assert.deepEqual([ROW().local.file, Object.keys(LIBFILES()).sort()], [l1.file, [fresh.file, l1.file].sort()], "the refused one left nothing behind");
+  await o1.sent;
+});
+
+test("one passing error of the storage's never loses a save: only a file the storage says is not there counts, and a sweep keeps it until a later check confirms - or brings it back (LW-2)", async () => {
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  const o = await LIB.keepSave(F1.id, saveOf(savedProject(1 * MiB + 5)));
+  await o.sent;
+  const f = ROW().local.file;
+  const d = await DEV.fs.root.getDirectoryHandle("plan-library");
+  const once = (name) => {
+    d.getFileHandle = async (n, opt) => {
+      if (n === f) { delete d.getFileHandle; throw Object.assign(new Error("made up"), { name }); }
+      return DEV.fs.DirHandle.prototype.getFileHandle.call(d, n, opt);
+    };
+  };
+  // WebKit's passing UnknownError at a check: nothing is decided, the sweep keeps the save
+  once("UnknownError");
+  await LIB.verifyFiles();
+  assert.equal(ROW().local && ROW().local.file, f, "a passing error decides nothing");
+  await LIB.sweep();
+  assert.ok(LIBFILES()[f], "and the sweep keeps it");
+  // the same at a send: not sent, not lost - it waits, and goes again after its wait
+  DEV.nav.onLine = true;
+  once("InvalidStateError");
+  await assert.rejects(LIB.sendSaved(F1.id, { manual: true }), (e) => e.code === "storage");
+  assert.deepEqual([ROW().local.file, ROW().local.state, ROW().local.code], [f, "failed", "storage"]);
+  assert.match(ROW().local.error, /storage did not answer/);
+  DEV.nav.onLine = false;
+  // a NotFoundError at one check while the file is there after all: marked lost - but kept from every sweep, and the
+  // next check finds it: the save is the record's again
+  once("NotFoundError");
+  await LIB.verifyFiles();
+  assert.deepEqual([ROW().local, ROW().sent.mode, ROW().sent.was.file], [null, "lost", f]);
+  assert.deepEqual((await LIB.list())[0].save, { state: "lost" });
+  await LIB.sweep();
+  assert.ok(LIBFILES()[f], "a sweep keeps a save found lost only once");
+  await LIB.verifyFiles();
+  assert.deepEqual([ROW().local && ROW().local.file, ROW().sent], [f, null], "found again: the save is back");
+  // really gone: lost at one check, confirmed at the next (the note stays, without the save)
+  d.entries.delete(f);
+  await LIB.verifyFiles();
+  assert.equal(ROW().sent.was.file, f);
+  await LIB.verifyFiles();
+  assert.deepEqual([ROW().local, Object.keys(ROW().sent).sort()], [null, ["at", "mode"]]);
+  assert.equal(lib.lostSave(ROW()), null);
+  assert.ok(lib.keepSet([{ sent: { mode: "lost", at: AT, was: { file: SAVE, size: 9 } } }], {}, NOW).has(SAVE), "keepSet keeps a save found lost once");
+});
+
+test("no sweep of another window ever takes a save being kept: its record is written under the spool's lock, and a sweep lists the files before it reads the records (LW-3)", async () => {
+  const W2 = await window2();
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  // window 2's sweep (its 5-minute check) right after this window's spool lock is let go
+  const realReq = DEV.locks.request;
+  let swept = false;
+  DEV.locks.request = async function (name, o, cb) {
+    const out = await realReq.call(DEV.locks, name, o, cb);
+    if (!swept && String(name).indexOf("dcr2-plan-sp:") === 0) { swept = true; await W2.sweep(); }
+    return out;
+  };
+  let o;
+  try { o = await LIB.keepSave(F1.id, saveOf(savedProject(1 * MiB + 9))); } finally { DEV.locks.request = realReq; }
+  assert.ok(swept);
+  assert.equal(o.state, "kept");
+  assert.ok(ROW().local && LIBFILES()[ROW().local.file], "the save it was told was kept is on the device");
+  await o.sent;
+  // window 2's sweep under way while a save is kept here, start to end, between its listing and its look at the records
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  const d = await DEV.fs.root.getDirectoryHandle("plan-library");
+  let o2 = null;
+  d.keys = async function* () {
+    delete d.keys;
+    o2 = await LIB.keepSave(F1.id, saveOf(savedProject(2 * MiB + 9)));
+    for (const k of Array.from(d.entries.keys())) yield k;
+  };
+  await W2.sweep();
+  assert.equal(o2 && o2.state, "kept");
+  assert.ok(ROW().local && LIBFILES()[ROW().local.file], "kept by that sweep too");
+  await o2.sent;
+  // and a save whose copy is whole (its worker done, the file let go) but not yet in a record when that sweep's
+  // listing ends: the sweep asks again after its listing, sees the spool's lock, and takes nothing
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  const d3 = await DEV.fs.root.getDirectoryHandle("plan-library");
+  const seen = DEV.workers.length;
+  let release = null, p3 = null;
+  d3.keys = async function* () {
+    delete d3.keys;
+    p3 = LIB.keepSave(F1.id, saveOf(savedProject(3 * MiB + 9)));
+    // the spool's worker: its last word ("spooled": the file whole and let go) held back from the page a while
+    for (let i = 0; i < 2000 && !release; i++) {
+      const w = DEV.workers.slice(seen).find((x) => typeof x.onmessage === "function" && !x.held);
+      if (w) {
+        const real = w.onmessage;
+        w.held = true;
+        w.onmessage = (ev) => { if (ev.data && ev.data.type === "spooled") release = () => real(ev); else real(ev); };
+      }
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    assert.ok(release, "the spool reached its last word");
+    for (const k of Array.from(d3.entries.keys())) yield k;
+  };
+  await W2.sweep();
+  release();
+  const o3 = await p3;
+  assert.equal(o3.state, "kept");
+  assert.ok(ROW().local && LIBFILES()[ROW().local.file], "the whole copy, not yet in a record during that sweep, is still there");
+  await o3.sent;
 });

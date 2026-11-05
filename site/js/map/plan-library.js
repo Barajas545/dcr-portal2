@@ -308,6 +308,9 @@ export function keepSet(records, handed, now) {
     if (r && r.file) keep.add(r.file);
     if (r && r.dl && r.dl.file) keep.add(r.dl.file);
     if (hasLocal(r)) keep.add(r.local.file);
+    // a save found lost only once: kept until a later check says it is really gone (js/plan-library.js verifyFiles)
+    const lost = lostSave(r);
+    if (lost) keep.add(lost.file);
   });
   Object.keys(handed || {}).forEach(function (name) {
     const t = Date.parse(handed[name] || "");
@@ -352,7 +355,8 @@ export function projectBatches(records, n) {
                 closed after the last byte, say) - settled with plan_save_done before anything is sent again, so a
                 save that landed is never sent twice (nor made into a copy of itself). The ticket is the broker's sealed
                 word for plan_save_done, never an upload address: those stay in the page's memory.}
-   and `sent` {mode: "replace" | "copy" | "lost", name, at} the last one's outcome, shown a while (SENT_NOTE_MS). */
+   and `sent` {mode: "replace" | "copy" | "lost", name, at, was?} the last one's outcome, shown a while (SENT_NOTE_MS);
+   `was` (lost only): the save as it was, until a later check confirms its file is gone (lostSave). */
 
 /** How long "Sent" / "Saved as a separate file" stays on a row after the send. */
 export const SENT_NOTE_MS = 3 * 24 * 3600 * 1000;
@@ -365,6 +369,14 @@ export const MAX_SENDS = 4;
 /** The person's own save waiting on this device. */
 export function hasLocal(rec) {
   return !!(rec && rec.local && typeof rec.local.file === "string" && FILE_RE.test(rec.local.file));
+}
+
+/** The save a record's `sent: {mode: "lost", was}` names: one the storage said was not there at ONE check (review
+    LW-2) - its file is kept from sweeps until a later check says it is really gone (the note then loses `was`), or
+    finds it after all (the save is the record's again). -> that `local`, or null. */
+export function lostSave(rec) {
+  const s = rec && rec.sent;
+  return s && s.mode === "lost" && s.was && hasLocal({ local: s.was }) ? s.was : null;
 }
 
 /** A version string as the broker gives one (plans_list's): the base a save is sent against. */

@@ -54,7 +54,7 @@ import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
-  purgeText,
+  purgeText, lostSave,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -250,13 +250,20 @@ async function removeFile(name) {
   if (!FILE_RE.test(String(name || ""))) return;
   try { await (await dir()).removeEntry(name); } catch (e) { /* already gone, or open in a writer: a sweep takes it */ }
 }
-async function fileOf(name) {
-  if (!FILE_RE.test(String(name || ""))) return null;
-  try { return await (await (await dir()).getFileHandle(name)).getFile(); } catch (e) { return null; }
+/** A library file as the storage answers now (review LW-2): {state: "ok", file}; "missing" - not there (NotFoundError)
+    or not the `size` it should be; "unknown" - the storage did not answer (WebKit's passing UnknownError, an
+    InvalidStateError after the page slept): nothing may be decided on that, it is asked again later. */
+async function fileState(name, size) {
+  if (!FILE_RE.test(String(name || ""))) return { state: "missing" };
+  let f;
+  try { f = await (await (await dir()).getFileHandle(name)).getFile(); } catch (e) {
+    return { state: e && e.name === "NotFoundError" ? "missing" : "unknown" };
+  }
+  if (Number(size) > 0 && f.size !== Number(size)) return { state: "missing", file: f };
+  return { state: "ok", file: f };
 }
 async function fileOk(name, size) {
-  const f = await fileOf(name);
-  return !!f && (!(Number(size) > 0) || f.size === Number(size));
+  return (await fileState(name, size)).state === "ok";
 }
 /** A file handed to the takeoff app lately stays on the device through the grace (it reads it by slices). */
 async function handedLately(name) {
@@ -834,25 +841,33 @@ export async function purgeOwner(who) {
 /* ── housekeeping ──────────────────────────────────────────────────────── */
 
 /** Files nobody points at any more: an old version after an update, a part left by a closed window, a copy whose
-    record was removed elsewhere - except a copy handed to the takeoff app within the grace. Never while a download runs
-    (here or in another window): its new part may not be in a record yet. */
+    record was removed elsewhere - except a copy handed to the takeoff app within the grace. Never while a download, a
+    save being kept or one being sent runs (here or in another window): its new file may not be in a record yet. */
 export async function sweep() {
   if (!supported()) return;
-  const held = await heldLocks();
-  if ((held && Object.keys(held).length) || Object.keys(jobs).length) return;
-  // a save being kept writes a file no record names yet (here, or in another window)
-  if (spooling || Object.keys(sending).length) return;
-  const sp = await heldLocks(SPOOL_LOCK);
-  if (sp && Object.keys(sp).length) return;
+  if (await busyFiles()) return;
+  // the files FIRST, then what keeps them (review LW-3): a download or a spool makes its file under its lock, and its
+  // record names the file before that lock goes - so a file in this list either has its writer still running (asked
+  // again just below: nothing goes then) or is named by a record read after it
+  const d = await dir();
+  const names = [];
+  for await (const name of d.keys()) names.push(name);
+  if (await busyFiles()) return;
   const all = await getAll("plans");
   const handed = await mutate("meta", "handed", (cur) => ({ key: "handed", value: pruneHanded(cur ? cur.value : {}, Date.now()) }));
   const keep = keepSet(all, handed ? handed.value : {}, Date.now());
   // and whatever a frame's takeoff app has open now, however long ago it was handed over
   (await framesReading()).forEach(function (n) { keep.add(n); });
-  const d = await dir();
-  const names = [];
-  for await (const name of d.keys()) names.push(name);
   for (const n of names) if (FILE_RE.test(n) && !keep.has(n)) await removeFile(n);
+}
+/** A download, a save being kept or one being sent runs - here, or in another window (their Web Locks). */
+async function busyFiles() {
+  if (Object.keys(jobs).length || spooling || Object.keys(sending).length || Object.keys(sendCalls).length) return true;
+  for (const prefix of [LOCK, SPOOL_LOCK, SEND_LOCK]) {
+    const held = await heldLocks(prefix);
+    if (held && Object.keys(held).length) return true;
+  }
+  return false;
 }
 
 /** A saved copy the browser has lost (storage cleared under it, a broken write): the record says so, and the
@@ -860,23 +875,43 @@ export async function sweep() {
 export async function verifyFiles() {
   const who = owner();
   if (!who || !supported()) return;
+  // (only a file the storage says is not there, or not its size, counts as lost: a passing error of the storage's
+  // decides nothing - review LW-2)
   for (const r of (await getAll("plans")).filter((x) => x.owner === who && x.file)) {
     if (jobs[r.key]) continue;
-    if (!(await fileOk(r.file, r.size))) {
+    if ((await fileState(r.file, r.size)).state === "missing") {
       const cur = await mutate("plans", r.key, (c) => (c && c.file === r.file ? Object.assign({}, c, { file: "", version: "", savedAt: "" }) : undefined));
       if (cur && !cur.file) changed(r.key);
     }
   }
+  // a save found lost at an earlier check (map/plan-library.js lostSave: its file still kept from sweeps): asked again
+  // now - still not there, it is lost for good (the row's note stays); there after all, the save is the record's again
+  for (const r of (await getAll("plans")).filter((x) => x.owner === who && !hasLocal(x) && lostSave(x))) {
+    const was = lostSave(r);
+    const st = (await fileState(was.file, was.size)).state;
+    if (st === "unknown") continue;
+    const cur = await mutate("plans", r.key, function (c) {
+      const w = c && !hasLocal(c) ? lostSave(c) : null;
+      if (!w || w.file !== was.file) return undefined;
+      return st === "ok" ? Object.assign({}, c, { local: w, sent: null })
+        : Object.assign({}, c, { sent: { mode: "lost", at: c.sent.at } });
+    });
+    if (cur) changed(r.key);
+  }
   // a save kept here that the browser lost: nothing is left to send - the row says so (sent "lost")
   for (const r of (await getAll("plans")).filter((x) => x.owner === who && hasLocal(x))) {
     if (sending[r.key] || spooling) continue;
-    if (!(await fileOk(r.local.file, r.local.size))) {
-      const lost = r.local.file;
-      const cur = await mutate("plans", r.key, (c) => (c && hasLocal(c) && c.local.file === lost
-        ? Object.assign({}, c, { local: null, sent: { mode: "lost", at: nowIso() } }) : undefined));
-      if (cur && !cur.local) changed(r.key);
-    }
+    if ((await fileState(r.local.file, r.local.size)).state === "missing") await markLost(r.key, r.local.file);
   }
+}
+
+/** The save `file` waiting on record `key` is not on the device (the storage said so): the record says it was lost
+    (sent "lost") and keeps what the save was (`was`) - its file kept from every sweep until a LATER check says it is
+    really gone, or brings it back (verifyFiles; review LW-2). */
+async function markLost(key, file) {
+  const cur = await mutate("plans", key, (c) => (c && hasLocal(c) && c.local.file === file
+    ? Object.assign({}, c, { local: null, sent: { mode: "lost", at: nowIso(), was: c.local } }) : undefined));
+  if (cur && !cur.local) changed(key);
 }
 
 /* ── new versions ──────────────────────────────────────────────────────── */
@@ -1080,7 +1115,9 @@ export function open(itemId, onDone, opts) {
     }
     if (!r) throw err("missing", "This plan was just updated on this device. Tap Open again.");
     const mine = hasLocal(r);
-    const f = await fileOf(which(r));
+    const st = await fileState(which(r));
+    if (st.state === "unknown") throw err("storage", "This device's storage did not answer just now. Tap Open again.");
+    const f = st.file;
     if (!f) throw err("missing", mine ? "The save kept on this device is gone (the browser cleared this site's storage)." : "This saved plan is no longer on this device. Save it again from 📐 while online.");
     const want = mine ? Number(r.local.size) : Number(r.size);
     if (want > 0 && f.size !== want) throw err("missing", "This saved plan did not finish downloading. It carries on while the portal is open and online.");
@@ -1455,6 +1492,20 @@ function stopSend(key, file) {
   }
 }
 
+/** Record `c` holds a save of ANOTHER opening of the plan (a second window or tab, an older opening): the save waiting
+    there is not the file this opening's app has (`line`: the file it was handed, then each of its saves kept here).
+    Its work is not in this one's, so it is never superseded (review LW-1): only an opening's own save moves on.
+    (A Web Lock per plan for a frame's life - a second opening offered no save at all - was weighed and left: a
+    suspended tab's lock would take the save from the opening the person is using, and a refusal at the Save costs
+    nothing while the first opening has not saved.) */
+function otherOpening(c, line) {
+  return !!(line && line.file && hasLocal(c) && c.local.file !== line.file);
+}
+function otherSaveWhy() {
+  return "This plan has a save from another window or tab on this " + deviceWord(here()) + " that is not in OneDrive yet, so this one was not " +
+    "kept over it. Your changes stay in the takeoff app: use Save a copy to Files to keep them.";
+}
+
 /**
  * The app's Save of the plan `itemId` (js/plan-handoff.js saveOf: {req, name, size, file}) kept on this device ->
  * {state: "kept" | "refused" | "no-room" | "failed", why, sent} - the hand-over's answer to the app (`sent`: the send
@@ -1473,6 +1524,9 @@ export async function keepSave(itemId, save, tell, line) {
     const ours = line && line.file ? recordOfLine(await getAll("plans"), owner(), line.file) : null;
     if (ours) { r = ours; key = ours.key; }
     if (!r || !(r.file || hasLocal(r))) return { state: "refused", why: "This plan is no longer saved on this device: use Save a copy to Files." };
+    // another opening's save waits there (a second window or tab on this plan): never superseded - this one is refused,
+    // so its app keeps its draft (review LW-1)
+    if (otherOpening(r, line)) return { state: "refused", why: otherSaveWhy() };
     const size = Number(s.size);
     if (!s.file || typeof s.file.slice !== "function" || !(size > 0) || s.file.size !== size) return { state: "refused", why: "The save did not arrive whole: save again." };
     if (!(await canWrite())) return { state: "failed", why: UNSUPPORTED };
@@ -1489,7 +1543,24 @@ export async function keepSave(itemId, save, tell, line) {
       beatAt = now;
       tell("keeping", { pct: Math.max(0, Math.min(100, Math.floor((done * 100) / size))) });
     };
-    const spool = function () { return runSpool(key, name, s.file, size, beat); };
+    // the copy AND its record under the spool's lock: until a record names the new file, the lock (and `spooling`) is
+    // what keeps every window's sweep off it (review LW-3)
+    let old = "", kept = false, base = "", other = false;
+    const spool = async function () {
+      const w = await runSpool(key, name, s.file, size, beat);
+      if (w.error || w.magic !== MAGIC || w.size !== size) return w;
+      // the record as it is now (another window may have removed it, or kept another opening's save, meanwhile)
+      await mutate("plans", key, function (c) {
+        if (!c) return undefined;
+        if (otherOpening(c, line)) { other = true; return undefined; }
+        const a = withSave(c, name, w.size, nowIso(), saveBase(c, line));
+        old = a.old;
+        base = a.rec.local.base;
+        kept = true;
+        return a.rec;
+      });
+      return w;
+    };
     const w = HAS && navigator.locks && navigator.locks.request ? await navigator.locks.request(SPOOL_LOCK + key, spool) : await spool();
     if (w.error) {
       if (w.error.status === 507) return { state: "no-room", why: w.error.message };
@@ -1497,16 +1568,7 @@ export async function keepSave(itemId, save, tell, line) {
     }
     if (w.magic !== MAGIC) { await removeFile(name); return { state: "refused", why: "What the takeoff app saved is not a takeoff project file." }; }
     if (w.size !== size) { await removeFile(name); return { state: "failed", why: "The save was not kept whole on this device. Save again." }; }
-    // the record as it is now (another window may have removed it meanwhile)
-    let old = "", kept = false, base = "";
-    await mutate("plans", key, function (c) {
-      if (!c) return undefined;
-      const a = withSave(c, name, w.size, nowIso(), saveBase(c, line));
-      old = a.old;
-      base = a.rec.local.base;
-      kept = true;
-      return a.rec;
-    });
+    if (other) { await removeFile(name); return { state: "refused", why: otherSaveWhy() }; }
     if (!kept) { await removeFile(name); return { state: "refused", why: "This plan was removed from this device meanwhile: use Save a copy to Files." }; }
     // the app's work is this save now (the next Save of this opening builds on it)
     if (line) { line.file = name; line.base = String(base || ""); }
@@ -1663,12 +1725,18 @@ async function sendNow(key) {
     await failSend(key, file, x);
     throw x;
   }
-  const f = await fileOf(file);
-  if (!f || f.size !== Number(r.local.size)) {
-    await mutate("plans", key, (c) => (c && hasLocal(c) && c.local.file === file ? Object.assign({}, c, { local: null, sent: { mode: "lost", at: nowIso() } }) : undefined));
-    changed(key);
+  const fs = await fileState(file, r.local.size);
+  if (fs.state === "unknown") {
+    // the storage did not answer: the save stays as it is, and goes again after its wait (review LW-2)
+    const x = err("storage", "This device's storage did not answer just now. The save stays on this device and is sent again in a few minutes.");
+    await failSend(key, file, x);
+    throw x;
+  }
+  if (fs.state === "missing") {
+    await markLost(key, file);
     throw err("lost", "The save kept on this device is gone (the browser cleared this site's storage).");
   }
+  const f = fs.file;
   await mutate("plans", key, (c) => (c && hasLocal(c) && c.local.file === file
     ? Object.assign({}, c, { local: Object.assign({}, c.local, { state: "sending", error: "", code: "" }) }) : undefined));
   const up = uploader();
