@@ -19,7 +19,12 @@
      plan_save_done (until then a line says the check waits): the ops and not_saved / plan_changed in the drift; an
      admin's save through Portal 2's own uploader replaces the made-up plan (its id kept, a new version as plans_list
      words it), a device with the old version saves a copy beside it ("<stem> - iPad <date> <time>.takeoff"), and a
-     person without prices or without the switch is refused;
+     person without prices or without the switch is refused; and, once the broker has plan_save_commit (contract
+     addendum 2, C1b), as Portal 2's library drives it - the plan's name to the session, a replace DEFERRED (every chunk
+     202, the broker's commit with the session's address and the save's quickXorHash from site/js/quickxor.js, which
+     must be OneDrive's - fake_graph.ts hashes with the broker's quickxor.ts), an office save during the upload made the
+     same upload's copy, a desktop-style save (the old item moved into Backup, a new one on the name) a copy found by
+     name, a byte-identical re-save saved, and a commit whose answer was lost settled by plan_save_done with the hash;
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -55,6 +60,8 @@ export async function run(h) {
   const od = await site("repo/onedrive.js");
   const OD = await site("map/onedrive.js");
   const { createUploader } = await site("onedrive-upload.js");
+  await site("quickxor.js");                                  // the device's quickXorHash (a classic script: self.DCR2QuickXor)
+  const QX = globalThis.DCR2QuickXor;
   const files = await site("repo/files.js");
   const id = (k) => PEOPLE[k].id;
 
@@ -83,6 +90,8 @@ export async function run(h) {
   // and the iPad's save back (owner decisions Q1-Q3 of 2026-11-04; contract C1): until DCR Desktop 2 has it, the drift
   // is the older one and its check waits
   const HAS_SAVE = Array.isArray(fn.OPS) && fn.OPS.includes("plan_save_session");
+  // and the review round's deferred commit (contract addendum 2, C1b)
+  const HAS_COMMIT = Array.isArray(fn.OPS) && fn.OPS.includes("plan_save_commit");
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   const deps = {
     settings: () => {
@@ -119,20 +128,32 @@ export async function run(h) {
   };
   /* Microsoft's upload URL (fake_graph.ts plays only the last chunk): the chunk semantics on top of it */
   const offsets = new Map();
+  const parts = new Map();
   const seen = [];
   let loseFinal = false;
+  let atLast = null;                   // a check's: run when a session's last chunk arrives (an office save during the upload)
   const transport = async (req) => {
     seen.push({ method: req.method, headers: Object.assign({}, req.headers), size: req.body ? req.body.size : 0 });
     const s = g.sessions.get(req.url);
     const res = (status, body) => ({ status, header: () => null, text: () => JSON.stringify(body) });
     if (!s || s.done) return res(404, { error: { code: "itemNotFound" } });
     const at = offsets.get(req.url) || 0;
-    if (req.method === "GET") return res(200, { nextExpectedRanges: [at + "-"] });
+    if (req.method === "GET") return res(200, { nextExpectedRanges: s.deferred && s.bytes ? [] : [at + "-"] });
     if (Object.keys(req.headers).some((k) => /authorization/i.test(k))) return res(401, { error: { code: "unauthenticated" } });
     const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(req.headers["Content-Range"] || "");
     if (!m || Number(m[1]) !== at || Number(m[2]) - Number(m[1]) + 1 !== req.body.size) return res(416, { nextExpectedRanges: [at + "-"] });
     offsets.set(req.url, Number(m[2]) + 1);
+    parts.set(req.url, (parts.get(req.url) || []).concat([req.body]));
     if (Number(m[2]) + 1 < Number(m[3])) return res(202, { nextExpectedRanges: [(Number(m[2]) + 1) + "-"] });
+    const bytes = new Uint8Array(await new Blob(parts.get(req.url)).arrayBuffer());
+    if (atLast) { const a = atLast; atLast = null; a(); }
+    if (HAS_COMMIT && typeof g.lastChunk === "function") {
+      // the broker's fake Graph as Microsoft's page has it: a deferred session's last chunk commits nothing (202)
+      const last = g.lastChunk(req.url, bytes);
+      if (last.status === 202) return res(202, { expirationDateTime: new Date(clock.t + 86400000).toISOString(), nextExpectedRanges: [] });
+      if (loseFinal) { loseFinal = false; throw Object.assign(new Error("No connection"), { code: "offline" }); }
+      return res(201, { id: last.item.id, name: last.item.name, size: last.item.size });
+    }
     const it = g.completeUpload(req.url, Number(m[3]));
     if (loseFinal) { loseFinal = false; throw Object.assign(new Error("No connection"), { code: "offline" }); }
     return res(201, { id: it.id, name: it.name, size: it.size });
@@ -146,13 +167,31 @@ export async function run(h) {
     },
     setTimeout: (f) => setTimeout(f, 0), wait: () => 1,
   });
+  // the plan broker as js/plan-library.js has it: the plan's name to the session, the broker's commit of a deferred
+  // replace (the session's own address, the save's hash), plan_save_done with the hash, plan_changed sent again as a copy
+  const planUploader = (planId, base, meta) => createUploader({
+    send: transport,
+    broker: {
+      session: (j) => od.planSaveSession({ projectId: j.projectId, itemId: (meta && meta.itemId) || planId, version: base, size: j.size,
+        name: meta && meta.name, mode: meta && meta.mode === "copy" ? "copy" : undefined }),
+      done: (j, itemId, ticket) => od.planSaveDone(j.projectId, itemId, ticket, meta && meta.hash),
+      commit: async (j) => {
+        try {
+          return await od.planSaveCommit({ projectId: j.projectId, itemId: (meta && meta.itemId) || planId, ticket: j.session.ticket, uploadUrl: j.session.uploadUrl, hash: meta && meta.hash });
+        } catch (x) { if (x && x.code === "plan_changed" && meta) { meta.mode = "copy"; x.restart = true; } throw x; }
+      },
+      find: async () => [],
+    },
+    setTimeout: (f) => setTimeout(f, 0), wait: () => 1,
+  });
   const settle = (up) => new Promise((resolve) => { const c = () => (up.active() ? setTimeout(c, 5) : resolve(up.list())); setTimeout(c, 5); });
   const file = (size, name) => new File([new Uint8Array(size)], name, { type: name.endsWith(".pdf") ? "application/pdf" : "application/octet-stream" });
 
   try {
     await check("Part 4 OneDrive: drift - the broker's ops, error codes, CORS origin, chunk unit and cap, allowlist and blocklist are the ones Portal 2 knows", async () => {
       same(fn.OPS.slice().sort(), ["download", "ensure_folder", "list", "status", "upload_done", "upload_session"].concat(HAS_PLANS ? ["plans_for"] : [])
-        .concat(HAS_LIBRARY ? ["plans_list", "plan_link"] : []).concat(HAS_SAVE ? ["plan_save_session", "plan_save_done"] : []).sort(), "the ops");
+        .concat(HAS_LIBRARY ? ["plans_list", "plan_link"] : []).concat(HAS_SAVE ? ["plan_save_session", "plan_save_done"] : [])
+        .concat(HAS_COMMIT ? ["plan_save_commit"] : []).sort(), "the ops");
       same(Object.keys(fn.ERRORS).sort(), od.CONTRACT.filter((c) => (HAS_PLANS || !/^takeoff_/.test(c)) &&
         (HAS_SAVE || (c !== "not_saved" && c !== "plan_changed"))).sort(), "every error code the broker answers is one repo/onedrive.js reads");
       ok(fn.ALLOWED_ORIGINS.includes("https://portal.dcrframing.com"), "the site's origin is allowed in CORS");
@@ -342,21 +381,18 @@ export async function run(h) {
         const listed = (await od.plansList([pid]))[String(pid)];
         const plan = listed && listed.files.find((f) => f.name === made.number + " Bid.takeoff");
         ok(!!plan, "the made-up project's plan (the plan buttons' check made it)");
-        const saveOf = (base) => createUploader({
-          send: transport,
-          broker: {
-            session: (j) => od.planSaveSession({ projectId: j.projectId, itemId: plan.id, version: base, size: j.size }),
-            done: (j, itemId, ticket) => od.planSaveDone(j.projectId, itemId, ticket),
-            find: async () => [],
-          },
-          setTimeout: (f) => setTimeout(f, 0), wait: () => 1,
-        });
-        const up = saveOf(plan.version);
+        const saveOf = (base, meta) => planUploader(plan.id, base, meta);
+        const up = saveOf(plan.version, HAS_COMMIT ? { name: plan.name, hash: QX.quickXorHash(new Uint8Array(3 * OD.CHUNK_UNIT + 7)) } : null);
         up.add({ projectId: pid, file: file(3 * OD.CHUNK_UNIT + 7, plan.name), name: plan.name });
         const [job] = await settle(up);
         same(job.state, "done", "replaced: " + job.error);
         same([job.result.mode, job.result.id, job.result.size], ["replace", plan.id, 3 * OD.CHUNK_UNIT + 7], "the plan itself, by its id");
         ok(job.result.version !== plan.version, "a new version");
+        if (HAS_COMMIT) {
+          const commits = g.calls.filter((c) => c.method === "PUT" && c.body && typeof c.body === "object" && "@microsoft.graph.sourceUrl" in c.body);
+          same(commits.length, 1, "committed once, by the broker (Graph's PUT with the session as its source)");
+          same(job.result.version, "qx:" + QX.quickXorHash(new Uint8Array(3 * OD.CHUNK_UNIT + 7)), "OneDrive's quickXorHash is the device's (site/js/quickxor.js = quickxor.ts)");
+        }
         const now = (await od.plansList([pid]))[String(pid)].files.find((f) => f.id === plan.id);
         same(now.version, job.result.version, "in plans_list's form exactly");
         // the device still has the old version: a copy beside it, never over the newer save
@@ -374,6 +410,66 @@ export async function run(h) {
         }
         client.as(null);
       });
+      if (!HAS_COMMIT) {
+        results.push({ section, name: "the save back's review round: op plan_save_commit is not in DCR Desktop 2's broker yet - its check waits for it", ok: true });
+      } else {
+        await check("the save back's review round (contract addendum 2, C1b) through Portal 2's parts over the REAL broker: an office save during the upload makes the same upload a copy; a desktop-style save (the old item into Backup, a new one on the name) a copy found by name; an identical re-save is saved; a commit whose answer was lost settles with plan_save_done and the hash", async () => {
+          client.as(id("admin"));
+          // plans_list answers are kept 2 minutes by the broker: each look is past that (the broker's own clock)
+          const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)].files; };
+          const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+          ok(!!tf, "the made-up project's takeoff folder (the plan buttons' check made it)");
+          const it = g.file(tf.id, made.number + " Walls.takeoff", 10);
+          const plan = (await files()).find((x) => x.id === it.id);
+          ok(!!plan, "a made-up plan for these checks");
+          const bytesN = (n, v) => new Uint8Array(n).fill(v);
+          const sendIt = async (base, meta, bytes) => {
+            const up = planUploader(it.id, base, meta);
+            up.add({ projectId: pid, file: new File([bytes], plan.name), name: plan.name });
+            return (await settle(up))[0];
+          };
+          // (1) the office saves the plan in place while the iPad's replace goes up: the SAME upload is the copy
+          const b1 = bytesN(2 * OD.CHUNK_UNIT + 3, 1);
+          atLast = () => g.write(it.id, 77);
+          const j1 = await sendIt(plan.version, { name: plan.name, hash: QX.quickXorHash(b1) }, b1);
+          same([j1.state, j1.result && j1.result.mode], ["done", "copy"], "a copy: " + j1.error);
+          ok(/ - iPad \d{4}-\d{2}-\d{2} \d{4}\.takeoff$/.test(j1.result.name), "the copy's name: " + j1.result.name);
+          same(j1.result.version, "qx:" + QX.quickXorHash(b1), "the copy holds exactly the save");
+          same((await files()).find((x) => x.id === it.id).size, 77, "the office's save is still the plan: never overwritten");
+          // (2) a desktop-style save: the old item moved into Backup, a new item on the plan's name - found by the name
+          const v2 = (await files()).find((x) => x.id === it.id).version;
+          const backup = g.child(tf.id, "Backup") || g.mkdir(tf.id, "Backup");
+          g.items.get(it.id).parent = backup.id;
+          const fresh = g.file(tf.id, plan.name, 55);
+          const b2 = bytesN(OD.CHUNK_UNIT + 9, 2);
+          const j2 = await sendIt(v2, { name: plan.name, hash: QX.quickXorHash(b2) }, b2);
+          same([j2.state, j2.result && j2.result.mode], ["done", "copy"], "found by name, a copy beside it: " + j2.error);
+          same([g.items.get(it.id).size, g.items.get(it.id).parent], [77, backup.id], "the Backup item untouched");
+          same((await refused(() => od.planSaveSession({ projectId: pid, itemId: it.id, version: v2, size: 5 }), "not_found", "no name")).status, 404, "without the name: 404");
+          // (3) a byte-identical re-save of the new item: replace onto its own bytes - saved, no not_saved, no copy
+          const v3 = (await files()).find((x) => x.id === fresh.id).version;
+          const b3 = bytesN(OD.CHUNK_UNIT + 1, 3);
+          const m3 = { itemId: fresh.id, name: plan.name, hash: QX.quickXorHash(b3) };
+          const j3 = await sendIt(v3, m3, b3);
+          same([j3.state, j3.result && j3.result.mode, j3.result && j3.result.id], ["done", "replace", fresh.id], "replaced: " + j3.error);
+          const j3b = await sendIt(j3.result.version, m3, b3);
+          same([j3b.state, j3b.result && j3b.result.mode, j3b.result && j3b.result.version], ["done", "replace", j3.result.version], "the identical re-save: " + j3b.error);
+          // (4) the commit landed, its answer lost: plan_save_done with the hash finds it; the commit asked again settles too
+          const b4 = bytesN(OD.CHUNK_UNIT + 5, 4);
+          const h4 = QX.quickXorHash(b4);
+          const s4 = await od.planSaveSession({ projectId: pid, itemId: fresh.id, version: j3b.result.version, size: b4.length, name: plan.name });
+          same([s4.mode, s4.commit], ["replace", "broker"], "a deferred replace");
+          const put = (a, z, body) => transport({ method: "PUT", url: s4.uploadUrl, headers: { "Content-Range": "bytes " + a + "-" + z + "/" + b4.length }, body });
+          same((await put(0, OD.CHUNK_UNIT - 1, new Blob([b4.subarray(0, OD.CHUNK_UNIT)]))).status, 202, "a chunk");
+          same((await put(OD.CHUNK_UNIT, b4.length - 1, new Blob([b4.subarray(OD.CHUNK_UNIT)]))).status, 202, "the last chunk commits nothing");
+          same((await refused(() => od.planSaveDone(pid, fresh.id, s4.ticket, h4), "not_saved", "before the commit")).status, 409, "nothing landed yet");
+          same((await od.planSaveCommit({ projectId: pid, itemId: fresh.id, ticket: s4.ticket, uploadUrl: s4.uploadUrl, hash: h4 })).mode, "replace", "committed");
+          same((await od.planSaveDone(pid, fresh.id, s4.ticket, h4)).mode, "replace", "settled by plan_save_done with the hash");
+          same((await od.planSaveCommit({ projectId: pid, itemId: fresh.id, ticket: s4.ticket, uploadUrl: s4.uploadUrl, hash: h4 })).mode, "replace", "the commit asked again: settled, no copy");
+          same((await refused(() => od.planSaveDone(pid, fresh.id, s4.ticket, QX.quickXorHash(b3)), "not_saved", "another hash")).status, 409, "another hash is not this save");
+          client.as(null);
+        });
+      }
     }
   } finally {
     takeoffSet = true;
