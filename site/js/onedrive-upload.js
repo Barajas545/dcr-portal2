@@ -38,12 +38,17 @@
 
    A session whose answer says commit: "broker" (a plan's replace: contract addendum 2, C1b - the upload is DEFERRED,
    so an office save that lands while it goes up is never overwritten) is committed by the broker, not by its last
-   chunk: every chunk, the last one too, answers 202; once the final range is in - a 202 that wants no more, an
-   unexpected 200/201, or the upload URL's own GET saying it wants nothing more - the uploader calls broker.commit(job)
-   (plan_save_commit: the broker needs the upload URL for that one call; it goes nowhere else), never done(). A commit
-   that did not get through is asked again (the bytes are there: never sent again); one refused with not_saved starts
-   a new session on Retry; one the broker answers with an error marked `restart` (plan_changed: it dropped the
-   session) starts a new session at once, which the broker's session() makes a copy.
+   chunk: every chunk, the last one too, answers 202; once the final range is in - a 202 that wants no more, or the
+   upload URL's own GET saying it wants nothing more - the uploader calls broker.commit(job) (plan_save_commit: the
+   broker needs the upload URL for that one call; it goes nowhere else), never done(). A last chunk that answers 200 /
+   201 with the file means OneDrive committed it itself (it did not honour the deferral: addendum 3 D3): never taken as
+   done here either - the job is marked `chunkLanded` and broker.commit says so (landed: true), so the broker only
+   checks what OneDrive did (its version history: an office save that commit crossed is put back). A session that is
+   gone once every byte may be in (a last answer lost after such a commit) is asked of broker.commit too, never of
+   find()/done(): the broker settles it and checks it the same way. A commit that did not get through is asked again
+   (the bytes are there: never sent again); one refused with not_saved starts a new session on Retry (a gone session's:
+   at once); one the broker answers with an error marked `restart` (plan_changed: it dropped the session) starts a new
+   session at once, which the broker's session() makes a copy.
 
    xhrTransport() is the page's transport (XMLHttpRequest for upload progress, no credentials). */
 
@@ -193,6 +198,7 @@ export function createUploader(parts) {
         if (j.session.name) j.target = j.session.name;
         j.offset = 0;
         j.sent = 0;
+        j.chunkLanded = false;
         return true;
       } catch (e) {
         if (stopped(j)) return false;
@@ -274,9 +280,9 @@ export function createUploader(parts) {
       if (s === 200 || s === 201) {
         const item = jsonOf(res);
         j.sent = j.size;
-        // a session the broker commits answered as a committed one: all its bytes are sent - the broker's commit says
-        // what became of them (never taken as done here)
-        if (deferred(j)) return { commit: true };
+        // a session the broker commits answered as a committed one: OneDrive did not wait for the broker's commit
+        // (addendum 3 D3) - never adopted from this answer: the broker is told it landed, and checks what it became
+        if (deferred(j)) { j.offset = j.size; j.chunkLanded = true; return { commit: true }; }
         if (item && typeof item.id === "string" && ITEM_ID.test(item.id)) return { itemId: item.id };
         const w = await where(j);
         return w === "gone" ? { gone: true } : { fail: "OneDrive did not say which file it made." };
@@ -326,8 +332,10 @@ export function createUploader(parts) {
   }
 
   /** Every byte of a session the broker commits is in: the broker commits it -> null (the job ended: done or failed),
-      or "restart" (the broker dropped the session - plan_changed: a new session from the start, a copy). */
-  async function commit(j) {
+      or "restart" (the broker dropped the session - plan_changed: a new session from the start, a copy). `gone`: the
+      session was found gone (its last answer lost) - the broker settles it; one it does not find (not_saved: it never
+      landed, the session ran out) starts a new session at once, as a gone upload session always did. */
+  async function commit(j, gone) {
     setState(j, "finishing", { sent: j.size });
     for (;;) {
       try {
@@ -338,6 +346,7 @@ export function createUploader(parts) {
         if (stopped(j)) return null;
         const code = String((e && e.code) || "");
         if (e && e.restart) { j.session = null; return "restart"; }
+        if (gone && code === "not_saved") { j.session = null; return "restart"; }
         if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
         if (stopped(j)) return null;
         if (RETRYABLE.indexOf(code) !== -1) {
@@ -364,8 +373,12 @@ export function createUploader(parts) {
       if (stopped(j)) return;
       const r = await sendAll(j);
       if (!r || stopped(j)) return;
-      if (r.commit) {
-        if ((await commit(j)) !== "restart" || stopped(j)) return;
+      // a session the broker commits that is gone (a lost last answer: OneDrive may have committed it at its last chunk,
+      // addendum 3 D3): the broker settles it and checks it by the plan's version history - never done() here, which
+      // would take it without that check
+      const goneDeferred = !!r.gone && deferred(j);
+      if (r.commit || goneDeferred) {
+        if ((await commit(j, goneDeferred)) !== "restart" || stopped(j)) return;
         if (++restarts > 2) { setState(j, "failed", { error: "OneDrive kept closing the upload. Retry in a few minutes." }); return; }
         if (!(await openSession(j))) return;
         setState(j, "sending");

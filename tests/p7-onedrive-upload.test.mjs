@@ -342,7 +342,7 @@ function deferredGraph() {
     s.offset = s.size;
     if (step === "lose-answer") throw Object.assign(new Error("No connection"), { code: "offline" });
     // what Graph does not document for a deferred session's last chunk: 202 (expected), or a 201 the uploader must not believe
-    if (step === 201) return { status: 201, header: () => null, text: () => JSON.stringify({ id: "01NOTTHIS0001", name: s.name, size: s.size }) };
+    if (step === 201 || step === 200) return { status: step, header: () => null, text: () => JSON.stringify({ id: "01NOTTHIS0001", name: s.name, size: s.size }) };
     return { status: 202, header: () => null, text: () => JSON.stringify({ expirationDateTime: "2026-11-05T00:00:00Z", nextExpectedRanges: [] }) };
   };
   g.commit = (url) => {
@@ -462,4 +462,58 @@ test("uploader, a commit 'broker' session: the broker dropped it (plan_changed, 
   const [j2] = await settle(up2);
   assert.equal(j2.state, "failed");
   assert.ok(b2.sessions <= 3, "at most three sessions: " + b2.sessions);
+});
+
+test("uploader, a commit 'broker' session OneDrive committed itself (contract addendum 3 D3): a last chunk that answers 200 or 201 with the file marks the job chunkLanded - the broker's commit is told so (landed), the file never taken from that answer; a session found gone (its last answer lost) is asked of broker.commit, never of find()/done(); one gone that never landed starts a new session at once", async () => {
+  for (const status of [200, 201]) {
+    const g = deferredGraph(), b = deferredBroker(g);
+    g.last = [status];
+    const landed = [];
+    b.commit = ((c) => async (j) => { landed.push(j.chunkLanded); return c(j); })(b.commit);
+    const up = make(g, b);
+    up.add({ projectId: 7, file: file(CHUNK_UNIT + 1, "A.takeoff"), name: "A.takeoff", meta: {} });
+    const [job] = await settle(up);
+    assert.equal(job.state, "done", job.error);
+    assert.deepEqual([landed, b.dones, b.finds, job.result.id !== "01NOTTHIS0001"], [[true], 0, 0, true], status + ": landed, checked by the broker's commit only");
+  }
+  // a 202 (deferral honoured): not landed
+  const g0 = deferredGraph(), b0 = deferredBroker(g0);
+  const seen0 = [];
+  b0.commit = ((c) => async (j) => { seen0.push(j.chunkLanded); return c(j); })(b0.commit);
+  const up0 = make(g0, b0);
+  up0.add({ projectId: 7, file: file(CHUNK_UNIT + 1, "A.takeoff"), name: "A.takeoff", meta: {} });
+  await settle(up0);
+  assert.deepEqual(seen0, [false]);
+  // the last chunk's answer lost and the session gone (OneDrive committed it at the last chunk): the broker's commit
+  // settles and checks it - never find() and done(), which would take it unchecked
+  const g1 = deferredGraph(), b1 = deferredBroker(g1);
+  g1.last = ["lose-answer"];
+  const gone = [];
+  b1.commit = async (j) => {
+    b1.commits.push({ url: j.session.uploadUrl });
+    gone.push(j.chunkLanded);
+    return { saved: true, mode: "replace", id: "01ITEM000001", name: j.name, size: j.size, modified: "2026-11-04T18:30:00Z", version: "qx:NEW", verified: true };
+  };
+  // once the last answer is lost, the session is gone (its GET: 404)
+  const inner = g1.send;
+  let lost = false;
+  g1.send = async (req) => {
+    if (lost && req.method === "GET") Array.from(g1.sessions.values())[0].done = "committed-at-the-last-chunk";
+    try { return await inner(req); } catch (e) { lost = true; throw e; }
+  };
+  const up1 = make(g1, b1);
+  up1.add({ projectId: 7, file: file(2 * CHUNK_UNIT + 3, "B.takeoff"), name: "B.takeoff", meta: {} });
+  const [j1] = await settle(up1);
+  assert.equal(j1.state, "done", j1.error);
+  assert.deepEqual([b1.commits.length, b1.dones, b1.finds, b1.sessions, gone], [1, 0, 0, 1, [false]], "the gone session went to the broker's commit");
+  // gone part way and never landed: the broker says not_saved - a new session at once (no Retry needed)
+  const g2 = deferredGraph(), b2 = deferredBroker(g2);
+  g2.script = [null, 404];                                          // the second chunk: the session is gone
+  const up2 = make(g2, b2);
+  up2.add({ projectId: 7, file: file(3 * CHUNK_UNIT + 5, "C.takeoff"), name: "C.takeoff", meta: {} });
+  const [j2] = await settle(up2);
+  assert.equal(j2.state, "done", j2.error);
+  assert.deepEqual([b2.sessions, b2.commits.length, b2.dones, b2.finds], [2, 2, 0, 0], "the broker asked of the gone one (not_saved), then a new session");
+  const src = readFileSync(new URL("../site/js/onedrive-upload.js", import.meta.url), "utf8");
+  assert.match(src, /if \(deferred\(j\)\) \{ j\.offset = j\.size; j\.chunkLanded = true; return \{ commit: true \}; \}/);
 });

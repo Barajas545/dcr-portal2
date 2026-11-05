@@ -569,6 +569,8 @@ test("plansList: op plans_list, 1 to 20 projects a call; each project's files re
     const projects = {};
     for (const id of b.project_ids) projects[String(id)] = { number: "A" + id, files: [F1, { id: "bad", name: "x.pdf" }, F2] };
     if (projects["8"]) projects["8"].complete = false;              // a walk that did not finish
+    if (projects["9"]) projects["9"].save_back = true;              // the broker takes a save of A9's plans (addendum 3 D1)
+    if (projects["10"]) projects["10"].save_back = "yes";           // not its true: never taken for one
     projects["999"] = { number: "A999", files: [F3] };             // not asked: never used
     return ok({ projects, checked_at: AT });
   });
@@ -576,8 +578,13 @@ test("plansList: op plans_list, 1 to 20 projects a call; each project's files re
   const got = await onedrive.plansList(ids.concat(["3", "x", 0]));
   assert.deepEqual(calls.map((c) => [c.name, c.body.op, c.body.project_ids.length]), [["onedrive", "plans_list", 20], ["onedrive", "plans_list", 20], ["onedrive", "plans_list", 5]]);
   assert.equal(onedrive.LIST_BATCH, 20);
-  assert.deepEqual(got["7"], { number: "A7", files: [F1, F2], complete: true }, "complete unless the broker says false");
+  assert.deepEqual(got["7"], { number: "A7", files: [F1, F2], complete: true, saveBack: false }, "complete unless the broker says false; no save_back: false (an older broker)");
   assert.equal(got["8"].complete, false, "the broker's false comes through");
+  assert.deepEqual([got["9"].saveBack, got["10"].saveBack], [true, false], "save_back: only the broker's true");
+  // ...and kept on the record by applyCheck: the frame offers a save only while it is true (a project not visible: false)
+  assert.deepEqual([lib.applyCheck(rec({}), got["9"], AT).saveBack, lib.applyCheck(rec({ saveBack: true }), got["7"], AT).saveBack,
+    lib.applyCheck(rec({ saveBack: true }), null, AT).saveBack, lib.applyCheck(rec({ saveBack: true }), Object.assign({}, got["9"], { files: [], complete: false }), AT).saveBack],
+    [true, false, false, true], "the latest answer's, also from a walk that did not finish");
   // and through applyCheck: a saved plan missing from that unfinished list is not taken for gone
   const kept = rec({ latest: { status: "ok", version: "qx:AAA" } });
   assert.deepEqual(lib.applyCheck(kept, Object.assign({}, got["8"], { files: [] }), AT).latest, kept.latest);
@@ -595,8 +602,12 @@ test("plansList: op plans_list, 1 to 20 projects a call; each project's files re
 test("planLink: op plan_link; the link must point at the owner's OneDrive host; the file must be the one asked", async () => {
   const url = "https://" + onedrive.ONEDRIVE_HOST + "/personal/x/_layouts/15/download.aspx?UniqueId=1&tempauth=abc";
   const calls = stub(() => ok(Object.assign({ url }, F1)));
-  assert.deepEqual(await onedrive.planLink(7, F1.id), Object.assign({ url }, F1));
+  assert.deepEqual(await onedrive.planLink(7, F1.id), Object.assign({ url }, F1, { saveBack: false }), "no save_back (an older broker): false");
   assert.deepEqual(calls[0].body, { op: "plan_link", project_id: 7, item_id: F1.id });
+  stub(() => ok(Object.assign({ url, save_back: true }, F1)));
+  assert.equal((await onedrive.planLink(7, F1.id)).saveBack, true, "the broker's save_back (addendum 3 D1)");
+  stub(() => ok(Object.assign({ url, save_back: 1 }, F1)));
+  assert.equal((await onedrive.planLink(7, F1.id)).saveBack, false, "only its true");
   stub(() => ok(Object.assign({ url: "https://evil.example.test/x" }, F1)));
   assert.equal((await refusal(onedrive.planLink(7, F1.id))).code, "bad_link");
   stub(() => ok(Object.assign({ url }, F2)));
@@ -631,7 +642,7 @@ test("demo plans_list: the people who see prices get each project's .takeoff fil
     const got = await onedrive.plansList([a267.id, ab.id, a001.id]);
     assert.deepEqual(got[String(a267.id)].files.map((f) => f.name).sort(), ["A267 Bid.takeoff", "A267 Rev 2.takeoff", "L1 walls.takeoff"], key);
     assert.deepEqual(got[String(ab.id)].files.map((f) => f.name).sort(), ["A024-B Framing.takeoff", "A024-B Roof.takeoff"], key);
-    assert.deepEqual(got[String(a001.id)], { number: "A001", files: [], complete: true }, key);
+    assert.deepEqual(got[String(a001.id)], { number: "A001", files: [], complete: true, saveBack: false }, key + ": the demo broker (as an older broker) says no save_back");
     const counts = await onedrive.plansFor([a267.id, ab.id]);
     assert.equal(counts[String(a267.id)].plans, got[String(a267.id)].files.length);
     assert.ok(got[String(a267.id)].files.every((f) => lib.planFileOf(f) && /^A267 - /.test(f.folder)), key);
@@ -908,7 +919,7 @@ test("the save back's words: Saved on this iPad, Sending 45%, Sent, Saved as a s
   assert.deepEqual(lib.saveStateOf(r, null, NOW, true), { state: "sending", pct: null }, "another window sends it");
   assert.deepEqual(lib.saveStateOf(rec({ local: local({ state: "sending" }) }), null, NOW), { state: "kept" }, "a page closed while it went: waiting again");
   assert.deepEqual(lib.saveStateOf(rec({ local: local({ state: "failed", error: "OneDrive is busy.", code: "busy" }) }), null, NOW),
-    { state: "failed", why: "OneDrive is busy.", final: false });
+    { state: "failed", why: "OneDrive is busy.", final: false, code: "busy" });
   assert.deepEqual(lib.saveStateOf(rec({ sent: { mode: "replace", at: AT } }), null, NOW), { state: "sent" });
   assert.deepEqual(lib.saveStateOf(rec({ sent: { mode: "copy", name: "A - iPad 2026-11-04 1030.takeoff", at: AT } }), null, NOW),
     { state: "copy", name: "A - iPad 2026-11-04 1030.takeoff" });
@@ -919,6 +930,15 @@ test("the save back's words: Saved on this iPad, Sending 45%, Sent, Saved as a s
   assert.equal(lib.saveText({ state: "sending", pct: 45 }), "Sending 45% — keep this screen open");
   assert.equal(lib.saveText({ state: "sending", pct: null }), "Sending to OneDrive…");
   assert.equal(lib.saveText({ state: "failed", why: "OneDrive is busy." }), "Not sent — tap to retry (OneDrive is busy)");
+  // the broker's switch off for its project (contract addendum 3 D1): the row says it waits - nothing to retry
+  const off = lib.saveStateOf(rec({ local: local({ state: "failed", error: "x", code: "save_back_off" }) }), null, NOW);
+  assert.deepEqual([off.state, off.final, off.code], ["failed", false, "save_back_off"]);
+  assert.equal(lib.saveText(off, "iPad"), "Saving back to OneDrive is turned off for now - this save waits on this iPad.");
+  assert.equal(lib.saveBackOffWords("iPad"), "Saving back to OneDrive is turned off for now - this save waits on this iPad.");
+  // a copy made because OneDrive would not replace the plan (plan_changed {why: "refused"}, D5): nobody is blamed
+  assert.equal(lib.refusedTold("A900 Bid - iPad 2026-11-04 1030.takeoff"),
+    "OneDrive would not replace the plan, so your work was saved as 'A900 Bid - iPad 2026-11-04 1030.takeoff' next to it - nothing was overwritten.");
+  assert.ok(!/office|Someone/.test(lib.refusedTold("x.takeoff")));
   assert.equal(lib.saveText({ state: "sent" }), "Sent to OneDrive");
   assert.match(lib.saveText({ state: "copy", name: "A - iPad.takeoff" }), /^Saved as a separate file: A - iPad\.takeoff/);
   assert.equal(lib.copyTold("A900 Bid - iPad 2026-11-04 1030.takeoff", "iPad"),
@@ -974,10 +994,14 @@ test.after(() => { if (DEV) DEV.uninstall(); });
     session finds the plan by its name when its id is gone (a desktop save), and plan_save_done takes the device's hash
     (with OneDrive's: they alone decide) and a ticket for 30 days (w.expired: one past them). w.realHash: OneDrive's
     version of saved bytes is their real quickXorHash. w.during(s): run when a session's last chunk arrives (an office
-    save while it goes up). */
+    save while it goes up). And addendum 3: w.landAtChunk - OneDrive ignores the deferral, the last chunk commits the
+    replace and answers 200 with the file; w.refusedAll - both commit forms refused: plan_changed {why: "refused"};
+    w.commitWhy - the why of w.commitRefuse's plan_changed (none: an older broker); w.refuseField - the field of
+    w.refuse's error; w.needHash - plan_save_done without a hash: 409 not_saved {need: "hash"}. */
 function saveWorld(o) {
   const w = Object.assign({ calls: [], bodies: [], sessions: new Map(), n: 0, refuse: null, hash: false, loseFinal: false, puts: 0, bytes: 0,
-    deferred: false, realHash: false, commitRefuse: false, loseCommit: false, expired: false, during: null }, o || {});
+    deferred: false, realHash: false, commitRefuse: false, loseCommit: false, expired: false, during: null, landAtChunk: false, refusedAll: false,
+    commitWhy: null, refuseField: null, needHash: false }, o || {});
   w.plan = Object.assign({ id: F1.id, name: F1.name, folder: F1.folder, size: 1500, modified: AT, version: "qx:AAA", rev: 1 }, (o && o.plan) || {});
   w.files = [w.plan];
   const file = (f) => ({ id: f.id, name: f.name, folder: f.folder, size: f.size, modified: f.modified, version: f.version });
@@ -1006,7 +1030,7 @@ function saveWorld(o) {
     if (b.op === "plan_link") return ok(Object.assign({ url: "https://" + onedrive.ONEDRIVE_HOST + "/dl/" + b.item_id }, file(w.files.find((f) => f.id === b.item_id))));
     if (b.op === "plan_save_session") {
       w.sessionBody = b;
-      if (w.refuse) return http(w.refuse[0], { error: w.refuse[1], message: "made up" });
+      if (w.refuse) return http(w.refuse[0], Object.assign({ error: w.refuse[1], message: "made up" }, w.refuseField ? { field: w.refuseField } : {}));
       let f = w.files.find((x) => x.id === b.item_id), byName = false;
       if (!f && w.deferred && b.name) {
         const same = w.files.filter((x) => nameKey(x.name) === nameKey(b.name));
@@ -1034,16 +1058,21 @@ function saveWorld(o) {
           : http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
       }
       if (s.offset !== s.size || w.notSaved) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
+      if (w.refusedAll) { w.sessions.delete(s.url); return http(409, { error: "plan_changed", retry: "copy", why: "refused", message: "OneDrive would not replace the plan: the save is sent again as a separate file." }); }
       const plan = w.files.find((f) => f.id === s.item);
       let f;
       if (plan && plan.rev === s.rev) f = await land(s, null);
-      else if (w.commitRefuse) { w.sessions.delete(s.url); return http(409, { error: "plan_changed", retry: "copy", message: "OneDrive's plan changed while the save was sent: it is sent again as a separate file." }); }
+      else if (w.commitRefuse) {
+        w.sessions.delete(s.url);
+        return http(409, Object.assign({ error: "plan_changed", retry: "copy", message: "OneDrive's plan changed while the save was sent: it is sent again as a separate file." }, w.commitWhy ? { why: w.commitWhy } : {}));
+      }
       else f = await land(s, freeCopyName());
       if (w.loseCommit) { w.loseCommit = false; return { data: null, error: { name: "FunctionsFetchError", message: "Failed to send", context: new TypeError("offline") } }; }
       return saved(f.id === s.item ? "replace" : "copy", f);
     }
     if (b.op === "plan_save_done") {
       if (w.expired) return http(400, { error: "invalid", field: "ticket", message: "This save's ticket is not valid or has run out: save the plan again." });
+      if (w.needHash && !b.hash) return http(409, { error: "not_saved", need: "hash", message: "This save can be checked now only with the file's hash - send it again with the hash." });
       const s = Array.from(w.sessions.values()).find((x) => x.ticket === b.ticket);
       const f = s && s.done ? w.files.find((x) => x.id === s.done) : null;
       if (!f || f.id !== b.item_id) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
@@ -1065,14 +1094,15 @@ function saveWorld(o) {
     w.bytes += req.body.size;
     s.parts.push(req.body);
     s.offset = Number(m[2]) + 1;
-    if (s.offset < s.size) return res(202, { nextExpectedRanges: [s.offset + "-"] });
+    if (s.offset < s.size) { if (typeof w.chunk === "function") w.chunk(s); return res(202, { nextExpectedRanges: [s.offset + "-"] }); }
     if (typeof w.during === "function") { const d = w.during; w.during = null; d(s); }
-    // a deferred replace: the last chunk commits nothing (the broker's plan_save_commit does)
-    if (s.deferred) return res(202, { expirationDateTime: AT, nextExpectedRanges: [] });
+    // a deferred replace: the last chunk commits nothing (the broker's plan_save_commit does) - unless OneDrive ignores
+    // the deferral (w.landAtChunk): then it commits it, 200 with the file (addendum 3 D3)
+    if (s.deferred && !w.landAtChunk) return res(202, { expirationDateTime: AT, nextExpectedRanges: [] });
     // the last chunk: OneDrive has it - the plan replaced (same id), or a copy beside it
     const f = await land(s, s.mode === "replace" ? null : s.name);
     if (w.loseFinal) { w.loseFinal = false; throw Object.assign(new Error("No connection"), { code: "offline" }); }
-    return res(201, { id: f.id, name: f.name, size: f.size });
+    return res(s.deferred ? 200 : 201, { id: f.id, name: f.name, size: f.size });
   });
   return w;
 }
@@ -2126,6 +2156,184 @@ test("a byte-identical re-save is saved, never a loop (review BRK-5): the hash i
   saveWorld({ refuse: [400, "invalid"] });
   await (await LIB.keepSave(F1.id, saveOf(savedProject(4096)))).sent;
   assert.deepEqual([ROW().local.code, lib.dueToSend(ROW(), Date.now() + 365 * 86400000)], ["invalid", false]);
+});
+
+test("the save-back rules (addendum 3 D1, D6): the broker's switch off (save_back_off) and a broker not deployed yet (not_deployed) wait at least 30 minutes, and are never final", () => {
+  assert.deepEqual([lib.LONG_WAIT_MS, lib.LONG_WAIT.slice().sort()], [30 * 60 * 1000, ["not_deployed", "save_back_off"]]);
+  assert.deepEqual([1, 2, 3, 9].map((n) => lib.sendWaitMs("save_back_off", n)), [30, 30, 30, 360].map((m) => m * 60000), "at least 30 min, then the backoff's");
+  assert.deepEqual([1, 9].map((n) => lib.sendWaitMs("not_deployed", n)), [30, 360].map((m) => m * 60000));
+  assert.deepEqual([1, 2].map((n) => lib.sendWaitMs("busy", n)), [5, 10].map((m) => m * 60000), "any other code: the backoff's");
+  const l = (over) => ({ local: Object.assign({ file: "p1-x-2.takeoff", state: "failed", retryAt: null }, over) });
+  assert.deepEqual(["save_back_off", "not_deployed"].map((code) => lib.dueToSend(l({ code, fails: 40 }), NOW)), [true, true], "never final");
+  assert.deepEqual(["save_back_off", "not_deployed"].map((code) => lib.saveStateOf(l({ code, error: "x" }), null, NOW).final), [false, false]);
+});
+
+test("the broker's switch turned off after a save was kept (503 save_back_off, addendum 3 D1), and a broker older than this page (400 invalid for the field op, D6): the save waits on the device - at least 30 minutes, never final, the row in plain words - and goes once the broker takes it", async () => {
+  for (const [refuse, field, code, words] of [[[503, "save_back_off"], null, "save_back_off", "Saving back to OneDrive is turned off for now - this save waits on this iPad."],
+    [[400, "invalid"], "op", "not_deployed", "The portal's OneDrive connection does not take plan saves yet. The save stays on this iPad and is sent later."]]) {
+    await devicePlan();
+    const w = saveWorld({ deferred: true, realHash: true, refuse, refuseField: field });
+    const t0 = Date.now();
+    await (await LIB.keepSave(F1.id, saveOf(savedProject(4096, "PDFCACHE1", 31)))).sent;
+    const l = ROW().local;
+    assert.deepEqual([l.code, l.error, l.state], [code, words, "failed"], code);
+    assert.deepEqual(w.calls, ["plan_save_session"], code + ": asked once in the page (no retry loop), nothing sent");
+    assert.ok(Date.parse(l.retryAt) - t0 >= 30 * 60 * 1000, code + ": a long wait");
+    assert.equal(lib.dueToSend(ROW(), Date.now() + 29 * 60 * 1000), false, code + ": not before it");
+    assert.equal(lib.dueToSend(ROW(), Date.now() + 31 * 60 * 1000), true, code + ": never final - it goes again by itself");
+    const row = (await LIB.list())[0];
+    assert.equal(row.save.final, false);
+    if (code === "save_back_off") assert.equal(lib.saveText(row.save, "iPad"), words, "the row says it waits");
+    // the switch on again (the broker deployed): the person's Retry, or the wait over, sends it
+    w.refuse = null;
+    const out = await LIB.sendSaved(F1.id, { manual: true });
+    assert.deepEqual([out.sent, out.mode, ROW().local], [true, "replace", null], code);
+  }
+});
+
+test("OneDrive ignoring the deferral (addendum 3 D3): a last chunk that answers 200 with the file is never adopted - the broker is asked to check it (plan_save_commit with landed: true); a session found gone after its last chunk is asked of the broker too, never of plan_save_done", async () => {
+  await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true, landAtChunk: true });
+  const p = savedProject(2 * MiB + 13, "PDFCACHE1", 32);
+  const sent = await (await LIB.keepSave(F1.id, saveOf(p))).sent;
+  assert.deepEqual([sent && sent.sent, sent && sent.mode], [true, "replace"]);
+  assert.deepEqual(w.calls, ["plan_save_session", "plan_save_commit"], "the broker's check, never plan_save_done");
+  assert.deepEqual(w.bodies[1], { op: "plan_save_commit", project_id: 7, item_id: F1.id, ticket: "tk1", upload_url: UPS(1), hash: QX.quickXorHash(p.bytes), landed: true });
+  // the last chunk's answer lost, the session gone: the broker settles and checks it (no landed: it cannot be known)
+  await devicePlan();
+  const w2 = saveWorld({ deferred: true, realHash: true, landAtChunk: true, loseFinal: true });
+  const q = savedProject(1 * MiB + 17, "PDFCACHE1", 33);
+  const s2 = await (await LIB.keepSave(F1.id, saveOf(q))).sent;
+  assert.deepEqual([s2 && s2.sent, s2 && s2.mode], [true, "replace"]);
+  assert.deepEqual(w2.calls, ["plan_save_session", "plan_save_commit"], "the gone session goes to the broker's commit");
+  assert.equal(w2.bodies[1].landed, undefined);
+  assert.equal(w2.bytes, q.blob.size, "nothing sent twice");
+  // a deferred session that is gone part way and never landed (it ran out): the broker's commit, asked, says not_saved -
+  // a new session at once, as a gone upload session always did
+  await devicePlan();
+  const w3 = saveWorld({ deferred: true, realHash: true });
+  const r = savedProject(3 * MiB + 19, "PDFCACHE1", 34);
+  w3.chunk = (s) => { if (!w3.cut) { w3.cut = true; s.done = "ran-out"; } };     // gone after its first chunk
+  const s3 = await (await LIB.keepSave(F1.id, saveOf(r))).sent;
+  assert.deepEqual([s3 && s3.sent, s3 && s3.mode], [true, "replace"], JSON.stringify(w3.calls));
+  assert.deepEqual(w3.calls, ["plan_save_session", "plan_save_commit", "plan_save_session", "plan_save_commit"]);
+});
+
+test("why OneDrive made a copy (addendum 3 D5): plan_changed {why: \"refused\"} - OneDrive would not replace the plan - is told without blaming the office (and the takeoff app hears no 'copy' news, whose words say the office saved), here and when settled in a later page; no why (an older broker) or \"changed\" - the copy words", async () => {
+  const toasts = [];
+  globalThis.DCR2 = { toast: (t) => toasts.push(t) };
+  try {
+    await devicePlan();
+    const w = saveWorld({ deferred: true, realHash: true, refusedAll: true });
+    const news = [];
+    const p = savedProject(1 * MiB + 23, "PDFCACHE1", 35);
+    const sent = await (await LIB.keepSave(F1.id, saveOf(p), (state, extra) => news.push([state, extra]))).sent;
+    assert.deepEqual([sent && sent.mode, w.calls], ["copy", ["plan_save_session", "plan_save_commit", "plan_save_session", "plan_save_done"]]);
+    assert.deepEqual([w.bodies[2].mode, w.bodies[2].version], ["copy", "qx:AAA"], "sent again as a copy against the old base");
+    assert.deepEqual(toasts, ["OneDrive would not replace the plan, so your work was saved as 'A900 Bid - iPad 2026-11-04 1030.takeoff' next to it - nothing was overwritten."]);
+    assert.ok(!news.some((n) => n[0] === "copy"), "no 'copy' news to the app (its words blame an office save)");
+    // an older broker (no why), or "changed": the copy words
+    for (const why of [null, "changed"]) {
+      toasts.length = 0;
+      await devicePlan();
+      const w2 = saveWorld({ deferred: true, realHash: true, commitRefuse: true, commitWhy: why });
+      w2.during = () => officeSave(w2);
+      const n2 = [];
+      await (await LIB.keepSave(F1.id, saveOf(savedProject(1 * MiB + 29, "PDFCACHE1", 36)), (state, extra) => n2.push([state, extra]))).sent;
+      assert.deepEqual(toasts, [lib.copyTold("A900 Bid - iPad 2026-11-04 1030.takeoff", "iPad")], String(why));
+      assert.ok(n2.some((n) => n[0] === "copy"), String(why));
+    }
+    // the copy session's end never heard (the page closed after its last byte): its why is kept with it, and the later
+    // page's settle says the neutral words too
+    toasts.length = 0;
+    const q = savedProject(1 * MiB + 31, "PDFCACHE1", 37);
+    await devicePlan();
+    const w4 = saveWorld({ deferred: true, realHash: true });
+    const hash = QX.quickXorHash(q.bytes);
+    const r = ROW();
+    const st = DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+    const file = "p" + lib.hashOf("u1") + "-save-9.takeoff";
+    const d = await DEV.fs.root.getDirectoryHandle("plan-library", { create: true });
+    (await d.getFileHandle(file, { create: true })).bytes = q.bytes.slice();
+    const copyName = "A900 Bid - iPad 2026-11-04 1030.takeoff";
+    w4.files.push({ id: "01FAKECOPY00099", name: copyName, folder: F1.folder, size: q.blob.size, modified: AT, version: "qx:" + hash, rev: 1 });
+    w4.sessions.set(UPS(99), { mode: "copy", item: F1.id, name: copyName, size: q.blob.size, done: "01FAKECOPY00099", ticket: "tk99", deferred: false, url: UPS(99) });
+    st.set(KEY, Object.assign({}, r, { local: { file, base: "qx:AAA", savedAt: AT, size: q.blob.size, hash, state: "waiting", error: "", code: "", fails: 0, retryAt: null,
+      sends: [{ file, ticket: "tk99", mode: "copy", name: copyName, size: q.blob.size, at: AT, hash, why: "refused" }] } }));
+    toasts.length = 0;
+    const settled = await LIB.sendSaved(F1.id, { manual: true });
+    assert.deepEqual([settled.sent, settled.mode, w4.calls], [true, "copy", ["plans_list", "plan_save_done"]]);
+    assert.deepEqual(toasts, ["OneDrive would not replace the plan, so your work was saved as '" + copyName + "' next to it - nothing was overwritten."]);
+    // and a session the library opens after a refusal keeps that why (never its address)
+    await devicePlan();
+    const w5 = saveWorld({ deferred: true, realHash: true, refusedAll: true });
+    let sends = null;
+    w5.during = function look(sx) { if (sx.mode === "copy") sends = ROW().local.sends; else w5.during = look; };
+    await (await LIB.keepSave(F1.id, saveOf(savedProject(4096, "PDFCACHE1", 38)))).sent;
+    assert.deepEqual(sends.map((x) => [x.mode, x.why]), [["replace", undefined], ["copy", "refused"]]);
+  } finally { delete globalThis.DCR2; }
+});
+
+test("a kept save without its hash (its spool could not load js/quickxor.js - addendum 3 D4) is hashed again in a second worker pass before it is sent or settled; one the broker settles only with a hash (need: hash) that this device cannot hash is never settled without it - it waits, and is not sent again", async () => {
+  await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true });
+  DEV.nav.onLine = false;
+  await LIB.canWrite();                                     // (its probe worker first: it would take the failure)
+  DEV.importFails = 1;                                       // the spool's worker cannot load the hash
+  const p = savedProject(2 * MiB + 41, "PDFCACHE1", 39);
+  await (await LIB.keepSave(F1.id, saveOf(p))).sent;
+  DEV.importFails = 0;
+  assert.equal(ROW().local.hash, null, "kept without a hash");
+  DEV.nav.onLine = true;
+  const out = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([out.sent, out.mode], [true, "replace"]);
+  const hash = QX.quickXorHash(p.bytes);
+  assert.equal(w.bodies.find((b) => b.op === "plan_save_commit").hash, hash, "hashed again before the send: the commit carries it");
+  // a session whose end was never heard, of a save with no hash, past the broker's 48 hours (need: hash): the second
+  // pass hashes the file, and the settle goes with it
+  const setUp = async (seed) => {
+    await devicePlan();
+    const w2 = saveWorld({ deferred: true, realHash: true, needHash: true });
+    const q = savedProject(1 * MiB + seed, "PDFCACHE1", seed);
+    DEV.nav.onLine = false;
+    await LIB.canWrite();                                     // (its probe worker first: it would take the failure)
+    DEV.importFails = 1;
+    await (await LIB.keepSave(F1.id, saveOf(q))).sent;
+    DEV.importFails = 0;
+    DEV.nav.onLine = true;
+    const r = ROW();
+    w2.sessions.set(UPS(99), { mode: "replace", item: F1.id, name: F1.name, size: q.blob.size, done: F1.id, ticket: "tk99", deferred: true, url: UPS(99) });
+    Object.assign(w2.plan, { size: q.blob.size, modified: "2026-11-04T19:00:00.000Z", version: "qx:" + QX.quickXorHash(q.bytes), rev: 2 });
+    const st = DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+    st.set(KEY, Object.assign({}, r, { local: Object.assign({}, r.local, { sends: [{ file: r.local.file, ticket: "tk99", mode: "replace", name: F1.name,
+      size: q.blob.size, at: AT, hash: null, commit: "broker" }] }) }));
+    return { w2, q };
+  };
+  const a = await setUp(42);
+  const settled = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([settled.sent, settled.mode, a.w2.calls], [true, "replace", ["plan_save_done"]], JSON.stringify(a.w2.calls));
+  assert.equal(a.w2.bodies[0].hash, QX.quickXorHash(a.q.bytes), "settled with the hash of the second pass");
+  // ...and when this device cannot hash it now either: never settled without it, nor sent again - it waits
+  const b = await setUp(43);
+  DEV.importFails = 2;                                       // the second pass's worker cannot load it either
+  const e = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+  DEV.importFails = 0;
+  assert.equal(e && e.code, "need_hash");
+  assert.deepEqual(b.w2.calls, ["plan_save_done"], "asked once, without a hash - never a new session");
+  const l = ROW().local;
+  assert.deepEqual([l.code, l.sends.map((x) => x.ticket), lib.dueToSend(ROW(), Date.now() + 365 * 86400000)], ["need_hash", ["tk99"], true],
+    "the session kept, the save waiting (tried again later)");
+  // tried again - the second pass's worker could not load it when it started, and asks for it once more itself: the
+  // hash, and the save settled with it
+  DEV.importFails = 1;
+  const again = await LIB.sendSaved(F1.id, { manual: true });
+  DEV.importFails = 0;
+  assert.deepEqual([again.sent, b.w2.calls.slice(-1)[0], b.w2.bodies.slice(-1)[0].hash], [true, "plan_save_done", QX.quickXorHash(b.q.bytes)]);
+  // the worker's second pass: slices of 8 MiB, never the whole file, and nothing written
+  const worker = read("js/plan-library-worker.js");
+  assert.match(worker, /async function hashFile\(m\) \{[\s\S]*?var end = Math\.min\(pos \+ CHUNK, size\);\s*var buf = new Uint8Array\(await readSlice\(f\.slice\(pos, end\)\)\);/);
+  const pass = worker.slice(worker.indexOf("async function hashFile"), worker.indexOf("async function start"));
+  assert.ok(pass.length > 200 && !/createSyncAccessHandle|\.write\(|create: true/.test(pass), "no access handle, nothing made: nothing written");
 });
 
 test("the save-back rules (addendum 2): a send waits for the person on SEND_FINAL (invalid now too) or on NOT_SAVED_MAX not_saved answers; hashOk is the broker's form", () => {

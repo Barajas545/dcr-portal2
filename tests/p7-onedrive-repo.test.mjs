@@ -316,3 +316,33 @@ test("repo/onedrive: plan_save_commit's errors - plan_changed with {retry: 'copy
     if (code === "invalid") assert.ok(e.field === "upload_url" || e.field === "ticket", "its field");
   }
 });
+
+test("repo/onedrive (contract addendum 3): plan_save_commit's landed (only its true), verified on a replace's answer, plan_changed's why, not_saved's need, 503 save_back_off by name, and a broker without the op (400 invalid for the field op) is 'not deployed'", async () => {
+  const calls = stub((b) => ok(Object.assign({}, DONE, { verified: b.landed === true })));
+  const a = await onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP, hash: QXH, landed: true });
+  assert.equal(a.verified, true, "a replace's verified comes through");
+  await onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP, landed: "yes" });
+  await onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP });
+  assert.deepEqual(calls.map((x) => x.body.landed), [true, undefined, undefined], "landed only when it is true (else the broker's default, false)");
+  stub(() => ok(Object.assign({}, DONE, { mode: "copy", id: "01FAKECOPY0001", name: "A900 Bid - iPad 2026-11-04 1030.takeoff", verified: true })));
+  assert.ok(!("verified" in (await onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP }))), "a copy carries none");
+  stub(() => ok(Object.assign({}, DONE, { verified: "yes" })));
+  assert.ok(!("verified" in (await onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP }))), "only a boolean");
+  // the errors
+  stub(() => http(409, { error: "plan_changed", message: "OneDrive would not replace the plan: the save is sent again as a separate file.", retry: "copy", why: "refused" }));
+  const r = await refusal(onedrive.planSaveCommit({ projectId: 7, itemId: PLAN, ticket: "t", uploadUrl: UP }));
+  assert.deepEqual([r.code, r.info.why, r.info.retry], ["plan_changed", "refused", "copy"]);
+  stub(() => http(409, { error: "not_saved", message: "This save can be checked now only with the file's hash - send it again with the hash.", need: "hash" }));
+  const n = await refusal(onedrive.planSaveDone(7, PLAN, "t"));
+  assert.deepEqual([n.code, n.info.need], ["not_saved", "hash"]);
+  assert.ok(onedrive.CONTRACT.includes("save_back_off"), "the broker's code since addendum 3 (D1)");
+  stub(() => http(503, { error: "save_back_off", message: "Saving plans back to OneDrive is not on yet - your save waits on this device." }));
+  const off = await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 9 }));
+  assert.deepEqual([off.code, off.status], ["save_back_off", 503], "by name (never 'unavailable': the uploader would ask again in a minute)");
+  stub(() => http(400, { error: "invalid", message: "op must be one of list, download, upload_session", field: "op" }));
+  const old = await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 9 }));
+  assert.deepEqual([old.code, old.status, old.field], ["not_deployed", 400, "op"], "a broker older than this page (D6)");
+  assert.ok(!/list, download/.test(old.message), "never the broker's list of ops");
+  stub(() => http(400, { error: "invalid", message: "name must be the plan's file name (at most 255 characters)", field: "name" }));
+  assert.equal((await refusal(onedrive.planSaveSession({ projectId: 7, itemId: PLAN, version: "qx:AAA", size: 9 }))).code, "invalid", "any other field: invalid, as before");
+});

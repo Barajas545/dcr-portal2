@@ -332,7 +332,11 @@ test("the hand-over's file: three posts in all (the plan, a fresh link, a save's
 test("the Plans Library offers a save only in the frame, to a person who may save back, and takes it with keepSave; the switch PLAN_SAVE_BACK", () => {
   const lib = code(read("js/plan-library.js"));
   assert.match(lib, /const frame = usesFrame\(\);\s*const offer = frame && saveBackFor\(o\.me\);/);
-  assert.match(lib, /if \(offer\) plan\.canSave = true;/);
+  // ...and only while the record's latest plans_list / plan_link answer said the broker takes it (its save_back, kept on
+  // the record: contract addendum 3 D1) - an older broker never says so
+  assert.match(lib, /if \(offer && r\.saveBack === true\) plan\.canSave = true;/);
+  assert.match(lib, /await noteSaveBack\(key, link\.saveBack === true\);/, "every plan_link answer of a download notes it");
+  assert.match(lib, /folder, version: a\.version, expect: a\.expect \|\| null, saveBack: a\.saveBack === true \}\);/, "every check's too");
   assert.match(lib, /onSave: offer \? function \(save, tell\) \{ return keepSave\(itemId, save, tell, line\); \} : null,\s*onClose: function \(\) \{ closeNow\(\); \}/,
     "the opening's line (what the app has), and the frame's close lets go of the file it read");
   assert.match(lib, /const free = frame \? holdForFrame\(which\(cur\), closed\) : null;\s*if \(!frame\) await markHanded\(which\(cur\)\);/,
@@ -358,8 +362,8 @@ test("the Plans Library offers a save only in the frame, to a person who may sav
   // its one use: a deferred replace's commit, handed from the uploader's job (memory) to the broker (plan_save_commit) -
   // never written anywhere (local.sends keeps the ticket, never the address)
   assert.equal(lib.replace(/\(j\.session && j\.session\.name\)/g, "").split("\n").filter((l) => /uploadUrl/.test(l)).length, 1, "the library touches an upload address on one line only");
-  assert.match(lib, /return await onedrive\.planSaveCommit\(\{ projectId: j\.projectId, itemId: m\.itemId, ticket: j\.session\.ticket, uploadUrl: j\.session\.uploadUrl, hash: m\.hash \}\);/,
-    "the commit's, from the job's session to the broker");
+  assert.match(lib, /return await onedrive\.planSaveCommit\(\{ projectId: j\.projectId, itemId: m\.itemId, ticket: j\.session\.ticket, uploadUrl: j\.session\.uploadUrl, hash: m\.hash,\s*landed: j\.chunkLanded === true \}\);/,
+    "the commit's, from the job's session to the broker (and whether its last chunk answered the file: addendum 3 D3)");
   // the pages: the person is offered save back through openOnDevice (me), and Send now / Retry
   assert.match(code(read("js/pages/plan-buttons.js")), /L\.sendSaved\(id, \{ manual: true \}\)/);
   assert.match(code(read("js/pages/plans-library.js")), /L\.sendSaved\(id, \{ manual: true \}\)/);

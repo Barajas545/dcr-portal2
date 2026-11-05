@@ -287,8 +287,12 @@ export function installDevice(o) {
       const clear = (id) => { timers.delete(id); clearTimeout(id); clearInterval(id); };
       const self = { onmessage: null, postMessage(m) { setTimeout(function () { if (!me.terminated && me.onmessage) me.onmessage({ data: m }); }, 0); } };
       this.self = self;
-      // a worker's importScripts: the site's file beside it, run in the worker's own global (js/quickxor.js)
-      const importScripts = (...names) => names.forEach((n) => vm.runInContext(readFileSync(fileURLToPath(new URL(n, url)), "utf8"), ctx, { filename: n }));
+      // a worker's importScripts: the site's file beside it, run in the worker's own global (js/quickxor.js) -
+      // dev.importFails: that many of the next ones fail as a browser's does when the file cannot be had
+      const importScripts = (...names) => names.forEach((n) => {
+        if (dev.importFails > 0) { dev.importFails--; throw new Error("NetworkError: " + n + " could not be loaded"); }
+        vm.runInContext(readFileSync(fileURLToPath(new URL(n, url)), "utf8"), ctx, { filename: n });
+      });
       const ctx = vm.createContext({ self, navigator: { storage: { getDirectory: async () => scopedDir(fs.root, me.owned) } }, FileSystemFileHandle: fs.FileHandle,
         setTimeout: later, clearTimeout: clear, setInterval: every, clearInterval: clear, importScripts,
         fetch: opt.fetch || (async () => { throw new Error("no network here"); }),
@@ -319,7 +323,7 @@ export function installDevice(o) {
   };
   apply();
   const dev = {
-    idb, fs, locks, store, nav, wake, workers, workerSpeed: 1,
+    idb, fs, locks, store, nav, wake, workers, workerSpeed: 1, importFails: 0,
     /** the globals put back (a test before may have deleted one) */
     apply,
     uninstall() {

@@ -43,6 +43,8 @@
    * saveStateOf / saveText / copyTold / sendBar  what the rows say: Saved on this iPad, Sending 45%, Sent, Saved as a
                                 separate file, Not sent - tap to retry;
    * purgeText(p, device)       what a purge on lost prices took (the plans, the saves not yet sent, the takeoff app's).
+   * sendWaitMs(code, fails)    how long a failed send waits (LONG_WAIT: the broker's switch off, a broker not deployed);
+   * refusedTold / saveBackOffWords  the words of a copy OneDrive would not replace, and of a save the switch holds.
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -236,11 +238,14 @@ export function progressHtml(p) {
 }
 
 /**
- * A record after its project's plans_list answer. `answer`: {files: [...]} (the project visible) or null (not in the
- * answer: the project is no longer visible to this person). The record's own copy is never touched here.
+ * A record after its project's plans_list answer. `answer`: {files: [...], saveBack} (the project visible) or null (not
+ * in the answer: the project is no longer visible to this person). The record's own copy is never touched here.
+ * `saveBack` (the broker's save_back, contract addendum 3 D1) is kept as the record's: the frame offers a save of the
+ * plan only while it is true - never from an answer without it (an older broker), never for a project not visible.
  */
 export function applyCheck(rec, answer, nowIso) {
   const out = Object.assign({}, rec);
+  out.saveBack = !!answer && answer.saveBack === true;
   if (!answer) {
     out.latest = { status: "denied", checkedAt: nowIso };
     return out;
@@ -386,6 +391,18 @@ export const SEND_FINAL = Object.freeze(["not_found", "too_large", "lost", "bad_
 /** OneDrive said this often that it did not get a save whole (not_saved): the save waits for the person - never the
     whole plan sent again and again by itself, every backoff, with the screen held awake (review BRK-5). */
 export const NOT_SAVED_MAX = 2;
+/** A send that failed for one of these goes again by itself only after a long wait (at least LONG_WAIT_MS), never
+    final: the broker's switch turned off (save_back_off, contract addendum 3 D1 - it is turned on again by hand) and a
+    broker older than this page (not_deployed: its 400 invalid for the field "op", D6 - deployed later). */
+export const LONG_WAIT = Object.freeze(["save_back_off", "not_deployed"]);
+export const LONG_WAIT_MS = 30 * 60 * 1000;
+
+/** The wait before a failed send (`code`, its `fails`-th failure) goes again by itself: backoffMs, and at least
+    LONG_WAIT_MS for a LONG_WAIT code. */
+export function sendWaitMs(code, fails) {
+  const ms = backoffMs(fails);
+  return LONG_WAIT.indexOf(String(code || "")) !== -1 ? Math.max(ms, LONG_WAIT_MS) : ms;
+}
 /** At most this many unsettled sessions are kept with a save (each is settled, then dropped, before the next send). */
 export const MAX_SENDS = 4;
 
@@ -540,7 +557,8 @@ export function adoptSent(rec, file, ans, nowIso) {
   const copy = mine ? { key: rec.owner + "|" + ans.id, owner: rec.owner, itemId: ans.id, projectId: rec.projectId, number: rec.number,
     projectTitle: rec.projectTitle, name: ver.name, folder: rec.folder, file, size: ver.size, modified: ver.modified, version: ver.version,
     savedAt: nowIso, dl: null, latest: Object.assign({ status: "ok", checkedAt: nowIso }, ver), fails: 0, retryAt: null, failCode: null,
-    expect: expectOf(ans), local: null, sent: null, from: rec.itemId, adopted: { file, keptAt: rec.local.savedAt || nowIso } } : null;
+    expect: expectOf(ans), local: null, sent: null, from: rec.itemId, adopted: { file, keptAt: rec.local.savedAt || nowIso },
+    saveBack: rec.saveBack === true } : null;
   return { rec: Object.assign({}, rec, { local, sent }), copy, old: mine ? [] : [file] };
 }
 
@@ -562,7 +580,7 @@ export function saveStateOf(rec, live, now, elsewhere) {
     const l = rec.local;
     if (live) return { state: "sending", pct: pctOf(live.sent, live.size) };
     if (elsewhere) return { state: "sending", pct: null };
-    if (l.state === "failed") return { state: "failed", why: String(l.error || ""), final: sendFinal(l) };
+    if (l.state === "failed") return { state: "failed", why: String(l.error || ""), final: sendFinal(l), code: String(l.code || "") };
     return { state: "kept" };
   }
   const s = rec.sent;
@@ -579,6 +597,9 @@ export function saveText(st, device) {
   if (!st) return "";
   if (st.state === "kept") return "Saved on this " + d + " — not in OneDrive yet: it is sent while the portal is open and online";
   if (st.state === "sending") return typeof st.pct === "number" ? "Sending " + st.pct + "% — keep this screen open" : "Sending to OneDrive…";
+  // the broker's switch is off for this project (contract addendum 3 D1): nothing to retry - it waits, and goes once it
+  // is turned on
+  if (st.state === "failed" && st.code === "save_back_off") return saveBackOffWords(d);
   if (st.state === "failed") return "Not sent — tap to retry" + (st.why ? " (" + String(st.why).replace(/[.\s]+$/, "") + ")" : "");
   if (st.state === "sent") return "Sent to OneDrive";
   if (st.state === "copy") return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — nothing was overwritten";
@@ -590,6 +611,18 @@ export function saveText(st, device) {
 export function copyTold(name, device) {
   return "Someone saved this plan in the office after your " + (device || "device") + " got it. Your work was saved as '" + String(name || "") +
     "' next to it - nothing was overwritten.";
+}
+
+/** What the person is told when the save became a separate file because OneDrive would not replace the plan (the
+    broker's plan_changed {why: "refused"}, contract addendum 3 D5): nobody saved anything in the office - no blame. */
+export function refusedTold(name) {
+  return "OneDrive would not replace the plan, so your work was saved as '" + String(name || "") + "' next to it - nothing was overwritten.";
+}
+
+/** The words of a save waiting because the broker's switch for the save back is off for its project (503
+    save_back_off, contract addendum 3 D1): the row, the frame's bar. */
+export function saveBackOffWords(device) {
+  return "Saving back to OneDrive is turned off for now - this save waits on this " + (device || "device") + ".";
 }
 
 /**

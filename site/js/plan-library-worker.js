@@ -19,11 +19,15 @@
                    {op: "spool", id, file, blob, size}   keep a save of the takeoff app (the iPad's save back, owner
                                                  decisions Q1-Q3 of 2026-11-04): copy `blob` - the whole saved project,
                                                  handed over by reference - into the NEW file `file`, 8 MiB at a time
+                   {op: "hash", id, file, size}  OneDrive's quickXorHash of the library file `file` (`size` bytes), read
+                                                 8 MiB at a time: the second pass over a kept save whose spool could not
+                                                 hash it (contract addendum 3 D4); nothing is written
    worker -> page  {type: "probe", ok}
                    {type: "progress", id, done}
                    {type: "need-url", id}
                    {type: "done", id, size, magic}
                    {type: "spooled", id, size, magic, hash}
+                   {type: "hashed", id, size, hash}
                    {type: "cancelled", id, done}
                    {type: "error", id, message, status, done}
 
@@ -79,6 +83,12 @@ self.onmessage = function (ev) {
   if (m.op === "spool") {
     spool(m).catch(function (e) {
       post({ type: "error", id: m.id, message: (e && e.message) || "The save could not be kept on this device.", status: 0, done: null });
+    });
+    return;
+  }
+  if (m.op === "hash") {
+    hashFile(m).catch(function (e) {
+      post({ type: "error", id: m.id, message: (e && e.message) || "The save could not be hashed.", status: 0, done: null });
     });
     return;
   }
@@ -231,6 +241,39 @@ async function spool(m) {
     else post({ type: "error", id: job.id, message: (e && e.message) || "The save could not be kept on this device.", status: (e && e.status) || 0, done: null });
   } finally {
     clearInterval(beat);
+    job = null;
+  }
+}
+
+/* A kept save hashed again (its spool could not load js/quickxor.js: asked once more here), one slice at a time from
+   the file as the storage has it - never the whole file in memory, never a write. */
+async function hashFile(m) {
+  if (job) { post({ type: "error", id: m.id, message: "This worker is already busy.", status: 0, done: null }); return; }
+  job = { id: m.id, url: "", size: 0, cancelled: false, pos: 0 };
+  try {
+    if (!self.DCR2QuickXor) { try { importScripts("quickxor.js"); } catch (e0) { /* below */ } }
+    if (!self.DCR2QuickXor) throw failure("This browser could not load the hash.");
+    if (!NAME_RE.test(String(m.file || ""))) throw failure("That is not a library file name.");
+    var root = await navigator.storage.getDirectory();
+    var dir = await root.getDirectoryHandle(DIR);
+    var f = await (await dir.getFileHandle(m.file)).getFile();
+    var size = Number(m.size);
+    if (!(size > 0) || f.size !== size) throw failure("The kept save is not the size it should be.", 416);
+    var qx = new self.DCR2QuickXor.QuickXorHash();
+    var pos = 0;
+    while (pos < size) {
+      var end = Math.min(pos + CHUNK, size);
+      var buf = new Uint8Array(await readSlice(f.slice(pos, end)));
+      if (buf.byteLength !== end - pos) throw failure("The kept save could not be read whole.", 400);
+      qx.update(buf);
+      pos = end;
+      job.pos = pos;
+      post({ type: "progress", id: job.id, done: pos });
+    }
+    post({ type: "hashed", id: job.id, size: pos, hash: qx.base64() });
+  } catch (e) {
+    post({ type: "error", id: job.id, message: (e && e.message) || "The save could not be hashed.", status: (e && e.status) || 0, done: null });
+  } finally {
     job = null;
   }
 }
