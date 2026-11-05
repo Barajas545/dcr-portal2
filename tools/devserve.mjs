@@ -78,7 +78,10 @@ export function injectDemo(html) {
 
 async function fakeBundle() {
   const parts = await Promise.all(FAKE_PARTS.map((f) => readFile(join(FAKE_DIR, f), "utf8")));
-  return "/* DCR Portal 2 demo mode: tools/fake/" + FAKE_PARTS.join(" + ") + " (development only) */\n" +
+  // the demo's OneDrive hashes what it is sent with the site's own quickXorHash (tools/fake/p7-onedrive.js)
+  const qx = await readFile(join(SITE, "js", "quickxor.js"), "utf8");
+  return "/* DCR Portal 2 demo mode: site/js/quickxor.js + tools/fake/" + FAKE_PARTS.join(" + ") + " (development only) */\n" +
+    "/* ── site/js/quickxor.js ── */\n" + qx + "\n;\n" +
     parts.map((p, i) => "/* ── " + FAKE_PARTS[i] + " ── */\n" + p).join("\n;\n");
 }
 

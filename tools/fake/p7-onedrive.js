@@ -48,17 +48,30 @@
      project the person may not see too) and this tab's own download link (a blob:; node: a placeholder on the host)
      answering byte ranges; its bytes start "PDFCACHE1" as a takeoff file does (made up: the takeoff app cannot open
      it). setPlanVersion(path, version) gives one a new version (a node test's "new save in OneDrive").
-   * plan_save_session {project_id, item_id, version, size, modified?, mode?} (the iPad's save back, owner decisions
-     Q1-Q3 of 2026-11-04; contract C1) -> {mode, upload_url, expires_at, chunk_bytes, chunk_multiple, max_chunk_bytes,
-     max_bytes, ticket, name}: an admin, or prices AND the upload switch (403 forbidden naming the switch when only it is
-     missing), one of the project's plans (404), at most 4096 MiB (413 too_large {max_bytes}); "replace" while the plan's
-     version is still `version` (the same item id), else a COPY beside it "<stem> - iPad YYYY-MM-DD HHMM.takeoff" (company
-     time; " (2)" ... " (9)" when taken; all taken: 503 busy, Retry-After 60). The upload URL answers as upload_session's
-     does; its last chunk replaces the plan's bytes (a new version: "sm:<size>:<time>") or adds the copy to the folder;
-   * plan_save_done {project_id, item_id, ticket} -> {saved: true, mode, id, name, size, modified, version}: the ticket's
-     person, project, plan (a replace: the same id and size, another version, changed since the ticket) or copy (its
-     name and size), else 409 not_saved; the version in plans_list's form - the "sm:" one, which plans_list then
-     reports under a made-up hash (the same size and time: the portal takes it without a download).
+   * plan_save_session {project_id, item_id, version, size, modified?, mode?, name?} (the iPad's save back, owner
+     decisions Q1-Q3 of 2026-11-04; contract C1 and addendum 2 C1b, as DCR Desktop 2's handler.ts has them since the
+     review round) -> {mode, commit?, upload_url, expires_at, chunk_bytes, chunk_multiple, max_chunk_bytes, max_bytes,
+     ticket, name}: an admin, or prices AND the upload switch (403 forbidden naming the switch when only it is missing),
+     one of the project's plans - else, when `name` is the name of exactly ONE of them (the office's desktop app moved the
+     item into Backups and wrote a new one: desktopSave), that one, and always a copy - (404), at most 4096 MiB (413
+     too_large {max_bytes}); "replace" while the plan's version is still `version` (or `version` is "sm:<size>:<time>"
+     naming its size and time), DEFERRED: commit "broker", the ticket keeps the plan's tag and a tag of the upload URL,
+     and its last chunk answers 202 and commits nothing; else a COPY beside it "<stem> - iPad YYYY-MM-DD HHMM.takeoff"
+     (company time; " (2)" ... " (9)" when taken; all taken: 503 busy, Retry-After 60), whose last chunk adds it to the
+     folder. The upload URL answers as upload_session's does;
+   * plan_save_commit {project_id, item_id, ticket, upload_url, hash?} -> plan_save_done's answer: the ticket of a
+     deferred replace (48 hours to commit, 30 days to settle) and its own upload URL; the plan still with the session's
+     tag: committed onto it (a new version: "sm:<size>:<time>", then OneDrive's quickXorHash of the bytes a moment later);
+     the tag moved (an office save during the upload) or the plan left its folder: the SAME upload committed as the copy
+     beside it (the copy name of the session's minute) - or, refuseCopyCommits(true) in a node test, 409 plan_changed
+     {retry: "copy"} with the session dropped; the session gone (committed earlier, the answer lost): plan_save_done's
+     checks;
+   * plan_save_done {project_id, item_id, ticket, hash?} -> {saved: true, mode, id, name, size, modified, version}: the
+     ticket's person, project (30 days), plan (a replace) or copy (its folder and name); then the device's hash against
+     OneDrive's when both are there (alone), else the size and - a replace - another version than the device's, changed
+     since the ticket; a deferred replace's ticket with a hash also finds the copy its commit made; else 409 not_saved.
+     The version in plans_list's form: the "sm:" one until the demo's OneDrive has hashed the saved bytes - with
+     site/js/quickxor.js, the device's own module: the REAL quickXorHash (hashed() waits for it) - then "qx:<it>".
    The takeoff folder (made up, the same every time): A267 three .takeoff files in its folder (and an autosave, a PDF
    and plan notes, never counted) and two older ones in Backup/ and Backup/Old/ (never counted); A024 one and A024-B
    two (apart; a third in Backup/); A120 one in its folder and one in an older second folder; the other A### numbers by
@@ -106,6 +119,7 @@
     file_type: [415, "That kind of file cannot be uploaded here (PDFs, pictures, videos, Office files, text and CAD files can)."],
     takeoff_not_configured: [503, "The takeoff folder is not set up yet."],
     not_saved: [409, "OneDrive did not get the whole file - send it again."],
+    plan_changed: [409, "OneDrive's plan changed while the save was sent: it is sent again as a separate file."],
     busy: [503, "OneDrive is busy just now: try again in a minute."],
   };
   const NOT_RECORDED = {
@@ -399,6 +413,11 @@
       const all = rows[TABLE].filter((r) => r.takeoff === full);
       return all.length ? all[all.length - 1] : null;
     }
+    /** the last desktop save of the takeoff file at `full` (desktopSave: its new item id), or null */
+    function desktopItem(full) {
+      const all = rows[TABLE].filter((r) => r.takeoff === full && r.parent_id === "desktop-save");
+      return all.length ? all[all.length - 1] : null;
+    }
     function planFilesOf(p) {
       const folders = takeoffFolders();
       const names = candidates(folders.map((f) => f.name), p.number);
@@ -411,7 +430,9 @@
           const name = parts.pop();
           const full = parts.concat(name).join("/");
           const size = 180000 + ((fi * 7 + i * 13) % 9) * 41000;
-          out.push({ id: "01DEMOTKO" + String(fi).padStart(3, "0") + "F" + String(i).padStart(3, "0"), name, folder: parts.join("/"),
+          // the office's desktop app saved it: a new item on the name (the old one went into Backups)
+          const dk = desktopItem(full);
+          out.push({ id: dk ? dk.item_id : "01DEMOTKO" + String(fi).padStart(3, "0") + "F" + String(i).padStart(3, "0"), name, folder: parts.join("/"),
             size, modified: new Date(Date.UTC(2026, 8, 1 + ((fi + i) % 27), 17, 0, 0)).toISOString(),
             version: planVersions.get(full) || "qx:demo" + full.length.toString(36) + i + fi, full, folderName: f.name });
           // a save back from a device (a row of the demo's table: every tab knows it): its bytes' size, time and version
@@ -449,8 +470,11 @@
       }
       return answer(200, { projects, checked_at: nowIso() });
     }
-    /* the iPad's save back (contract C1): replace the plan by its id while it is still the device's version, else a copy */
+    /* the iPad's save back (contract C1, addendum 2 C1b - DCR Desktop 2's handler.ts since the review round): a replace by
+       the plan's id while it is still the device's version, DEFERRED (its last chunk commits nothing; plan_save_commit
+       commits it onto that version only - else the same upload becomes the copy), else a copy beside it */
     const MAX_PLAN = 4096 * 1024 * 1024;
+    const SETTLE_MS = 30 * 24 * 3600 * 1000;                 // a plan ticket settles this long (commits: TICKET_MS)
     const STAMP = typeof Intl !== "undefined" ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit",
       day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : null;
     function companyStamp(ms) {
@@ -464,73 +488,192 @@
       const p = E.readable(w, "projects").find((x) => x.id === b.project_id && !x.deleted_at);
       return p ? { p, f: planFilesOf(p).find((x) => x.id === b.item_id) || null } : { p: null, f: null };
     }
+    /** handler.ts versionMatches (review BRK-7): the same string, or the device's "sm:<size>:<time>" naming the plan's
+        size and time now */
+    function versionMatches(device, f) {
+      if (device === f.version) return true;
+      const m = /^sm:([0-9]{1,16}):(.+)$/.exec(String(device || ""));
+      return !!m && Number(m[1]) === f.size && Date.parse(m[2]) === Date.parse(f.modified || "");
+    }
+    /** the plan's tag (its cTag: what changes with its bytes - never with OneDrive's hash of them coming in later): the
+        last save's row of it (every tab agrees), and this tab's own test hooks */
+    const revs = new Map();              // path -> how often a node test's hook gave it new bytes (this tab)
+    function tagOf(f) {
+      const r = savedPlan(f.full);
+      return "t" + (r ? r.id : 0) + "." + (revs.get(f.full) || 0);
+    }
+    /** handler.ts urlTag: the ticket keeps a tag of its session's upload URL, never the URL */
+    const urlTag = (url) => (NS.md5 ? NS.md5("uh:" + url) : String(String(url).length));
+    /** the first free copy name of the plan's in its folder, the minute `ms` (handler.ts copySession / plan_save_commit) */
+    function freeCopyName(p, f, ms) {
+      const taken = new Set(planFilesOf(p).filter((x) => x.folder === f.folder).map((x) => nfc(x.name).toLowerCase()));
+      const stamp = companyStamp(ms);
+      for (let n = 1; n <= 9; n++) {
+        const want = copyName(f.name, stamp, n, f.folder);
+        if (want === null) return { refuse: bad("item_id", "That plan's folder name is too long for a copy of the plan next to it.") };
+        if (!taken.has(want.toLowerCase())) return { name: want };
+      }
+      return { refuse: answer(503, { error: "busy", message: "Several copies of this plan were saved this minute already. Try again in a minute." }) };
+    }
     function planSaveSession(b, w) {
       if (typeof b.version !== "string" || !/^(qx|sm):/.test(b.version) || b.version.length > 200) return bad("version", "version must be the plan's version as the plan list gave it");
       if (typeof b.size !== "number" || !Number.isSafeInteger(b.size) || b.size < 1) return bad("size", "size must be the file's size in bytes");
       if (b.mode !== undefined && b.mode !== null && b.mode !== "replace" && b.mode !== "copy") return bad("mode", 'mode must be "replace" or "copy"');
+      if (b.name !== undefined && b.name !== null && (typeof b.name !== "string" || !b.name || Array.from(b.name).length > 255)) {
+        return bad("name", "name must be the plan's file name (at most 255 characters)");
+      }
       if (!takeoffOn()) return fail("takeoff_not_configured");
       const no = saver(w);
       if (no) return no;
-      const { p, f } = planOf(b, w);
+      let { p, f } = planOf(b, w);
+      // the office's desktop app moved the item into Backups and wrote a new one: the ONE plan of that name, and a copy
+      let byName = false;
+      if (p && !f && typeof b.name === "string") {
+        const same = planFilesOf(p).filter((x) => nfc(x.name).toLowerCase() === nfc(b.name).toLowerCase());
+        if (same.length === 1) [f, byName] = [same[0], true];
+      }
       if (!f) return fail("not_found");
       if (b.size > MAX_PLAN) return fail("too_large", { max_bytes: MAX_PLAN });
-      const mode = (b.mode || "replace") === "replace" && f.version === b.version ? "replace" : "copy";
+      const mode = !byName && (b.mode || "replace") === "replace" && versionMatches(b.version, f) ? "replace" : "copy";
       let name = f.name;
       if (mode === "copy") {
-        const taken = new Set(planFilesOf(p).filter((x) => x.folder === f.folder).map((x) => nfc(x.name).toLowerCase()));
-        const stamp = companyStamp(nowMs());
-        name = null;
-        for (let n = 1; n <= 9 && !name; n++) {
-          const want = copyName(f.name, stamp, n, f.folder);
-          if (want === null) return bad("item_id", "That plan's folder name is too long for a copy of the plan next to it.");
-          if (!taken.has(want.toLowerCase())) name = want;
-        }
-        if (!name) return answer(503, { error: "busy", message: "Several copies of this plan were saved this minute already. Try again in a minute." });
+        const c = freeCopyName(p, f, nowMs());
+        if (c.refuse) return c.refuse;
+        name = c.name;
       }
       const token = "s" + (++sessionN) + "-" + Math.random().toString(36).slice(2, 10);
       const exp = nowMs() + 24 * 3600 * 1000;
+      const url = "https://" + HOST + "/__demo/up/" + token;
+      const deferred = mode === "replace";
       sessions.set(token, { plan: true, mode, uid: w.uid, pid: p.id, item: f.id, full: f.full, folderName: f.folderName, folder: f.folder, name,
-        size: b.size, offset: 0, parts: [], done: null, exp });
-      const ticket = seal("plan", { u: w.uid, p: p.id, m: mode, t: mode === "replace" ? f.id : f.folder, v: b.version, s: b.size, n: name,
-        i: Math.floor(nowMs() / 1000) }, nowMs() + TICKET_MS);
-      return answer(200, { mode, upload_url: "https://" + HOST + "/__demo/up/" + token, expires_at: new Date(exp).toISOString(), chunk_bytes: CHUNK,
-        chunk_multiple: UNIT, max_chunk_bytes: MAX_CHUNK, max_bytes: MAX_PLAN, ticket, name });
+        size: b.size, offset: 0, parts: [], done: null, exp, deferred });
+      const ticket = seal("plan", Object.assign({ u: w.uid, p: p.id, m: mode, t: mode === "replace" ? f.id : f.folder, v: b.version, s: b.size, n: name,
+        i: Math.floor(nowMs() / 1000) }, deferred ? { tag: tagOf(f), uh: urlTag(url), dc: true, f: f.folder } : {}), nowMs() + SETTLE_MS);
+      return answer(200, Object.assign({ mode }, deferred ? { commit: "broker" } : {}, { upload_url: url, expires_at: new Date(exp).toISOString(),
+        chunk_bytes: CHUNK, chunk_multiple: UNIT, max_chunk_bytes: MAX_CHUNK, max_bytes: MAX_PLAN, ticket, name }));
     }
-    /** the last chunk of a plan's save: the plan's bytes replaced (a new version), or the copy added to its folder */
+    /** OneDrive's quickXorHash of saved bytes, a moment after they landed (js/quickxor.js - the very module the device
+        hashes with): until then the version is the "sm:" form, as OneDrive's is before it hashed them */
+    let hashing = Promise.resolve();
+    async function hashOf(blob) {
+      const Q = root.DCR2QuickXor;
+      if (!Q || !blob || typeof blob.slice !== "function") return null;
+      const h = new Q.QuickXorHash();
+      for (let at = 0; at < blob.size; at += 8 * 1024 * 1024) h.update(new Uint8Array(await blob.slice(at, at + 8 * 1024 * 1024).arrayBuffer()));
+      return h.base64();
+    }
+    function hashLater(rowId, blob) {
+      hashing = hashing.then(() => hashOf(blob)).then(function (h) {
+        const row = rows[TABLE].find((r) => r.id === rowId);
+        if (h && row && /^sm:/.test(row.version)) commitUpdate(TABLE, row, Object.assign({}, row, { version: "qx:" + h }));
+      }).catch(() => null);
+      return hashing;
+    }
+    /** the plan's bytes replaced (a new version, the same id), or the copy added to its folder */
     function planSaveLanded(s) {
       const at = nowIso();
       let full = s.full;
       if (s.mode === "copy") {
         const folder = takeoffFolders().find((x) => x.name === s.folderName);
-        if (folder) folder.files.push(s.name);
+        if (folder && folder.files.indexOf(s.name) === -1) folder.files.push(s.name);
         full = s.folder + "/" + s.name;
       }
-      if (typeof Blob !== "undefined") savedBytes.set(full, new Blob(s.parts, { type: "application/octet-stream" }));
+      const blob = typeof Blob !== "undefined" ? new Blob(s.parts, { type: "application/octet-stream" }) : null;
+      if (blob) savedBytes.set(full, blob);
       fixtures.delete(full);
       const p = rows.projects.find((x) => x.id === s.pid);
       const f = p ? planFilesOf(p).find((x) => x.full === full) : null;
       const id = f ? f.id : s.item;
-      commitInsert(TABLE, { id: nextId(TABLE), item_id: id, project_id: s.pid, parent_id: null, name: s.name, folder: false, size: s.size,
+      const rowId = nextId(TABLE);
+      commitInsert(TABLE, { id: rowId, item_id: id, project_id: s.pid, parent_id: null, name: s.name, folder: false, size: s.size,
         mime: "application/octet-stream", created_at: at, modified_at: at, by_app: true, takeoff: full, version: "sm:" + s.size + ":" + at });
+      if (blob) hashLater(rowId, blob);
       return id;
     }
+    /** handler.ts notLanded: the device's hash and OneDrive's decide alone when both are there (a byte-identical re-save
+        is saved, an office save of the same size is not); else the size, the version (never the device's), the time */
+    function landedAs(t, f, hash) {
+      if (t.m === "replace" && f.id !== t.t) return false;
+      if (t.m === "copy" && (f.folder !== t.t || !same(f.name, t.n))) return false;
+      if (hash && /^qx:/.test(f.version)) return f.version === "qx:" + hash;
+      if (f.size !== t.s) return false;
+      if (t.m === "replace") return !versionMatches(t.v, f) && Date.parse(f.modified || "") >= t.i * 1000 - SKEW_MS;
+      return true;
+    }
+    /** plan_save_done's checks (and a commit's whose session is gone): the item the ticket's save landed as - else, for a
+        deferred replace with a hash, the copy its commit made of it */
+    function settled(p, t, id, hash) {
+      const files = planFilesOf(p);
+      const f = files.find((x) => x.id === id) || null;
+      if (f && landedAs(t, f, hash)) return answer(200, { saved: true, mode: t.m, id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version });
+      if (t.m === "replace" && t.dc && hash) {
+        const stem = nfc(t.n).replace(/\.takeoff$/i, "").toLowerCase() + " - ipad " + companyStamp(t.i * 1000);
+        const c = files.find((x) => x.folder === t.f && x.version === "qx:" + hash && nfc(x.name).toLowerCase().indexOf(stem) === 0);
+        if (c) return answer(200, { saved: true, mode: "copy", id: c.id, name: c.name, size: c.size, modified: c.modified, version: c.version });
+      }
+      return fail("not_saved");
+    }
+    const hashOk = (h) => h === undefined || h === null || (typeof h === "string" && /^[A-Za-z0-9+/]{27}=$/.test(h));
     function planSaveDone(b, w) {
+      if (!hashOk(b.hash)) return bad("hash", "hash must be the file's quickXorHash in base64, as OneDrive reports it");
       if (!takeoffOn()) return fail("takeoff_not_configured");
       const no = saver(w);
       if (no) return no;
       const t = unseal("plan", b.ticket);
       if (!t || t.u !== w.uid || t.p !== b.project_id) return bad("ticket", "This save's ticket is not valid or has run out: save the plan again.");
-      const { f } = planOf(b, w);
-      if (!f) return fail("not_saved");
-      const changed = Date.parse(f.modified || "");
-      if (t.m === "replace" && (f.id !== t.t || f.size !== t.s || f.version === t.v || !(changed >= t.i * 1000 - SKEW_MS))) return fail("not_saved");
-      if (t.m === "copy" && (f.folder !== t.t || !same(f.name, t.n) || f.size !== t.s)) return fail("not_saved");
-      const out = { saved: true, mode: t.m, id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version };
-      // OneDrive computes its hash of the new bytes a moment later: plans_list reports that from now on (the same size
-      // and time - the portal takes it without a download)
-      const kept = savedPlan(f.full);
-      if (kept && /^sm:/.test(kept.version)) commitUpdate(TABLE, kept, Object.assign({}, kept, { version: "qx:demo-saved-" + kept.id + "x" }));
-      return answer(200, out);
+      const { p } = planOf(b, w);
+      if (!p) return fail("not_found");
+      return settled(p, t, b.item_id, b.hash || null);
+    }
+    /** what plan_save_commit answers once Microsoft committed it: the item afresh - the hash, else the size */
+    function committed(p, t, found, hash) {
+      const f = planFilesOf(p).find(found);
+      if (!f || (hash && /^qx:/.test(f.version) ? f.version !== "qx:" + hash : f.size !== t.s)) return fail("not_saved");
+      return answer(200, { saved: true, mode: f.id === t.t ? "replace" : "copy", id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version });
+    }
+    let refuseCopyCommit = false;        // a node test's: Microsoft will not commit a session as the copy (plan_changed)
+    function planSaveCommit(b, w) {
+      if (typeof b.upload_url !== "string" || !/^https:\/\//.test(b.upload_url) || (() => { try { return new URL(b.upload_url).hostname !== HOST; } catch (e) { return true; } })()) {
+        return bad("upload_url", "upload_url must be the upload URL of this save's session");
+      }
+      if (!hashOk(b.hash)) return bad("hash", "hash must be the file's quickXorHash in base64, as OneDrive reports it");
+      if (!takeoffOn()) return fail("takeoff_not_configured");
+      const no = saver(w);
+      if (no) return no;
+      const t = unseal("plan", b.ticket);
+      if (!t || t.u !== w.uid || t.p !== b.project_id) return bad("ticket", "This save's ticket is not valid or has run out: save the plan again.");
+      if (t.m !== "replace" || t.dc !== true || typeof t.tag !== "string" || typeof t.uh !== "string") return bad("ticket", "This save's session is not one the broker commits: finish it with plan_save_done.");
+      if (b.item_id !== t.t) return bad("item_id", "item_id must be the plan this save's session was made for");
+      if (urlTag(b.upload_url) !== t.uh) return bad("upload_url", "That is not the upload URL of this save's session.");
+      const { p } = planOf(b, w);
+      if (!p) return fail("not_found");
+      const hash = b.hash || null;
+      // a ticket past 48 hours: nothing is committed, the save is only looked for
+      if (nowMs() - t.i * 1000 > TICKET_MS) return settled(p, t, b.item_id, hash);
+      const m = /^\/__demo\/up\/([A-Za-z0-9-]+)$/.exec(new URL(b.upload_url).pathname);
+      const s = m ? sessions.get(m[1]) : null;
+      // the session gone (committed earlier, its answer lost; or run out): the save is looked for
+      if (!s || s.done || s.exp < nowMs()) return settled(p, t, b.item_id, hash);
+      if (s.offset !== s.size) return fail("not_saved");
+      const plan = planFilesOf(p).find((x) => x.id === t.t) || null;
+      if (plan && tagOf(plan) === t.tag) {
+        s.done = planSaveLanded(s);
+        return committed(p, t, (x) => x.id === t.t, hash);
+      }
+      // the plan changed during the upload, or left its folder (a desktop save): the SAME upload as the copy beside it
+      const where = plan || planFilesOf(p).find((x) => x.folder === t.f) || null;
+      if (!where || refuseCopyCommit) {
+        sessions.delete(m[1]);
+        return answer(409, { error: "plan_changed", message: ERR.plan_changed[1], retry: "copy" });
+      }
+      const c = freeCopyName(p, Object.assign({}, where, { name: plan ? plan.name : t.n }), t.i * 1000);
+      if (c.refuse) {
+        sessions.delete(m[1]);
+        return answer(409, { error: "plan_changed", message: ERR.plan_changed[1], retry: "copy" });
+      }
+      Object.assign(s, { mode: "copy", name: c.name, folder: where.folder, folderName: where.folderName });
+      s.done = planSaveLanded(s);
+      return committed(p, t, (x) => x.folder === where.folder && same(x.name, c.name), hash);
     }
 
     function planLink(b, w) {
@@ -598,7 +741,8 @@
       if (!b) return bad("body", "the body must be a JSON object");
       const ops = { list: ["path", "cursor"], download: ["item_id"], upload_session: ["folder", "rel_dir", "name", "size", "modified"],
         upload_done: ["item_id", "ticket"], ensure_folder: [], status: [], plans_for: ["project_ids"], plans_list: ["project_ids"],
-        plan_link: ["item_id"], plan_save_session: ["item_id", "version", "size", "modified", "mode"], plan_save_done: ["item_id", "ticket"] };
+        plan_link: ["item_id"], plan_save_session: ["item_id", "version", "size", "modified", "mode", "name"],
+        plan_save_commit: ["item_id", "ticket", "upload_url", "hash"], plan_save_done: ["item_id", "ticket", "hash"] };
       if (!Object.prototype.hasOwnProperty.call(ops, b.op)) return bad("op", "op must be one of " + Object.keys(ops).join(", "));
       const allowed = ["op"].concat(b.op === "status" || b.op === "plans_for" || b.op === "plans_list" ? [] : ["project_id"], ops[b.op]);
       const extra = Object.keys(b).find((k) => !allowed.includes(k));
@@ -616,9 +760,10 @@
       if (b.item_id !== undefined && (typeof b.item_id !== "string" || !/^[A-Za-z0-9!_.-]{8,128}$/.test(b.item_id))) {
         return bad("item_id", "item_id must be an item id from the list");
       }
-      if (b.op === "plan_link" || b.op === "plan_save_session" || b.op === "plan_save_done") {
+      if (b.op === "plan_link" || b.op === "plan_save_session" || b.op === "plan_save_done" || b.op === "plan_save_commit") {
         if (typeof b.item_id !== "string") return bad("item_id", "item_id must be an item id from the list");
         if (b.op === "plan_save_session") return planSaveSession(b, w);
+        if (b.op === "plan_save_commit") return planSaveCommit(b, w);
         if (b.op === "plan_save_done") return planSaveDone(b, w);
         return planLink(b, w);
       }
@@ -796,7 +941,7 @@
       const m = /^\/__demo\/up\/([A-Za-z0-9-]+)$/.exec(u.pathname);
       const s = m ? sessions.get(m[1]) : null;
       if (!s || s.done || s.exp < nowMs()) return graphJson(404, { error: { code: "itemNotFound", message: "The upload session was not found" } });
-      const nextRanges = () => ({ expirationDateTime: new Date(s.exp).toISOString(), nextExpectedRanges: [s.offset + "-"] });
+      const nextRanges = () => ({ expirationDateTime: new Date(s.exp).toISOString(), nextExpectedRanges: s.offset < s.size ? [s.offset + "-"] : [] });
       if (method === "GET") return graphJson(200, nextRanges());
       if (method !== "PUT") return graphJson(405, { error: { code: "invalidRequest" } });
       if (h.authorization) return graphJson(401, { error: { code: "unauthenticated", message: "An upload URL takes no Authorization header" } });
@@ -810,7 +955,10 @@
       s.offset = z + 1;
       if (s.offset < s.size) return graphJson(202, nextRanges());
       if (s.plan) {
-        // a plan's save back: the plan itself (its id stays) or the copy beside it - never a Projects-folder item
+        during(s);
+        // a deferred replace: its last chunk commits nothing (202, nothing more wanted) - plan_save_commit does
+        if (s.deferred) return graphJson(202, nextRanges());
+        // a plan's save back: the copy beside the plan - never a Projects-folder item
         const id = planSaveLanded(s);
         s.done = id;
         return graphJson(201, { id, name: s.name, size: s.size, file: { mimeType: "application/octet-stream" } });
@@ -837,12 +985,49 @@
       try { return new URL(String(url)).hostname === HOST; } catch (e) { return false; }
     }
 
+    /** someone saves the plan at `full` in the office, in place (its id stays): other bytes (made-up, of another size), a
+        version of their own - after any save this tab sent. -> that version */
+    function officeSave(full) {
+      const p = rows.projects.find((x) => !x.deleted_at && planFilesOf(x).some((f) => f.full === full));
+      const f = p ? planFilesOf(p).find((x) => x.full === full) : null;
+      if (!f) return null;
+      fixtures.delete(full);
+      savedBytes.delete(full);
+      const at = nowIso();
+      const n = nextId(TABLE);
+      commitInsert(TABLE, { id: n, item_id: f.id, project_id: p.id, parent_id: null, name: f.name, folder: false, size: f.size + 7,
+        mime: "application/octet-stream", created_at: at, modified_at: at, by_app: false, takeoff: full, version: "qx:demo-office-" + n });
+      return "qx:demo-office-" + n;
+    }
+    /** the office's DESKTOP app saves the plan at `full`: it moves the item into the folder's Backups and writes a new
+        item on the name (a new id; made-up bytes of another size, a version of their own). -> {id, version} */
+    function desktopSave(full) {
+      const p = rows.projects.find((x) => !x.deleted_at && planFilesOf(x).some((f) => f.full === full));
+      const f = p ? planFilesOf(p).find((x) => x.full === full) : null;
+      if (!f) return null;
+      fixtures.delete(full);
+      savedBytes.delete(full);
+      const at = nowIso();
+      const n = nextId(TABLE);
+      const id = "01DEMOTKD" + String(n).padStart(9, "0");
+      commitInsert(TABLE, { id: n, item_id: id, project_id: p.id, parent_id: "desktop-save", name: f.name, folder: false, size: f.size + 11,
+        mime: "application/octet-stream", created_at: at, modified_at: at, by_app: false, takeoff: full, version: "qx:demo-desktop-" + n });
+      return { id, version: "qx:demo-desktop-" + n };
+    }
+    const arms = new Map();              // path -> "office" | "desktop": done when the next save of it has all its bytes in
+    function during(s) {
+      const what = arms.get(s.full);
+      if (!what) return;
+      arms.delete(s.full);
+      if (what === "desktop") desktopSave(s.full); else officeSave(s.full);
+    }
+
     return { name: "p7-onedrive", tables: new Set([TABLE]), canRead: () => false, functions: ["onedrive"], invoke, http, owns,
       host: HOST, handles: () => false,
       /** plans_for's takeoff folder: false = not set up (503 takeoff_not_configured), true = there, null = the default */
       setTakeoff(on) { takeoffSet = on === null || on === undefined ? null : !!on; },
       /** the Plans Library: a takeoff file's new version ("<folder>/<path>", as the takeoff folder lists it) */
-      setPlanVersion(full, version) { if (version) planVersions.set(full, version); else planVersions.delete(full); },
+      setPlanVersion(full, version) { if (version) planVersions.set(full, version); else planVersions.delete(full); revs.set(full, (revs.get(full) || 0) + 1); },
       /** a browser e2e that drives the REAL takeoff app (tools/e2e-p7-plans.mjs): `blob`, a made-up but real .takeoff
           project, is the first plan of project `number` in this tab from now on - its bytes, size and a version of its
           own - until a save of it lands or the office saves it (officeSave). -> {id, name, full, size, version} | null */
@@ -852,6 +1037,7 @@
         if (!f || !blob || !(blob.size > 0)) return null;
         fixtures.set(f.full, { size: blob.size, version: "qx:demo-fixture-" + blob.size, modified: nowIso() });
         savedBytes.set(f.full, blob);
+        revs.set(f.full, (revs.get(f.full) || 0) + 1);
         const g = planFilesOf(p)[0];
         return { id: g.id, name: g.name, full: g.full, size: g.size, version: g.version };
       },
@@ -863,20 +1049,17 @@
         }
         return null;
       },
-      /** someone saves the plan at `full` in the office: other bytes (made-up, of another size), a version of their own -
-          after any save this tab sent. -> that version */
-      officeSave(full) {
-        const p = rows.projects.find((x) => !x.deleted_at && planFilesOf(x).some((f) => f.full === full));
-        const f = p ? planFilesOf(p).find((x) => x.full === full) : null;
-        if (!f) return null;
-        fixtures.delete(full);
-        savedBytes.delete(full);
-        const at = nowIso();
-        const n = nextId(TABLE);
-        commitInsert(TABLE, { id: n, item_id: f.id, project_id: p.id, parent_id: null, name: f.name, folder: false, size: f.size + 7,
-          mime: "application/octet-stream", created_at: at, modified_at: at, by_app: false, takeoff: full, version: "qx:demo-office-" + n });
-        return "qx:demo-office-" + n;
-      } };
+      /** the office saves the plan at `full` in place (officeSave above) -> that version */
+      officeSave,
+      /** the office's desktop app saves it as a new item (desktopSave above) -> {id, version} */
+      desktopSave,
+      /** the next save of the plan at `full` to have all its bytes in OneDrive's upload session meets an office save
+          ("office") or a desktop save ("desktop") just then - while it goes up, before the broker's commit */
+      duringUpload(full, what) { if (what) arms.set(full, what); else arms.delete(full); },
+      /** Microsoft will not commit a session as the copy (plan_save_commit's plan_changed, the session dropped) */
+      refuseCopyCommits(on) { refuseCopyCommit = !!on; },
+      /** the demo's OneDrive has hashed every save that landed (their "qx:" versions are there) */
+      hashed() { return hashing; } };
   });
 
   /* ── made-up data: the switch for two people, the admin's test project ── */

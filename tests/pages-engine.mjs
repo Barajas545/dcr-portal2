@@ -20,6 +20,7 @@ const P8_CONTACTS = new URL("../tools/fake/p8-contacts.js", import.meta.url); //
 const P8_BOOKS = new URL("../tools/fake/p8-books.js", import.meta.url);       // the Books program, release B: the money messages (after p8-register.js)
 const P8_ADVANCED = new URL("../tools/fake/p8-advanced.js", import.meta.url); // the Books program, release B part 2b: vendors and reports (after p8-books.js)
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
+const QUICKXOR = new URL("../site/js/quickxor.js", import.meta.url); // the demo's OneDrive hashes saves with the site's own
 const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
 const SEED = new URL("../tools/fake/seed.js", import.meta.url);
 
@@ -29,6 +30,7 @@ let loaded = null;
 export async function loadFake() {
   if (!available) return null;
   if (!loaded) {
+    await import(QUICKXOR.href);
     if (existsSync(P6)) await import(P6.href);
     if (existsSync(P5A)) await import(P5A.href);
     if (existsSync(P5A_PM)) await import(P5A_PM.href);
