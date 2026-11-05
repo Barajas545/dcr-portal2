@@ -26,8 +26,10 @@
    Opening hands the copy to the takeoff app window to window (js/plan-handoff.js): on a computer in a new tab (the app is
    another site), on a phone or a tablet in the portal's own copy of the app in a frame over the page (js/plan-frame.js;
    owner decision Q4, 2026-11-04 - the home-screen app included, since the frame shares this storage). Either way the
-   app reads the File by slices as it draws, and nothing there holds the copy open. So a copy handed over is kept a week
-   after it is replaced or removed (map/plan-library.js HANDED_GRACE_MS) and goes at a sweep after that. On a phone or a
+   app reads the File by slices as it draws, and nothing there holds the copy open. So a copy handed to a computer's tab
+   is kept a week after it is replaced or removed (map/plan-library.js HANDED_GRACE_MS) and goes at a sweep after that;
+   one handed to the frame is held while the frame is open and goes once it closes, when nothing names it any more
+   (holdForFrame: the frame is followed exactly, so a plan-sized copy is never left for a week). On a phone or a
    tablet a plan always opens from a copy on the device (openOnDevice): it is saved here first when it is not, or is not
    the version OneDrive holds - and only when there is no room (or no way to keep it) does it open online.
 
@@ -277,39 +279,68 @@ function markHanded(name) {
     return { key: "handed", value: handed };
   });
 }
-/** An old version or a removed copy: gone now - or, handed to the takeoff app lately, kept a week from now (the replace
-    or the remove; up to a week of an old copy per plan opened) and gone at a sweep after that. One a frame's takeoff app
-    has open NOW is never removed while it is (framesReading: however long the frame stays open), and gets its week
-    after. A takeoff tab (a computer's) still open on it longer than the week loses it (its save check then keeps the
-    work as a draft). */
+/** An old version or a removed copy: gone now - or, handed to a computer's takeoff tab lately, kept a week from now
+    (the replace or the remove; up to a week of an old copy per plan opened) and gone at a sweep after that. A takeoff
+    tab still open on it longer than the week loses it (its save check then keeps the work as a draft). One a frame's
+    takeoff app has open NOW is never removed while it is (framesReading: however long the frame stays open) - and
+    needs no week after: its frame's close frees it (holdForFrame; review STORE-1). */
 async function retire(name) {
   if (!name) return;
-  if ((await handedLately(name)) || (await framesReading()).has(name)) await markHanded(name);
+  if ((await framesReading()).has(name)) return;
+  if (await handedLately(name)) await markHanded(name);
   else await removeFile(name);
 }
 
 const readingHere = new Map();      // file name -> how many frames of this window have it open
-/** The library files a takeoff app in a frame has open now: this window's, and other windows' (their Web Locks). */
-async function framesReading() {
+/** The library files a takeoff app in a frame has open now: this window's, and other windows' (their Web Locks).
+    `but`: a lock word of this window's not to count (one just let go). */
+async function framesReading(but) {
   const out = new Set(readingHere.keys());
   const held = await heldLocks(READ_LOCK);
-  Object.keys(held || {}).forEach(function (k) { out.add(k.split("|")[0]); });
+  Object.keys(held || {}).forEach(function (k) { const i = k.lastIndexOf("|"); if (k.slice(i + 1) !== but) out.add(k.slice(0, i)); });
   return out;
 }
-/** The frame's takeoff app reads `name` until `closed` settles (the frame closed): held so meanwhile (open(); a test's too). */
+/** The frame's takeoff app reads `name` until `closed` settles (the frame closed): held so meanwhile (open(); a test's
+    too) - here by a count, for other windows by a Web Lock. -> let go of it now (the hand-over did not happen after all).
+    Let go, and read by no frame any more: the file goes at once when no record names it - the reader on this route is
+    known exactly, so no week's grace (that is for a computer's tab, which cannot be followed; review STORE-1). */
 export function holdForFrame(name, closed) {
-  if (!FILE_RE.test(String(name || ""))) return;
+  if (!FILE_RE.test(String(name || ""))) return function () {};
   readingHere.set(name, (readingHere.get(name) || 0) + 1);
+  const word = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  let free = function () {}, after = null;
+  const done = new Promise(function (r) { free = r; });
+  // -> once what follows the let-go is done (a test waits on it)
   const let_go = function () {
+    if (after) return after;
     const n = (readingHere.get(name) || 1) - 1;
     if (n > 0) readingHere.set(name, n); else readingHere.delete(name);
+    free();
+    after = n <= 0 ? afterFrame(name, word).catch(function () { /* a sweep takes it */ }) : Promise.resolve();
+    return after;
   };
-  closed.then(let_go, let_go);
+  if (closed && typeof closed.then === "function") closed.then(let_go, let_go);
   if (HAS && navigator.locks && navigator.locks.request) {
-    const word = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    navigator.locks.request(READ_LOCK + name + "|" + word, function () { return closed.catch(function () { /* closed */ }); })
+    navigator.locks.request(READ_LOCK + name + "|" + word, function () { return done; })
       .catch(function () { /* this window's own count still holds it */ });
   }
+  return let_go;
+}
+/** A file a frame had open, once no frame reads it: gone when no record names it, its "handed" note dropped either way
+    (a retire or a sweep then needs no week for it). Kept while a save is being kept here (the app's save is slices of
+    the file it was handed: the spool may still read it after the frame closed) - a later sweep takes it then. */
+async function afterFrame(name, word) {
+  if (readingHere.has(name) || spooling) return;
+  if ((await framesReading(word)).has(name)) return;
+  await mutate("meta", "handed", function (cur) {
+    if (!cur || !cur.value || !Object.prototype.hasOwnProperty.call(cur.value, name)) return undefined;
+    const v = Object.assign({}, cur.value);
+    delete v[name];
+    return { key: "handed", value: v };
+  });
+  if (keepSet(await getAll("plans"), {}, Date.now()).has(name)) return;
+  if (readingHere.has(name) || spooling) return;
+  await removeFile(name);
 }
 
 /** This person still has a file of theirs here (a copy kept for the takeoff app after a Remove counts). */
@@ -1129,15 +1160,18 @@ export function open(itemId, onDone, opts) {
   // what the frame's app has (map/plan-library.js saveBase): the file handed over, then each save of it kept here
   const line = { file: "", base: "" };
   openInTakeoff(async function () {
-    // marked as handed over first, then read again: a new version committed in between (here or in another window)
-    // would otherwise retire the very file being handed over
+    // held (the frame: until it closes) or marked as handed over (a computer's tab: the week's grace) first, then read
+    // again: a new version committed in between (here or in another window) would otherwise retire the very file being
+    // handed over
     let r = null;
     for (let i = 0; i < 2 && !r; i++) {
       const cur = await get("plans", key);
       if (!cur || !which(cur)) throw err("missing", "This plan has not finished downloading on this device yet.");
-      await markHanded(which(cur));
+      const free = frame ? holdForFrame(which(cur), closed) : null;
+      if (!frame) await markHanded(which(cur));
       const again = await get("plans", key);
       if (again && which(again) === which(cur)) r = again;
+      else if (free) free();                                 // not this file after all
     }
     if (!r) throw err("missing", "This plan was just updated on this device. Tap Open again.");
     const mine = hasLocal(r);
@@ -1147,7 +1181,6 @@ export function open(itemId, onDone, opts) {
     if (!f) throw err("missing", mine ? "The save kept on this device is gone (the browser cleared this site's storage)." : "This saved plan is no longer on this device. Save it again from 📐 while online.");
     const want = mine ? Number(r.local.size) : Number(r.size);
     if (want > 0 && f.size !== want) throw err("missing", "This saved plan did not finish downloading. It carries on while the portal is open and online.");
-    if (frame) holdForFrame(which(r), closed);
     line.file = which(r);
     line.base = String((mine ? r.local.base : r.version) || "");
     // the save's own time - also once OneDrive has it (the work's time, not the upload's: the app compares its drafts

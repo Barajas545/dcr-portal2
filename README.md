@@ -713,7 +713,8 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   in that copy, and a base OneDrive first named `sm:` is sent against its hash of the same bytes. While a save is kept
   the app hears `keeping` (pct) at most every 2 s, from the spool worker's own progress, so a big plan never runs out
   its 2-minute wait. The file the app was handed is never removed while the frame is open (a Web Lock
-  `dcr2-plan-rd:<file>|<word>` other windows see), and gets the week's grace after.
+  `dcr2-plan-rd:<file>|<word>` other windows see), and goes once the frame closes when no record names it (no week's
+  grace on this route: the frame is followed exactly, so plan-sized copies never pile up).
 - **Rows.** The Plans Library and the 📐 menu say Saved on this iPad / Sending 45% / Sent / Saved as a separate file /
   Not sent — tap to retry, with Send now / Retry. A purge on lost prices takes the saves waiting here too, and on this
   site the takeoff app's own drafts (`ptt-drafts`) and kept copies (`plans-kept`).

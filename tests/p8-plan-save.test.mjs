@@ -335,7 +335,8 @@ test("the Plans Library offers a save only in the frame, to a person who may sav
   assert.match(lib, /if \(offer\) plan\.canSave = true;/);
   assert.match(lib, /onSave: offer \? function \(save, tell\) \{ return keepSave\(itemId, save, tell, line\); \} : null,\s*onClose: function \(\) \{ closeNow\(\); \}/,
     "the opening's line (what the app has), and the frame's close lets go of the file it read");
-  assert.match(lib, /if \(frame\) holdForFrame\(which\(r\), closed\);/, "held while the frame's app reads it");
+  assert.match(lib, /const free = frame \? holdForFrame\(which\(cur\), closed\) : null;\s*if \(!frame\) await markHanded\(which\(cur\)\);/,
+    "held while the frame's app reads it (before the record is read again); only a tab's copy is marked for the week");
   assert.match(lib, /const t = handedTime\(r\);/, "handed with the save's own time");
   assert.match(code(read("js/plan-handoff.js")), /if \(opts && typeof opts\.onClose === "function"\) \{ try \{ opts\.onClose\(\); \}/);
   assert.match(lib, /if \(!PLAN_SAVE_BACK\) return \{ state: "refused",/, "keepSave refuses with the switch off");

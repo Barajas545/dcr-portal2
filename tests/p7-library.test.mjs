@@ -1265,12 +1265,12 @@ test("the office saved while the frame was open and the portal downloaded it: th
   assert.ok(await same(w.saved, q.bytes));
 });
 
-test("a copy the frame's app has open is never removed while it is open, however long (the person's Remove, a newer version, a sweep); after it closes it gets the week's grace", async () => {
+test("a copy the frame's app has open is never removed while it is open, however long (the person's Remove, a newer version, a sweep); once it closes it goes at once - nothing names it, and the frame was followed exactly (STORE-1: no week's grace)", async () => {
   const before = await devicePlan();
   saveWorld();
   let close;
   const closed = new Promise((r) => { close = r; });
-  LIB.holdForFrame(before.file, closed);
+  const freed = LIB.holdForFrame(before.file, closed);
   // handed more than a week ago: the grace alone would no longer keep it
   const meta = DEV.idb.dbs.get("dcr2-plan-library").stores.get("meta").data;
   meta.set("handed", { key: "handed", value: { [before.file]: new Date(Date.now() - 8 * 86400000).toISOString() } });
@@ -1280,13 +1280,11 @@ test("a copy the frame's app has open is never removed while it is open, however
   await LIB.sweep();
   assert.ok(LIBFILES()[before.file], "still there while the frame reads it");
   close();
+  await freed();                                             // (what follows the frame's close, waited for)
   await new Promise((r) => setTimeout(r, 20));
   assert.equal((await DEV.locks.query()).held.some((l) => l.name.indexOf("dcr2-plan-rd:") === 0), false, "let go when the frame closed");
-  await LIB.sweep();
-  assert.ok(LIBFILES()[before.file], "the week's grace from the Remove");
-  meta.set("handed", { key: "handed", value: { [before.file]: new Date(Date.now() - 8 * 86400000).toISOString() } });
-  await LIB.sweep();
-  assert.equal(LIBFILES()[before.file], undefined, "gone at a sweep after it");
+  assert.equal(LIBFILES()[before.file], undefined, "gone once the frame closed (nothing names it, nothing reads it): no week of a plan-sized copy");
+  assert.ok(!(meta.get("handed").value || {})[before.file], "and no note of it left");
   // another window's frame (only its Web Lock is seen here): kept too
   const other = await devicePlan();
   let release;
@@ -1825,4 +1823,59 @@ test("the watchdogs never count time the page was hidden or asleep: iOS suspends
       assert.match(ROW().dl.error, /stopped responding/);
     } finally { DEV.apply(); }
   });
+});
+
+test("the frame's copies never pile up (STORE-1): a day's open, save and send leaves one copy once the frame closes; a copy a record still names stays (its note dropped); another window's frame, or a save still being kept, keeps it", async () => {
+  const meta = () => (DEV.idb.dbs.get("dcr2-plan-library").stores.get("meta").data.get("handed") || { value: {} }).value;
+  const frameOn = (file) => { let close; const closed = new Promise((r) => { close = r; }); const free = LIB.holdForFrame(file, closed); return () => { close(); return free(); }; };
+  // three days of: open the plan in the frame, Save, the save sent and adopted, Close
+  const before = await devicePlan();
+  saveWorld();
+  let file = before.file;
+  for (let day = 0; day < 3; day++) {
+    const shut = frameOn(file);
+    const line = { file, base: ROW().version };
+    const o = await LIB.keepSave(F1.id, { req: "sDAY" + day + "XXXXX", name: F1.name, size: 1 * MiB + day, file: savedProject(1 * MiB + day, "PDFCACHE1", 20 + day).blob }, null, line);
+    assert.equal(o.state, "kept");
+    assert.equal((await o.sent).mode, "replace");
+    assert.ok(LIBFILES()[file], "the copy the app reads stays while its frame is open");
+    await shut();
+    assert.equal(LIBFILES()[file], undefined, "day " + day + ": the copy it read went when the frame closed");
+    file = ROW().file;
+  }
+  assert.deepEqual(Object.keys(LIBFILES()), [ROW().file], "one plan, one copy on the device");
+  assert.deepEqual(meta(), {}, "nothing kept for a week");
+  // a copy a record still names stays when its frame closes, and an old note of it goes (a later retire needs no week)
+  const r = ROW();
+  DEV.idb.dbs.get("dcr2-plan-library").stores.get("meta").data.set("handed", { key: "handed", value: { [r.file]: new Date().toISOString() } });
+  await frameOn(r.file)();
+  assert.ok(LIBFILES()[r.file], "the plan's own copy stays");
+  assert.deepEqual(meta(), {}, "its note dropped");
+  // another window's frame on it: this window's close leaves it (that window's close frees it)
+  let release;
+  DEV.locks.request("dcr2-plan-rd:" + r.file + "|elsewhere", () => new Promise((go) => { release = go; }));
+  await new Promise((res) => setTimeout(res, 5));
+  const shut2 = frameOn(r.file);
+  await LIB.remove(F1.id);
+  await shut2();
+  assert.ok(LIBFILES()[r.file], "another window's frame still reads it");
+  release();
+  await new Promise((res) => setTimeout(res, 5));
+  await LIB.sweep();
+  assert.equal(LIBFILES()[r.file], undefined, "a sweep takes it once no frame reads it");
+  // a save still being kept when the frame closes (its Blob is slices of the handed file): kept until the spool is done
+  const b = await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  const held = heldProject(20 * MiB, 2);
+  const shut3 = frameOn(b.file);
+  const keeping = LIB.keepSave(F1.id, { req: "sKEEPXXXXX", name: F1.name, size: held.size, file: held.blob }, null, { file: b.file, base: "qx:AAA" });
+  await new Promise((res) => setTimeout(res, 30));
+  await LIB.remove(F1.id);                                   // removed meanwhile: nothing names the handed copy now
+  await shut3();
+  assert.ok(LIBFILES()[b.file], "not removed under a save still being kept");
+  held.open();
+  await keeping;
+  await LIB.sweep();
+  assert.equal(LIBFILES()[b.file], undefined, "a sweep takes it after");
 });
