@@ -3524,6 +3524,11 @@ test("the broker's version check waits on OneDrive (its 503 why \"checking\": On
     assert.deepEqual(lib.saveStateOf({ local: Object.assign({ state: "sending" }, loc) }, { sent: 5, size: 10, checking: true }, Date.now()), { state: "checking" });
     assert.deepEqual(lib.saveStateOf({ local: Object.assign({ state: "sending" }, loc) }, { sent: 5, size: 10 }, Date.now()), { state: "sending", pct: 50 });
     assert.deepEqual([lib.saveText({ state: "checking" }, "iPad"), lib.sendBar({ state: "checking" }), lib.sendFinal({ state: "checking", code: "checking" })], [CHECKING, null, false]);
+    // (the frame's bar while it is open: the uploader's job's words, and a later page's settle's - the browser walk
+    // tools/e2e-p7-plans.mjs (xii-a) sees the bar)
+    const src = read("js/plan-library.js");
+    assert.match(src, /if \(s\.checking\) \{\s*news\(key, "checking"\);\s*if \(frameIsOpen\(\)\) frameSay\(checkingWords\(deviceWord\(here\(\)\)\)\);/);
+    assert.match(src, /async function checkSend\(key, file, x\) \{[\s\S]*?changed\(key\);\s*if \(frameIsOpen\(\)\) frameSay\(x\.message\);\s*\}/);
     // (1) the commit: OneDrive committed over an office save and has no hash of it yet - 503 why "checking", Retry-After
     // 30, three times: while the uploader asks again the row is "being checked", the app hears "checking" (never
     // "failed"), no progress words after it; its tries spent, the save is in the check - not a failure - and E7's timer

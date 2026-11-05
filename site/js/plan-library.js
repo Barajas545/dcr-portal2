@@ -1881,7 +1881,8 @@ async function failSend(key, file, x) {
 
 /** A save in the broker's version check (`x`: checking()): the record says so - local.state "checking", never a
     failure (no `fails`, no not_saved counted) - its wait to then (checkAgainMs: at the Retry-After, at least 30 s); the
-    row, the frame's bar and the app ("checking") are told. */
+    row and the frame's bar are told (the app heard "checking" from the uploader's job already - onUploads -, and a
+    later page's settle has no Save of its frame to tell). */
 async function checkSend(key, file, x) {
   try {
     await mutate("plans", key, function (c) {
@@ -1891,7 +1892,6 @@ async function checkSend(key, file, x) {
     });
   } catch (e) { /* the words have reached the page */ }
   changed(key);
-  news(key, "checking");
   if (frameIsOpen()) frameSay(x.message);
 }
 
