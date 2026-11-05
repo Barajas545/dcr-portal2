@@ -36,7 +36,12 @@
      settling a deferred replace OneDrive committed at the last chunk over an office save (plan_save_done checks it: put
      back, 409 not_saved; no crossing: `verified` - the shape Portal 2's settle needs, map/plan-library.js
      uncheckedReplace), a restore Microsoft refuses (503, asked again; then put back) and a moment's trouble listing the
-     versions (503, never "unverified");
+     versions (503, never "unverified"); and, once the broker has its repair round 3 (contract addendum 4: PLAN_UNPROVED),
+     no deferred replace committed or settled without the hash (409 not_saved need "hash" at once, nothing of OneDrive's
+     written), OneDrive giving no hash to finish a check - 503 with the Retry-After Portal 2's timer takes (E7), then
+     "unproved" from plan_save_commit (plan_changed) and plan_save_done (not_saved), nothing put back - a retried commit
+     after the check's 503 with Microsoft keeping the committed session usable (checked as a commit and put back, never
+     the same upload as a copy: E3) and an identical re-save found landed without its commit (verified, nothing put back);
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -109,6 +114,8 @@ export async function run(h) {
   const HAS_SWITCH = !!(fn.ERRORS && fn.ERRORS.save_back_off);
   // and its repair round 2 (the version check across pages, on the hash's proof)
   const HAS_R2 = typeof fn.HASH_WAIT_MS === "number" && typeof fn.CHECK_RETRY_S === "number";
+  // and its repair round 3 (contract addendum 4: no hash, no deferred replace; "unproved"; the retried commit)
+  const HAS_R3 = HAS_R2 && typeof fn.PLAN_UNPROVED === "string" && typeof fn.NEED_HASH === "string";
   let onFetch = null;                  // a check's: run before a request reaches the fake Graph (an office save just then)
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   let planSave;                        // ONEDRIVE_PLAN_SAVE for a check (undefined: test_world.ts's own)
@@ -202,7 +209,12 @@ export async function run(h) {
           return await od.planSaveCommit({ projectId: j.projectId, itemId: (meta && meta.itemId) || planId, ticket: j.session.ticket, uploadUrl: j.session.uploadUrl,
             hash: meta && meta.hash, landed: j.chunkLanded === true });
         } catch (x) {
-          if (x && x.code === "plan_changed" && meta) { meta.mode = "copy"; meta.why = x.info && x.info.why === "refused" ? "refused" : "changed"; x.restart = true; }
+          if (x && x.code === "plan_changed" && meta) {
+            const why = x.info && x.info.why;
+            meta.mode = "copy";
+            meta.why = why === "refused" || why === "unproved" ? why : "changed";
+            x.restart = true;
+          }
           throw x;
         }
       },
@@ -683,6 +695,130 @@ export async function run(h) {
             g.script.versions = "on";
             const ok5 = await od.planSaveCommit(c5);
             same([ok5.mode, ok5.verified], ["replace", true], "checked once the listing answers");
+          } finally {
+            reset();
+            atLast = null;
+            onFetch = null;
+          }
+          client.as(null);
+        });
+      }
+      if (!HAS_R3) {
+        results.push({ section, name: "the save back's repair round 3: the broker has no PLAN_UNPROVED yet (contract addendum 4) - its check waits for it", ok: true });
+      } else {
+        await check("the save back's repair round 3 (contract addendum 4) through Portal 2's parts over the REAL broker: no deferred replace committed or settled without the hash (need hash at once, nothing written); OneDrive giving no hash to finish a check - 503 with the Retry-After Portal 2's timer asks again at, then unproved (plan_changed / not_saved why unproved, nothing put back, the admin's log line); a retried commit after the check's 503 on a committed session Microsoft keeps usable - checked and put back, never a copy (E3); an identical re-save found landed without its commit - verified, nothing put back", async () => {
+          client.as(id("admin"));
+          const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)]; };
+          const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+          ok(!!tf, "the made-up project's takeoff folder");
+          const it = g.file(tf.id, made.number + " Porch.takeoff", 10);
+          const planOf = async () => (await files()).files.find((x) => x.id === it.id);
+          const reset = () => Object.assign(g.script, { deferCommit: "honoured", putCommit: "accepted", putIfMatch: "honoured", postIfMatch: "honoured", postStatus: 0,
+            versions: "on", versionsStatus: 403, restoreStatus: 0, hashLater: false, afterCommit: "gone" });
+          const bytesN = (n, v) => new Uint8Array(n).fill(v);
+          /** a deferred replace's chunks by hand, its commit left to the check */
+          const upOnly = async (bytes) => {
+            const plan = await planOf();
+            const s = await od.planSaveSession({ projectId: pid, itemId: it.id, version: plan.version, size: bytes.length, name: plan.name });
+            same([s.mode, s.commit], ["replace", "broker"], "a deferred replace");
+            const put = (a, z) => transport({ method: "PUT", url: s.uploadUrl, headers: { "Content-Range": "bytes " + a + "-" + z + "/" + bytes.length }, body: new Blob([bytes.subarray(a, z + 1)]) });
+            same((await put(0, OD.CHUNK_UNIT - 1)).status, 202, "a chunk");
+            return { s, base: plan.version, last: await put(OD.CHUNK_UNIT, bytes.length - 1) };
+          };
+          const contentOf = async () => (await planOf()).size;
+          const NOT_PROVED = "crossed: not proved (OneDrive gave no hash): check the plan's version history by hand";
+          try {
+            // (E1) no hash: a deferred replace is never committed or settled - 409 not_saved {need: "hash"} at once (right
+            // after the session, not past 48 hours), nothing written; Portal 2 waits on it (need_hash: long, never final)
+            reset();
+            clock.t += 5000;
+            const b1 = bytesN(OD.CHUNK_UNIT + 23, 51);
+            const u1 = await upOnly(b1);
+            same(u1.last.status, 202, "the last chunk commits nothing");
+            const writes = g.writes ? g.writes.length : null;
+            logs.length = 0;
+            for (const landed of [false, true]) {
+              const e = await refused(() => od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u1.s.ticket, uploadUrl: u1.s.uploadUrl, landed }), "not_saved", "no hash, landed " + landed);
+              same([e.status, e.info && e.info.need, e.message], [409, "hash", fn.NEED_HASH], "need hash, landed " + landed);
+            }
+            const ed = await refused(() => od.planSaveDone(pid, it.id, u1.s.ticket), "not_saved", "plan_save_done, no hash");
+            same([ed.info && ed.info.need], ["hash"], "plan_save_done too");
+            ok(logs.filter((l) => /a deferred replace is committed or settled only with the file's hash: not saved, the hash is needed/.test(l)).length === 3, JSON.stringify(logs));
+            same((await planOf()).version, u1.base, "nothing committed: the plan as it was");
+            if (writes !== null) same(g.writes.length, writes, "nothing written in OneDrive");
+            ok(PL.LONG_WAIT.includes("need_hash") && PL.sendWaitMs("need_hash", 1) >= PL.LONG_WAIT_MS && !PL.SEND_FINAL.includes("need_hash"), "Portal 2: a long wait, never final");
+            // ...with the hash: committed (the same session)
+            const c1 = await od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u1.s.ticket, uploadUrl: u1.s.uploadUrl, hash: QX.quickXorHash(b1) });
+            same([c1.mode, c1.verified], ["replace", true], "with the hash: committed and verified");
+            // (E1) OneDrive committed at the last chunk over an office save and gives no hash of the newest version: 503 busy
+            // with Retry-After 30 (Portal 2's E7 timer at 30 s) until HASH_WAIT_MS after the plan's change, then "unproved"
+            for (const op of ["plan_save_commit", "plan_save_done"]) {
+              reset();
+              Object.assign(g.script, { deferCommit: "ignored", hashLater: true });
+              clock.t += 5000;
+              const b2 = bytesN(OD.CHUNK_UNIT + 25, op === "plan_save_commit" ? 52 : 53);
+              atLast = () => { clock.t += 5000; g.write(it.id, 77); };
+              const u2 = await upOnly(b2);
+              same(u2.last.status, 200, op + ": OneDrive committed it at the last chunk (over the office save)");
+              const h2 = QX.quickXorHash(b2);
+              const ask = () => (op === "plan_save_commit" ? od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u2.s.ticket, uploadUrl: u2.s.uploadUrl, hash: h2, landed: true })
+                : od.planSaveDone(pid, it.id, u2.s.ticket, h2));
+              logs.length = 0;
+              const w2 = await refused(ask, "busy", op + ": OneDrive may hash it yet");
+              same([w2.status, w2.retryAfter, PL.checkAgainMs(w2.retryAfter)], [503, fn.CHECK_RETRY_S, 30000], op + ": Portal 2 reads the Retry-After: its timer asks again in 30 s");
+              ok(logs.some((l) => /asked again/.test(l)), op + ": " + JSON.stringify(logs));
+              clock.t += fn.HASH_WAIT_MS + 60 * 1000;
+              logs.length = 0;
+              const end = await refused(ask, op === "plan_save_commit" ? "plan_changed" : "not_saved", op + ": unproved");
+              same([end.status, end.info && end.info.why, end.message], [409, "unproved", fn.PLAN_UNPROVED], op + ": why unproved, the broker's words");
+              if (op === "plan_save_commit") same(end.info.retry, "copy", "sent again as a copy");
+              ok(logs.some((l) => l === "onedrive " + op + ": " + NOT_PROVED), op + ": the admin's log line " + JSON.stringify(logs));
+              same(await contentOf(), b2.length, op + ": nothing put back (the plan holds the iPad's bytes; the office save is in the history)");
+              ok(!/nothing was overwritten/.test(PL.unprovedTold("x.takeoff", "iPad")) && /version history/.test(PL.unprovedTold("x.takeoff", "iPad")), "Portal 2's words never say nothing was overwritten");
+              same((await od.planSaveSession({ projectId: pid, itemId: it.id, version: u2.base, size: b2.length, name: it.name, mode: "copy" })).mode, "copy", op + ": the device's send again is a copy");
+            }
+            // (E3) a restore that did not go through after attempt A's PUT committed over an office save, and the commit asked
+            // again with the same body - Microsoft keeping the committed session usable: checked as a commit (the plan holds
+            // this save by its hash), put back, plan_changed - never the same upload committed as a copy
+            for (const afterCommit of ["gone", "usable"]) {
+              reset();
+              Object.assign(g.script, { putIfMatch: "ignored", restoreStatus: 503, afterCommit });
+              clock.t += 5000;
+              const b3 = bytesN(OD.CHUNK_UNIT + 27, afterCommit === "gone" ? 54 : 55);
+              const u3 = await upOnly(b3);
+              let fired = false;
+              onFetch = (url, init) => {
+                if (!fired && String(init.method || "").toUpperCase() === "PUT" && new RegExp("/items/" + encodeURIComponent(it.id) + "$").test(new URL(url).pathname)) {
+                  fired = true; clock.t += 30000; g.write(it.id, 77);
+                }
+              };
+              const c3 = { projectId: pid, itemId: it.id, ticket: u3.s.ticket, uploadUrl: u3.s.uploadUrl, hash: QX.quickXorHash(b3) };
+              const e3 = await refused(() => od.planSaveCommit(c3), "busy", afterCommit + ": the restore refused");
+              onFetch = null;
+              same([fired, e3.retryAfter], [true, fn.CHECK_RETRY_S], afterCommit + ": the office save came between the walk and the PUT; asked again in 30 s");
+              same(await contentOf(), b3.length, afterCommit + ": the iPad's bytes over the office save for now");
+              g.script.restoreStatus = 0;
+              clock.t += fn.CHECK_RETRY_S * 1000;
+              const before = (await files()).files.length;
+              logs.length = 0;
+              const e3b = await refused(() => od.planSaveCommit(c3), "plan_changed", afterCommit + ": the retry");
+              same(e3b.info && e3b.info.why, "changed", afterCommit + ": put back now");
+              ok(logs.some((l) => /crossed: the office save was put back/.test(l)) && !logs.some((l) => /committed as a copy/.test(l)), afterCommit + ": " + JSON.stringify(logs));
+              same([await contentOf(), (await files()).files.length], [77, before], afterCommit + ": the office save is the plan again, and no copy of the same upload was made");
+            }
+            // (dd29c6a) an identical re-save found landed WITHOUT its commit (a later page's settle after the 202): the newest
+            // version is the base itself, byte for byte this save - verified, and the older version under it never put back
+            reset();
+            clock.t += 5000;
+            const b4 = bytesN(OD.CHUNK_UNIT + 29, 56);
+            const u4 = await upOnly(b4);
+            same((await od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u4.s.ticket, uploadUrl: u4.s.uploadUrl, hash: QX.quickXorHash(b4) })).mode, "replace", "the first save");
+            clock.t += 5000;
+            const u5 = await upOnly(b4);
+            same(u5.last.status, 202, "the same bytes again, never committed");
+            const vBefore = (await planOf()).version;
+            const d5 = await od.planSaveDone(pid, it.id, u5.s.ticket, QX.quickXorHash(b4));
+            same([d5.mode, d5.verified, (await planOf()).version], ["replace", true, vBefore], "verified, nothing put back");
           } finally {
             reset();
             atLast = null;
