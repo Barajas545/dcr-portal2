@@ -30,7 +30,13 @@
      version history - OneDrive ignoring the deferral with an office save during the upload (the last chunk's 200 sent
      back as landed: crossed, the office save put back, the save a copy), the PUT commit refused (the POST commits it,
      verified), both refused (plan_changed why "refused": the copy without blame), no history (verified false) and a
-     deferred replace's ticket past 48 hours without a hash (not_saved need "hash");
+     deferred replace's ticket past 48 hours without a hash (not_saved need "hash"); and, once the broker has its repair
+     round 2 (HASH_WAIT_MS), the paths the checkers found outside one page: an office save between attempt B's own walk
+     and its POST (the If-Match honoured: the same upload as the copy; ignored: put back, the save a copy), a LATER page
+     settling a deferred replace OneDrive committed at the last chunk over an office save (plan_save_done checks it: put
+     back, 409 not_saved; no crossing: `verified` - the shape Portal 2's settle needs, map/plan-library.js
+     uncheckedReplace), a restore Microsoft refuses (503, asked again; then put back) and a moment's trouble listing the
+     versions (503, never "unverified");
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -65,6 +71,7 @@ export async function run(h) {
   const TW = await ts("test_world.ts");
   const od = await site("repo/onedrive.js");
   const OD = await site("map/onedrive.js");
+  const PL = await site("map/plan-library.js");
   const { createUploader } = await site("onedrive-upload.js");
   await site("quickxor.js");                                  // the device's quickXorHash (a classic script: self.DCR2QuickXor)
   const QX = globalThis.DCR2QuickXor;
@@ -100,6 +107,9 @@ export async function run(h) {
   const HAS_COMMIT = Array.isArray(fn.OPS) && fn.OPS.includes("plan_save_commit");
   // and the repair round (contract addendum 3): the switch, the version check, landed, why, need hash
   const HAS_SWITCH = !!(fn.ERRORS && fn.ERRORS.save_back_off);
+  // and its repair round 2 (the version check across pages, on the hash's proof)
+  const HAS_R2 = typeof fn.HASH_WAIT_MS === "number" && typeof fn.CHECK_RETRY_S === "number";
+  let onFetch = null;                  // a check's: run before a request reaches the fake Graph (an office save just then)
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   let planSave;                        // ONEDRIVE_PLAN_SAVE for a check (undefined: test_world.ts's own)
   const logs = [];                     // the broker's log lines (op, statuses, the save back's lines - never a name or an id)
@@ -121,7 +131,7 @@ export async function run(h) {
       try { return await sql("select id, number from public.projects where id = any($1::bigint[]) and deleted_at is null", [ids]); }
       catch (e) { throw Object.assign(new Error("database"), { code: e.code, hint: e.hint ?? null }); }
     }, subOf(jwt)),
-    fetch: (url, init) => g.fetch(url, init),
+    fetch: (url, init) => { if (onFetch) onFetch(url, init || {}); return g.fetch(url, init); },
     now: () => clock.t,
     sleep: async (ms) => { clock.t += ms; },
     log: (m) => { logs.push(String(m)); if (logs.length > 500) logs.shift(); },
@@ -567,6 +577,116 @@ export async function run(h) {
             reset();
             atLast = null;
             planSave = undefined;
+          }
+          client.as(null);
+        });
+      }
+      if (!HAS_SWITCH || !HAS_R2) {
+        results.push({ section, name: "the save back's repair round 2: the broker has no HASH_WAIT_MS yet (the version check across pages) - its check waits for it", ok: true });
+      } else {
+        await check("the save back's repair round 2 through Portal 2's parts over the REAL broker: an office save between attempt B's own walk and its POST (If-Match honoured: the same upload as the copy; ignored: put back, a copy); a LATER page's plan_save_done checks a deferred replace OneDrive committed at the last chunk over an office save (put back, 409 not_saved) and answers verified otherwise (Portal 2 adopts only that); a restore refused is 503 and asked again; a moment's trouble listing the versions is 503, never unverified", async () => {
+          client.as(id("admin"));
+          const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)]; };
+          const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+          ok(!!tf, "the made-up project's takeoff folder");
+          const it = g.file(tf.id, made.number + " Deck.takeoff", 10);
+          const planOf = async () => (await files()).files.find((x) => x.id === it.id);
+          const reset = () => Object.assign(g.script, { deferCommit: "honoured", putCommit: "accepted", putIfMatch: "honoured", postIfMatch: "honoured", postStatus: 0,
+            versions: "on", versionsStatus: 403, restoreStatus: 0 });
+          const bytesN = (n, v) => new Uint8Array(n).fill(v);
+          const sendIt = async (meta, bytes) => {
+            const plan = await planOf();
+            const up = planUploader(it.id, plan.version, Object.assign(meta, { name: plan.name, hash: QX.quickXorHash(bytes) }));
+            up.add({ projectId: pid, file: new File([bytes], plan.name), name: plan.name });
+            return (await settle(up))[0];
+          };
+          /** a deferred replace's chunks by hand, never committed by this page (it closed; its upload address is gone) */
+          const upOnly = async (bytes) => {
+            const plan = await planOf();
+            const s = await od.planSaveSession({ projectId: pid, itemId: it.id, version: plan.version, size: bytes.length, name: plan.name });
+            same([s.mode, s.commit], ["replace", "broker"], "a deferred replace");
+            const put = (a, z) => transport({ method: "PUT", url: s.uploadUrl, headers: { "Content-Range": "bytes " + a + "-" + z + "/" + bytes.length }, body: new Blob([bytes.subarray(a, z + 1)]) });
+            same((await put(0, OD.CHUNK_UNIT - 1)).status, 202, "a chunk");
+            return { s, base: plan.version, last: await put(OD.CHUNK_UNIT, bytes.length - 1) };
+          };
+          try {
+            // (1) the PUT commit refused, an office save between attempt B's own walk and its POST
+            for (const [postIfMatch, line] of [["honoured", /the plan changed just now \(412\): the same upload is committed as a copy/], ["ignored", /crossed: the office save was put back/]]) {
+              reset();
+              Object.assign(g.script, { putCommit: "refused", postIfMatch });
+              logs.length = 0;
+              clock.t += 5000;
+              let fired = false;
+              onFetch = (url, init) => {
+                if (!fired && String(init.method || "").toUpperCase() === "POST" && g.sessions.has(url)) { fired = true; clock.t += 30000; g.write(it.id, 77); }
+              };
+              const m1 = {};
+              const b1 = bytesN(OD.CHUNK_UNIT + 13, postIfMatch === "honoured" ? 41 : 42);
+              const j1 = await sendIt(m1, b1);
+              onFetch = null;
+              same([j1.state, j1.result && j1.result.mode, fired], ["done", "copy", true], postIfMatch + ": a copy: " + j1.error);
+              ok(logs.some((l) => /the PUT commit was refused \(400\): the POST commit/.test(l)) && logs.some((l) => line.test(l)), postIfMatch + ": " + JSON.stringify(logs));
+              same((await planOf()).size, 77, postIfMatch + ": the office save is the plan");
+              same(j1.result.version, "qx:" + QX.quickXorHash(b1), postIfMatch + ": the copy holds exactly the save");
+              if (postIfMatch === "ignored") same(m1.why, "changed", "the copy words: an office save");
+            }
+            // (2) a LATER page settles a deferred replace OneDrive committed at the last chunk while the office saved: its
+            // plan_save_done is checked as a commit is - put back, 409 not_saved (the device sends it again: a copy)
+            reset();
+            g.script.deferCommit = "ignored";
+            logs.length = 0;
+            clock.t += 5000;
+            const b2 = bytesN(OD.CHUNK_UNIT + 15, 43);
+            atLast = () => { clock.t += 5000; g.write(it.id, 77); };
+            const u2 = await upOnly(b2);
+            same(u2.last.status, 200, "OneDrive committed it at the last chunk (over the office save)");
+            const e2 = await refused(() => od.planSaveDone(pid, it.id, u2.s.ticket, QX.quickXorHash(b2)), "not_saved", "a later page's settle");
+            same(e2.status, 409, "the crossing is not this save as the plan");
+            ok(logs.some((l) => /onedrive plan_save_done: crossed: the office save was put back/.test(l)) &&
+              logs.some((l) => /onedrive plan_save_done: not saved as the plan \(the check above\): the save is sent again/.test(l)), JSON.stringify(logs));
+            same((await planOf()).size, 77, "the office save is the plan again");
+            same((await od.planSaveSession({ projectId: pid, itemId: it.id, version: u2.base, size: b2.length, name: it.name })).mode,
+              "copy", "the device's send again (its old base) is a copy");
+            // ...no crossing: plan_save_done answers verified - the only answer Portal 2's settle adopts
+            clock.t += 5000;
+            const b3 = bytesN(OD.CHUNK_UNIT + 17, 44);
+            const u3 = await upOnly(b3);
+            const d3 = await od.planSaveDone(pid, it.id, u3.s.ticket, QX.quickXorHash(b3));
+            same([d3.mode, d3.verified], ["replace", true], "checked by plan_save_done");
+            same([PL.uncheckedReplace({ commit: "broker", mode: "replace" }, d3), PL.uncheckedReplace({ commit: "broker", mode: "replace" }, Object.assign({}, d3, { verified: undefined }))],
+              [false, true], "Portal 2 adopts it; without its verified it would not");
+            // (3) a restore Microsoft refuses: 503 (Retry-After 30), asked again - never plan_changed with the iPad's bytes
+            // over the office save; once it goes through, put back
+            reset();
+            Object.assign(g.script, { deferCommit: "ignored", restoreStatus: 503 });
+            logs.length = 0;
+            clock.t += 5000;
+            const b4 = bytesN(OD.CHUNK_UNIT + 19, 45);
+            atLast = () => { clock.t += 5000; g.write(it.id, 77); };
+            const u4 = await upOnly(b4);
+            const c4 = { projectId: pid, itemId: it.id, ticket: u4.s.ticket, uploadUrl: u4.s.uploadUrl, hash: QX.quickXorHash(b4), landed: true };
+            const e4 = await refused(() => od.planSaveCommit(c4), "busy", "the restore refused");
+            same([e4.status, e4.retryAfter], [503, fn.CHECK_RETRY_S], "asked again in 30 seconds");
+            same((await planOf()).version, "qx:" + QX.quickXorHash(b4), "still the iPad's bytes: nothing told as done");
+            g.script.restoreStatus = 0;
+            const e4b = await refused(() => od.planSaveCommit(c4), "plan_changed", "the retry");
+            same(e4b.info && e4b.info.why, "changed", "put back now");
+            same((await planOf()).size, 77, "the office save is the plan again");
+            // (4) the versions listing in a moment's trouble: 503, never "unverified"
+            reset();
+            Object.assign(g.script, { versions: "failing", versionsStatus: 503 });
+            clock.t += 5000;
+            const b5 = bytesN(OD.CHUNK_UNIT + 21, 46);
+            const u5 = await upOnly(b5);
+            const c5 = { projectId: pid, itemId: it.id, ticket: u5.s.ticket, uploadUrl: u5.s.uploadUrl, hash: QX.quickXorHash(b5) };
+            same((await refused(() => od.planSaveCommit(c5), "busy", "the listing failing")).status, 503, "busy");
+            g.script.versions = "on";
+            const ok5 = await od.planSaveCommit(c5);
+            same([ok5.mode, ok5.verified], ["replace", true], "checked once the listing answers");
+          } finally {
+            reset();
+            atLast = null;
+            onFetch = null;
           }
           client.as(null);
         });
