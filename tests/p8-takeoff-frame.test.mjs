@@ -489,9 +489,14 @@ test("the frame's Close: at once when nothing would be lost; asked while the app
   const dirty = F.closeQuestion("", true);
   assert.match(dirty.text, /not saved/);
   assert.equal(dirty.danger, true);
-  const busy = F.closeQuestion("Your save is being sent to OneDrive (45%).", true);
+  // unsaved changes come first, whatever is in flight (review FRAME-1): the danger question, what is in flight after it
+  const both = F.closeQuestion("Your save is being kept on this iPad.", true);
+  assert.deepEqual([both.title, both.okText, both.danger], ["Close the takeoff app?", "Close without saving", true]);
+  assert.match(both.text, /^This plan has changes that are not saved\..* Your save is being kept on this iPad\. Closing now does not stop it/);
+  const busy = F.closeQuestion("Your save is being kept on this iPad.", false);
   assert.match(busy.title, /save is not finished/);
-  assert.match(busy.text, /^Your save is being sent to OneDrive \(45%\)\. Closing now stops it/);
+  assert.equal(busy.danger, false, "closing does not stop it (review WORDS-1)");
+  assert.ok(!/Closing now stops it/.test(busy.text));
   // the app's own live objects (takeoff-web's window.TakeoffApp, "for the portal embed"), read defensively
   assert.equal(F.unsavedIn({ TakeoffApp: { app: { project: { dirty: true } } } }), true);
   assert.equal(F.unsavedIn({ TakeoffApp: { app: { project: { dirty: false } } } }), false);

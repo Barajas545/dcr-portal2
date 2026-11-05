@@ -16,7 +16,8 @@
    * at once when nothing would be lost;
    * asked first while the takeoff app has changes it has not saved (its own TakeoffApp.app.project.dirty: the live
      objects it exposes for the portal embed), or while a save is being kept on this device or sent to OneDrive (guard():
-     the save-back, P4, says what is in flight) - closeQuestion() words it;
+     the save-back, P4, says what is in flight) - closeQuestion() words it, unsaved changes first;
+   * then the app keeps its draft (TakeoffApp.saveDraftNow, at most 3 s: keepDraft) before its frame goes;
    * the hand-over itself closes it only when nothing would be lost (closeIfIdle: the app never answered, or the plan
      could not be read) and otherwise says why on the bar.
    The ✕ Close button and Escape on the bar do the same; Escape inside the frame is the app's own (it ends a
@@ -28,7 +29,7 @@
 
    The copy's page loads only once its own service worker is registered (takeoffWorker: else the app reloads itself
    under the portal's worker on a first visit and loses the hand-over's word). Browser-only module (node tests import
-   its pure helpers: peerOf, closeQuestion, unsavedIn, viewportBox, takeoffWorker). */
+   its pure helpers: peerOf, closeQuestion, unsavedIn, viewportBox, takeoffWorker, keepDraft). */
 
 /** What the frame's page may use: a same-site page has these by default anyway (their allowlists are 'self'); said so
     that its Save can still reach the share sheet (web-share) and a link be copied, whatever a browser's default. No
@@ -109,23 +110,48 @@ export function unsavedIn(win) {
 }
 
 /** What Close asks first, or null (it closes at once). `busy`: what a guard says is in flight - a sentence (a save
-    being kept on this device: closing now can stop it) or a whole question {title, text, okText, danger} (a save being
-    sent to OneDrive: that goes on in the page after the frame closes, so the question only says to keep the page
-    open); `dirty`: unsavedIn's answer. */
+    being kept on this device) or a whole question {title, text, okText, danger} (a save being sent to OneDrive); both
+    go on in the page after the frame closes, so they only say so. `dirty`: unsavedIn's answer. Unsaved changes come
+    first, whatever else is in flight: always the danger question, with what is in flight said after it (review
+    FRAME-1 - a send of another plan, or of an earlier save of this one, never hides unsaved work). */
 export function closeQuestion(busy, dirty) {
-  if (busy && typeof busy === "object") {
-    return { title: String(busy.title || "The save is not finished"), okText: String(busy.okText || "Close anyway"), danger: busy.danger !== false,
-      text: String(busy.text || "") };
-  }
-  if (busy) {
-    return { title: "The save is not finished", okText: "Close anyway", danger: true,
-      text: String(busy) + " Closing now stops it: leave the takeoff app open until it says so." };
-  }
+  const said = busy && typeof busy === "object" ? String(busy.text || "") : busy ? String(busy) + STILL_KEPT : "";
   if (dirty === true) {
     return { title: "Close the takeoff app?", okText: "Close without saving", danger: true,
-      text: "This plan has changes that are not saved. Save them in the takeoff app first (File › Save), or they may be lost." };
+      text: "This plan has changes that are not saved. Save them in the takeoff app first (File › Save), or they may be lost." + (said ? " " + said : "") };
   }
+  if (busy && typeof busy === "object") {
+    return { title: String(busy.title || "The save is not finished"), okText: String(busy.okText || "Close anyway"), danger: busy.danger !== false,
+      text: said };
+  }
+  if (busy) return { title: "The save is not finished", okText: "Close anyway", danger: false, text: said };
   return null;
+}
+/** A save being kept on this device when the frame closes goes on in the page (its Blob is the page's own copy): it is
+    kept and sent - only the app no longer hears of it (review WORDS-1: "closing now stops it" was untrue). */
+const STILL_KEPT = " Closing now does not stop it: it still finishes on this device and goes to OneDrive, but the takeoff app will not hear that it was kept.";
+
+/** How long Close waits for the takeoff app to keep its draft (contract C2b). */
+export const DRAFT_WAIT_MS = 3000;
+/**
+ * The takeoff app keeps its draft NOW (takeoff-web's window.TakeoffApp.saveDraftNow(), contract C2b), waited for at
+ * most `ms`: the app's own pagehide write is an async IndexedDB put that does not outlive a frame removed at once
+ * (review FRAME-1). -> true (kept, or nothing needed keeping), false (it failed, or took too long), null (an app
+ * without it - an older copy - or no app in the frame). Never throws.
+ */
+export function keepDraft(win, ms) {
+  let t = null, fn = null;
+  try {
+    t = win && win.TakeoffApp;
+    fn = t && typeof t.saveDraftNow === "function" ? t.saveDraftNow : null;
+  } catch (e) { fn = null; }
+  if (!fn) return Promise.resolve(null);
+  return new Promise(function (resolve) {
+    const timer = setTimeout(function () { resolve(false); }, ms === undefined ? DRAFT_WAIT_MS : ms);
+    let p;
+    try { p = Promise.resolve(fn.call(t)); } catch (e) { p = Promise.reject(e); }
+    p.then(function (v) { clearTimeout(timer); resolve(v === true); }, function () { clearTimeout(timer); resolve(false); });
+  });
 }
 
 /** The box the frame takes: the visual viewport (above an on-screen keyboard, where a pinch left it), or null when the
@@ -234,10 +260,12 @@ export function open(link, opts) {
   frame.id = "ptfFrame";
   frame.title = "Takeoff app";
   frame.setAttribute("allow", FRAME_ALLOW);
-  // the rest of the page: still, out of reach of taps and of the focus (inert), until the frame closes
+  // the rest of the page: still, out of reach of taps and of the focus (inert), until the frame closes - all but the
+  // portal's own dialog host (common2 modalHost: made once, kept in the page): a dialog over the frame (Close's own
+  // question) must take taps, also when an earlier dialog of the page made that host already (review FRAME-2)
   const inerted = [];
   Array.prototype.forEach.call(document.body.children, function (n) {
-    if (n === host || n.inert || n.tagName === "SCRIPT") return;
+    if (n === host || n.inert || n.tagName === "SCRIPT" || n.id === "dcrModalHost") return;
     n.inert = true;
     inerted.push(n);
   });
@@ -295,7 +323,8 @@ export function close() {
   const a = active;
   active = null;
   const frame = a.frame;
-  // the app's page goes with its frame (its own pagehide keeps its draft)
+  // the app's page goes with its frame (a person's Close had it keep its draft first: requestClose - its own pagehide
+  // write does not outlive the frame's removal)
   try { frame.remove(); } catch (e) { /* */ }
   if (shell) {
     shell.classList.remove("open");
@@ -316,24 +345,26 @@ export function closeIfIdle() {
   return true;
 }
 
-/** The person's Close (the button, Escape on the bar): asked first when something would be lost. */
+/** The person's Close (the button, Escape on the bar): asked first when something would be lost; then the app keeps
+    its draft (keepDraft, at most DRAFT_WAIT_MS) before the frame goes. */
 export async function requestClose() {
   if (!active || asking) return;
   const a = active;
   const q = closeQuestion(busyText(), unsavedIn(a.frame.contentWindow));
-  if (q) {
-    const c = dcr2().confirm;
-    asking = true;
-    let yes = false;
-    try {
+  asking = true;                                             // (a second Close meanwhile is the same one)
+  try {
+    if (q) {
+      const c = dcr2().confirm;
       // no dialog of the portal's (a page without common2): the browser's own
-      yes = typeof c === "function" ? await c(q.text, { title: q.title, okText: q.okText, danger: q.danger }) : window.confirm(q.title + "\n\n" + q.text);
-    } finally {
-      asking = false;
+      const yes = typeof c === "function" ? await c(q.text, { title: q.title, okText: q.okText, danger: q.danger }) : window.confirm(q.title + "\n\n" + q.text);
+      if (!yes || active !== a) return;
     }
-    if (!yes || active !== a) return;
+    await keepDraft(a.frame.contentWindow);
+  } finally {
+    asking = false;
   }
+  if (active !== a) return;
   close();
 }
 
-export default { open, close, closeIfIdle, requestClose, say, guard, isOpen, peerOf, closeQuestion, unsavedIn, viewportBox };
+export default { open, close, closeIfIdle, requestClose, say, guard, isOpen, peerOf, closeQuestion, unsavedIn, viewportBox, keepDraft };

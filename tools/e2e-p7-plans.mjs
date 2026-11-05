@@ -30,7 +30,8 @@
      got, the edit in them (no plan_link, no download), and a later check takes OneDrive's hash with no plan_link; a
      ptt-save from the page itself is never heard; (iv) the office saves the plan (officeSave), and the next Save of
      the same opening becomes a separate file: said on the frame's bar and on the app's status line, the plan's record
-     untouched, the copy a record of its own; the menu's row says so after Close. (v) A person with prices but without
+     untouched, the copy a record of its own; the menu's row says so after Close; (viii) a second opening on that page
+     (the portal's dialog host made already): Close's question answered by real taps, and the app keeps its draft first. (v) A person with prices but without
      "Can upload to OneDrive" (the accountant): the app opens without canSave and its Save goes to the share sheet (a
      stand-in: headless Chrome has none, and the frame is given Safari's lack of file pickers), nothing handed to the
      portal or sent. (vi) A tablet without prices: 📐 says "Plans are for the people who see prices", and nothing is
@@ -442,6 +443,37 @@ async function main() {
         const took = await Promise.race([T.shot("plans_menu_copy_tablet.png"), sleep(25000).then(() => null)]);
         if (took) shots.push(took);
       }
+      // (viii) a second opening on the same page - the portal's dialog host already made by (ii)'s question - and Close
+      // answered by TAPS (real input at each button's centre, not .click(), which an inert element still takes): the
+      // question takes them, and the app keeps its draft before its frame goes (review FRAME-1 / FRAME-2)
+      const tap = async (sel) => {
+        const box = await T.eval("(() => { const r = document.querySelector(" + JSON.stringify(sel) + ").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()");
+        await T.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
+        await T.call("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
+        await T.call("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
+        return box;
+      };
+      // (the copy's row: the person's own work, a real project - the plan itself now holds the office's made-up bytes)
+      await T.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(copyRec ? copyRec.itemId : "") + "]').click(); true");
+      await T.until("(() => { try { const t = " + APP + ".TakeoffApp; return !!(t && t.app.portal && t.app.project.pageCount === 2); } catch (e) { return false; } })()", 30000);
+      const hostNow = await T.eval("(() => { const h = document.getElementById('dcrModalHost'); return h ? { there: true, inert: !!h.inert } : { there: false }; })()");
+      // takeoff-web's TakeoffApp.saveDraftNow (contract C2b) stands in here: the vendored copy may not have it yet
+      await T.eval("(() => { const w = " + APP + "; window.__draft = null; w.TakeoffApp.saveDraftNow = () => new Promise((r) => setTimeout(() => {" +
+        " window.__draft = { frameThere: !!document.getElementById('ptfFrame'), dirty: w.TakeoffApp.app.project.dirty }; r(true); }, 300));" +
+        " const p = w.TakeoffApp.app.project; p.transact('e2e: an edit before Close', () => { p.metadata.client_name = 'Made-up client (e2e), third edit'; }); return p.dirty; })()");
+      await tap("#ptfClose");
+      await T.until("!!document.querySelector('#dcrModalHost.open #dcrMoYes')", 5000);
+      const ask2 = await T.eval("({ title: document.querySelector('#dcrModalHost .dcr-mo-t').textContent, yes: document.getElementById('dcrMoYes').textContent," +
+        " hit: (() => { const b = document.getElementById('dcrMoYes').getBoundingClientRect(); const e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return e ? (e.id || e.tagName) : ''; })() })");
+      await tap("#dcrMoYes");
+      const closedByTap = await T.until("!document.getElementById('ptfFrame')", 6000).then(() => true, () => false);
+      const draft = await T.eval("window.__draft");
+      check("tablet (viii): a second opening on the same page - Close's question takes taps (the portal's dialog host is never made inert), and the frame closes",
+        hostNow.there && !hostNow.inert && ask2.title === "Close the takeoff app?" && ask2.yes === "Close without saving" && ask2.hit === "dcrMoYes" && closedByTap,
+        JSON.stringify({ hostNow, ask2, closedByTap }));
+      check("tablet (viii): before its frame goes, the app is asked to keep its draft (TakeoffApp.saveDraftNow, waited for)",
+        !!draft && draft.frameThere === true && draft.dirty === true, JSON.stringify(draft));
+      if (!closedByTap) await T.eval("(() => { const m = document.querySelector('#dcrModalHost.open #dcrMoNo'); if (m) m.click(); return true; })()");
       check("tablet: no dialog of the browser's own was opened by the app or the portal", !T.dialogs.length, JSON.stringify(T.dialogs));
     }, T);
 

@@ -362,13 +362,18 @@ test("the Plans Library offers a save only in the frame, to a person who may sav
   assert.match(code(read("js/pages/plans-library.js")), /me: state\.me \}, told,/);
 });
 
-test("the frame's Close while a save is kept (closing can stop it) or sent (it goes on in the page: the question says to keep the page open)", () => {
+test("the frame's Close while a save is kept or sent (both go on in the page: the question says so - WORDS-1); unsaved changes in the app always ask the danger question first, with what is in flight after it (FRAME-1)", () => {
   const keeping = F.closeQuestion("Your save is being kept on this iPad.", false);
-  assert.deepEqual([keeping.title, keeping.danger, keeping.okText], ["The save is not finished", true, "Close anyway"]);
-  assert.match(keeping.text, /^Your save is being kept on this iPad\. Closing now stops it/);
-  const sending = F.closeQuestion({ title: "Still sending to OneDrive", okText: "Close the takeoff app", danger: false, text: "Your save is on this iPad and is being sent (45%)." }, true);
-  assert.deepEqual(sending, { title: "Still sending to OneDrive", okText: "Close the takeoff app", danger: false, text: "Your save is on this iPad and is being sent (45%)." },
-    "a question of its own: never 'closing stops it'");
+  assert.deepEqual([keeping.title, keeping.danger, keeping.okText], ["The save is not finished", false, "Close anyway"]);
+  assert.equal(keeping.text, "Your save is being kept on this iPad. Closing now does not stop it: it still finishes on this device and goes to OneDrive, " +
+    "but the takeoff app will not hear that it was kept.");
+  const SENDING = { title: "Still sending to OneDrive", okText: "Close the takeoff app", danger: false, text: "Your save is on this iPad and is being sent (45%)." };
+  assert.deepEqual(F.closeQuestion(SENDING, false), SENDING, "a question of its own: never 'closing stops it'");
+  // the app has unsaved changes while another save is sent (another plan's, or an earlier save of this one): never hidden
+  assert.deepEqual(F.closeQuestion(SENDING, true), { title: "Close the takeoff app?", okText: "Close without saving", danger: true,
+    text: "This plan has changes that are not saved. Save them in the takeoff app first (File › Save), or they may be lost. Your save is on this iPad and is being sent (45%)." });
+  assert.equal(F.closeQuestion("Your save is being kept on this iPad.", true).title, "Close the takeoff app?");
+  assert.equal(F.closeQuestion("", true).text, "This plan has changes that are not saved. Save them in the takeoff app first (File › Save), or they may be lost.");
   assert.deepEqual(F.closeQuestion({ text: "x" }, false), { title: "The save is not finished", okText: "Close anyway", danger: true, text: "x" });
   const lib = code(read("js/plan-library.js"));
   assert.match(lib, /if \(spooling\) return "Your save is being kept on this " \+ d \+ "\.";/);
@@ -512,4 +517,30 @@ test("who (contract C2b, review PRICE-4): an opaque 12-character word per person
   const lib = code(read("js/plan-library.js"));
   assert.match(lib, /const who = frame \? await whoWord\(owner\(\)\) : "";\s*if \(who\) plan\.who = who;/);
   assert.match(lib, /const who = usesFrame\(\) \? await whoWord\(owner\(\)\) : "";[^\n]*\n\s*if \(who\) plan\.who = who;/);
+});
+
+test("Close has the takeoff app keep its draft first (contract C2b TakeoffApp.saveDraftNow, at most 3 s; review FRAME-1); an app without it, or none, closes as before", async () => {
+  assert.equal(F.DRAFT_WAIT_MS, 3000);
+  const app = (fn) => ({ TakeoffApp: { app: { project: { dirty: true } }, saveDraftNow: fn } });
+  let calls = 0;
+  assert.equal(await F.keepDraft(app(async function () { calls++; assert.ok(this && this.app, "called on TakeoffApp"); return true; }), 500), true);
+  assert.equal(calls, 1);
+  assert.equal(await F.keepDraft(app(async () => false), 500), false, "the app could not keep it");
+  assert.equal(await F.keepDraft(app(async () => { throw new Error("made up"); }), 500), false);
+  assert.equal(await F.keepDraft(app(() => { throw new Error("made up"); }), 500), false, "a throw at once");
+  const t0 = Date.now();
+  assert.equal(await Promise.race([F.keepDraft(app(() => new Promise(() => {})), 120), new Promise((r) => setTimeout(() => r("still waiting"), 2000))]), false,
+    "never answers: the wait ends");
+  assert.ok(Date.now() - t0 < 1000);
+  assert.equal(await F.keepDraft({ TakeoffApp: { app: {} } }, 50), null, "an app without it (an older copy)");
+  assert.equal(await F.keepDraft({}, 50), null, "no app in the frame yet");
+  assert.equal(await F.keepDraft(null, 50), null);
+  assert.equal(await F.keepDraft({ get TakeoffApp() { throw new Error("SecurityError"); } }, 50), null);
+  // the person's Close: asked first (unsaved changes first), then the draft, then the frame goes
+  const fr = code(read("js/plan-frame.js"));
+  const rc = fr.slice(fr.indexOf("export async function requestClose"), fr.indexOf("export default"));
+  assert.ok(rc.indexOf("await c(q.text") !== -1 && rc.indexOf("await c(q.text") < rc.indexOf("await keepDraft(a.frame.contentWindow);") &&
+    rc.indexOf("await keepDraft(a.frame.contentWindow);") < rc.indexOf("close();"), "question, draft, then close");
+  // the portal's own dialog host is never made inert by the frame (Close's question takes taps: review FRAME-2)
+  assert.match(fr, /if \(n === host \|\| n\.inert \|\| n\.tagName === "SCRIPT" \|\| n\.id === "dcrModalHost"\) return;/);
 });
