@@ -173,8 +173,10 @@ function readSlice(b) {
 async function spool(m) {
   if (job) { post({ type: "error", id: m.id, message: "This worker is already busy.", status: 0, done: null }); return; }
   job = { id: m.id, url: "", size: 0, cancelled: false, pos: 0 };
-  var ah = null, dir = null, made = false, pos = 0;
-  var beat = setInterval(function () { if (job) post({ type: "progress", id: job.id, done: job.pos }); }, 10000);
+  var ah = null, dir = null, made = false, pos = 0, told = 0;
+  // a word every 10 s while a slow write goes on - only when bytes moved since the last word (review LW-6): a read that
+  // never settles goes silent, so the page's watchdog and the app's own wait still end it
+  var beat = setInterval(function () { if (job && job.pos > told) { told = job.pos; post({ type: "progress", id: job.id, done: job.pos }); } }, 10000);
   try {
     if (!NAME_RE.test(String(m.file || ""))) throw failure("That is not a library file name.");
     var blob = m.blob;
@@ -204,7 +206,7 @@ async function spool(m) {
       pos = end;
       job.pos = pos;
       var now = Date.now();
-      if (now - lastPost > 250) { lastPost = now; post({ type: "progress", id: job.id, done: pos }); }
+      if (now - lastPost > 250) { lastPost = now; told = pos; post({ type: "progress", id: job.id, done: pos }); }
     }
     try { ah.flush(); } catch (e4) { throw noRoom(); }
     var got = ah.getSize();

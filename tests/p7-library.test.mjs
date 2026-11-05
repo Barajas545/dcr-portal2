@@ -1102,7 +1102,7 @@ test("keepSave's heartbeat (takeoff-web's 'keeping'): from the worker's own prog
   assert.equal(LIB.BEAT_MS, 2000);
   // derived from the worker's messages only: no timer of the page's own for it
   const src = read("js/plan-library.js");
-  assert.match(src, /if \(m\.type === "progress"\) \{ if \(!over && typeof onProgress === "function"\)/);
+  assert.match(src, /if \(d <= done\) return;[^\n]*\n\s*done = d;\s*dog\.moved\(\);\s*if \(!over && typeof onProgress === "function"\)/);
   assert.match(src, /const spool = async function \(\) \{\s*const w = await runSpool\(key, name, s\.file, size, beat\);/);
   assert.ok(!/setInterval\([^)]*keeping/.test(src) && !/setTimeout\([^)]*keeping/.test(src));
 });
@@ -1674,4 +1674,155 @@ test("no sweep of another window ever takes a save being kept: its record is wri
   assert.equal(o3.state, "kept");
   assert.ok(ROW().local && LIBFILES()[ROW().local.file], "the whole copy, not yet in a record during that sweep, is still there");
   await o3.sent;
+});
+
+/** A saved project whose `at`-th slice is read only once `open()` is called (or never). */
+function heldProject(size, at) {
+  const bytes = new Uint8Array(size);
+  bytes.set(new TextEncoder().encode("PDFCACHE1"));
+  let n = 0, go = null;
+  const gate = new Promise((r) => { go = r; });
+  class Held extends Blob {
+    slice(a, b, t) {
+      const s = super.slice(a, b, t);
+      if (++n === at) return { size: b - a, arrayBuffer: () => gate.then(() => s.arrayBuffer()) };
+      return s;
+    }
+  }
+  return { blob: new Held([bytes]), size, open: () => go() };
+}
+/** The watchdogs short (and a worker's own timers fast) for one test. */
+const standIns = [];                                         // stand-in workers of a test (ended after it, whatever happened)
+async function quickWatch(fn) {
+  const was = Object.assign({}, LIB.WATCH);
+  const seen = DEV.workers.length;
+  Object.assign(LIB.WATCH, { tick: 20, stall: 400 });
+  DEV.workerSpeed = 200;                                     // the worker's 10 s beat: every 50 ms
+  try { return await fn(); } finally {
+    Object.assign(LIB.WATCH, was);
+    DEV.workerSpeed = 1;
+    delete globalThis.document;
+    DEV.apply();
+    // a failed test may leave a worker running: ended, so the file's process can end
+    DEV.workers.slice(seen).forEach((w) => { if (!w.terminated) w.terminate(); });
+    standIns.splice(0).forEach((w) => w.terminate());
+  }
+}
+const within = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r("still waiting"), ms))]);
+
+test("a slice read that never settles ends the keep after the watchdog's wait - no 'keeping' without bytes moving (the worker's beat and the page's count both follow progress), the copy cut short removed, a Save again kept (LW-6, SPOOL-1)", async () => {
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  await quickWatch(async () => {
+    const start = Object.keys(LIBFILES()).sort();
+    const p = heldProject(20 * MiB, 2);                       // the 2nd slice never comes
+    const words = [];
+    const beats = [];
+    // every word the spool's worker says to the page (the made-up phone's worker, its page handler wrapped)
+    const Real = globalThis.Worker;
+    globalThis.Worker = class extends Real {
+      constructor(u) {
+        super(u);
+        let h = null;
+        Object.defineProperty(this, "onmessage", { get: () => h, set: (fn) => { h = typeof fn === "function" ? (ev) => { words.push(ev.data); fn(ev); } : fn; } });
+      }
+    };
+    let got;
+    try {
+      got = await within(LIB.keepSave(F1.id, { req: "sAAAAAAAAA", name: F1.name, size: p.size, file: p.blob }, (state, x) => beats.push([state, x && x.pct])), 5000);
+    } finally { DEV.apply(); }
+    assert.notEqual(got, "still waiting", "the keep ended");
+    assert.deepEqual([got.state, /stopped responding/.test(got.why)], ["failed", true], JSON.stringify(got));
+    const progress = words.filter((m) => m.type === "progress").map((m) => m.done);
+    assert.ok(progress.length >= 1 && progress.every((d, i) => i === 0 || d > progress[i - 1]), "the worker spoke only when bytes moved: " + JSON.stringify(progress));
+    assert.deepEqual(beats, [["keeping", 40]], "the app heard 'keeping' for the bytes that moved, and nothing during the stall");
+    // the ended worker could not tidy its copy: the page did (a re-Save at once has its room)
+    assert.deepEqual(Object.keys(LIBFILES()).sort(), start, "no part of the save left on the device");
+    assert.equal(ROW().local, undefined);
+    const again = await LIB.keepSave(F1.id, saveOf(savedProject(3 * MiB + 1)));
+    assert.equal(again.state, "kept", again.why);
+    await again.sent;
+  });
+});
+
+test("a worker that only says it is alive (no bytes moving) is ended all the same: the page counts progress, not words (LW-6)", async () => {
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  await quickWatch(async () => {
+    // a stand-in for the spool's worker: a 'progress' of the same bytes every 30 ms, for ever (and a probe answered)
+    class Chatty {
+      constructor() { this.onmessage = null; this.t = null; standIns.push(this); }
+      postMessage(m) {
+        if (m.op === "probe") { setTimeout(() => this.onmessage && this.onmessage({ data: { type: "probe", ok: true } }), 0); return; }
+        this.t = setInterval(() => this.onmessage && this.onmessage({ data: { type: "progress", id: m.id, done: 4096 } }), 30);
+      }
+      terminate() { clearInterval(this.t); }
+    }
+    globalThis.Worker = Chatty;
+    const heard = [];
+    let got;
+    try {
+      got = await within(LIB.keepSave(F1.id, saveOf(savedProject(1 * MiB)), (s, x) => heard.push([s, x && x.pct])), 5000);
+    } finally { DEV.apply(); }
+    assert.notEqual(got, "still waiting", "ended although the worker kept talking");
+    assert.equal(got.state, "failed");
+    assert.ok(heard.filter((h) => h[0] === "keeping").length <= 1, "one word for its one move, none for the rest: " + JSON.stringify(heard));
+  });
+});
+
+test("the watchdogs never count time the page was hidden or asleep: iOS suspends the page, the frame and the worker together - a long switch to another app is no stall (SPOOL-1)", async () => {
+  await devicePlan();
+  saveWorld();
+  DEV.nav.onLine = false;
+  await quickWatch(async () => {
+    const vis = { visibilityState: "visible" };
+    globalThis.document = vis;
+    // hidden for well over the watchdog's wait: the keep goes on, and finishes once the bytes move again
+    const p = heldProject(20 * MiB, 2);
+    const out = LIB.keepSave(F1.id, { req: "sAAAAAAAAA", name: F1.name, size: p.size, file: p.blob });
+    await new Promise((r) => setTimeout(r, 60));
+    vis.visibilityState = "hidden";
+    assert.equal(await within(out, 1300), "still waiting", "not ended while hidden");
+    vis.visibilityState = "visible";
+    p.open();
+    const got = await within(out, 5000);
+    assert.equal(got.state, "kept", JSON.stringify(got));
+    await got.sent;
+    // asleep while "visible" (the page frozen, its timers far overdue when it wakes): not counted either
+    const real = Date.now;
+    let ahead = 0;
+    Date.now = () => real() + ahead;
+    try {
+      const q = heldProject(20 * MiB, 2);
+      const out2 = LIB.keepSave(F1.id, { req: "sBBBBBBBBB", name: F1.name, size: q.size, file: q.blob });
+      await new Promise((r) => setTimeout(r, 60));
+      ahead += 120000;                                       // two minutes asleep
+      assert.equal(await within(out2, 150), "still waiting", "not ended for the time it slept");
+      q.open();
+      const got2 = await within(out2, 5000);
+      assert.equal(got2.state, "kept", JSON.stringify(got2));
+      await got2.sent;
+    } finally { Date.now = real; }
+    // a download's watchdog likewise: a silent worker while hidden is no stall; once in front, it ends as a pause
+    await devicePlan();
+    const w = saveWorld();
+    w.plan.version = "qx:NEWER";                              // a newer version to download
+    DEV.nav.onLine = true;
+    class Silent {
+      constructor() { this.onmessage = null; standIns.push(this); }
+      postMessage(m) { if (m.op === "probe") setTimeout(() => this.onmessage && this.onmessage({ data: { type: "probe", ok: true } }), 0); }
+      terminate() {}
+    }
+    globalThis.Worker = Silent;
+    try {
+      vis.visibilityState = "hidden";
+      const dl = LIB.resume(F1.id).then(() => "done", (e) => e.code);
+      assert.equal(await within(dl, 1300), "still waiting", "a hidden page's silent download is not ended");
+      vis.visibilityState = "visible";
+      assert.equal(await within(dl, 3000), "paused", "in front and silent: ended as a pause");
+      assert.match(ROW().dl.error, /stopped responding/);
+    } finally { DEV.apply(); }
+  });
 });

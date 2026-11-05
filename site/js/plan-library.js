@@ -704,23 +704,49 @@ async function run(key, auto) {
   throw err("changed", "The file kept changing in OneDrive while it downloaded. Try again in a minute.");
 }
 
+/** The watchdogs over a worker (a download, a save being kept): looked at every `tick` ms; `stall` ms of the page's own
+    time in front with no word that counts is the end. (A test shortens them.) */
+export const WATCH = { tick: 10000, stall: 90000 };
+/**
+ * A watchdog: onStall() once WATCH.stall passes with no moved() - never counting time the page was hidden, or asleep
+ * (iOS suspends a page in the background, the frame and its workers with it: on its return the overdue timer would
+ * otherwise run before the worker can say a word; review SPOOL-1). Asleep: a look far later than its tick (a page back
+ * in front runs its overdue timer first). -> {moved(), stop()}.
+ */
+function watchdog(onStall) {
+  const hidden = function () { return typeof document !== "undefined" && !!document && document.visibilityState === "hidden"; };
+  let last = Date.now(), look = last, over = false;
+  const t = setInterval(function () {
+    const now = Date.now();
+    if (hidden() || now - look > WATCH.tick * 3) last = now;          // hidden, or the page was asleep: not counted
+    look = now;
+    if (!over && now - last > WATCH.stall) { over = true; onStall(); }
+  }, WATCH.tick);
+  return {
+    moved: function () { last = Date.now(); },
+    stop: function () { over = true; clearInterval(t); },
+  };
+}
+
 function runWorker(r, dl, url) {
   return new Promise(function (resolve, reject) {
     const key = r.key;
     const w = new Worker(new URL("./plan-library-worker.js", import.meta.url));
     const j = jobs[key] = Object.assign(jobs[key] || {}, { worker: w, done: dl.done || 0, size: dl.size, rate: 0,
       changed: false, finished: false });
-    let lastSave = 0, lastT = Date.now(), lastD = j.done, lastMsg = Date.now();
-    // A worker that goes silent (it posts at least every 10 seconds) is ended and the download treated as a pause.
-    const dog = setInterval(function () {
-      if (j.finished || Date.now() - lastMsg < 90000) return;
+    let lastSave = 0, lastT = Date.now(), lastD = j.done;
+    // A worker that goes silent (it posts at least every 10 seconds, waiting on OneDrive too) for WATCH.stall of the
+    // page's own time in front (watchdog: never the time the page was hidden or asleep - review SPOOL-1) is ended and
+    // the download treated as a pause.
+    const dog = watchdog(function () {
+      if (j.finished) return;
       end();
       reject(Object.assign(new Error("The download stopped responding."), { status: 0, done: j.done }));
-    }, 10000);
-    function end() { j.finished = true; clearInterval(dog); try { w.terminate(); } catch (x) { /* gone */ } }
+    });
+    function end() { j.finished = true; dog.stop(); try { w.terminate(); } catch (x) { /* gone */ } }
     w.onmessage = async function (ev) {
       const m = ev.data || {};
-      lastMsg = Date.now();
+      dog.moved();
       if (j.finished) return;
       if (m.type === "progress") {
         const now = Date.now();
@@ -1449,35 +1475,51 @@ frameGuard(function () {
     text: "Your save is on this " + d + " and is being sent to OneDrive (" + pct + "%). It carries on after the takeoff app closes: keep the portal open on this screen until it says Sent." };
 });
 
-/** Copy the app's Blob into the library file `name` (the worker's op "spool") -> {size, magic} | {error}.
-    onProgress(done): the worker's own progress (every slice, and its beat every 10 s while a write is slow). */
+/** Copy the app's Blob into the library file `name` (the worker's op "spool") -> {size, magic} | {error, cut?}.
+    onProgress(done): the worker's own progress - only when its bytes moved (review LW-6: the app's "keeping" is real
+    progress, never a beat of a stuck read). `cut`: the worker was ended (its watchdog, its failure) without tidying its
+    file - keepSave removes it. */
 function runSpool(key, name, blob, size, onProgress) {
   return new Promise(function (resolve) {
     let w;
     try { w = new Worker(new URL("./plan-library-worker.js", import.meta.url)); } catch (e) { resolve({ error: err("unsupported", UNSUPPORTED) }); return; }
-    let last = Date.now(), over = false;
-    // a worker that goes silent (it speaks at least every 10 seconds) is ended: the save is not kept
-    const dog = setInterval(function () {
-      if (Date.now() - last > 90000) end({ error: err("stalled", "Keeping the save on this device stopped responding. Save again.") });
-    }, 10000);
+    let over = false, done = 0;
+    // no bytes moved for WATCH.stall (the page's own time in front: watchdog) - a read that never settles, a worker
+    // that died - is the end: the save is not kept, and the app may save again
+    const dog = watchdog(function () { end({ error: err("stalled", "Keeping the save on this device stopped responding. Save again."), cut: true }); });
     function end(v) {
       if (over) return;
       over = true;
-      clearInterval(dog);
+      dog.stop();
       try { w.terminate(); } catch (e) { /* gone */ }
       resolve(v);
     }
     w.onmessage = function (ev) {
       const m = ev.data || {};
-      last = Date.now();
-      if (m.type === "progress") { if (!over && typeof onProgress === "function") { try { onProgress(Number(m.done) || 0); } catch (e) { /* words only */ } } }
+      if (m.type === "progress") {
+        const d = Number(m.done) || 0;
+        if (d <= done) return;                               // a word without progress counts for nothing
+        done = d;
+        dog.moved();
+        if (!over && typeof onProgress === "function") { try { onProgress(d); } catch (e) { /* words only */ } }
+      }
       else if (m.type === "spooled") end({ size: m.size, magic: m.magic });
       else if (m.type === "error") end({ error: err("spool", m.message || "The save could not be kept on this device.", { status: m.status }) });
       else if (m.type === "cancelled") end({ error: err("spool", "Keeping the save stopped. Save again.") });
     };
-    w.onerror = function (ev) { end({ error: err("spool", "Keeping the save stopped (" + ((ev && ev.message) || "the worker failed") + ").") }); };
+    w.onerror = function (ev) { end({ error: err("spool", "Keeping the save stopped (" + ((ev && ev.message) || "the worker failed") + ")."), cut: true }); };
     w.postMessage({ op: "spool", id: key, file: name, blob, size });
   });
+}
+
+/** A spool's file its ended worker could not remove (review SPOOL-1): removed here, tried for a moment while the
+    browser lets go of the ended worker's access handle; still there after that, a sweep takes it (no record names it). */
+async function dropPart(name) {
+  for (let i = 0; i < 8; i++) {
+    await removeFile(name);
+    if ((await fileState(name)).state === "missing") return;
+    await new Promise(function (r) { setTimeout(r, 250); });
+  }
 }
 
 /** A send of this plan's save `file` (or of any, without one) stops here: an earlier save a later one replaced, a
@@ -1563,6 +1605,9 @@ export async function keepSave(itemId, save, tell, line) {
     };
     const w = HAS && navigator.locks && navigator.locks.request ? await navigator.locks.request(SPOOL_LOCK + key, spool) : await spool();
     if (w.error) {
+      // a worker ended by the watchdog or by its own failure did not remove what it wrote: done here (SPOOL-1) - else
+      // a re-Save at once would find that part using the room it needs
+      if (w.cut) await dropPart(name);
       if (w.error.status === 507) return { state: "no-room", why: w.error.message };
       return { state: w.error.status === 415 ? "refused" : "failed", why: w.error.message };
     }

@@ -151,10 +151,12 @@ export function fakeOPFS(opts) {
       if (this.open) throw dom("NoModificationAllowedError", "already open");
       this.open = true;
       const f = this;
+      let shut = false;
       return {
         getSize: () => f.bytes.length,
         truncate(n) { const b = new Uint8Array(n); b.set(f.bytes.subarray(0, Math.min(n, f.bytes.length))); f.bytes = b; },
         write(buf, o) {
+          if (shut) throw dom("InvalidStateError", "the handle is closed");
           const at = (o && o.at) || 0;
           const src = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
           const end = at + src.byteLength;
@@ -167,7 +169,7 @@ export function fakeOPFS(opts) {
         },
         read(buf, o) { const at = (o && o.at) || 0; const part = f.bytes.subarray(at, at + buf.byteLength); buf.set(part); return part.byteLength; },
         flush() {},
-        close() { f.open = false; },
+        close() { if (!shut) { shut = true; f.open = false; } },
       };
     }
   }
@@ -258,21 +260,48 @@ export function installDevice(o) {
     },
     wakeLock: { request: async () => { wake.asked++; wake.held++; let gone = false; return { release: async () => { if (!gone) { gone = true; wake.held--; } }, addEventListener() {} }; } },
   };
+  // the private file system as one worker sees it: every synchronous access handle it opens is noted, so that ending the
+  // worker lets go of them as a browser's does (a test of a worker ended part way can then see its file removed)
+  const scopedFile = (f, owned) => new Proxy(f, { get(t, p) {
+    if (p === "createSyncAccessHandle") return async () => { const h = await t.createSyncAccessHandle(); owned.add(h); return h; };
+    const v = t[p];
+    return typeof v === "function" ? v.bind(t) : v;
+  } });
+  const scopedDir = (d, owned) => new Proxy(d, { get(t, p) {
+    if (p === "getDirectoryHandle") return async (n, o) => scopedDir(await t.getDirectoryHandle(n, o), owned);
+    if (p === "getFileHandle") return async (n, o) => scopedFile(await t.getFileHandle(n, o), owned);
+    const v = t[p];
+    return typeof v === "function" ? v.bind(t) : v;
+  } });
   class FakeWorker {
     constructor(url) {
       const src = readFileSync(fileURLToPath(url), "utf8");
       const me = this;
       this.onmessage = null; this.onerror = null; this.terminated = false;
+      this.owned = new Set();
+      // the worker's own timers: dev.workerSpeed runs them this many times faster (a test's); ending the worker ends them
+      const timers = this.timers = new Set();
+      const ms = (n) => Math.max(0, Number(n) || 0) / (dev.workerSpeed || 1);
+      const later = (cb, n, ...a) => { const id = setTimeout(() => { timers.delete(id); cb(...a); }, ms(n)); timers.add(id); return id; };
+      const every = (cb, n, ...a) => { const id = setInterval(cb, ms(n), ...a); timers.add(id); return id; };
+      const clear = (id) => { timers.delete(id); clearTimeout(id); clearInterval(id); };
       const self = { onmessage: null, postMessage(m) { setTimeout(function () { if (!me.terminated && me.onmessage) me.onmessage({ data: m }); }, 0); } };
       this.self = self;
-      const ctx = vm.createContext({ self, navigator: { storage: { getDirectory: async () => fs.root } }, FileSystemFileHandle: fs.FileHandle,
-        setTimeout, clearTimeout, setInterval, clearInterval, fetch: opt.fetch || (async () => { throw new Error("no network here"); }),
+      const ctx = vm.createContext({ self, navigator: { storage: { getDirectory: async () => scopedDir(fs.root, me.owned) } }, FileSystemFileHandle: fs.FileHandle,
+        setTimeout: later, clearTimeout: clear, setInterval: every, clearInterval: clear,
+        fetch: opt.fetch || (async () => { throw new Error("no network here"); }),
         AbortController, Blob, File, Promise, Uint8Array, ArrayBuffer, Date, Math, String, Number, Array, Error, Object, console });
       vm.runInContext(src, ctx, { filename: "plan-library-worker.js" });
       workers.push(this);
     }
-    postMessage(m) { const s = this.self; setTimeout(function () { if (s.onmessage) s.onmessage({ data: m }); }, 0); }
-    terminate() { this.terminated = true; }
+    postMessage(m) { const s = this.self; const me = this; setTimeout(function () { if (!me.terminated && s.onmessage) s.onmessage({ data: m }); }, 0); }
+    /** as a browser's: nothing more runs in it, and its access handles are let go */
+    terminate() {
+      this.terminated = true;
+      this.timers.forEach((id) => { clearTimeout(id); clearInterval(id); });
+      this.timers.clear();
+      this.owned.forEach((h) => { try { h.close(); } catch (e) { /* closed */ } });
+    }
   }
   const saved = {};
   const names = ["window", "navigator", "localStorage", "indexedDB", "Worker", "BroadcastChannel"];
@@ -287,14 +316,15 @@ export function installDevice(o) {
     set("BroadcastChannel", undefined);
   };
   apply();
-  return {
-    idb, fs, locks, store, nav, wake, workers,
+  const dev = {
+    idb, fs, locks, store, nav, wake, workers, workerSpeed: 1,
     /** the globals put back (a test before may have deleted one) */
     apply,
     uninstall() {
       names.forEach((k) => { if (saved[k]) Object.defineProperty(globalThis, k, saved[k]); else delete globalThis[k]; });
     },
   };
+  return dev;
 }
 
 /** A Blob of `size` bytes starting `head` (a takeoff project's: "PDFCACHE1"), every slice asked and every whole read
