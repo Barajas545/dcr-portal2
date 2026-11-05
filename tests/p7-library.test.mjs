@@ -642,7 +642,7 @@ test("demo plans_list: the people who see prices get each project's .takeoff fil
     const got = await onedrive.plansList([a267.id, ab.id, a001.id]);
     assert.deepEqual(got[String(a267.id)].files.map((f) => f.name).sort(), ["A267 Bid.takeoff", "A267 Rev 2.takeoff", "L1 walls.takeoff"], key);
     assert.deepEqual(got[String(ab.id)].files.map((f) => f.name).sort(), ["A024-B Framing.takeoff", "A024-B Roof.takeoff"], key);
-    assert.deepEqual(got[String(a001.id)], { number: "A001", files: [], complete: true, saveBack: false }, key + ": the demo broker (as an older broker) says no save_back");
+    assert.deepEqual(got[String(a001.id)], { number: "A001", files: [], complete: true, saveBack: key !== "accountant" }, key + ": save_back - the save back's gate and the switch");
     const counts = await onedrive.plansFor([a267.id, ab.id]);
     assert.equal(counts[String(a267.id)].plans, got[String(a267.id)].files.length);
     assert.ok(got[String(a267.id)].files.every((f) => lib.planFileOf(f) && /^A267 - /.test(f.folder)), key);
@@ -695,8 +695,12 @@ function demoSend(ext) {
         done: (job, itemId, ticket) => onedrive.planSaveDone(job.projectId, itemId, ticket, job.meta.hash),
         commit: async (job) => {
           try {
-            return await onedrive.planSaveCommit({ projectId: job.projectId, itemId: job.meta.itemId, ticket: job.session.ticket, uploadUrl: job.session.uploadUrl, hash: job.meta.hash });
-          } catch (x) { if (x && x.code === "plan_changed") { job.meta.mode = "copy"; x.restart = true; } throw x; }
+            return await onedrive.planSaveCommit({ projectId: job.projectId, itemId: job.meta.itemId, ticket: job.session.ticket, uploadUrl: job.session.uploadUrl,
+              hash: job.meta.hash, landed: job.chunkLanded === true });
+          } catch (x) {
+            if (x && x.code === "plan_changed") { job.meta.mode = "copy"; job.meta.why = x.info && x.info.why; x.restart = true; }
+            throw x;
+          }
         },
         find: async () => [],
       },
@@ -764,6 +768,154 @@ test("demo plan_save_session / plan_save_commit / plan_save_done (the iPad's sav
   const big = await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: plan.id, version: after.version, size: 4096 * 1024 * 1024 + 1 }));
   assert.deepEqual([big.code, big.info.max_bytes], ["too_large", 4096 * 1024 * 1024]);
   assert.equal((await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: "01DEMONOTAPLAN", version: after.version, size: 5 }))).code, "not_found");
+});
+
+test("demo broker as DCR Desktop 2's since the repair round (contract addendum 3): the switch ONEDRIVE_PLAN_SAVE (save_back, 503 save_back_off before anything else); every replace checked by the version history - verified, or a crossed office save put back and plan_changed; landed; PUT refused -> the POST; both refused -> why refused; no history -> unverified; a hashless deferred ticket past 48 hours -> need hash", { skip }, async () => {
+  let shift = 0;
+  FK = await loadFake();
+  E = FK.createEngine({ maxFileSize: 500 * 1024 * 1024, clock: () => new Date(Date.now() + shift) });
+  E.load(FK.seed({ now: new Date() }));
+  createUploaderRef = (await import("../site/js/onedrive-upload.js")).createUploader;
+  const a267 = project("A267"), a024 = project("A024");
+  const ext = E.exts.find((x) => x.name === "p7-onedrive");
+  const send = demoSend(ext);
+  const files = async (pid) => (await onedrive.plansList([pid]))[String(pid)].files;
+  const fresh = async (name) => {
+    const f = (await files(a267.id)).find((x) => x.name === name);
+    const fx = ext.setPlanFixture("A267", new Blob([bytesOf(5000, 11)]), name);           // a version of its own (its base)
+    return Object.assign({}, f, { size: fx.size, version: fx.version, modified: (await files(a267.id)).find((x) => x.id === f.id).modified, full: fx.full });
+  };
+  const sendOf = (plan, raw, extra) => send({ projectId: a267.id, file: new File([raw], plan.name), name: plan.name,
+    meta: Object.assign({ itemId: plan.id, base: plan.version, name: plan.name, hash: QX.quickXorHash(raw) }, extra || {}) });
+  const past = (ms) => { shift += ms; };                         // the demo's clock moves on (an office save comes later)
+  const refuse = (on) => ext.refuseCopyCommits(on);
+  try {
+    // (D1) the switch: save_back per project for those who pass the gate; plan_save_session's 503 after the gate
+    as("manager_prices");
+    for (const [v, a, b] of [["all", true, true], ["off", false, false], ["", false, false], ["only:a267", true, false], ["only: A024 , A999", false, true],
+      ["only:A267,all", false, false], ["on", false, false]]) {
+      ext.setPlanSave(v);
+      ext.logLines(true);
+      const got = await onedrive.plansList([a267.id, a024.id]);
+      assert.deepEqual([got[String(a267.id)].saveBack, got[String(a024.id)].saveBack], [a, b], JSON.stringify(v));
+      const said = ext.logLines(true).filter((l) => /not understood/.test(l));
+      assert.equal(said.length > 0, ["only:A267,all", "on"].includes(v), JSON.stringify(v) + ": the log says it was not understood (never the value)");
+      assert.ok(said.every((l) => l === "onedrive plans_list: ONEDRIVE_PLAN_SAVE not understood: off"));
+      const p0 = (await files(a267.id))[0];
+      assert.equal((await onedrive.planLink(a267.id, p0.id)).saveBack, a, "plan_link's too");
+      if (!a) {
+        const e = await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: p0.id, version: p0.version, size: 5 }));
+        assert.deepEqual([e.code, e.status], ["save_back_off", 503], JSON.stringify(v));
+      }
+    }
+    ext.setPlanSave("off");
+    as("accountant");                                        // no upload switch: the person's gate first (403, as before)
+    assert.equal((await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: (await files(a267.id))[0].id, version: "qx:x", size: 5 }))).code, "forbidden");
+    as("field");
+    assert.equal((await refusal(onedrive.planSaveSession({ projectId: a267.id, itemId: "01DEMOTKO000F000", version: "qx:x", size: 5 }))).code, "forbidden");
+    ext.setPlanSave("only:A267");
+    as("admin");
+    // (D2 step 4) a replace: the version history shows the base right under the save - verified
+    const p1 = await fresh("A267 Bid.takeoff");
+    const r1 = bytesOf(2 * 327680 + 9, 21);
+    ext.logLines(true);
+    const j1 = await sendOf(p1, r1);
+    assert.deepEqual([j1.state, j1.result.mode, j1.result.verified], ["done", "replace", true], j1.error);
+    assert.ok(ext.logLines().includes("onedrive plan_save_commit: the version history shows the base right under this save: verified"));
+    const v1 = ext.versionsOf(p1.id);
+    assert.deepEqual([v1[0].size, v1[1].size], [r1.length, 5000], "this save over the base");
+    // a crossing: an office save between the commit's walk and its commit, OneDrive not holding the PUT's If-Match - the
+    // office save is put back (a new version of its bytes: ours stays in the history), and the save goes as a copy
+    past(3000);
+    const base2 = (await files(a267.id)).find((x) => x.id === p1.id);
+    ext.graphModes({ putIfMatch: "ignored" });
+    ext.betweenWalkAndCommit(p1.full);
+    ext.logLines(true);
+    const r2 = bytesOf(327680 + 3, 22);
+    const j2 = await sendOf(Object.assign({}, p1, { version: base2.version }), r2);
+    assert.deepEqual([j2.state, j2.result.mode], ["done", "copy"], j2.error);
+    assert.match(j2.result.name, /^A267 Bid - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(\d\))?\.takeoff$/);
+    const log2 = ext.logLines();
+    assert.ok(log2.includes("onedrive plan_save_commit: crossed: the office save was put back"), JSON.stringify(log2));
+    const now2 = (await files(a267.id)).find((x) => x.id === p1.id);
+    assert.match(now2.version, /^qx:demo-office-/, "the office's save is the plan again");
+    const v2 = ext.versionsOf(p1.id);
+    assert.deepEqual(v2.slice(0, 3).map((v) => v.size), [now2.size, r2.length, now2.size], "the restored office save, ours under it, the office save");
+    // (D3) landed: OneDrive committed at the last chunk itself (deferCommit ignored), an office save during the upload -
+    // the broker only checks: crossed, put back, a copy; never adopted from the last chunk's answer
+    ext.graphModes({ reset: true, deferCommit: "ignored" });
+    const p3 = await fresh("A267 Rev 2.takeoff");
+    past(3000);
+    ext.duringUpload(p3.full, "office");
+    ext.logLines(true);
+    const r3 = bytesOf(2 * 327680 + 1, 23);
+    const j3 = await sendOf(p3, r3);
+    assert.deepEqual([j3.state, j3.result && j3.result.mode], ["done", "copy"], j3.error + " " + JSON.stringify(ext.logLines()));
+    const log3 = ext.logLines();
+    assert.ok(log3.includes("onedrive plan_save_commit: OneDrive committed at the last chunk: deferCommit not honoured here"), JSON.stringify(log3));
+    assert.ok(log3.includes("onedrive plan_save_commit: crossed: the office save was put back"));
+    assert.match((await files(a267.id)).find((x) => x.id === p3.id).version, /^qx:demo-office-/, "the office save stays the plan");
+    // ...without an office save: landed, checked, verified
+    const p3b = await fresh("A267 Rev 2.takeoff");
+    const j3b = await sendOf(p3b, bytesOf(327680 + 5, 24));
+    assert.deepEqual([j3b.state, j3b.result.mode, j3b.result.verified], ["done", "replace", true], j3b.error);
+    // (D2 attempt B) the PUT refused: the zero-length POST commits it
+    ext.graphModes({ reset: true, putCommit: "refused" });
+    const p4 = await fresh("L1 walls.takeoff");
+    ext.logLines(true);
+    const j4 = await sendOf(p4, bytesOf(327680 + 7, 25));
+    assert.deepEqual([j4.state, j4.result.mode, j4.result.verified], ["done", "replace", true], j4.error);
+    assert.ok(ext.logLines().includes("onedrive plan_save_commit: the PUT commit was refused (400): the POST commit"));
+    // (D5) both refused: plan_changed {why: "refused"} (no blame) - and through the uploader it goes again at once as a
+    // copy, with that why
+    ext.graphModes({ postStatus: 400 });
+    const p5 = await fresh("L1 walls.takeoff");
+    const raw5 = bytesOf(327680 + 9, 26);
+    const s5 = await onedrive.planSaveSession({ projectId: a267.id, itemId: p5.id, version: p5.version, size: raw5.length, name: p5.name });
+    for (const [a, z] of [[0, 327679], [327680, raw5.length - 1]]) ext.http("PUT", s5.uploadUrl, { "Content-Range": "bytes " + a + "-" + z + "/" + raw5.length }, new Blob([raw5.subarray(a, z + 1)]));
+    const e5 = await refusal(onedrive.planSaveCommit({ projectId: a267.id, itemId: p5.id, ticket: s5.ticket, uploadUrl: s5.uploadUrl, hash: QX.quickXorHash(raw5) }));
+    assert.deepEqual([e5.code, e5.info.why, e5.info.retry, e5.message], ["plan_changed", "refused", "copy", "OneDrive would not replace the plan: the save is sent again as a separate file."]);
+    const meta5 = { itemId: p5.id, base: p5.version, name: p5.name, hash: QX.quickXorHash(raw5) };
+    const j5 = await send({ projectId: a267.id, file: new File([raw5], p5.name), name: p5.name, meta: meta5 });
+    assert.deepEqual([j5.state, j5.result.mode, meta5.why], ["done", "copy", "refused"], j5.error);
+    // a plan that changed (an office save between the commit's walk and its commit, the PUT's If-Match honoured: 412),
+    // and Microsoft not committing the upload as the copy: why "changed" (other bytes: the same ones would be found as
+    // the copy above, "OneDrive holds the save already")
+    ext.graphModes({ reset: true });
+    const p5b = await fresh("L1 walls.takeoff");
+    ext.betweenWalkAndCommit(p5b.full);
+    refuse(true);
+    const raw5b = bytesOf(327680 + 9, 28);
+    const meta5b = { itemId: p5b.id, base: p5b.version, name: p5b.name, hash: QX.quickXorHash(raw5b) };
+    const j5b = await send({ projectId: a267.id, file: new File([raw5b], p5b.name), name: p5b.name, meta: meta5b });
+    refuse(false);
+    assert.deepEqual([j5b.state, j5b.result && j5b.result.mode, meta5b.why], ["done", "copy", "changed"], j5b.error + JSON.stringify(ext.logLines()));
+    // no history to read: saved, unverified (the go-live self-test's line)
+    ext.graphModes({ reset: true, versions: "failing" });
+    const p6 = await fresh("A267 Bid.takeoff");
+    ext.logLines(true);
+    const j6 = await sendOf(p6, bytesOf(327680 + 11, 27));
+    assert.deepEqual([j6.state, j6.result.mode, j6.result.verified], ["done", "replace", false], j6.error);
+    assert.ok(ext.logLines().includes("onedrive plan_save_commit: version history not available: unverified"));
+    // (D4) a deferred replace's ticket past 48 hours: settled only with the hash
+    ext.graphModes({ reset: true });
+    const p7 = await fresh("A267 Bid.takeoff");
+    const s7 = await onedrive.planSaveSession({ projectId: a267.id, itemId: p7.id, version: p7.version, size: 9, name: p7.name });
+    try {
+      shift += 49 * 3600 * 1000;
+      const e7 = await refusal(onedrive.planSaveDone(a267.id, p7.id, s7.ticket));
+      assert.deepEqual([e7.code, e7.info && e7.info.need, e7.message], ["not_saved", "hash", "This save can be checked now only with the file's hash - send it again with the hash."]);
+      const e7b = await refusal(onedrive.planSaveDone(a267.id, p7.id, s7.ticket, QX.quickXorHash(bytesOf(9, 1))));
+      assert.deepEqual([e7b.code, e7b.info && e7b.info.need], ["not_saved", undefined], "with a hash: the plain answer (not this save)");
+    } finally { shift -= 49 * 3600 * 1000; }
+    // a non-boolean landed: 400 field landed
+    const bad = await refusal(onedrive.call({ op: "plan_save_commit", project_id: a267.id, item_id: p7.id, ticket: s7.ticket, upload_url: s7.uploadUrl, landed: "yes" }));
+    assert.deepEqual([bad.code, bad.field], ["invalid", "landed"]);
+  } finally {
+    ext.setPlanSave(null);
+    ext.graphModes({ reset: true });
+    as("admin");
+  }
 });
 
 test("demo hooks for the real-app e2e: a made-up real .takeoff as a project's plan (its bytes, size, own version) until a save lands; the office's save; OneDrive's bytes of an item", { skip }, async () => {
