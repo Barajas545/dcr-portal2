@@ -16,7 +16,8 @@
      2. the app answers {type: "ptt-ready", v: 1, nonce} to this window;
      3. this window posts the plan, to the peer's origin only: {type: "ptt-open", v: 1, nonce, kind: "file", file, ...}
         (a copy saved on this device: a File out of the Plans Library, nothing copied) or {kind: "link", url, ...}
-        (a plan in OneDrive, opened over byte ranges);
+        (a plan in OneDrive, opened over byte ranges) - in the frame with `who` too (map/plans.js whoWord: an opaque
+        word for the person, so the app keeps one person's drafts apart from another's on a shared tablet; C2b);
      4. for a link, the app asks {type: "ptt-renew", v: 1, nonce, req} when it expires; this window answers
         {type: "ptt-link", v: 1, nonce, req, url} ('' when there is none) for as long as the app is open;
      5. once the app really keeps itself on this device for offline use (its service worker and program), it says
@@ -38,7 +39,7 @@
    With the frame switched off (map/plans.js PLAN_FRAME) a phone or a tablet opens the tab as a computer does, and an
    iPhone or iPad home-screen app is told to open the portal in Safari (handoffProblem). */
 
-import { TAKEOFF_ORIGIN, handoffLink, frameLink, planRoute } from "./map/plans.js";
+import { TAKEOFF_ORIGIN, handoffLink, frameLink, planRoute, WHO_RE } from "./map/plans.js";
 import * as frame from "./plan-frame.js";
 
 /** The frame is open (a page's own keys - the 📐 menu's Escape - wait while it is). */
@@ -199,6 +200,9 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
       saving = via === "frame" && p.kind === "file" && p.canSave === true && typeof onSave === "function";
       const open = Object.assign({}, p, { type: "ptt-open", v: VERSION, nonce: word });
       if (saving) open.canSave = true; else delete open.canSave;
+      // the person's opaque word (map/plans.js whoWord, contract C2b): the frame's app keys its drafts by it - only to
+      // the frame (a tab's drafts are on another site), only in its own shape
+      if (!(via === "frame" && typeof p.who === "string" && WHO_RE.test(p.who))) delete open.who;
       try {
         peer.win.postMessage(open, peer.origin);
       } catch (e) {

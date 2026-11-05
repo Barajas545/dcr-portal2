@@ -470,3 +470,45 @@ test("takeoff-stores.js: the takeoff app's drafts, kept copies and their indexes
   assert.deepEqual(Array.from(src.matchAll(/\.setItem\(([A-Z_]+)/g)).map((m) => m[1]), ["USERS_KEY"]);
   assert.ok(read("sw.js").includes('"js/takeoff-stores.js"'), "kept for offline use (the Plans Library imports it)");
 });
+
+test("who (contract C2b, review PRICE-4): an opaque 12-character word per person, never the id; told to the frame's app with the plan, never to a tab, only in its own shape", async () => {
+  const { createHash } = await import("node:crypto");
+  const P = await import("../site/js/map/plans.js");
+  // the rule, against node's own sha256 (and fixed vectors, worked out here with Python's hashlib as well)
+  const ref = (id) => createHash("sha256").update("dcr2-who:" + id).digest().subarray(0, 9).toString("base64url");
+  assert.equal(await P.whoWord("u1"), "9KvjNaay_zIh");
+  assert.equal(await P.whoWord("00000000-0000-4000-8000-000000000003"), "KVOLX6He-gVa");
+  for (const id of ["00000000-0000-4000-8000-000000000003", "u1", "u2", "ü-ñ id"]) {
+    const w = await P.whoWord(id);
+    assert.equal(w, ref(id), id);
+    assert.match(w, P.WHO_RE);
+    assert.ok(!w.includes(id), "never the id itself");
+  }
+  assert.notEqual(await P.whoWord("u1"), await P.whoWord("u2"), "one word a person");
+  for (const none of ["", null, undefined]) assert.equal(await P.whoWord(none), "");
+  assert.equal(await P.whoWord("u1", { digest: async () => { throw new Error("made up"); } }), "", "no crypto: no word (never a throw)");
+  // the hand-over: to the frame as given; never to a tab; a word of another shape is not passed on
+  const who = await P.whoWord("u1");
+  for (const [label, via, origin, w, want] of [["the frame, a file", "frame", HERE, who, who], ["a tab", "tab", "https://barajas545.github.io", who, undefined],
+    ["the frame, a word of another shape", "frame", HERE, who + "x", undefined], ["the frame, not text", "frame", HERE, 12, undefined], ["the frame, none", "frame", HERE, undefined, undefined]]) {
+    const s = stage(via, origin);
+    const plan = async () => Object.assign({ kind: "file", file: blob(9), name: NAME, size: 9, lastModified: 1, number: "A900" }, w === undefined ? {} : { who: w });
+    const ctl = H.talk(s.peer, WORD, plan, null, () => {}, null, s.host);
+    try {
+      await s.emit(s.from({ type: "ptt-ready" }));
+      assert.equal(s.win.posted[0].m.who, want, label);
+      if (want === undefined) assert.ok(!("who" in s.win.posted[0].m), label);
+    } finally { ctl.stop(); }
+  }
+  // a link opened online in the frame carries it too (its drafts are the app's as well)
+  const s = stage("frame", HERE);
+  const ctl = H.talk(s.peer, WORD, async () => ({ kind: "link", url: "https://made-up-my.sharepoint.com/x", name: NAME, size: 9, lastModified: 0, number: "A1", who }), async () => "", () => {}, null, s.host);
+  try {
+    await s.emit(s.from({ type: "ptt-ready" }));
+    assert.equal(s.win.posted[0].m.who, who);
+  } finally { ctl.stop(); }
+  // the Plans Library puts it on the plan for the frame (a file of the device, a link online), for the person signed in
+  const lib = code(read("js/plan-library.js"));
+  assert.match(lib, /const who = frame \? await whoWord\(owner\(\)\) : "";\s*if \(who\) plan\.who = who;/);
+  assert.match(lib, /const who = usesFrame\(\) \? await whoWord\(owner\(\)\) : "";[^\n]*\n\s*if \(who\) plan\.who = who;/);
+});

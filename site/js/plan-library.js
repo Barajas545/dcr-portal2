@@ -56,7 +56,7 @@ import {
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
   purgeText,
 } from "./map/plan-library.js";
-import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord } from "./map/plans.js";
+import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
 import { say as frameSay, guard as frameGuard, isOpen as frameIsOpen } from "./plan-frame.js";
 import { createUploader, xhrTransport } from "./onedrive-upload.js";
@@ -1093,6 +1093,9 @@ export function open(itemId, onDone, opts) {
     const plan = { kind: "file", file: f, name: r.name, size: f.size, lastModified: isFinite(t) ? t : f.lastModified, number: r.number,
       updateAvailable: !mine && statusOf(r, null, false) === "outdated" };
     if (offer) plan.canSave = true;                          // (js/plan-handoff.js offers it to the frame only)
+    // whose work it is (the app keys its drafts by it; review PRICE-4) - the frame's app only
+    const who = frame ? await whoWord(owner()) : "";
+    if (who) plan.who = who;
     return plan;
   }, null, onDone, noteReady, Object.assign({}, o, { onSave: offer ? function (save, tell) { return keepSave(itemId, save, tell, line); } : null,
     onClose: function () { closeNow(); } }));
@@ -1110,7 +1113,10 @@ export function openOnline(projectId, number, file, onDone, opts) {
     if (!(Number(l.size) > 0)) throw err("no_size", "OneDrive did not say how big this file is.");
     version = l.version;
     const t = Date.parse(l.modified || "");
-    return { kind: "link", url: l.url, name: l.name, size: Number(l.size), lastModified: isFinite(t) ? t : 0, number: String(number || "") };
+    const plan = { kind: "link", url: l.url, name: l.name, size: Number(l.size), lastModified: isFinite(t) ? t : 0, number: String(number || "") };
+    const who = usesFrame() ? await whoWord(owner()) : "";   // (the frame's app keys its drafts by it: PRICE-4)
+    if (who) plan.who = who;
+    return plan;
   }, async function () {
     if (stale) return "";
     const l = await onedrive.planLink(projectId, file.id);

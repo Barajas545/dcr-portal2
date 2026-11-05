@@ -39,7 +39,8 @@
    * canSaveBack(me)              a person who may save a plan back (Q2): an admin, or Sees prices AND "Can upload to
                                   OneDrive" - the broker asks the same (403 forbidden otherwise);
    * saveBackFor(me, on)          the switch and the person together: whether the frame offers a save of the plan;
-   * deviceWord(win)              "iPad", "iPhone" or "device": what the words call this device ("Saved on this iPad").
+   * deviceWord(win)              "iPad", "iPhone" or "device": what the words call this device ("Saved on this iPad");
+   * whoWord(id)                  the opaque per-person word the frame's app keys its drafts by (ptt-open's `who`).
 
    Pure module (node tests import it). */
 
@@ -182,6 +183,23 @@ export function canSaveBack(me) {
     person. */
 export function saveBackFor(me, on) {
   return (on === undefined ? PLAN_SAVE_BACK : !!on) && canSaveBack(me);
+}
+
+/** The opaque word for a person the frame's takeoff app keys its drafts by (contract C2b, review PRICE-4: on a shared
+    tablet one person is never offered another's unsaved work): base64url of the first 9 bytes of
+    sha256("dcr2-who:" + the person's id) - 12 characters, never the id or the e-mail (both repos are public). */
+export const WHO_RE = /^[A-Za-z0-9_-]{12}$/;
+/** whoWord(id) -> Promise of that word, or "" (no id, or no crypto here). `subtle`: crypto.subtle (a test's). */
+export async function whoWord(id, subtle) {
+  const s = subtle || (typeof crypto !== "undefined" && crypto && crypto.subtle) || null;
+  if (!id || !s || typeof s.digest !== "function") return "";
+  try {
+    const d = new Uint8Array(await s.digest("SHA-256", new TextEncoder().encode("dcr2-who:" + String(id))));
+    let bin = "";
+    for (let i = 0; i < 9; i++) bin += String.fromCharCode(d[i]);
+    const w = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return WHO_RE.test(w) ? w : "";
+  } catch (e) { return ""; }
 }
 
 /** What the words call this device: "iPad" (an iPad, also one that calls itself a Mac with touch), "iPhone", else
