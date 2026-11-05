@@ -187,7 +187,8 @@ tools/e2e-p7-onedrive.mjs   the Files tab's OneDrive part as every role (what is
 tools/e2e-p7-plans.mjs      the plan buttons and the Floor Plans card: Search and the project header as a field person
                             and an admin, the card per role, the takeoff folder switched off (phone and desk, light and dark);
                             a tablet with the REAL vendored takeoff app in the frame: open, edit, save, sent, copy (4b),
-                            prices without the upload switch (4c)
+                            the review round's walks - office and desktop saves, an identical re-save, two tabs, Close
+                            during a send, the per-person drafts (4d) - and prices without the upload switch (4c)
 tools/vendor-takeoff.mjs    the takeoff copy at site/takeoff/ from one takeoff-web commit (see "The takeoff app inside the portal")
 tools/schema-check-p7-onedrive.mjs  the same modules through DCR Desktop 2's OWN broker (handler.ts with its fake Graph) and
                             the REAL migrations (20261028000200_onedrive): drift, gates, the files row, plans_for once the
@@ -706,13 +707,25 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   20 characters, `size === file.size`); the Plans Library's worker copies it into a NEW file of its own (op `spool`,
   8 MiB slices, never the whole file in memory, MAGIC and size checked), the record gets `local`, and only then is the
   app told `kept`. The save opens from the device from then on (with no signal too) and nothing downloads over it.
-- **Then sent.** The Files tab's uploader sends it straight to OneDrive (`plan_save_session` / `plan_save_done`, the
-  upload address in memory only), the screen held awake and the rows saying "keep this screen open"; a send that does
-  not finish goes again later by itself (Search, a project, the Plans Library) or at Retry. OneDrive's version
+- **Then sent.** The Files tab's uploader sends it straight to OneDrive (`plan_save_session` with the plan's file name,
+  the upload address in memory only), the screen held awake and the rows saying "keep this screen open"; a send that
+  does not finish goes again later by itself (Search, a project, the Plans Library) or at Retry. OneDrive's version
   unchanged since the device got it: the save REPLACES the plan (OneDrive keeps the old one in its version history)
   and its bytes become the device's copy with no download (OneDrive's hash of them, given later, is taken without a
   download too). Changed in the office meanwhile: the save becomes a separate file beside it, `<stem> - iPad
   YYYY-MM-DD HHMM.takeoff`, the person is told, and nothing is overwritten.
+- **Never over an office save, even one that lands during the upload** (contract addendum 2; DCR Desktop 2's broker
+  since the review round). A replace is deferred: every chunk answers 202, and the broker's `plan_save_commit` (the
+  session's upload address handed to it from memory, for that one call) commits it onto the plan only while the plan
+  still has the tag the session was made with - else the SAME upload becomes the copy beside it, or (Microsoft
+  refusing that: `plan_changed`) the save is sent again at once as a copy. A desktop save that made the plan a new item
+  (the old one moved into Backups) is found by the plan's name: a copy beside it, never a save stuck on the device.
+  The spool worker computes OneDrive's quickXorHash of the save from its own slices (`js/quickxor.js`, a mirror of the
+  broker's `quickxor.ts` and its vectors; `local.hash`) and sends it to the commit and to `plan_save_done`: with
+  OneDrive's own hash it is the proof - a byte-identical re-save is saved, an office save of the same size is not. A
+  save whose last answer was lost is settled with its ticket (the broker takes it 30 days) and the hash, and past that
+  by the hash alone in `plans_list` - never sent again as a copy of itself. A broker refusal (400) and a second
+  `not_saved` wait for the person instead of sending the whole plan again by itself.
 - **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against
   the version the app's work was done on (`map/plan-library.js` `saveBase`) - so a newer version the portal downloaded
   while the app was open never turns older work into a replace (it becomes a copy), the next Save after a copy goes on
@@ -730,9 +743,18 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - **Before the owner's write grant** on the takeoff folder the broker answers 503 and a save just waits on the device.
 - **Tests.** `tests/p7-library.test.mjs` (the rules, and the library over a made-up phone: `tests/plan-device.mjs` with
   the REAL worker), `tests/p8-plan-save.test.mjs`, `tests/p7-onedrive-repo.test.mjs`, `tests/p7-onedrive-upload.test.mjs`;
+  `tests/p8-quickxor.test.mjs` (the broker's vectors, a port of Microsoft's C#, and the broker's own module when DCR
+  Desktop 2 is on the machine); `tools/schema-check-p7-onedrive.mjs` runs these parts over the REAL broker (the
+  deferred commit, an office save during the upload, a desktop-style save, an identical re-save, a lost commit answer);
   `tools/e2e-p7-plans.mjs` 4b drives the REAL vendored takeoff app in the frame (a made-up but real .takeoff as the
-  demo plan): its own Save is kept, marks the project saved, is sent and adopted with no download, and after an office
-  save the next one becomes a copy, said in both; 4c: prices without the upload switch saves to the share sheet only.
+  demo plan): its own Save is kept, marks the project saved, is sent (the broker's commit) and adopted with no
+  download, and after an office save the next one becomes a copy, said in both; 4d: an office save during the upload
+  and a desktop save become copies, an identical re-save is saved, a second tab's Save on the same plan is refused
+  while the first's waits, Close while dirty during a send keeps the draft (offered again on reopening), and a second
+  price person on the same tablet is not offered the first's draft; 4c: prices without the upload switch saves to the
+  share sheet only. The demo broker (`tools/fake/p7-onedrive.js`) answers as the real one (deferred commit, the real
+  hash of what it is sent, the name, 30-day tickets) and has the hooks `desktopSave`, `duringUpload`,
+  `refuseCopyCommits` and `hashed`; `DCR2Demo.setUploadDelay(ms)` makes the demo's uploads slow.
 
 ## Rules for every page
 
