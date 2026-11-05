@@ -56,7 +56,7 @@ import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
-  purgeText, lostSave, onlineNote, hashOk, sendWaitMs, refusedTold, saveBackOffWords,
+  purgeText, lostSave, onlineNote, hashOk, sendWaitMs, refusedTold, saveBackOffWords, uncheckedReplace, uncheckedWords,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -1359,7 +1359,9 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
    A session whose end this device never heard (the page closed after the last byte) is settled with its ticket first
    (settle: plan_save_done, with the save's hash; the broker takes the ticket for 30 days - review BRK-3, TICKET-1,
    LW-7 - and past that the save is looked for by its hash alone), so a save that landed is never sent twice, nor made
-   into a copy of itself.
+   into a copy of itself. A deferred replace settled that way is taken only on the broker's version check (its answer
+   carries `verified`; a crossed office save it put back answers not_saved, and the save goes again as a copy): never
+   on an older broker's word alone (uncheckedReplace - repair round 2, S1).
 
    While a save is kept or sent the frame's Close asks first (plan-frame.js guard) and leaving the page asks too. */
 
@@ -1810,7 +1812,7 @@ async function failSend(key, file, x) {
   changed(key);
   news(key, "failed", { why: x && x.message });
   if (!frameIsOpen()) return;
-  if (x && x.code === "save_back_off") frameSay(x.message, "warn");
+  if (x && (x.code === "save_back_off" || x.code === "unchecked")) frameSay(x.message, "warn");
   else frameSay("Your save is kept on this " + deviceWord(here()) + " but was not sent to OneDrive: " + String((x && x.message) || "").replace(/[.\s]+$/, "") + ".", "warn");
 }
 
@@ -1895,14 +1897,18 @@ async function landedByHash(r, s) {
     A session of the current save carries the save's hash (hashed again by now when the spool could not: hashKept
     writes it on the save and on its sessions); one the broker settles only with a hash (409 not_saved {need: "hash"}: a deferred
     replace past 48 hours, contract addendum 3 D4) and that this device cannot hash is never settled without it, nor
-    sent again - the save waits ("need_hash") and is tried again later. */
+    sent again - the save waits ("need_hash") and is tried again later. A deferred replace plan_save_done finds landed
+    is taken only when the broker checked it by the plan's version history (its answer carries `verified`; a crossed
+    office save it put back is its 409 not_saved: the session is over, the save goes again - a copy): one it did not
+    check (an older broker: uncheckedReplace) is never adopted - the save waits ("unchecked"), its session kept, and
+    the broker is asked again later (repair round 2, S1). */
 async function settle(key, skip) {
   const r = await get("plans", key);
   if (!r || !hasLocal(r)) return null;
   for (const s of (Array.isArray(r.local.sends) ? r.local.sends : []).slice()) {
     if (!s || !s.ticket || s.ticket === skip) continue;
     const own = s.file === r.local.file;
-    let ans = null;
+    let ans = null, byHash = false;
     try {
       ans = await landedSave(r, s);
     } catch (x) {
@@ -1913,12 +1919,19 @@ async function settle(key, skip) {
         throw y;
       }
       // a ticket past the broker's 30 days: looked for by the save's hash alone (else the session is over)
-      if (code === "invalid" && x.field === "ticket") ans = await landedByHash(r, s);
+      if (code === "invalid" && x.field === "ticket") { ans = await landedByHash(r, s); byHash = true; }
       // not there (not_saved), a ticket run out or a plan no longer there: the session is over; OneDrive or the
       // connection: asked again next time
       else if (code !== "not_saved" && code !== "invalid" && code !== "not_found") throw x;
     }
     if (ans && Number(ans.size) === Number(s.size)) {
+      // (found by its hash alone past the broker's 30 days: no ticket is left to check it with - the plan holds exactly
+      // these bytes, nobody saved over them since)
+      if (!byHash && uncheckedReplace(s, ans)) {
+        const y = err("unchecked", uncheckedWords(deviceWord(here())));
+        await failSend(key, r.local.file, y);
+        throw y;
+      }
       const out = await commitSent(key, s.file, ans, s.size, s.why);
       if (s.file === r.local.file) return out;
       continue;

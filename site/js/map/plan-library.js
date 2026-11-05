@@ -45,7 +45,9 @@
    * purgeText(p, device)       what a purge on lost prices took (the plans, the saves not yet sent, the takeoff app's:
                                 removed, waiting for the app to close, or failed - TAKEOFF_PURGE);
    * sendWaitMs(code, fails)    how long a failed send waits (LONG_WAIT: the broker's switch off, a broker not deployed);
-   * refusedTold / saveBackOffWords  the words of a copy OneDrive would not replace, and of a save the switch holds.
+   * refusedTold / saveBackOffWords  the words of a copy OneDrive would not replace, and of a save the switch holds;
+   * uncheckedReplace / uncheckedWords  a deferred replace a later page found landed that the broker did not check by
+                                the plan's version history (never adopted: it waits), and its words.
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -393,9 +395,11 @@ export const SEND_FINAL = Object.freeze(["not_found", "too_large", "lost", "bad_
     whole plan sent again and again by itself, every backoff, with the screen held awake (review BRK-5). */
 export const NOT_SAVED_MAX = 2;
 /** A send that failed for one of these goes again by itself only after a long wait (at least LONG_WAIT_MS), never
-    final: the broker's switch turned off (save_back_off, contract addendum 3 D1 - it is turned on again by hand) and a
-    broker older than this page (not_deployed: its 400 invalid for the field "op", D6 - deployed later). */
-export const LONG_WAIT = Object.freeze(["save_back_off", "not_deployed"]);
+    final: the broker's switch turned off (save_back_off, contract addendum 3 D1 - it is turned on again by hand), a
+    broker older than this page (not_deployed: its 400 invalid for the field "op", D6 - deployed later) and a deferred
+    replace a later page found in OneDrive that the broker did not check (unchecked: uncheckedReplace - a broker older
+    than its repair round 2, checked once that one is deployed). */
+export const LONG_WAIT = Object.freeze(["save_back_off", "not_deployed", "unchecked"]);
 export const LONG_WAIT_MS = 30 * 60 * 1000;
 
 /** The wait before a failed send (`code`, its `fails`-th failure) goes again by itself: backoffMs, and at least
@@ -563,6 +567,22 @@ export function adoptSent(rec, file, ans, nowIso) {
   return { rec: Object.assign({}, rec, { local, sent }), copy, old: mine ? [] : [file] };
 }
 
+/** plan_save_done's answer `ans` found the send `s` (one of local.sends) of a DEFERRED replace (commit "broker") landed
+    as the plan, but the broker did not check it by the plan's version history: the answer carries no `verified`. A
+    later page settles such a send through plan_save_done (its own page never heard the commit's answer, or OneDrive
+    committed it at the last chunk while the office saved; the upload address is never kept): only a broker that ran
+    the check there - and put a crossed office save back - may say the save replaced the plan (the checkers' repair
+    round 2, S1). Such an answer is never adopted: the save waits, its session kept, and the broker is asked again. */
+export function uncheckedReplace(s, ans) {
+  return !!(s && s.commit === "broker" && s.mode !== "copy" && ans && ans.mode === "replace" && typeof ans.verified !== "boolean");
+}
+
+/** The words of a save uncheckedReplace holds back: the row's and the frame bar's. */
+export function uncheckedWords(device) {
+  return "This save reached OneDrive, but the portal's OneDrive connection could not check yet that it did not cover an office save. It stays on this " +
+    (device || "device") + " and is checked again later.";
+}
+
 /** A send in progress: 0-99 (100 only once OneDrive said it has it). */
 function pctOf(sent, size) {
   return Number(size) > 0 ? Math.max(0, Math.min(99, Math.floor((Number(sent) / Number(size)) * 100))) : 0;
@@ -601,6 +621,8 @@ export function saveText(st, device) {
   // the broker's switch is off for this project (contract addendum 3 D1): nothing to retry - it waits, and goes once it
   // is turned on
   if (st.state === "failed" && st.code === "save_back_off") return saveBackOffWords(d);
+  // a save in OneDrive the broker did not check (uncheckedReplace): never "Not sent"
+  if (st.state === "failed" && st.code === "unchecked") return uncheckedWords(d);
   if (st.state === "failed") return "Not sent — tap to retry" + (st.why ? " (" + String(st.why).replace(/[.\s]+$/, "") + ")" : "");
   if (st.state === "sent") return "Sent to OneDrive";
   if (st.state === "copy") return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — nothing was overwritten";

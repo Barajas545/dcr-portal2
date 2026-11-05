@@ -1287,7 +1287,7 @@ test.after(() => { if (DEV) DEV.uninstall(); });
 function saveWorld(o) {
   const w = Object.assign({ calls: [], bodies: [], sessions: new Map(), n: 0, refuse: null, hash: false, loseFinal: false, puts: 0, bytes: 0,
     deferred: false, realHash: false, commitRefuse: false, loseCommit: false, expired: false, during: null, landAtChunk: false, refusedAll: false,
-    commitWhy: null, refuseField: null, needHash: false }, o || {});
+    commitWhy: null, refuseField: null, needHash: false, doneVerified: true, doneQueue: [] }, o || {});
   w.plan = Object.assign({ id: F1.id, name: F1.name, folder: F1.folder, size: 1500, modified: AT, version: "qx:AAA", rev: 1 }, (o && o.plan) || {});
   w.files = [w.plan];
   const file = (f) => ({ id: f.id, name: f.name, folder: f.folder, size: f.size, modified: f.modified, version: f.version });
@@ -1357,6 +1357,8 @@ function saveWorld(o) {
       return saved(f.id === s.item ? "replace" : "copy", f);
     }
     if (b.op === "plan_save_done") {
+      // a test's answers first (the broker's check of a later page's settle: busy, a crossing it put back - repair round 2)
+      if (w.doneQueue.length) { const a = w.doneQueue.shift(); return typeof a === "function" ? a(b) : a; }
       if (w.expired) return http(400, { error: "invalid", field: "ticket", message: "This save's ticket is not valid or has run out: save the plan again." });
       if (w.needHash && !b.hash) return http(409, { error: "not_saved", need: "hash", message: "This save can be checked now only with the file's hash - send it again with the hash." });
       const s = Array.from(w.sessions.values()).find((x) => x.ticket === b.ticket);
@@ -1364,7 +1366,10 @@ function saveWorld(o) {
       if (!f || f.id !== b.item_id) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
       // the hashes decide when both are there (only real ones: w.realHash - a made-up "qx:SAVED" is no hash of anything)
       if (b.hash && w.realHash && f.version.indexOf("qx:") === 0 && f.version !== "qx:" + b.hash) return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." });
-      return ok(Object.assign({ saved: true, mode: s.mode === "replace" && f.id === s.item ? "replace" : "copy" }, file(f)));
+      const mode = s.mode === "replace" && f.id === s.item ? "replace" : "copy";
+      // a deferred replace found landed is checked by the broker's version history (DCR Desktop 2 since its repair round
+      // 2): its answer carries `verified` - an older broker's none (w.doneVerified null)
+      return ok(Object.assign({ saved: true, mode }, file(f), s.deferred && mode === "replace" && typeof w.doneVerified === "boolean" ? { verified: w.doneVerified } : {}));
     }
     return http(400, { error: "invalid" });
   } } });
@@ -2491,6 +2496,85 @@ test("a commit whose answer was lost: in the page the commit is asked again (not
   assert.deepEqual(ROW().local, null);
 });
 
+test("a later page settles a deferred replace only on the broker's version check (the checkers' repair round 2, S1): its answer carries verified - adopted (true; or false: no history to read); none (a broker older than its repair round 2) - never adopted: the save waits, its session kept, at least 30 minutes and never final, in words that never say 'not sent', then adopted once the broker checks it; busy - asked again with the same ticket and hash; a crossing the broker put back (not_saved) - the save goes again as a copy", async () => {
+  /** a save whose page closed before its commit's answer: OneDrive holds its bytes as the plan (the last chunk committed
+      them over an office save, or the broker's commit did), and its session - the ticket and the hash - is the save's */
+  const setUp = async (seed, o) => {
+    await devicePlan();
+    const w = saveWorld(Object.assign({ deferred: true, realHash: true }, o || {}));
+    const q = savedProject(1 * MiB + seed, "PDFCACHE1", seed);
+    DEV.nav.onLine = false;
+    await (await LIB.keepSave(F1.id, saveOf(q))).sent;
+    DEV.nav.onLine = true;
+    const r = ROW();
+    const hash = QX.quickXorHash(q.bytes);
+    w.sessions.set(UPS(99), { mode: "replace", item: F1.id, name: F1.name, size: q.blob.size, done: F1.id, ticket: "tk99", deferred: true, url: UPS(99) });
+    Object.assign(w.plan, { size: q.blob.size, modified: "2026-11-04T19:00:00.000Z", version: "qx:" + hash, rev: 2 });
+    const st = DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+    st.set(KEY, Object.assign({}, r, { local: Object.assign({}, r.local, { sends: [{ file: r.local.file, ticket: "tk99", mode: "replace", name: F1.name,
+      size: q.blob.size, at: AT, hash, commit: "broker" }] }) }));
+    return { w, q, hash };
+  };
+  const sendsOf = () => (ROW().local.sends || []).map((x) => x.ticket);
+  // checked: verified true - the replace it was; verified false (the broker could not read the history) - the same
+  for (const v of [true, false]) {
+    const a = await setUp(41, { doneVerified: v });
+    const out = await LIB.sendSaved(F1.id, { manual: true });
+    assert.deepEqual([out.sent, out.mode, a.w.calls], [true, "replace", ["plan_save_done"]], "verified " + v);
+    assert.deepEqual([a.w.bodies[0].ticket, a.w.bodies[0].hash], ["tk99", a.hash]);
+    assert.deepEqual([ROW().local, ROW().version, ROW().sent.mode], [null, "qx:" + a.hash, "replace"]);
+  }
+  // an older broker: plan_save_done answers the plan without its check - never taken; nothing sent again, the session kept
+  const b = await setUp(42, { doneVerified: null });
+  const t0 = Date.now();
+  const e = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+  assert.deepEqual([e && e.code, b.w.calls], ["unchecked", ["plan_save_done"]], "no new session, no byte sent again");
+  const l = ROW().local;
+  assert.deepEqual([l.state, l.code, sendsOf(), ROW().version], ["failed", "unchecked", ["tk99"], "qx:AAA"], "the save waits; the record's version is not moved");
+  assert.equal(l.error, lib.uncheckedWords("iPad"));
+  assert.ok(Date.parse(l.retryAt) - t0 >= 30 * 60 * 1000, "a long wait");
+  assert.deepEqual([lib.dueToSend(ROW(), Date.now() + 29 * 60 * 1000), lib.dueToSend(ROW(), Date.now() + 31 * 60 * 1000)], [false, true], "never final");
+  const row = (await LIB.list())[0];
+  assert.deepEqual([row.save.final, lib.saveText(row.save, "iPad")], [false, lib.uncheckedWords("iPad")]);
+  assert.doesNotMatch(lib.saveText(row.save, "iPad"), /not sent/i, "it was sent: the row never says otherwise");
+  // ...once the broker checks it: the same ticket and hash, adopted
+  b.w.doneVerified = true;
+  const late = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([late.sent, late.mode, b.w.calls], [true, "replace", ["plan_save_done", "plan_save_done"]]);
+  assert.deepEqual([b.w.bodies[1].ticket, b.w.bodies[1].hash], ["tk99", b.hash]);
+  assert.deepEqual([ROW().local, ROW().version], [null, "qx:" + b.hash]);
+  // the broker's check could not finish (503 busy: OneDrive's hash of the plan not there yet, a restore that did not go
+  // through): nothing taken, nothing sent - the next send asks the same again
+  const c = await setUp(43);
+  c.w.doneQueue.push(http(503, { error: "busy", message: "made up" }));
+  const busy = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+  assert.deepEqual([busy && busy.code, c.w.calls, sendsOf(), ROW().version], ["busy", ["plan_save_done"], ["tk99"], "qx:AAA"]);
+  const again = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([again.sent, again.mode, c.w.calls], [true, "replace", ["plan_save_done", "plan_save_done"]]);
+  assert.deepEqual([c.w.bodies[1].ticket, c.w.bodies[1].hash], ["tk99", c.hash], "the same body");
+  // a crossing: the broker put the office save back and answered not_saved - the session is over, the save goes again
+  // against the version the work was done on (the plan's moved): a copy beside it, the plan's record keeps its copy
+  const d = await setUp(44);
+  d.w.doneQueue.push(() => { Object.assign(d.w.plan, { size: 1507, version: "qx:OFFICE1", modified: "2026-11-04T19:05:00.000Z", rev: 3 });
+    return http(409, { error: "not_saved", message: "OneDrive did not get the whole file - send it again." }); });
+  const before = ROW().file;
+  const copy = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([copy.sent, copy.mode, d.w.calls], [true, "copy", ["plan_save_done", "plan_save_session", "plan_save_done"]]);
+  assert.deepEqual([d.w.bodies[1].version, d.w.bodies[1].item_id], ["qx:AAA", F1.id], "the old base: the broker makes it a copy");
+  assert.equal(d.w.plan.version, "qx:OFFICE1", "the office save is the plan");
+  assert.deepEqual([ROW().file, ROW().local, ROW().sent.mode], [before, null, "copy"]);
+  const cr = PLANS().find((x) => x.key !== KEY);
+  assert.ok(cr && (await same(new Blob([LIBFILES()[cr.file]]), d.q.bytes)), "the save is the copy's own record");
+  // the rule itself: only a deferred replace's send found as the replace
+  const send = { commit: "broker", mode: "replace" };
+  assert.deepEqual([
+    lib.uncheckedReplace(send, { mode: "replace" }), lib.uncheckedReplace(send, { mode: "replace", verified: "true" }),
+    lib.uncheckedReplace(send, { mode: "replace", verified: true }), lib.uncheckedReplace(send, { mode: "replace", verified: false }),
+    lib.uncheckedReplace(send, { mode: "copy" }), lib.uncheckedReplace({ mode: "replace" }, { mode: "replace" }),
+    lib.uncheckedReplace({ commit: "broker", mode: "copy" }, { mode: "replace" }), lib.uncheckedReplace(null, { mode: "replace" }), lib.uncheckedReplace(send, null),
+  ], [true, true, false, false, false, false, false, false, false]);
+});
+
 test("a byte-identical re-save is saved, never a loop (review BRK-5): the hash is the proof; and OneDrive saying not_saved twice, or the broker refusing what it was sent (invalid), waits for the person - never the whole plan again by itself", async () => {
   await devicePlan();
   const w = saveWorld({ deferred: true, realHash: true });
@@ -2527,7 +2611,7 @@ test("a byte-identical re-save is saved, never a loop (review BRK-5): the hash i
 });
 
 test("the save-back rules (addendum 3 D1, D6): the broker's switch off (save_back_off) and a broker not deployed yet (not_deployed) wait at least 30 minutes, and are never final", () => {
-  assert.deepEqual([lib.LONG_WAIT_MS, lib.LONG_WAIT.slice().sort()], [30 * 60 * 1000, ["not_deployed", "save_back_off"]]);
+  assert.deepEqual([lib.LONG_WAIT_MS, lib.LONG_WAIT.slice().sort()], [30 * 60 * 1000, ["not_deployed", "save_back_off", "unchecked"]]);
   assert.deepEqual([1, 2, 3, 9].map((n) => lib.sendWaitMs("save_back_off", n)), [30, 30, 30, 360].map((m) => m * 60000), "at least 30 min, then the backoff's");
   assert.deepEqual([1, 9].map((n) => lib.sendWaitMs("not_deployed", n)), [30, 360].map((m) => m * 60000));
   assert.deepEqual([1, 2].map((n) => lib.sendWaitMs("busy", n)), [5, 10].map((m) => m * 60000), "any other code: the backoff's");

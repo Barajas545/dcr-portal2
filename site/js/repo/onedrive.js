@@ -79,9 +79,13 @@
                                      upload URL goes to the broker (its own sessions' only: it checks it against the
                                      ticket) and nowhere else;
    * planSaveDone(projectId, itemId, ticket, hash?)  op "plan_save_done" -> {saved, mode, id, name, size, modified,
-                                     version}: the file as plans_list lists it now (its version in plans_list's form:
-                                     "sm:..." while OneDrive has no hash of the new bytes yet); 409 not_saved when
-                                     OneDrive did not get the whole file (send it again) - with `need: "hash"` in its info
+                                     version, verified?}: the file as plans_list lists it now (its version in plans_list's
+                                     form: "sm:..." while OneDrive has no hash of the new bytes yet); `verified` on a
+                                     deferred replace found landed as the plan, which the broker checks by the plan's
+                                     version history as a commit (DCR Desktop 2's repair round 2: a crossing it put back
+                                     is its 409 not_saved; js/plan-library.js adopts such a replace only with it); 409
+                                     not_saved when OneDrive did not get the whole file (send it again) - with
+                                     `need: "hash"` in its info
                                      when a deferred replace's ticket is past 48 hours and no hash came (addendum 3 D4).
                                      `hash`: the save's quickXorHash (js/quickxor.js) - with OneDrive's own, the broker's
                                      proof (a byte-identical re-save is saved, an office save of the same size is not);
