@@ -686,8 +686,11 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
 - **The hand-over** is the computer's (`js/plan-handoff.js` `talk`: ptt-ready, ptt-open, ptt-renew/ptt-link,
   ptt-offline), with the frame's window and this site's origin as the peer; in the frame `ptt-open` also carries `who`
   (`map/plans.js whoWord`: an opaque 12-character word per person, never the id) so the app keeps one person's drafts
-  apart from another's. The frame registers the copy's worker and waits for it before loading (else the app reloads
-  itself under the portal's worker and loses the word).
+  apart from another's, and `plan` (`map/plans.js planWord`: an opaque 12-character word per plan - its project's
+  number, folder and name, never them in the clear; the same for every version) so one plan copied into two lots'
+  folders - the same name, the same bytes - never shares a draft (contract addendum 4 E4; the app's draft key is
+  `<name>|<size>|@<who>|#<plan>`). The frame registers the copy's worker and waits for it before loading (else the app
+  reloads itself under the portal's worker and loses the word).
 - **Close** asks first while the app has unsaved changes (always the danger question, with any save in flight said
   after it), then has the app keep its draft (`TakeoffApp.saveDraftNow`, at most 3 s) before the frame goes. The
   portal's own dialog host is never made inert, so the question always takes taps.
@@ -758,6 +761,22 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   off for now - this save waits on this iPad."; a "not deployed" row is the usual failed row with the reason: "Not sent
   — tap to retry (The portal's OneDrive connection does not take plan saves yet. The save stays on this iPad and is sent
   later)".
+- **Only what the broker proved** (contract addendum 4; DCR Desktop 2's broker since its repair round 3). A replace is
+  never started, committed or settled without the save's hash: a save neither the spool nor the second worker pass
+  could hash waits on the device - no session, at least 30 minutes, never final - and its row says "This save is
+  getting ready to send - it waits on this iPad." (a copy may go without one). When OneDrive gives no hash to prove a
+  crossing, the broker puts nothing back and answers `why: "unproved"` (and logs a line for an admin): the save goes
+  again as a copy and the person is told "Your work was saved as '<name>' next to the plan. OneDrive could not show
+  whether your iPad's version went over an office save - if someone saved this plan in the office while your iPad was
+  sending, ask them to check the plan's version history in OneDrive." - never "nothing was overwritten" (the takeoff
+  app is told "sent", and a later Save of it, or its resend, keeps those words). A replace adopted that nobody could
+  check against office saves - the broker's `verified: false` (no history), or one found by its hash alone because its
+  ticket no longer unseals (past 30 days, or the broker's client secret rotated) - is told "Your save is in OneDrive: it
+  replaced the plan there. It could not be checked against office saves this time - if someone saved this plan in the
+  office while your iPad was sending, ask them to check the plan's version history in OneDrive." And a settle or a
+  commit the broker answers 503 with a Retry-After (its check waiting on OneDrive) is asked again on a timer while the
+  page is open - at the Retry-After, at least 30 s - one timer per save, stopped when the page hides or the send
+  settles.
 - **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against
   the version the app's work was done on (`map/plan-library.js` `saveBase`) - so a newer version the portal downloaded
   while the app was open never turns older work into a replace (it becomes a copy), the next Save after a copy goes on
@@ -802,7 +821,9 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   and since the broker's repair round the switch, the version check - a crossing put back, landed, the POST commit,
   both commits refused, no history - and need hash; since its repair round 2 an office save between the POST commit's
   own walk and its POST, a later page's `plan_save_done` checking a crossing OneDrive made at the last chunk, a restore
-  refused and the history listing in trouble);
+  refused and the history listing in trouble; since its repair round 3 no deferred replace without the hash, the
+  "unproved" ends with the Retry-After before them, a retried commit Microsoft keeps usable checked instead of copied,
+  and an identical re-save found landed without its commit);
   `tools/e2e-p7-plans.mjs` 4b drives the REAL vendored takeoff app in the frame (a made-up but real .takeoff as the
   demo plan): its own Save is kept, marks the project saved, is sent (the broker's commit) and adopted with no
   download, and after an office save the next one becomes a copy, said in both; 4d: an office save during the upload
@@ -813,15 +834,19 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   `only:A267` (offered on A267's plans, never A024's), OneDrive ignoring the deferral with an office save during the
   upload (the office save stays the plan, the work a copy in the copy words), the PUT refused (the POST commits it),
   both refused (a copy in neutral words) and an office save between the POST commit's own walk and its POST with its
-  If-Match ignored (put back, a copy in the copy words); 4c: prices without the upload switch saves to the share sheet
+  If-Match ignored (put back, a copy in the copy words); 4f: a save the iPad cannot hash waits with no session and goes
+  once it can, "unproved" (a copy, never "nothing was overwritten"), no history (the unchecked words), and the house
+  model in two lots' folders keeps one draft per lot; 4c: prices without the upload switch saves to the share sheet
   only. The demo broker (`tools/fake/p7-onedrive.js`) answers as the real one (deferred commit, the switch and
-  `save_back`, the two commit forms, the version check and restore as DCR Desktop 2 fca95ce has them - `plan_save_done`
-  checking a deferred replace too, a restore only on the hash's proof, its 503s -, `landed`, `why`, `need: "hash"`, the
+  `save_back`, the two commit forms, the version check and restore as DCR Desktop 2 7fdd689 has them - `plan_save_done`
+  checking a deferred replace too, a restore only on the hash's proof, its 503s, `need: "hash"` at any age, the
+  "unproved" ends, the retried commit checked before a copy, an identical re-save found landed -, `landed`, `why`, the
   real hash of what it is sent, the name, 30-day tickets) and has the hooks `desktopSave`, `duringUpload`,
   `refuseCopyCommits`, `hashed`, `setPlanSave` (or localStorage `dcr2-demo-plan-save` in a browser; the demo's
   default is `all`), `graphModes` (`deferCommit`, `putCommit`, `putIfMatch`, `postIfMatch`, `postStatus`, `versions`,
-  `versionsStatus`, `restoreStatus`), `betweenWalkAndCommit`, `versionsOf` and `logLines`; `DCR2Demo.setUploadDelay(ms)`
-  makes the demo's uploads slow.
+  `versionsStatus`, `restoreStatus`, `hashes`, `afterCommit`), `betweenWalkAndCommit`, `passTime` (the broker's clock
+  ahead: OneDrive's 30 minutes without a hash), `addPlanFile` (a plan copied into another lot's folder), `versionsOf` and
+  `logLines`; `DCR2Demo.setUploadDelay(ms)` makes the demo's uploads slow.
 
 ## Rules for every page
 
