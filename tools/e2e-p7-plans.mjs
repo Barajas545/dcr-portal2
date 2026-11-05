@@ -783,12 +783,15 @@ async function main() {
     /* ── 4e (x). the repair round's walks (contract addendum 3) with the REAL app: the broker's switch (D1), and every
        replace checked by the plan's version history (D2, D3, D5) - the demo broker as DCR Desktop 2's since its repair
        round, its Microsoft in the modes the pages leave open (graphModes) ── */
-    /** openPlan, and an offer of unsaved work (a draft an earlier walk left of this plan's name, offered since takeoff-web
-        bc69633 as an earlier version's) declined: these walks are about the save, not the drafts */
+    /** openPlan, and an offer of unsaved work (a draft an earlier walk left of this plan, offered since takeoff-web
+        bc69633 as an earlier version's) declined for good - "Discard them" where the app asks with it (takeoff-web
+        3791063: its "Not now" keeps the draft and offers it at every opening), else its other answer: these walks are
+        about the save, not the drafts */
     async function openPlanNoDraft(p, id) {
       await openPlan(p, id, "(" + DRAFT_ASKED + " || " + APP_READY + ")");
       if (await p.eval(DRAFT_ASKED)) {
-        await p.eval("(() => { const b = Array.from(" + APP + ".document.querySelectorAll('.dlg-foot button')).find(x => !/Restore it/.test(x.textContent)); if (b) b.click(); return !!b; })()");
+        await p.eval("(() => { const bs = Array.from(" + APP + ".document.querySelectorAll('.dlg-foot button')); const b = bs.find(x => /Discard them/.test(x.textContent)) ||" +
+          " bs.find(x => !/Restore it/.test(x.textContent)); if (b) b.click(); return !!b; })()");
         await p.until(APP_READY, 15000);
       }
     }
@@ -855,7 +858,7 @@ async function main() {
       check("tablet (x): no dialog of the browser's own", !TS.dialogs.length, JSON.stringify(TS.dialogs));
     }, TS);
 
-    await attempt("a tablet, the version check (x, D2/D3/D5): OneDrive ignoring the deferral with an office save during the upload - the office save stays the plan, the work a copy in the copy words; the PUT refused - the POST commits it; both refused - a copy in neutral words", async () => {
+    await attempt("a tablet, the version check (x, D2/D3/D5): OneDrive ignoring the deferral with an office save during the upload - the office save stays the plan, the work a copy in the copy words; the PUT refused - the POST commits it; both refused - a copy in neutral words; an office save between the POST's own walk and the POST - put back, a copy", async () => {
       await closeFrame(T);
       await T.call("Page.bringToFront").catch(() => null);
       await openReal(T);
@@ -874,7 +877,11 @@ async function main() {
         await T.eval(OD + ".duringUpload(" + JSON.stringify(fa.full) + ", 'office'); " + OD + ".logLines(true); window.__ops = []; window.__opsSeen = []; true");
         const sa = await saveApp(T);
         const ca = sa.states.find((x) => x.state === "copy");
-        const opsA = await planOps(T);
+        const opsA0 = await planOps(T);
+        // (DCR Desktop 2's repair round 2: a crossing is put back only on the hash's proof - a check before the demo's
+        // OneDrive hashed what landed is 503 busy, and the uploader asks the same again)
+        const busyA = opsA0.filter((x) => x.op === "plan_save_commit" && x.error === "busy");
+        const opsA = opsA0.filter((x) => busyA.indexOf(x) === -1);
         const logA = await T.eval(OD + ".logLines()");
         const planIsSave = await T.eval(bytesOf(fa.id));
         const copyIsSave = await T.eval(bytesOf((opsA.find((x) => x.op === "plan_save_done") || {}).id));
@@ -884,7 +891,9 @@ async function main() {
           JSON.stringify(opsA.map((x) => [x.op, x.landed, x.mode || x.error])) === JSON.stringify([["plan_save_session", false, "replace"], ["plan_save_commit", true, "plan_changed"],
             ["plan_save_session", false, "copy"], ["plan_save_done", false, "copy"]]) && opsA[1].why === "changed" &&
           logA.indexOf("onedrive plan_save_commit: OneDrive committed at the last chunk: deferCommit not honoured here") !== -1 &&
-          logA.indexOf("onedrive plan_save_commit: crossed: the office save was put back") !== -1, JSON.stringify({ opsA, logA }));
+          logA.indexOf("onedrive plan_save_commit: crossed: the office save was put back") !== -1 && busyA.every((x) => x.landed === true) &&
+          (!busyA.length || logA.indexOf("onedrive plan_save_commit: crossed: OneDrive has no hash of the newest version yet, so it is not known to be this save: asked again") !== -1),
+          JSON.stringify({ opsA0, logA }));
         check("tablet (x-a): ...the office save stays the plan, the iPad's work is the copy - and both the portal and the app say so in the copy words",
           !!ca && /^A267 Rev 2 - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(\d\))?\.takeoff$/.test(ca.name || "") && !planIsSave && copyIsSave && !!nowA && /^qx:demo-office-/.test(nowA.version) &&
           COPY_BAR.test(barA) && COPY_APP.test(sa.status) && sa.dirty === false, JSON.stringify({ states: sa.states, planIsSave, copyIsSave, version: nowA && nowA.version, barA, status: sa.status }));
@@ -924,6 +933,36 @@ async function main() {
           appC.states.indexOf("copy") === -1 && appC.states[appC.states.length - 1] === "sent" && /^The portal sent .+ to OneDrive\.$/.test(appC.status) &&
           !/office/i.test(appC.status), JSON.stringify({ opsC, barC, appC }));
         await shotOf(T, "plans_frame_refused_copy_tablet.png");
+        await closeFrame(T);
+        // (x-d) the PUT refused, and an office save between attempt B's own walk and its POST, whose If-Match OneDrive
+        // ignores (it is not documented there): the POST lands over the office save - the version check puts it back (on
+        // the hash's proof: asked again until the demo's OneDrive hashed it) and the work goes again as a copy, in the
+        // copy words (the checkers' repair round 2: the demo could not show this crossing before)
+        await T.eval(OD + ".graphModes({ reset: true, putCommit: 'refused', postIfMatch: 'ignored' }); true");
+        const fd = await putFixture(T, "A267", "A267 Rev 2 - an office save before the POST (e2e, made up)", "A267 Rev 2.takeoff");
+        await openPlanNoDraft(T, fd.id);
+        await editApp(T, "Made-up client (e2e, an office save before the POST)");
+        await sleep(2500);                                    // the office's save comes later than the version the app has
+        await T.eval(OD + ".betweenWalkAndCommit(" + JSON.stringify(fd.full) + "); " + OD + ".logLines(true); window.__ops = []; window.__opsSeen = []; true");
+        const sd = await saveApp(T);
+        const cd = sd.states.find((x) => x.state === "copy");
+        const opsD0 = await planOps(T);
+        const busyD = opsD0.filter((x) => x.op === "plan_save_commit" && x.error === "busy");
+        const opsD = opsD0.filter((x) => busyD.indexOf(x) === -1);
+        const logD = await T.eval(OD + ".logLines()");
+        const planIsSaveD = await T.eval(bytesOf(fd.id));
+        const copyIsSaveD = await T.eval(bytesOf((opsD.find((x) => x.op === "plan_save_done") || {}).id));
+        const barD = await T.eval("document.getElementById('ptfSay').textContent");
+        const nowD = (await plansNow(T)).find((f) => f.id === fd.id);
+        check("tablet (x-d, D2 attempt B): an office save between the POST commit's own walk and its POST, the If-Match ignored - the POST landed over it, the broker put the office save back (asked again until OneDrive had the hash), and the work went again as a copy",
+          JSON.stringify(opsD.map((x) => [x.op, x.landed, x.mode || x.error])) === JSON.stringify([["plan_save_session", false, "replace"], ["plan_save_commit", false, "plan_changed"],
+            ["plan_save_session", false, "copy"], ["plan_save_done", false, "copy"]]) && opsD[1].why === "changed" && busyD.length >= 1 &&
+          logD.indexOf("onedrive plan_save_commit: the PUT commit was refused (400): the POST commit") !== -1 &&
+          logD.indexOf("onedrive plan_save_commit: crossed: OneDrive has no hash of the newest version yet, so it is not known to be this save: asked again") !== -1 &&
+          logD.indexOf("onedrive plan_save_commit: crossed: the office save was put back") !== -1, JSON.stringify({ opsD0, logD }));
+        check("tablet (x-d): ...the office save stays the plan, the iPad's work is the copy - and both the portal and the app say so in the copy words",
+          !!cd && /^A267 Rev 2 - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(\d\))?\.takeoff$/.test(cd.name || "") && !planIsSaveD && copyIsSaveD && !!nowD && /^qx:demo-office-/.test(nowD.version) &&
+          COPY_BAR.test(barD) && COPY_APP.test(sd.status) && sd.dirty === false, JSON.stringify({ states: sd.states, planIsSaveD, copyIsSaveD, version: nowD && nowD.version, barD, status: sd.status }));
         await closeFrame(T);
       } finally {
         await T.eval(OD + ".graphModes({ reset: true }); true").catch(() => null);
