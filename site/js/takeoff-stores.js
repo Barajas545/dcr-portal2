@@ -19,8 +19,10 @@
    the takeoff app in the frame here); or one with plans kept here (the Plans Library's owners) while stores are here
    that only /takeoff/ opened as a page of its own writes (standaloneStores: "ptt.keptPlans.v1", the "plans-kept"
    folder, "ptt-plans-archive" - the frame never writes those, and nothing on this site tells whose they are). Never
-   for a person with no trace here: their purge takes nothing of anyone's. Its settings and its own price catalog
-   ("ptt.catalog.user.v1") are left as they are (no plan's detail; the owner decides).
+   for a person with no trace here: their purge takes nothing of anyone's. The app's own price catalog
+   ("ptt.catalog.user.v1") and its settings ("ptt.settings.v1") are left on the device when a person loses prices:
+   the owner decided so on 2026-11-04 (iPads are not shared, and a departing person's iPad is factory reset; neither
+   holds a plan's detail).
 
    Whose: localStorage USERS_KEY holds only the user ids that opened the takeoff app in the frame here (no file, name
    or link), so a page that reads a person's profile online can tell, without opening anything, that the takeoff app's

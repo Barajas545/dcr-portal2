@@ -530,6 +530,15 @@ test("who (contract C2b, review PRICE-4): an opaque 12-character word per person
   assert.match(lib, /const who = usesFrame\(\) \? await whoWord\(owner\(\)\) : "";[^\n]*\n\s*if \(who\) plan\.who = who;/);
 });
 
+test("the takeoff app's own price catalog and settings stay on the device when a person loses prices - the owner's decision of 2026-11-04, said where the purge is (contract addendum 4 E6)", () => {
+  const head = read("js/takeoff-stores.js").slice(0, read("js/takeoff-stores.js").indexOf("*/"));
+  const flat = head.replace(/\s+/g, " ");
+  assert.match(flat, /"ptt\.catalog\.user\.v1"\) and its settings \("ptt\.settings\.v1"\) are left on the device when a person loses prices: the owner decided so on 2026-11-04 \(iPads are not shared, and a departing person's iPad is factory reset/);
+  assert.doesNotMatch(flat, /the owner decides/, "decided, not open");
+  // and the purge does as it says: neither is one of the keys it removes
+  assert.deepEqual(TS.TAKEOFF_KEYS.filter((k) => k === "ptt.catalog.user.v1" || k === "ptt.settings.v1"), []);
+});
+
 test("Close has the takeoff app keep its draft first (contract C2b TakeoffApp.saveDraftNow, at most 3 s; review FRAME-1); an app without it, or none, closes as before", async () => {
   assert.equal(F.DRAFT_WAIT_MS, 3000);
   const app = (fn) => ({ TakeoffApp: { app: { project: { dirty: true } }, saveDraftNow: fn } });
