@@ -48,7 +48,10 @@
    find()/done(): the broker settles it and checks it the same way. A commit that did not get through is asked again
    (the bytes are there: never sent again); one refused with not_saved starts a new session on Retry (a gone session's:
    at once); one the broker answers with an error marked `restart` (plan_changed: it dropped the session) starts a new
-   session at once, which the broker's session() makes a copy.
+   session at once, which the broker's session() makes a copy. A commit the broker answers with its version check's own
+   503 (the body's why "checking": OneDrive has no hash of the plan yet, or the office's save is not put back yet - DCR
+   Desktop 2's repair round 3) marks the job `checking` while it is asked again, and a job that ends so is failed with
+   `checking` too (its session kept): the bytes are in OneDrive's hands and only the check is left - never "not sent".
 
    xhrTransport() is the page's transport (XMLHttpRequest for upload progress, no credentials). */
 
@@ -122,7 +125,7 @@ export function createUploader(parts) {
     return {
       id: j.id, projectId: j.projectId, name: j.name, label: j.label, folder: j.folder, relDir: j.relDir, size: j.size,
       sent: j.sent, pct: j.size ? Math.min(100, Math.round((j.sent / j.size) * 100)) : 0, state: j.state, error: j.error,
-      tries: j.tries, result: j.result, landed: !!j.landed, code: j.code || "", retryAfter: j.retryAfter || null,
+      tries: j.tries, result: j.result, landed: !!j.landed, code: j.code || "", retryAfter: j.retryAfter || null, checking: !!j.checking,
       canRetry: (j.state === "failed" || j.state === "cancelled") && !j.landed,
     };
   }
@@ -340,11 +343,14 @@ export function createUploader(parts) {
     for (;;) {
       try {
         const r = await d.broker.commit(j);
-        setState(j, "done", { result: r, error: "" });
+        setState(j, "done", { result: r, error: "", checking: false });
         return null;
       } catch (e) {
         if (stopped(j)) return null;
         const code = String((e && e.code) || "");
+        // the broker's version check waits on OneDrive (its 503's why "checking"): the job says so while it asks again
+        const checking = !!(e && Number(e.status) === 503 && e.info && e.info.why === "checking");
+        if (checking !== !!j.checking) { j.checking = checking; emitNow({ type: "checking", job: pub(j) }); }
         if (e && e.restart) { j.session = null; return "restart"; }
         if (gone && code === "not_saved") { j.session = null; return "restart"; }
         if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
@@ -354,7 +360,8 @@ export function createUploader(parts) {
           // and its offset are kept, so the chunk loop finds every byte sent and goes straight to the commit). A
           // Retry-After the broker gave (its version check waiting on OneDrive) goes with it: the Plans Library asks
           // again on a timer then (contract addendum 4 E7)
-          setState(j, "failed", { error: "Your save is sent; OneDrive's last step did not get through. Retry.", code,
+          // (the version check's own wait: the job ends `checking` - the save is being checked, not "not sent")
+          setState(j, "failed", { error: checking ? "Your save is being checked against office saves in OneDrive." : "Your save is sent; OneDrive's last step did not get through. Retry.", code,
             retryAfter: e && Number(e.retryAfter) > 0 ? Number(e.retryAfter) : null });
           return null;
         }

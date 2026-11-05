@@ -33,7 +33,9 @@
         While it is being kept, "keeping" (pct) - the spool worker's own progress, at most every 2 s - restarts the
         app's 120 s wait each time (takeoff-web's heartbeat; a stalled worker goes silent, so both waits still end it);
         a save queued behind it hears "keeping" without a pct then too. Later, while the app is open, the send to
-        OneDrive's news: "sending" (pct), "sent", "copy" (name) or "failed".
+        OneDrive's news: "sending" (pct), "checking" (the broker's version check waits on OneDrive: never "failed"),
+        "sent", "copy" (name, and plan: the copy's own word, map/plans.js planWord - the one this window hands that copy
+        to the app with) or "failed" (the app goes on listening after it: the save is sent again - takeoff-web d1cbf16).
         Such a conversation lasts as long as the frame is open (a Save can come any time). A tab is never offered a
         save, and a ptt-save there - or for a plan not offered - is refused.
    A message counts only from the peer's window, from the peer's origin, with its word (accepted()).
@@ -132,15 +134,17 @@ export function saveOf(d) {
 /** The answers that end a save's wait in the app (one each); every other word about a save is news. */
 export const SAVE_FINAL = Object.freeze(["kept", "refused", "no-room", "failed"]);
 
-/** The answer about save `req` ({type: "ptt-save-state", v, nonce, req, state, why?, pct?, name?}). "keeping" (pct?) is
-    the heartbeat while the save is being kept: takeoff-web restarts its 120 s wait at each one (its portal-handoff.js
-    SAVE_PROGRESS) and shows the pct on its bar. */
+/** The answer about save `req` ({type: "ptt-save-state", v, nonce, req, state, why?, pct?, name?, plan?}). "keeping"
+    (pct?) is the heartbeat while the save is being kept: takeoff-web restarts its 120 s wait at each one (its
+    portal-handoff.js SAVE_PROGRESS) and shows the pct on its bar. "copy" carries the copy's name and its plan word
+    (PLAN_RE only): the app keeps the work done after the save with the copy, under that word. */
 export function saveState(word, req, state, extra) {
   const x = extra || {};
   const m = { type: "ptt-save-state", v: VERSION, nonce: word, req, state };
   if (x.why) m.why = String(x.why).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, WHY_MAX);
   if ((state === "sending" || state === "keeping") && typeof x.pct === "number" && isFinite(x.pct)) m.pct = Math.max(0, Math.min(100, Math.round(x.pct)));
   if (state === "copy" && typeof x.name === "string" && SAVE_NAME.test(x.name)) m.name = x.name;
+  if (state === "copy" && typeof x.plan === "string" && PLAN_RE.test(x.plan)) m.plan = x.plan;
   return m;
 }
 
@@ -287,8 +291,8 @@ export function talk(peer, word, plan, renew, done, onOffline, host, onSave) {
  *   opts.onClose()  the frame closed (the frame only): the app no longer reads what it was handed
  *   opts.onSave(save, tell)  the frame only (a tab is never offered a save): the app's ptt-save ({req, name, size,
  *            file}: saveOf) -> {state: "kept" | "refused" | "no-room" | "failed", why} - its answer; tell(state, extra)
- *            says the send's news ("sending" {pct}, "sent", "copy" {name}, "failed" {why}) while the app is open. Only
- *            a plan() that says canSave: true is offered it.
+ *            says the send's news ("sending" {pct}, "checking", "sent", "copy" {name, plan}, "failed" {why}) while the
+ *            app is open. Only a plan() that says canSave: true is offered it.
  */
 export function openInTakeoff(plan, renew, onDone, onOffline, opts) {
   const word = nonce();

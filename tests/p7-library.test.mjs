@@ -1724,7 +1724,13 @@ test("someone saved the plan in the office meanwhile (Q3): the save becomes a se
   const c = ROW("u1|01FAKECOPY0001");
   assert.ok(c && c.file && LIBFILES()[c.file] && (await same(new Blob([LIBFILES()[c.file]]), p.bytes)), "the save is the copy's own record");
   assert.deepEqual([c.itemId, c.name, c.version, c.folder, lib.statusOf(c)], ["01FAKECOPY0001", "A900 Bid - iPad 2026-11-04 1030.takeoff", "qx:SAVED1", F1.folder, "saved"]);
-  assert.deepEqual(news.find((n) => n[0] === "copy"), ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }]);
+  // the copy's news names the copy AND its own plan word - the word open() hands the copy's record to the frame with
+  // (its number, folder and name: map/plans.js planWord), never the plan's - so the app keeps the work done after this
+  // save with the copy (takeoff-web d1cbf16; the final checker's round 3b, problem 3)
+  const copyWord = await plans.planWord(c.number, c.folder, c.name);
+  assert.deepEqual(news.find((n) => n[0] === "copy"), ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff", plan: copyWord }]);
+  assert.deepEqual([copyWord, c.number, c.folder], [await plans.planWord("A900", F1.folder, "A900 Bid - iPad 2026-11-04 1030.takeoff"), "A900", F1.folder]);
+  assert.ok(plans.PLAN_RE.test(copyWord) && copyWord !== (await plans.planWord(r.number, r.folder, r.name)), "the copy's word, not the plan's");
   const rows = await LIB.list();
   assert.deepEqual(rows.find((x) => x.key === KEY).save, { state: "copy", name: "A900 Bid - iPad 2026-11-04 1030.takeoff" });
   assert.ok(!w.calls.includes("plan_link"), "no download of the copy");
@@ -2541,7 +2547,7 @@ test("an office save that lands WHILE the iPad's replace goes up is never overwr
   assert.deepEqual([r.file, r.version, r.local, r.sent.mode], [before.file, "qx:AAA", null, "copy"], "the plan's record keeps its copy");
   const c = ROW("u1|01FAKECOPY0002");
   assert.ok(c && (await same(new Blob([LIBFILES()[c.file]]), p.bytes)), "the save is the copy's own record");
-  assert.deepEqual(news.find((n) => n[0] === "copy"), ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }]);
+  assert.deepEqual(news.find((n) => n[0] === "copy"), ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff", plan: await plans.planWord(c.number, c.folder, c.name) }]);
   // Microsoft would not commit the session as the copy: the broker dropped it (plan_changed, retry copy) - the save goes
   // again at once as a copy, against the version the work was done on, and that copy is checked by plan_save_done
   await devicePlan();
@@ -3300,6 +3306,122 @@ test("a check's 503 with a Retry-After is asked again on a timer while the page 
       await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
       await settleDown();
       assert.equal(timers.size, 0, "no Retry-After: no timer (the next page, or Retry)");
+    } finally { delete globalThis.document; }
+  } finally { LIB.useAgainClock(null); }
+});
+
+/* ── the final checker's round 3b (DCR Desktop 2 9969d61): the version check's own 503 (why "checking") ── */
+
+/** a broker 503 of its version check itself (DCR Desktop 2 checkWait: busy, or onedrive_not_authorized when Microsoft
+    refused the restore), with its Retry-After */
+const checkRA = (error, ra) => httpRA(503, { error: error || "busy", message: "OneDrive is busy just now. Try again in a minute.", why: "checking" }, ra || 30);
+
+test("the broker's version check waits on OneDrive (its 503 why \"checking\": OneDrive has no hash of the plan yet, a restore not done - the final checker's round 3b, problem 2): the save is being checked, never 'not sent' - the row, the app's news and the record say so while the commit is asked again and once the uploader's tries are spent (no failure counted, its session kept), and a later page's settle the same; it is asked again at the Retry-After (E7), and when the page is in front again; a 503 without that why is OneDrive busy as before", async () => {
+  const timers = new Map();
+  let n = 0;
+  LIB.useAgainClock({ set: (fn, ms) => { const id = ++n; timers.set(id, { fn, ms }); return id; }, clear: (id) => { timers.delete(id); } });
+  const st = () => DEV.idb.dbs.get("dcr2-plan-library").stores.get("plans").data;
+  const settleDown = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 5)); };
+  const fire = async (id) => {
+    const t = timers.get(id);
+    timers.delete(id);
+    st().set(KEY, Object.assign({}, ROW(), { local: Object.assign({}, ROW().local, { retryAt: new Date(Date.now() - 1000).toISOString() }) }));
+    t.fn();
+    await settleDown();
+  };
+  const CHECKING = "Your save is being checked against office saves in OneDrive - keep the portal open; there is nothing to do. It stays on this iPad meanwhile.";
+  try {
+    // the rules: only the check's own 503 is one; its words never say "not sent", "retry", "replaced", "overwritten" -
+    // nor that the save is in OneDrive (during OneDrive's hash wait only a version of its size is there)
+    assert.equal(lib.checkingWords("iPad"), CHECKING);
+    assert.doesNotMatch(CHECKING, /not sent|retry|fail|could not|replaced|overwritten|is in OneDrive/i);
+    assert.deepEqual([{ status: 503, info: { error: "busy", why: "checking" } }, { status: 503, info: { error: "onedrive_not_authorized", why: "checking" } }, { status: 503, info: { error: "busy" } },
+      { status: 409, info: { error: "not_saved", why: "checking" } }, { status: 503 }, null].map(lib.checkWaitOf), [true, true, false, false, false, false]);
+    const loc = { file: "p1-x-2.takeoff", base: "qx:A" };
+    assert.deepEqual(lib.saveStateOf({ local: Object.assign({ state: "checking" }, loc) }, null, Date.now()), { state: "checking" });
+    assert.deepEqual(lib.saveStateOf({ local: Object.assign({ state: "sending" }, loc) }, { sent: 5, size: 10, checking: true }, Date.now()), { state: "checking" });
+    assert.deepEqual(lib.saveStateOf({ local: Object.assign({ state: "sending" }, loc) }, { sent: 5, size: 10 }, Date.now()), { state: "sending", pct: 50 });
+    assert.deepEqual([lib.saveText({ state: "checking" }, "iPad"), lib.sendBar({ state: "checking" }), lib.sendFinal({ state: "checking", code: "checking" })], [CHECKING, null, false]);
+    // (1) the commit: OneDrive committed over an office save and has no hash of it yet - 503 why "checking", Retry-After
+    // 30, three times: while the uploader asks again the row is "being checked", the app hears "checking" (never
+    // "failed"), no progress words after it; its tries spent, the save is in the check - not a failure - and E7's timer
+    // asks again at the Retry-After: the same session committed, nothing sent twice, no "checking" told again first
+    await devicePlan();
+    const w = saveWorld({ deferred: true, realHash: true, parts: { maxTries: 3, setTimeout: (fn) => setTimeout(fn, 0) } });
+    let during = null;
+    w.commitQueue.push(checkRA("busy"), async () => { during = (await LIB.list()).find((x) => x.key === KEY).save; return checkRA("onedrive_not_authorized"); }, checkRA("busy"));
+    const news = [];
+    const p = savedProject(2 * MiB + 9, "PDFCACHE1", 73);
+    await (await LIB.keepSave(F1.id, saveOf(p), (state, extra) => news.push([state, extra]))).sent;
+    await settleDown();
+    assert.deepEqual(during, { state: "checking" }, "while the commit is asked again: being checked");
+    const l = ROW().local;
+    assert.deepEqual([l.state, l.code, l.error, l.fails, Number(l.notSaved) || 0], ["checking", "checking", CHECKING, 0, 0], "in the check: no failure counted");
+    const at = Date.parse(l.retryAt) - Date.now();
+    assert.ok(at > 25000 && at <= 30000, "its wait: the Retry-After (" + at + ")");
+    assert.deepEqual([lib.dueToSend(ROW(), Date.now()), lib.dueToSend(ROW(), Date.now() + 31000)], [false, true], "never final: asked again by itself");
+    const row = (await LIB.list()).find((x) => x.key === KEY);
+    assert.deepEqual([row.save, lib.saveText(row.save, "iPad")], [{ state: "checking" }, CHECKING]);
+    const told = news.map((x) => x[0]);
+    assert.ok(told.includes("checking") && !told.includes("failed"), JSON.stringify(told));
+    assert.ok(!told.slice(told.indexOf("checking")).includes("sending"), "no progress words once it is in the check: " + JSON.stringify(told));
+    assert.deepEqual(Array.from(timers.values()).map((t) => t.ms), [30000], "E7's timer at the Retry-After");
+    assert.deepEqual([w.calls, w.bytes], [["plan_save_session", "plan_save_commit", "plan_save_commit", "plan_save_commit"], p.blob.size]);
+    news.length = 0;
+    await fire(Array.from(timers.keys())[0]);
+    assert.deepEqual([w.calls.length, w.bytes, ROW().local, ROW().sent.mode], [5, p.blob.size, null, "replace"], "the same session committed: nothing sent again");
+    assert.deepEqual(news.map((x) => x[0]), ["sent"], "resumed in the check: no 'checking' told again, no 'Sending' first");
+    // (2) a later page's settle: plan_save_done 503 why "checking" (busy; a restore Microsoft refused: not allowed in) -
+    // the save is in the check, its session kept (the same ticket asked again), the timer at the Retry-After
+    for (const error of ["busy", "onedrive_not_authorized"]) {
+      timers.clear();
+      const a = await landedElsewhere(error === "busy" ? 74 : 75);
+      a.w.doneQueue.push(checkRA(error));
+      const e = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+      await settleDown();
+      assert.deepEqual([e && e.code, e && e.retryAfter, e && e.message], ["checking", 30, CHECKING], error);
+      const l2 = ROW().local;
+      assert.deepEqual([l2.state, l2.code, l2.fails, Number(l2.notSaved) || 0, l2.sends.map((s) => s.ticket)], ["checking", "checking", 0, 0, ["tk99"]], error + ": its session kept");
+      assert.equal(lib.saveText((await LIB.list()).find((x) => x.key === KEY).save, "iPad"), CHECKING);
+      assert.deepEqual(Array.from(timers.values()).map((t) => t.ms), [30000], error + ": asked again at the Retry-After");
+      await fire(Array.from(timers.keys())[0]);
+      assert.deepEqual([a.w.calls, a.w.bodies[1].ticket, a.w.bodies[1].hash, ROW().local, ROW().version], [["plan_save_done", "plan_save_done"], "tk99", a.hash, null, "qx:" + a.hash], error + ": then adopted");
+    }
+    // a 503 of OneDrive's without the check's why: busy, as before - not the check's state
+    timers.clear();
+    const b = await landedElsewhere(76);
+    b.w.doneQueue.push(httpRA(503, { error: "busy", message: "OneDrive is busy just now. Try again in a minute." }, 30));
+    const eb = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+    await settleDown();
+    assert.deepEqual([eb && eb.code, ROW().local.state, (await LIB.list()).find((x) => x.key === KEY).save.state], ["busy", "waiting", "kept"]);
+    // (3) the page hidden, then in front again: a save in the check gets its timer again, for what is left of its wait;
+    // one that is not in the check gets none
+    timers.clear();
+    const doc = { visibilityState: "visible", ls: [], addEventListener(t, fn) { if (t === "visibilitychange") this.ls.push(fn); } };
+    globalThis.document = doc;
+    try {
+      const c = await landedElsewhere(77);
+      c.w.doneQueue.push(checkRA("busy"));
+      await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+      await settleDown();
+      assert.equal(timers.size, 1);
+      doc.visibilityState = "hidden";
+      doc.ls.forEach((fn) => fn());
+      assert.equal(timers.size, 0, "stopped when the page hid");
+      doc.visibilityState = "visible";
+      doc.ls.forEach((fn) => fn());
+      await settleDown();
+      const left = Array.from(timers.values()).map((t) => t.ms);
+      assert.ok(left.length === 1 && left[0] > 20000 && left[0] <= 30000, "its timer again, for what is left of its wait: " + JSON.stringify(left));
+      await fire(Array.from(timers.keys())[0]);
+      assert.deepEqual([c.w.calls, ROW().local, ROW().version], [["plan_save_done", "plan_save_done"], null, "qx:" + c.hash], "asked again and adopted");
+      await landedElsewhere(78);
+      doc.visibilityState = "hidden";
+      doc.ls.forEach((fn) => fn());
+      doc.visibilityState = "visible";
+      doc.ls.forEach((fn) => fn());
+      await settleDown();
+      assert.equal(timers.size, 0, "a save not in the check: no timer");
     } finally { delete globalThis.document; }
   } finally { LIB.useAgainClock(null); }
 });

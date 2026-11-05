@@ -57,7 +57,7 @@ import {
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
   purgeText, lostSave, onlineNote, hashOk, sendWaitMs, refusedTold, saveBackOffWords, uncheckedReplace, uncheckedWords,
-  needHashWords, unprovedTold, uncheckedTold, checkAgainMs,
+  needHashWords, unprovedTold, uncheckedTold, checkAgainMs, checkWaitOf, checkingWords, LONG_WAIT_MS,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord, planWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -422,7 +422,7 @@ export async function list() {
     const running = !!(held ? held[r.key] : there);
     const job = here && here.worker ? { done: here.done, size: here.size, rate: here.rate } : running && there ? there : null;
     // the person's own save: being sent here, or in another window (its lock; its last word of progress)
-    const mine = sending[r.key] ? { sent: sending[r.key].sent, size: sending[r.key].size } : null;
+    const mine = sending[r.key] ? { sent: sending[r.key].sent, size: sending[r.key].size, checking: !!sending[r.key].checking } : null;
     const far = !mine && (up ? !!up[r.key] : !!(remoteSend[r.key] && now - remoteSend[r.key].at < 30000));
     const farLive = far && remoteSend[r.key] && now - remoteSend[r.key].at < 30000 ? remoteSend[r.key] : null;
     return Object.assign({}, r, { status: statusOf(r, here && here.worker && !here.finished ? here : null, running), job,
@@ -1373,13 +1373,19 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
    check the broker could not prove (why "unproved": OneDrive gave no hash) sends the save again as a copy, told in
    words that never say "nothing was overwritten" (unprovedTold); a replace adopted that nobody checked against office
    saves - verified false, or found by its hash alone - is told so (uncheckedTold, E2); and a settle's or commit's 503
-   with a Retry-After is asked again on a timer while the page is open (E7: askAgainLater).
+   with a Retry-After is asked again on a timer while the page is open (E7: askAgainLater). The broker's version check's
+   own 503 (its why "checking": OneDrive has no hash of the plan yet, a restore not done - DCR Desktop 2's repair round 3)
+   is a state of its own (checkSend, local.state "checking"): the row, the frame's bar and the takeoff app's news
+   ("checking") say the save is being checked against office saves - never "not sent", never a failure - and it is asked
+   again (the uploader's tries, then E7's timer; the page in front again: checkAgainNow). A copy's news to the app carries
+   the copy's own plan word (map/plans.js planWord - the word its record is handed to the frame with), so the app keeps
+   the work done after this save with the copy (takeoff-web d1cbf16).
 
    While a save is kept or sent the frame's Close asks first (plan-frame.js guard) and leaving the page asks too. */
 
-const sending = {};        // key -> {job, file, sent, size, told, meta}: a save being sent from THIS window
+const sending = {};        // key -> {job, file, sent, size, told, meta, checking}: a save being sent from THIS window
 const remoteSend = {};     // key -> {sent, size, at}: one being sent from another window (its last word)
-const parked = {};         // key -> {id, file, meta}: a send that failed with its session alive (resumed in this page)
+const parked = {};         // key -> {id, file, meta, checking}: a send that failed with its session alive (resumed in this page)
 const tells = {};          // key -> the frame's news (js/plan-handoff.js), while the takeoff app is open on that plan
 const waiting = {};        // uploader job id -> resolve(the job, once it ended)
 const sendCalls = {};      // key -> a sendSaved running in this window (a second call is the same one)
@@ -1405,6 +1411,12 @@ const here = () => (HAS ? window : null);
     (map/plan-library.js LONG_WAIT), its local copy never dropped. */
 function needHash() {
   return err("need_hash", needHashWords(deviceWord(here())));
+}
+
+/** A save in the broker's version check (map/plan-library.js checkWaitOf: its 503 why "checking"), asked again at the
+    Retry-After (`retryAfter`, seconds: E7's timer): never "not sent", never a failure. */
+function checking(retryAfter) {
+  return err("checking", checkingWords(deviceWord(here())), Number(retryAfter) > 0 ? { status: 503, retryAfter: Number(retryAfter) } : { status: 503 });
 }
 
 /** A refusal of the broker's, in the words of a save (the broker's own for the rest). */
@@ -1533,7 +1545,18 @@ function onUploads(items) {
   Object.keys(sending).forEach(function (key) {
     const s = sending[key];
     const j = items.find((x) => x.id === s.job);
-    if (!j || ["starting", "sending", "finishing"].indexOf(j.state) === -1 || j.sent === s.sent) return;
+    if (!j) return;
+    // the broker's version check waits on OneDrive (the uploader's job `checking`): the row, the frame's bar and the app
+    // are told once - the save is being checked, never "not sent" - and no progress words while it waits
+    if (!!j.checking !== !!s.checking) {
+      s.checking = !!j.checking;
+      if (s.checking) {
+        news(key, "checking");
+        if (frameIsOpen()) frameSay(checkingWords(deviceWord(here())));
+      }
+      changed(key);
+    }
+    if (s.checking || ["starting", "sending", "finishing"].indexOf(j.state) === -1 || j.sent === s.sent) return;
     s.sent = j.sent;
     s.size = j.size;
     const m = { t: "send", key, sent: s.sent, size: s.size };
@@ -1612,6 +1635,10 @@ frameGuard(function () {
   if (!keys.length) return "";
   const s = sending[keys[0]];
   const pct = s.size ? Math.min(99, Math.floor((s.sent / s.size) * 100)) : 0;
+  if (s.checking) {
+    return { title: "Still checking in OneDrive", okText: "Close the takeoff app", danger: false,
+      text: "Your save is on this " + d + " and is being checked against office saves in OneDrive. It carries on after the takeoff app closes: keep the portal open on this screen until it says Sent." };
+  }
   return { title: "Still sending to OneDrive", okText: "Close the takeoff app", danger: false,
     text: "Your save is on this " + d + " and is being sent to OneDrive (" + pct + "%). It carries on after the takeoff app closes: keep the portal open on this screen until it says Sent." };
 });
@@ -1852,6 +1879,22 @@ async function failSend(key, file, x) {
   else frameSay("Your save is kept on this " + deviceWord(here()) + " but was not sent to OneDrive: " + String((x && x.message) || "").replace(/[.\s]+$/, "") + ".", "warn");
 }
 
+/** A save in the broker's version check (`x`: checking()): the record says so - local.state "checking", never a
+    failure (no `fails`, no not_saved counted) - its wait to then (checkAgainMs: at the Retry-After, at least 30 s); the
+    row, the frame's bar and the app ("checking") are told. */
+async function checkSend(key, file, x) {
+  try {
+    await mutate("plans", key, function (c) {
+      if (!c || !hasLocal(c) || c.local.file !== file) return undefined;
+      return Object.assign({}, c, { local: Object.assign({}, c.local, { state: "checking", error: String(x.message || ""), code: "checking",
+        retryAt: new Date(Date.now() + checkAgainMs(x.retryAfter)).toISOString() }) });
+    });
+  } catch (e) { /* the words have reached the page */ }
+  changed(key);
+  news(key, "checking");
+  if (frameIsOpen()) frameSay(x.message);
+}
+
 /**
  * OneDrive has save `file` of this plan (plan_save_done's answer `ans`; `size`: what was sent) - the records as
  * map/plan-library.js adoptSent makes them, the old files retired, the person told. `why`: "refused" when the copy
@@ -1892,7 +1935,10 @@ async function commitSent(key, file, ans, size, why) {
   if (a.rec && ans.mode === "copy" && a.copy) {
     const noBlame = why === "refused" || why === "unproved";
     const told = why === "unproved" ? unprovedTold(ans.name, deviceWord(here())) : why === "refused" ? refusedTold(ans.name) : copyTold(ans.name, deviceWord(here()));
-    if (noBlame) news(key, "sent"); else news(key, "copy", { name: ans.name });
+    // (the copy's own word - map/plans.js planWord of its record's number, folder and name, the word open() hands it to
+    // the frame with from now on - so the app keeps the work done after this save with the copy: takeoff-web d1cbf16)
+    if (noBlame) news(key, "sent");
+    else news(key, "copy", { name: ans.name, plan: typeof tells[key] === "function" ? await planWord(a.copy.number, a.copy.folder, a.copy.name) : "" });
     if (frameIsOpen()) frameSay(told, "warn"); else toastOf(told, "info");
   } else if (a.rec && ans.mode === "replace") {
     news(key, "sent");
@@ -1978,6 +2024,13 @@ async function settle(key, skip) {
       // the save goes again as a copy, told so
       if (code === "not_saved" && x.info && x.info.why === "unproved") {
         await mutate("plans", key, (c) => (c && hasLocal(c) ? Object.assign({}, c, { local: Object.assign({}, c.local, { why: "unproved" }) }) : undefined));
+      }
+      // the broker's version check waits on OneDrive (its 503 why "checking": the current save's session) - the save is
+      // being checked, asked again at the Retry-After (E7), never "not sent"
+      if (own && checkWaitOf(x)) {
+        const y = checking(x.retryAfter);
+        await checkSend(key, r.local.file, y);
+        throw y;
       }
       // a ticket that no longer unseals (past the broker's 30 days; its secret rotated): looked for by the save's hash
       // alone (else the session is over)
@@ -2079,7 +2132,7 @@ async function sendNow(key) {
     id = up.add({ projectId: r.projectId, file: f, name: r.name, label: r.number || "", meta }).id;
   }
   delete parked[key];
-  sending[key] = { job: id, file, sent: 0, size: f.size, told: 0, meta };
+  sending[key] = { job: id, file, sent: 0, size: f.size, told: 0, meta, checking: !!(park && park.checking && meta === park.meta) };
   awake(true);
   changed(key);
   let end;
@@ -2095,7 +2148,14 @@ async function sendNow(key) {
   }
   if (end.state === "cancelled") { up.remove(id); changed(key); return { cancelled: true }; }
   // not sent: its session kept for a resume in this page when it lives (a connection that did not come back)
-  if (end.canRetry && end.code !== "not_saved") parked[key] = { id, file, meta }; else up.remove(id);
+  if (end.canRetry && end.code !== "not_saved") parked[key] = { id, file, meta, checking: !!end.checking }; else up.remove(id);
+  // the broker's version check still waits on OneDrive (the job ended `checking`, its session kept): the save is being
+  // checked - its own state, asked again at the Retry-After (E7) - never "not sent"
+  if (end.checking) {
+    const y = checking(end.retryAfter);
+    await checkSend(key, file, y);
+    throw y;
+  }
   // (a commit the broker answered 503 with a Retry-After carries it: asked again on a timer - contract addendum 4 E7)
   const x = err(end.code || "not_sent", end.error || "The save was not sent to OneDrive.", end.retryAfter ? { retryAfter: end.retryAfter } : undefined);
   await failSend(key, file, x);
@@ -2164,7 +2224,7 @@ function hookAgain() {
   const d = typeof document !== "undefined" ? document : null;
   if (d && d !== againDoc && typeof d.addEventListener === "function") {
     againDoc = d;
-    d.addEventListener("visibilitychange", function () { if (d.visibilityState === "hidden") stopAllAgain(); });
+    d.addEventListener("visibilitychange", function () { if (d.visibilityState === "hidden") stopAllAgain(); else checkAgainNow(); });
   }
   if (!againWin && HAS && typeof window.addEventListener === "function") {
     againWin = true;
@@ -2189,6 +2249,25 @@ async function askAgainLater(key, itemId, x) {
     if (pageHidden()) return;
     sendSaved(itemId).catch(function () { /* the row says why (another 503 sets the next timer) */ });
   }, ms);
+}
+
+/** The page in front again (its timers stopped when it hid): each of this person's saves in the broker's version check
+    (local.state "checking": the row says "keep the portal open; there is nothing to do") gets its timer again - at its
+    wait's end, at once when that is over. */
+function checkAgainNow() {
+  const who = owner();
+  if (!who || pageHidden()) return;
+  getAll("plans").then(function (all) {
+    all.filter((r) => r.owner === who && hasLocal(r) && r.local.state === "checking").forEach(function (r) {
+      if (sendCalls[r.key] || Object.prototype.hasOwnProperty.call(againTimers, r.key) || pageHidden()) return;
+      const left = Date.parse(r.local.retryAt || "") - Date.now();
+      againTimers[r.key] = clockOf().set(function () {
+        delete againTimers[r.key];
+        if (pageHidden()) return;
+        sendSaved(r.itemId).catch(function () { /* the row says why */ });
+      }, Number.isFinite(left) ? Math.max(0, Math.min(left, LONG_WAIT_MS)) : 0);
+    });
+  }).catch(function () { /* the next page asks again */ });
 }
 
 /** This person's saves waiting here, sent one at a time (maybeCheck); a failure of OneDrive's or the connection's

@@ -517,3 +517,46 @@ test("uploader, a commit 'broker' session OneDrive committed itself (contract ad
   const src = readFileSync(new URL("../site/js/onedrive-upload.js", import.meta.url), "utf8");
   assert.match(src, /if \(deferred\(j\)\) \{ j\.offset = j\.size; j\.chunkLanded = true; return \{ commit: true \}; \}/);
 });
+
+test("uploader, a commit 'broker' session the broker's version check holds (its 503 why \"checking\", DCR Desktop 2's repair round 3): the job says `checking` while it asks again at the Retry-After, ends done (checking no more), or - its tries spent - failed WITH checking (its session kept, the Retry-After kept, never \"OneDrive's last step did not get through\"); a 503 without that why is the old failure", async () => {
+  const check = (code) => ({ code, status: 503, retryAfter: 30, info: { error: code === "not_authorized" ? "onedrive_not_authorized" : "busy", why: "checking" }, message: "OneDrive is busy just now: try again in a minute." });
+  // asked again, then committed: `checking` said while it waited, and over at the end
+  const g = deferredGraph(), b = deferredBroker(g);
+  b.cscript = [check("busy"), check("not_authorized")];
+  const waits = [];
+  const seen = [];
+  const up = make(g, b, { setTimeout: (fn, ms) => { if (ms !== 200) waits.push(ms); return setTimeout(fn, 0); } });
+  up.onChange((items, evt) => { if (evt && (evt.type === "checking" || evt.type === "done")) seen.push([evt.type, evt.job.checking]); });
+  up.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "A.takeoff"), name: "A.takeoff", meta: {} });
+  const [job] = await settle(up);
+  assert.deepEqual([job.state, job.checking, b.commits.length, b.sessions], ["done", false, 3, 1], job.error);
+  assert.deepEqual(seen, [["checking", true], ["done", false]], "checking while the check waits (said once), and no more once it answered");
+  assert.deepEqual(waits.filter((ms) => ms === 30000).length, 2, "asked again at the Retry-After each time");
+  // its tries spent: failed, checking - the session kept (Retry commits again: no byte, no session), the Retry-After kept
+  const g2 = deferredGraph(), b2 = deferredBroker(g2);
+  b2.cscript = [check("busy"), check("busy")];
+  const up2 = make(g2, b2, { maxTries: 2 });
+  up2.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "B.takeoff"), name: "B.takeoff", meta: {} });
+  const [j2] = await settle(up2);
+  assert.deepEqual([j2.state, j2.checking, j2.code, j2.retryAfter, j2.canRetry], ["failed", true, "busy", 30, true]);
+  assert.equal(j2.error, "Your save is being checked against office saves in OneDrive.");
+  assert.doesNotMatch(j2.error, /not sent|did not get through|retry|failed/i);
+  const puts = g2.requests.filter((r) => r.method === "PUT").length;
+  assert.ok(up2.retry(j2.id));
+  const [j2b] = await settle(up2);
+  assert.deepEqual([j2b.state, j2b.checking, b2.sessions, b2.commits.length, g2.requests.filter((r) => r.method === "PUT").length], ["done", false, 1, 3, puts], "committed on Retry, nothing sent again");
+  // a 503 of OneDrive's without the check's why: the old words, never `checking`
+  const g3 = deferredGraph(), b3 = deferredBroker(g3);
+  b3.cscript = [{ code: "busy", status: 503, retryAfter: 30, info: { error: "busy" }, message: "x" }, { code: "busy", status: 503, retryAfter: 30, info: { error: "busy" }, message: "x" }];
+  const up3 = make(g3, b3, { maxTries: 2 });
+  up3.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "C.takeoff"), name: "C.takeoff", meta: {} });
+  const [j3] = await settle(up3);
+  assert.deepEqual([j3.state, j3.checking, j3.error], ["failed", false, "Your save is sent; OneDrive's last step did not get through. Retry."]);
+  // the check's why on a refusal that is no 503 (made up): not the check's wait
+  const g4 = deferredGraph(), b4 = deferredBroker(g4);
+  b4.cscript = [{ code: "not_saved", status: 409, info: { error: "not_saved", why: "checking" }, message: "x" }];
+  const up4 = make(g4, b4);
+  up4.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "D.takeoff"), name: "D.takeoff", meta: {} });
+  const [j4] = await settle(up4);
+  assert.deepEqual([j4.state, j4.checking, j4.code], ["failed", false, "not_saved"]);
+});

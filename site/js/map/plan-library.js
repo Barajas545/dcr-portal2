@@ -51,7 +51,10 @@
    * needHashWords / unprovedTold / uncheckedTold  the words of a save that waits for its hash (contract addendum 4 E1),
                                 of a copy the broker could not prove went over nothing (E1's "unproved"), and of a
                                 replace adopted that nobody could check against office saves (E2);
-   * checkAgainMs(retryAfter)   when a check the broker answered 503 with a Retry-After is asked again (E7).
+   * checkAgainMs(retryAfter)   when a check the broker answered 503 with a Retry-After is asked again (E7);
+   * checkWaitOf / checkingWords  a 503 of the broker's version check itself (its body's why "checking", DCR Desktop 2's
+                                repair round 3) - the save is being checked against office saves, never "not sent" -
+                                and its words.
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -378,7 +381,8 @@ export function projectBatches(records, n) {
       hash      OneDrive's quickXorHash of the save's bytes (js/quickxor.js: the spool worker computes it from the slices it
                 writes; null when it could not), sent to plan_save_commit / plan_save_done - with OneDrive's own hash of
                 the item, the broker's proof that it holds exactly these bytes (contract addendum 2, C3b);
-      state     "waiting" | "sending" | "failed" (a "sending" no window is running is waiting again);
+      state     "waiting" | "sending" | "checking" | "failed" (a "sending" no window is running is waiting again;
+                "checking": the broker's version check waits on OneDrive - checkWaitOf - and asks again by itself);
       error, code, fails, retryAt   the last failed send and when it is tried again by itself;
       notSaved  how often OneDrive said it did not get this save whole (409 not_saved): past NOT_SAVED_MAX it waits;
       sends     [{file, ticket, mode, name, size, at, hash, commit, why?}]: sessions this device opened whose end it never heard (the page
@@ -419,6 +423,23 @@ export const CHECK_AGAIN_MIN_MS = 30 * 1000;
 export function checkAgainMs(retryAfter) {
   const s = Number(retryAfter);
   return Math.min(LONG_WAIT_MS, Math.max(CHECK_AGAIN_MIN_MS, Number.isFinite(s) && s > 0 ? s * 1000 : 0));
+}
+
+/** A refusal of the broker's version check itself (DCR Desktop 2's repair round 3): its 503 - busy, or not allowed in
+    when Microsoft refused the restore - whose body says why "checking" (OneDrive has no hash of the plan yet, or the
+    office's save is not put back yet; Retry-After 30). The save is being checked against office saves: never "not sent",
+    never counted as a failure - asked again (E7's timer). Any other 503 (OneDrive busy before anything was committed)
+    carries no such why. */
+export function checkWaitOf(x) {
+  return !!(x && Number(x.status) === 503 && x.info && x.info.why === "checking");
+}
+
+/** The words of a save in the broker's version check (checkWaitOf): the row's, the frame bar's. They never say the save
+    is in OneDrive (during OneDrive's hash wait only a version of its size is known to be there), never "not sent",
+    "retry", "replaced" or "overwritten". */
+export function checkingWords(device) {
+  return "Your save is being checked against office saves in OneDrive - keep the portal open; there is nothing to do. It stays on this " +
+    (device || "device") + " meanwhile.";
 }
 
 /** The wait before a failed send (`code`, its `fails`-th failure) goes again by itself: backoffMs, and at least
@@ -640,6 +661,8 @@ function pctOf(sent, size) {
  * What a row says of the record's save: {state, pct?, why?, name?} or null (nothing to say).
  *   kept     saved on this device, not in OneDrive yet (waiting; or a send that a closed page left half way);
  *   sending  being sent here (`live`: {sent, size}) or in another window (`elsewhere`: pct null);
+ *   checking the broker's version check waits on OneDrive (`live.checking` while it is asked here; local.state
+ *            "checking" between the asks): never "not sent";
  *   failed   not sent: `why`; `final` when it waits for the person;
  *   sent / copy / lost   the last one's outcome, for SENT_NOTE_MS.
  */
@@ -647,8 +670,9 @@ export function saveStateOf(rec, live, now, elsewhere) {
   if (!rec) return null;
   if (hasLocal(rec)) {
     const l = rec.local;
-    if (live) return { state: "sending", pct: pctOf(live.sent, live.size) };
+    if (live) return live.checking ? { state: "checking" } : { state: "sending", pct: pctOf(live.sent, live.size) };
     if (elsewhere) return { state: "sending", pct: null };
+    if (l.state === "checking") return { state: "checking" };
     if (l.state === "failed") return { state: "failed", why: String(l.error || ""), final: sendFinal(l), code: String(l.code || "") };
     return { state: "kept" };
   }
@@ -666,6 +690,8 @@ export function saveText(st, device) {
   if (!st) return "";
   if (st.state === "kept") return "Saved on this " + d + " — not in OneDrive yet: it is sent while the portal is open and online";
   if (st.state === "sending") return typeof st.pct === "number" ? "Sending " + st.pct + "% — keep this screen open" : "Sending to OneDrive…";
+  // the broker's version check waits on OneDrive (checkWaitOf): nothing to do - never "Not sent"
+  if (st.state === "checking") return checkingWords(d);
   // the broker's switch is off for this project (contract addendum 3 D1): nothing to retry - it waits, and goes once it
   // is turned on
   if (st.state === "failed" && st.code === "save_back_off") return saveBackOffWords(d);

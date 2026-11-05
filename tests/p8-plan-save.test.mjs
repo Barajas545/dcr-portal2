@@ -261,7 +261,8 @@ test("the two halves together (the vendored takeoff-web's own askPortalToKeep): 
   const TW = slow.TW;
   for (const [state, extra, want] of [["keeping", { pct: 45.4 }, { pct: 45 }], ["keeping", {}, { pct: null }], ["sending", { pct: 3 }, { pct: 3 }], ["sent", {}, {}],
     ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }, { name: "A900 Bid - iPad 2026-11-04 1030.takeoff" }], ["kept", {}, {}], ["refused", { why: "No." }, {}],
-    ["no-room", {}, {}], ["failed", { why: "x" }, {}]]) {
+    ["no-room", {}, {}], ["failed", { why: "x" }, {}], ["checking", {}, {}],
+    ["copy", { name: "A900 Bid - iPad 2026-11-04 1030.takeoff", plan: "Zx9_-copyW0r" }, { name: "A900 Bid - iPad 2026-11-04 1030.takeoff", plan: "Zx9_-copyW0r" }]]) {
     const got = TW.saveStateFromMessage(H.saveState(WORD, "s1", state, extra), WORD, "s1");
     assert.ok(got && got.state === state, state);
     for (const [k, v] of Object.entries(want)) assert.equal(got[k], v, state + " " + k);
@@ -269,6 +270,37 @@ test("the two halves together (the vendored takeoff-web's own askPortalToKeep): 
   assert.deepEqual(Array.from(TW.SAVE_ENDINGS), Array.from(H.SAVE_FINAL), "the same answers on both sides");
   assert.ok(TW.SAVE_PROGRESS.includes("keeping"));
   assert.equal(String(TW.SAVE_WAIT_MS / 1000), "120", "the app's window: one heartbeat within it is enough (BEAT_MS is 2 s)");
+});
+
+test("the two halves after a kept save (the final checker's round 3b, with the vendored takeoff-web d1cbf16): the portal's 'checking' is news the app reads (never an answer), the app goes on listening past a 'failed', and the 'copy' news carries the copy's own plan word, which the app reads - only a copy carries one, only in its shape", async () => {
+  const COPY = "A900 Bid - iPad 2026-11-04 1030.takeoff";
+  const WORD_C = "Zx9_-copyW0r";
+  const h = await twoHalves(async (save, tell) => {
+    setTimeout(() => {
+      tell("sending", { pct: 40 });
+      tell("checking");
+      tell("failed", { why: "made up" });
+      tell("checking");
+      tell("copy", { name: COPY, plan: WORD_C });
+      tell("sent");
+    }, 20);
+    return { state: "kept" };
+  }, 1000);
+  try {
+    const r = await h.ask("sCCCCCCCCC");
+    assert.equal(r.ending, "kept");
+    await new Promise((res) => setTimeout(res, 120));
+    assert.deepEqual(h.news.map((s) => [s.state, s.plan || ""]), [["sending", ""], ["checking", ""], ["failed", ""], ["checking", ""], ["copy", WORD_C]],
+      "each heard as it came, past the 'failed', to the copy (then over: the 'sent' after it is not heard)");
+    assert.equal(h.news[4].name, COPY);
+  } finally { h.stop(); }
+  // the words as the portal composes them
+  assert.deepEqual(H.saveState(WORD, "s1", "checking"), { type: "ptt-save-state", v: 1, nonce: WORD, req: "s1", state: "checking" });
+  assert.deepEqual(H.saveState(WORD, "s1", "copy", { name: COPY, plan: WORD_C }), { type: "ptt-save-state", v: 1, nonce: WORD, req: "s1", state: "copy", name: COPY, plan: WORD_C });
+  for (const bad of ["short", "x".repeat(13), "has space 12", "a/b+c=d.efgh", 12, null]) assert.ok(!("plan" in H.saveState(WORD, "s1", "copy", { name: COPY, plan: bad })), "not a word: " + bad);
+  for (const state of ["sent", "sending", "checking", "failed", "kept"]) assert.ok(!("plan" in H.saveState(WORD, "s1", state, { plan: WORD_C })), "only a copy: " + state);
+  assert.ok(h.TW.SAVE_NEWS.includes("checking"), "the app knows the state");
+  assert.equal(h.TW.PLAN_RE.source, (await import("../site/js/map/plans.js")).PLAN_RE.source, "the same word's shape on both sides");
 });
 
 test("a copy's name (Q3): the demo broker's is the real broker's (handler.ts copyName, when its checkout is here); every one reaches the app whole in the 'copy' news", async () => {
