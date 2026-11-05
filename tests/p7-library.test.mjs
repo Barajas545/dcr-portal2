@@ -1163,6 +1163,188 @@ test("demo broker as DCR Desktop 2's since the repair round (contract addendum 3
   }
 });
 
+test("demo broker as DCR Desktop 2 9969d61 (the final checker's round 3b): the check's own 503 says why \"checking\" (a listing's moment of trouble does not); a newer office save on top of an iPad save that went over one - the retry (OneDrive's hash late, a restore refused), the PUT path's retry (usable or gone) and a later page all answer \"unproved\" with the admin's line, nothing put back, never the plain copy or not_saved; on the base it is the plain answer; no history and the plan not this save, or a listing that ends at this save - unproved; a 412 from this very save's own earlier commit (two requests overlapping) - checked, a replace, never the same bytes as a copy", { skip }, async () => {
+  let shift = 0;
+  FK = await loadFake();
+  E = FK.createEngine({ maxFileSize: 500 * 1024 * 1024, clock: () => new Date(Date.now() + shift) });
+  E.load(FK.seed({ now: new Date() }));
+  const a267 = project("A267");
+  const ext = E.exts.find((x) => x.name === "p7-onedrive");
+  const files = async () => (await onedrive.plansList([a267.id]))[String(a267.id)].files;
+  const fresh = async (name) => {
+    const f = (await files()).find((x) => x.name === name);
+    const fx = ext.setPlanFixture("A267", new Blob([bytesOf(5000, 11)]), name);
+    return Object.assign({}, f, { size: fx.size, version: fx.version, modified: (await files()).find((x) => x.id === f.id).modified, full: fx.full });
+  };
+  const past = (ms) => { shift += ms; };
+  /** a deferred replace's session and every chunk of `raw` (its commit left to the check) */
+  const upload = async (plan, raw) => {
+    const s = await onedrive.planSaveSession({ projectId: a267.id, itemId: plan.id, version: plan.version, size: raw.length, name: plan.name });
+    for (const [a, z] of [[0, 327679], [327680, raw.length - 1]]) ext.http("PUT", s.uploadUrl, { "Content-Range": "bytes " + a + "-" + z + "/" + raw.length }, new Blob([raw.subarray(a, z + 1)]));
+    return s;
+  };
+  const commitOf = (plan, s, raw, landed) => refusal(onedrive.planSaveCommit({ projectId: a267.id, itemId: plan.id, ticket: s.ticket, uploadUrl: s.uploadUrl, hash: QX.quickXorHash(raw), landed: !!landed }));
+  const BY_HAND = "crossed: not put back (newer save): check the plan's version history by hand";
+  const UNPROVED = "OneDrive could not show whether this save went over an office save: it is sent again as a separate file - check the plan's version history in OneDrive.";
+  const has = (op, line) => ext.logLines().includes("onedrive " + op + ": " + line);
+  const sizes = (plan) => ext.versionsOf(plan.id).map((v) => v.size);
+  try {
+    as("admin");
+    // (N1, N1b) OneDrive committed at the last chunk over an office save X, and the check could not finish at once -
+    // OneDrive's hash not there yet, or a restore refused: 503 {why: "checking"}; then the office saves again (Y): the
+    // retry answers "unproved" with the admin's line, nothing put back over Y
+    for (const how of ["hash wait", "restore refused"]) {
+      ext.graphModes({ reset: true, deferCommit: "ignored", hashes: how === "hash wait" ? "off" : "on", restoreStatus: how === "restore refused" ? 503 : 0 });
+      const pl = await fresh("A267 Rev 2.takeoff");
+      past(3000);
+      ext.duringUpload(pl.full, "office");
+      const raw = bytesOf(327680 + (how === "hash wait" ? 41 : 42), 51);
+      const s = await upload(pl, raw);
+      let c1 = await commitOf(pl, s, raw, true);
+      if (how === "restore refused") { await ext.hashed(); c1 = await commitOf(pl, s, raw, true); }
+      assert.deepEqual([c1.code, c1.status, c1.info && c1.info.why], ["busy", 503, "checking"], how + ": the check's own 503");
+      ext.graphModes({ hashes: "on", restoreStatus: 0 });
+      past(2 * 60 * 1000);
+      ext.officeSave(pl.full);
+      await ext.hashed();
+      ext.logLines(true);
+      const before = sizes(pl);
+      const c2 = await commitOf(pl, s, raw, true);
+      assert.deepEqual([c2.code, c2.info && c2.info.why, c2.info && c2.info.retry, c2.message], ["plan_changed", "unproved", "copy", UNPROVED], how + ": " + JSON.stringify(ext.logLines()));
+      assert.ok(has("plan_save_commit", BY_HAND), how + ": " + JSON.stringify(ext.logLines()));
+      assert.deepEqual(sizes(pl), before, how + ": nothing put back over Y");
+      assert.equal(sizes(pl).slice(0, 2)[1], raw.length, how + ": [Y, the iPad's, X, ...]");
+      assert.match((await files()).find((x) => x.id === pl.id).version, /^qx:demo-office-/, how + ": Y stays the plan");
+    }
+    // (N2) the PUT path: the PUT's If-Match ignored over an office save X between the walk and the PUT, the check ends
+    // 503 {why: "checking"} (a restore refused, or OneDrive's hash not there yet), Y lands - the retried commit answers
+    // "unproved": never the same upload committed as a copy, nor the plain not_saved - Microsoft keeping the committed
+    // session usable or not
+    for (const why of ["restore", "hash"]) for (const afterCommit of ["usable", "gone"]) {
+      const name = why + ", " + afterCommit;
+      ext.graphModes({ reset: true, putIfMatch: "ignored", afterCommit, hashes: why === "hash" ? "off" : "on", restoreStatus: why === "restore" ? 503 : 0 });
+      const pl = await fresh("A267 Bid.takeoff");
+      past(3000);
+      ext.betweenWalkAndCommit(pl.full);
+      const raw = bytesOf(327680 + 60 + 2 * (why === "hash" ? 1 : 0) + (afterCommit === "gone" ? 1 : 0), 52);
+      const s = await upload(pl, raw);
+      let c1 = await commitOf(pl, s, raw);
+      if (why === "restore") { await ext.hashed(); c1 = await commitOf(pl, s, raw); }
+      assert.deepEqual([c1.code, c1.info && c1.info.why], ["busy", "checking"], name + ": the check's own 503");
+      ext.graphModes({ hashes: "on", restoreStatus: 0 });
+      past(2 * 60 * 1000);
+      ext.officeSave(pl.full);
+      await ext.hashed();
+      const count = (await files()).length;
+      ext.logLines(true);
+      const c2 = await commitOf(pl, s, raw);
+      assert.deepEqual([c2.code, c2.info && c2.info.why, c2.info && c2.info.retry], ["plan_changed", "unproved", "copy"], name + ": " + JSON.stringify(ext.logLines()));
+      assert.ok(has("plan_save_commit", BY_HAND) && !ext.logLines().some((l) => /committed as a copy/.test(l)), name + ": " + JSON.stringify(ext.logLines()));
+      assert.equal((await files()).length, count, name + ": no copy committed of the same upload");
+      assert.match((await files()).find((x) => x.id === pl.id).version, /^qx:demo-office-/, name + ": Y stays the plan");
+    }
+    // (N4) the page closed before its commit's check; Y lands; the later page's plan_save_done answers not_saved {why:
+    // "unproved"} with the admin's line - never the plain not_saved (the copy's words say nothing was overwritten)
+    {
+      ext.graphModes({ reset: true, deferCommit: "ignored" });
+      const pl = await fresh("A267 Rev 2.takeoff");
+      past(3000);
+      ext.duringUpload(pl.full, "office");
+      const raw = bytesOf(327680 + 45, 53);
+      const s = await upload(pl, raw);
+      await ext.hashed();
+      past(20 * 60 * 1000);
+      ext.officeSave(pl.full);
+      past(60 * 60 * 1000);
+      ext.logLines(true);
+      const before = sizes(pl);
+      const d = await refusal(onedrive.planSaveDone(a267.id, pl.id, s.ticket, QX.quickXorHash(raw)));
+      assert.deepEqual([d.code, d.info && d.info.why, d.message], ["not_saved", "unproved", UNPROVED], JSON.stringify(ext.logLines()));
+      assert.ok(has("plan_save_done", BY_HAND), JSON.stringify(ext.logLines()));
+      assert.deepEqual(sizes(pl), before, "nothing put back");
+    }
+    // the control: the iPad's bytes right on the base, then Y on top before the check - the listing shows nothing under
+    // the iPad's but the base: the plain "changed" (the commit) and the plain not_saved (a later page) are true (each
+    // cell's save of a size of its own: a listing has no hash - an earlier save of the same size within the clock's skew
+    // over another version would read as "office", the broker's documented false alarm)
+    for (const op of ["plan_save_commit", "plan_save_done"]) {
+      ext.graphModes({ reset: true, deferCommit: "ignored" });
+      const pl = await fresh("A267 Rev 2.takeoff");
+      const raw = bytesOf(327680 + (op === "plan_save_commit" ? 47 : 48), 54);
+      const s = await upload(pl, raw);
+      await ext.hashed();
+      past(60 * 1000);
+      ext.officeSave(pl.full);
+      ext.logLines(true);
+      const e = op === "plan_save_commit" ? await commitOf(pl, s, raw, true) : await refusal(onedrive.planSaveDone(a267.id, pl.id, s.ticket, QX.quickXorHash(raw)));
+      assert.deepEqual([e.code, e.info && e.info.why], op === "plan_save_commit" ? ["plan_changed", "changed"] : ["not_saved", undefined], op + ": " + JSON.stringify(ext.logLines()));
+      assert.ok(!ext.logLines().some((l) => /by hand/.test(l)), op + ": no admin's line");
+    }
+    // no version history to read, and the plan not this save now (Y after the iPad's bytes landed): "unproved" - nothing
+    // shows what this save went over
+    {
+      ext.graphModes({ reset: true, deferCommit: "ignored", versions: "off" });
+      const pl = await fresh("L1 walls.takeoff");
+      const raw = bytesOf(327680 + 49, 55);
+      const s = await upload(pl, raw);
+      await ext.hashed();
+      past(5000);
+      ext.officeSave(pl.full);
+      ext.logLines(true);
+      const e = await commitOf(pl, s, raw, true);
+      assert.deepEqual([e.code, e.info && e.info.why], ["plan_changed", "unproved"], JSON.stringify(ext.logLines()));
+      assert.ok(has("plan_save_commit", "committed: not proved (no version history to read): check the plan's version history by hand"), JSON.stringify(ext.logLines()));
+    }
+    // what a listing cannot show: the iPad's bytes right on the base, then nine office saves on top - the listing (at
+    // most ten, newest first) ends at the iPad's version, so what it sits on is not known: "unproved", never "changed"
+    {
+      ext.graphModes({ reset: true, deferCommit: "ignored" });
+      const pl = await fresh("L1 walls.takeoff");
+      const raw = bytesOf(327680 + 51, 56);
+      const s = await upload(pl, raw);
+      await ext.hashed();
+      for (let i = 0; i < 9; i++) { past(60 * 1000); ext.officeSave(pl.full); }
+      ext.logLines(true);
+      const e = await commitOf(pl, s, raw, true);
+      assert.deepEqual([e.code, e.info && e.info.why], ["plan_changed", "unproved"], JSON.stringify(ext.logLines()));
+      assert.ok(has("plan_save_commit", BY_HAND), JSON.stringify(ext.logLines()));
+      assert.equal(sizes(pl)[10], 5000, "the demo's history has the base under it: only the broker's listing ends at ten");
+    }
+    // the listing's own moment of trouble (versions failing 503): busy, never the check's "checking"
+    {
+      ext.graphModes({ reset: true, versions: "failing", versionsStatus: 503 });
+      const pl = await fresh("A267 Bid.takeoff");
+      const raw = bytesOf(327680 + 53, 57);
+      const s = await upload(pl, raw);
+      const e = await commitOf(pl, s, raw);
+      assert.deepEqual([e.code, e.status, e.info && e.info.why], ["busy", 503, undefined]);
+    }
+    // (N6) two commits of one save overlap - this very session committed by the device's other request just before this
+    // one's commit (attempt A's PUT, or attempt B's POST: its If-Match 412): read afresh, the plan holds this save - the
+    // check (OneDrive's hash first: 503 {why: "checking"}), then a replace, verified; never the same bytes as a copy
+    for (const form of ["PUT", "POST"]) for (const afterCommit of ["usable", "gone"]) {
+      const name = form + ", " + afterCommit;
+      ext.graphModes({ reset: true, afterCommit, putCommit: form === "POST" ? "refused" : "accepted" });
+      const pl = await fresh("A267 Bid.takeoff");
+      ext.betweenWalkAndCommit(pl.full, "self");
+      const raw = bytesOf(327680 + 70 + 2 * (form === "POST" ? 1 : 0) + (afterCommit === "gone" ? 1 : 0), 58);
+      const s = await upload(pl, raw);
+      const count = (await files()).length;
+      ext.logLines(true);
+      const c1 = await commitOf(pl, s, raw);
+      assert.deepEqual([c1.code, c1.info && c1.info.why], ["busy", "checking"], name + ": the plan holds a save of this size, OneDrive has no hash of it yet: " + JSON.stringify(ext.logLines()));
+      assert.ok(!ext.logLines().some((l) => /committed as a copy/.test(l)), name + ": never the copy on the walk before the commit " + JSON.stringify(ext.logLines()));
+      await ext.hashed();
+      const c2 = await onedrive.planSaveCommit({ projectId: a267.id, itemId: pl.id, ticket: s.ticket, uploadUrl: s.uploadUrl, hash: QX.quickXorHash(raw) });
+      assert.deepEqual([c2.mode, c2.id, c2.version, c2.verified], ["replace", pl.id, "qx:" + QX.quickXorHash(raw), true], name);
+      assert.deepEqual([(await files()).length, sizes(pl).slice(0, 2)], [count, [raw.length, 5000]], name + ": no copy; this save right over the base");
+    }
+  } finally {
+    ext.graphModes({ reset: true });
+    as("admin");
+  }
+});
+
 test("demo hooks for the real-app e2e: a made-up real .takeoff as a project's plan (its bytes, size, own version) until a save lands; the office's save; OneDrive's bytes of an item", { skip }, async () => {
   await setup();
   const a267 = project("A267");

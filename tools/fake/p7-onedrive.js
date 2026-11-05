@@ -85,14 +85,24 @@
      the plan's change; then nothing restored and 409 plan_changed {why: "unproved"} with the admin's log line, contract
      addendum 4 E1), then 409 plan_changed {why: "changed"}; a restore Microsoft refuses - 503 (busy, or
      onedrive_not_authorized for 401 / 403), asked again; no history to read - verified false; the listing in a moment's
-     trouble (429, a 5xx but 501) - 503 busy. No `hash`: 409 not_saved {need: "hash"} at any age, before anything of
-     OneDrive's (E1). The plan's tag moved but the plan holds this save already (a commit that landed, asked again after
-     the check's 503; E3): checked as a commit, never the same upload as a copy - by OneDrive's hash, else waited for as
-     above. The 48 hours past, nothing is committed, and a replace found landed is checked too. The demo's OneDrive keeps
+     trouble (429, a 5xx but 501) - 503 busy. The check's own 503s (OneDrive's hash not there yet, a restore not done)
+     carry why "checking" (DCR Desktop 2's repair round 3: checkWait), the listing's moment of trouble none. Yet another
+     save on top by the time the check reads the history (the newest not this save): nothing put back, and the plain
+     plan_changed {why: "changed"} only when the listing shows this save right on the base - shown over anything else, or
+     not shown at all, "unproved" with the admin's line (shownUnder, THE PRINCIPLE over CONTRACT-3 D2's "the same 409");
+     this save committed and the plan something else with no history to read - "unproved" too. No `hash`: 409 not_saved
+     {need: "hash"} at any age, before anything of OneDrive's (E1). The plan's tag moved, or Microsoft's If-Match answered
+     412 (read afresh: another request of the device's may have committed this very session a moment ago - repair round
+     3), but the plan holds this save already (a commit that landed, asked again after the check's 503; E3): checked as a
+     commit, never the same upload as a copy - by OneDrive's hash, else waited for as above; the plan provably not this
+     save, the listing is read before the copy (overOffice: this save over an office save under a newer one - "unproved",
+     never the copy). The 48 hours past, nothing is committed, and a replace found landed is checked too. The demo's OneDrive keeps
      each plan's versions (this tab), and graphModes({deferCommit, putCommit, putIfMatch, postIfMatch, postStatus,
      versions, versionsStatus, restoreStatus, hashes, afterCommit}) chooses what Microsoft does where its pages leave it
      open, as DCR Desktop 2's fake_graph.ts does; betweenWalkAndCommit(path) puts an office save between the walk a
-     commit reads and that commit (attempt A's walk and its PUT; the PUT refused, attempt B's walk and its POST);
+     commit reads and that commit (attempt A's walk and its PUT; the PUT refused, attempt B's walk and its POST) -
+     betweenWalkAndCommit(path, "self"): this very session's commit by another request of the device's, its retry while
+     the first still ran (repair round 3, N6);
      passTime(ms) runs the broker's clock ahead (OneDrive's 30 minutes without a hash gone by); logLines() is the
      broker's log of the save back. (The demo's answers carry no Retry-After header: a 503 is asked again after the
      uploader's own wait.);
@@ -105,7 +115,8 @@
      so only on OneDrive's hash of it (by its size alone: 503 busy for 30 minutes, then 409 not_saved {why: "unproved"})
      and is checked by the version history as a commit is (verify, its answer with `verified`; a crossing it put back is
      409 not_saved here, an unprovable one not_saved {why: "unproved"}, and verify's 503s pass through: DCR Desktop 2's
-     repair round 2, S1, and 7fdd689). The version in
+     repair round 2, S1, and 7fdd689); one not found as the plan has its history read before the not_saved (overOffice:
+     this save over an office save under a newer one - not_saved {why: "unproved"}, DCR Desktop 2 9969d61). The version in
      plans_list's form: the "sm:" one until the demo's OneDrive has hashed the saved bytes - with site/js/quickxor.js,
      the device's own module: the REAL quickXorHash (hashed() waits for it) - then "qx:<it>".
    The takeoff folder (made up, the same every time): A267 three .takeoff files in its folder (and an autosave, a PDF
@@ -540,6 +551,7 @@
     const SETTLE_MS = 30 * 24 * 3600 * 1000;                 // a plan ticket settles this long (commits: TICKET_MS)
     const VERSION_SKEW_MS = 2000;                            // handler.ts VERSION_SKEW_MS
     const HASH_WAIT_MS = 30 * 60 * 1000;                     // handler.ts HASH_WAIT_MS (repair round 2)
+    const MAX_VERSIONS = 10;                                 // graph.ts MAX_VERSIONS: what a versions listing shows at most
     const CHECK_RETRY_S = 30;                                // handler.ts CHECK_RETRY_S: verify's 503s ask again after this
     const STAMP = typeof Intl !== "undefined" ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit",
       day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : null;
@@ -763,6 +775,10 @@
       }
       const c = t.m === "replace" && t.dc ? copyLanded(p, t, hash) : null;
       if (c) return savedAs("copy", c);
+      // a deferred replace not on the plan now: did it go over an office save there before a newer save landed on top
+      // (DCR Desktop 2 9969d61, THE PRINCIPLE: never the plain not_saved then)
+      const over = f && t.m === "replace" && t.dc === true ? overOffice(p, t, f, op) : null;
+      if (over) return over;
       return fail("not_saved");
     }
     const hashOk = (h) => h === undefined || h === null || (typeof h === "string" && /^[A-Za-z0-9+/]{27}=$/.test(h));
@@ -799,8 +815,8 @@
     }
     /** handler.ts unproved (contract addendum 4 E1): nothing proves whether the plan's newest version is this save over
         an office save - nothing is put back, the admin's log line, 409 plan_changed {why: "unproved"} */
-    function unproved(op) {
-      log(op, "crossed: not proved (OneDrive gave no hash): check the plan's version history by hand");
+    function unproved(op, what) {
+      log(op, (what || "crossed: not proved (OneDrive gave no hash)") + ": check the plan's version history by hand");
       return planChanged("unproved");
     }
     /** handler.ts hashWait: 503 busy (asked again) until HASH_WAIT_MS after the plan's last change, then unproved() */
@@ -808,9 +824,43 @@
       const changed = Date.parse(f.modified || "");
       if (Number.isFinite(changed) && nowMs() - changed <= HASH_WAIT_MS) {
         log(op, what + ": asked again");
-        return checkBusy("busy");
+        return checkWait("busy");
       }
       return unproved(op);
+    }
+    /** handler.ts isBaseVersion: a listing's entry is the ticket's base (its bs, and bm within VERSION_SKEW_MS) */
+    function isBaseVersion(t, v) {
+      const bm = typeof t.bm === "string" ? Date.parse(t.bm) : NaN;
+      const vm = Date.parse(v.modified || "");
+      return typeof t.bs === "number" && v.size === t.bs && Number.isFinite(bm) && Number.isFinite(vm) && Math.abs(vm - bm) <= VERSION_SKEW_MS;
+    }
+    /** handler.ts shownUnder (DCR Desktop 2 9969d61): the versions of this save's size made since the ticket (never the
+        base; the newest skipped when it is `top`, the plan now) - "office": one sits on anything but the base, or on
+        nothing the listing shows; "base": each sits right on the base; "none": the listing shows none */
+    function shownUnder(t, vs, top) {
+      const at = (iso) => Date.parse(iso || "");
+      const from = vs.length > 0 && vs[0].size === top.size && Math.abs(at(vs[0].modified) - at(top.modified)) <= VERSION_SKEW_MS ? 1 : 0;
+      let shown = "none";
+      for (let i = from; i < vs.length; i++) {
+        const v = vs[i];
+        if (v.size !== t.s || !(at(v.modified) >= t.i * 1000 - SKEW_MS) || isBaseVersion(t, v)) continue;
+        if (i + 1 >= vs.length || !isBaseVersion(t, vs[i + 1])) return "office";
+        shown = "base";
+      }
+      return shown;
+    }
+    /** handler.ts overOffice: the plan `f` as read now is provably not this save (a settle about to answer not_saved,
+        a commit about to make the same upload the copy) - did this save go over an office save there before a newer one
+        landed on top? The listing says (shownUnder): "office" -> unproved with the admin's line. No listing: nothing
+        shows this save ever reached the plan (null: the caller's answer stands). Read only. -> that answer, or null */
+    function overOffice(p, t, f, op) {
+      const vs = listing(f);
+      return Array.isArray(vs) && shownUnder(t, vs, f) === "office" ? unproved(op, "crossed: not put back (newer save)") : null;
+    }
+    /** what the broker's planVersions reads of the plan's history: at most MAX_VERSIONS (newest first), or null */
+    function listing(f) {
+      const vs = versionsOf(f);
+      return Array.isArray(vs) ? vs.slice(0, MAX_VERSIONS) : null;
     }
     /** what plan_save_commit answers once Microsoft committed it AS THE COPY: the item afresh - the hash, else the size */
     function committed(p, t, found, hash) {
@@ -823,6 +873,10 @@
         401 / 403) - asked again (the demo's functions answer no Retry-After header: the uploader's own waits) */
     const checkBusy = (code) => answer(503, { error: code || "busy", message: code === "onedrive_not_authorized"
       ? "The OneDrive connection is not allowed in just now: an admin checks it." : ERR.busy[1] });
+    /** handler.ts checkWait (DCR Desktop 2's repair round 3): a 503 of the version check itself - OneDrive's hash not
+        there yet, a restore not done - says why "checking" (Portal 2 tells it from OneDrive busy before anything was
+        committed); the listing's moment of trouble does not */
+    const checkWait = (code) => answer(503, Object.assign(checkBusy(code).data, { why: "checking" }));
     /** handler.ts verify (contract addendum 3 D2 step 4; DCR Desktop 2's repair round 2): after a replace's commit (or
         one found landed - by plan_save_commit, or by plan_save_done for a deferred replace a later page settles), the
         plan afresh, then its version history: this save the newest and the base right under it - saved, verified; any
@@ -847,10 +901,13 @@
         if (vs === 429 || (vs >= 500 && vs !== 501)) return checkBusy("busy");
         vs = null;
       }
+      if (vs) vs = vs.slice(0, MAX_VERSIONS);
       if (!vs || vs.length < 2) {
         if (!ours) {
+          // this save was on the plan (Microsoft's 2xx, or found there) and is not now, and no listing shows what it went
+          // over: never the plain "changed" (DCR Desktop 2 9969d61, THE PRINCIPLE)
           log(op, "committed, but the plan has " + (proved ? "another hash" : "another size") + ": the save is sent again as a copy");
-          return planChanged("changed");
+          return unproved(op, "committed: not proved (no version history to read)");
         }
         log(op, "version history not available: unverified");
         return saved(false);
@@ -863,7 +920,11 @@
       const crossed = hasBase && !isBase;
       const topOurs = ours && top.size === it.size && near(at(top.modified), at(it.modified));
       if (!topOurs) {
-        log(op, crossed ? "crossed: not put back (newer save)" : "committed, but the newest version is not this save: the save is sent again as a copy");
+        // a newer save on top: nothing is put back (never over it). The plain "changed" only when the listing shows this
+        // save right on the base (DCR Desktop 2 9969d61: THE PRINCIPLE over CONTRACT-3 D2's "the same 409")
+        const shown = shownUnder(t, vs, it);
+        if (shown !== "base") return unproved(op, shown === "office" ? "crossed: not put back (newer save)" : "committed: not proved (this save is not in the version history)");
+        log(op, "committed, but the newest version is not this save: the save is sent again as a copy");
         return planChanged("changed");
       }
       // the newest version IS the base, byte for byte this save by the hash: an identical re-save found landed without
@@ -892,7 +953,7 @@
         return planChanged("changed");
       }
       log(op, "crossed: the office save could not be put back (" + status + "): asked again");
-      return checkBusy(status === 401 || status === 403 ? "onedrive_not_authorized" : "busy");
+      return checkWait(status === 401 || status === 403 ? "onedrive_not_authorized" : "busy");
     }
     /** the session is gone (committed earlier, the answer lost; or run out): looked for as plan_save_done does, a replace
         then checked as a commit is */
@@ -915,7 +976,16 @@
       return planChanged(why);
     }
     let refuseCopyCommit = false;        // a node test's: Microsoft will not commit a session as the copy (plan_changed)
-    const between = new Set();           // paths whose next commit meets an office save between its walk and its commit
+    const between = new Map();           // path -> "office" | "self": its next commit meets an office save (or this very
+                                         // session committed by another request of the device's) between walk and commit
+    /** what comes between a commit's walk and its commit (betweenWalkAndCommit): an office save, or the session's own
+        commit by another request (its bytes land on the plan: request 1's, before this request 2's) */
+    function meet(path, s) {
+      const what = between.get(path);
+      between.delete(path);
+      if (what === "self") s.done = planSaveLanded(s);
+      else if (what) officeSave(path);
+    }
     /** the SAME upload committed as the copy next to the plan (handler.ts asCopy) */
     function asCopy(p, s, token, t, plan, hash) {
       const where = plan || planFilesOf(p).find((x) => x.folder === t.f) || null;
@@ -968,24 +1038,16 @@
       if (s.offset !== s.size) return fail("not_saved");
       const plan = planFilesOf(p).find((x) => x.id === t.t) || null;
       if (!(plan && tagOf(plan) === t.tag)) {
-        // contract addendum 4 E3: the plan holds this save already (a commit that landed, asked again after the check's
-        // 503) - the check, never a copy
-        const held = plan ? holdsSave(p, t, plan, hash, op) : null;
-        if (held) return held;
-        log(op, plan ? "the plan changed during the upload: the same upload is committed as a copy"
+        return toCopy(p, s, token, t, plan, hash, op, plan ? "the plan changed during the upload: the same upload is committed as a copy"
           : "the plan left its project folder during the upload: the same upload is committed as a copy next to it");
-        return asCopy(p, s, token, t, plan, hash);
       }
       const movedFrom = (walked) => () => { const now = planFilesOf(p).find((x) => x.id === t.t) || null; return !now || tagOf(now) !== walked; };
       // attempt A: Example 7's PUT, If-Match the plan's tag as the walk read it - an office save between that walk and
       // the PUT (a node test's / an e2e's betweenWalkAndCommit)
       if (graph.putCommit !== "refused") {
         const moved = movedFrom(tagOf(plan));
-        if (between.delete(plan.full)) officeSave(plan.full);
-        if (graph.putIfMatch === "honoured" && moved()) {
-          log(op, "the plan changed just now (412): the same upload is committed as a copy");
-          return asCopy(p, s, token, t, plan, hash);
-        }
+        meet(plan.full, s);
+        if (graph.putIfMatch === "honoured" && moved()) return justChanged(p, s, token, t, hash, op);
         s.done = planSaveLanded(s);
         return verify(p, t, hash, op);
       }
@@ -994,23 +1056,37 @@
       log(op, "the PUT commit was refused (400): the POST commit");
       const p2 = planFilesOf(p).find((x) => x.id === t.t) || null;
       if (!(p2 && tagOf(p2) === t.tag)) {
-        const held = p2 ? holdsSave(p, t, p2, hash, op) : null;
-        if (held) return held;
-        log(op, p2 ? "the plan changed: the same upload is committed as a copy" : "the plan left its project folder: the same upload is committed as a copy next to it");
-        return asCopy(p, s, token, t, p2, hash);
+        return toCopy(p, s, token, t, p2, hash, op, p2 ? "the plan changed: the same upload is committed as a copy"
+          : "the plan left its project folder: the same upload is committed as a copy next to it");
       }
       const moved2 = movedFrom(tagOf(p2));
-      if (between.delete(p2.full)) officeSave(p2.full);
+      meet(p2.full, s);
       if (graph.postStatus) return dropped(p, token, t, hash, "Microsoft did not commit the replace (" + graph.postStatus + ")", "refused");
-      if (graph.postIfMatch === "honoured" && moved2()) {
-        log(op, "the plan changed just now (412): the same upload is committed as a copy");
-        return asCopy(p, s, token, t, p2, hash);
-      }
+      if (graph.postIfMatch === "honoured" && moved2()) return justChanged(p, s, token, t, hash, op);
       // the POST's If-Match ignored (undocumented there): it lands over the office save - verify finds it under ours
       s.done = planSaveLanded(s);
       return verify(p, t, hash, op);
     }
 
+    /** handler.ts justChanged (DCR Desktop 2 9969d61): Microsoft's 412 to a commit (attempt A's PUT, attempt B's POST) -
+        the plan changed just now, or another request of this very save committed it a moment ago: the plan read afresh
+        decides, exactly as a tag that moved does (toCopy), never the copy on the walk before the commit */
+    function justChanged(p, s, token, t, hash, op) {
+      const plan = planFilesOf(p).find((x) => x.id === t.t) || null;
+      return toCopy(p, s, token, t, plan, hash, op, plan ? "the plan changed just now (412): the same upload is committed as a copy"
+        : "the plan left its project folder just now (412): the same upload is committed as a copy next to it");
+    }
+    /** handler.ts toCopy: the plan is not as the session left it - the same upload committed as the copy next to it,
+        unless the plan holds this save already (holdsSave: the check) or its history shows this save over an office save
+        under a newer one (overOffice: "unproved") */
+    function toCopy(p, s, token, t, plan, hash, op, copying) {
+      const held = plan ? holdsSave(p, t, plan, hash, op) : null;
+      if (held) return held;
+      const over = plan ? overOffice(p, t, plan, op) : null;
+      if (over) return over;
+      log(op, copying);
+      return asCopy(p, s, token, t, plan, hash);
+    }
     /** handler.ts holdsSave (contract addendum 4 E3): the walk shows the plan's tag moved, so the same upload would be
         committed as a copy - but is the plan THIS save already (its commit landed and the answer did not get through)?
         By the hash: the check (verify), never a copy; by its size alone (OneDrive has no hash of it): hashWait. -> that
@@ -1421,8 +1497,9 @@
       /** what the demo's Microsoft does where its pages leave it open (see GRAPH): the modes given, the others as they
           were (reset: true - every one back to the documented way) -> the modes now */
       graphModes(o) { if (o && o.reset) Object.assign(graph, GRAPH); Object.keys(o || {}).forEach((k) => { if (k in GRAPH) graph[k] = o[k]; }); return Object.assign({}, graph); },
-      /** the next commit of the plan at `full` meets an office save between its walk and its commit */
-      betweenWalkAndCommit(full, on) { if (on === false) between.delete(full); else between.add(full); },
+      /** the next commit of the plan at `full` meets an office save between its walk and its commit - or, on "self",
+          this very session committed by another request of the device's just then (its retry while the first still ran) */
+      betweenWalkAndCommit(full, on) { if (on === false) between.delete(full); else between.set(full, on === "self" ? "self" : "office"); },
       /** the broker's own clock runs `ms` ahead of the demo's from now on (0: with it again) - OneDrive's 30 minutes
           without a hash (HASH_WAIT_MS) gone by, in a walk that cannot wait them -> the ms ahead */
       passTime(ms) { ahead = Math.max(0, Number(ms) || 0); return ahead; },
