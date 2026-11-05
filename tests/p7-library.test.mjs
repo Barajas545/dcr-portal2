@@ -3574,6 +3574,16 @@ test("the broker's version check waits on OneDrive (its 503 why \"checking\": On
       await fire(Array.from(timers.keys())[0]);
       assert.deepEqual([a.w.calls, a.w.bodies[1].ticket, a.w.bodies[1].hash, ROW().local, ROW().version], [["plan_save_done", "plan_save_done"], "tk99", a.hash, null, "qx:" + a.hash], error + ": then adopted");
     }
+    // the check's 503 without a Retry-After (a gateway's copy of it): in the check all the same, its own wait the
+    // shortest (checkAgainMs: 30 s) - no timer without a Retry-After (E7), the next page or the page in front asks
+    timers.clear();
+    const a3 = await landedElsewhere(79);
+    a3.w.doneQueue.push(http(503, { error: "busy", message: "OneDrive is busy just now. Try again in a minute.", why: "checking" }));
+    const e3 = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+    await settleDown();
+    const at3 = Date.parse(ROW().local.retryAt) - Date.now();
+    assert.deepEqual([e3 && e3.code, e3 && e3.retryAfter, ROW().local.state, timers.size], ["checking", undefined, "checking", 0]);
+    assert.ok(at3 > 25000 && at3 <= 30000, "its own wait: 30 s (" + at3 + ")");
     // a 503 of OneDrive's without the check's why: busy, as before - not the check's state
     timers.clear();
     const b = await landedElsewhere(76);
