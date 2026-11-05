@@ -917,11 +917,12 @@ async function main() {
         const opsC = await planOps(T);
         const barC = await T.eval("document.getElementById('ptfSay').textContent");
         const appC = await T.eval("(() => { const w = " + APP + "; return { states: w.__states.map(x => x.state), status: w.document.getElementById('statusText').textContent }; })()");
-        check("tablet (x-c, D5): both commit forms refused - the work went as a copy, and the portal says so in neutral words; the app hears no 'copy' and never says the office saved",
+        check("tablet (x-c, D5): both commit forms refused - the work went as a copy, and the portal says so in neutral words; the app hears 'sent', never 'copy', and never says the office saved",
           sc.states.some((x) => x.state === "kept") && JSON.stringify(opsC.map((x) => [x.op, x.mode || x.error])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "plan_changed"],
             ["plan_save_session", "copy"], ["plan_save_done", "copy"]]) && opsC[1].why === "refused" &&
           /^OneDrive would not replace the plan, so your work was saved as 'A267 Rev 2 - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(\d\))?\.takeoff' next to it - nothing was overwritten\.$/.test(barC) &&
-          appC.states.indexOf("copy") === -1 && !/office/i.test(appC.status), JSON.stringify({ opsC, barC, appC }));
+          appC.states.indexOf("copy") === -1 && appC.states[appC.states.length - 1] === "sent" && /^The portal sent .+ to OneDrive\.$/.test(appC.status) &&
+          !/office/i.test(appC.status), JSON.stringify({ opsC, barC, appC }));
         await shotOf(T, "plans_frame_refused_copy_tablet.png");
         await closeFrame(T);
       } finally {

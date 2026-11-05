@@ -1818,8 +1818,9 @@ async function failSend(key, file, x) {
  * OneDrive has save `file` of this plan (plan_save_done's answer `ans`; `size`: what was sent) - the records as
  * map/plan-library.js adoptSent makes them, the old files retired, the person told. `why`: "refused" when the copy
  * exists because OneDrive would not replace the plan (plan_changed {why: "refused"}, contract addendum 3 D5) - told
- * without blaming the office (refusedTold), and the takeoff app is not sent its "copy" news then (its words for a copy
- * say someone in the office saved the plan). -> {sent, mode, name}.
+ * without blaming the office (refusedTold), and the takeoff app is told "sent" then, never its "copy" news (takeoff-web's
+ * words for a copy say someone in the office saved the plan; "sent" ends its "sending" line - the frame's bar says
+ * where the work went). -> {sent, mode, name}.
  */
 async function commitSent(key, file, ans, size, why) {
   if (!ans || ans.saved !== true || Number(ans.size) !== Number(size)) {
@@ -1849,7 +1850,7 @@ async function commitSent(key, file, ans, size, why) {
   if (a.rec && ans.mode === "copy" && a.copy) {
     const noBlame = why === "refused";
     const told = noBlame ? refusedTold(ans.name) : copyTold(ans.name, deviceWord(here()));
-    if (noBlame) delete tells[key]; else news(key, "copy", { name: ans.name });
+    if (noBlame) news(key, "sent"); else news(key, "copy", { name: ans.name });
     if (frameIsOpen()) frameSay(told, "warn"); else toastOf(told, "info");
   } else if (a.rec && ans.mode === "replace") {
     news(key, "sent");

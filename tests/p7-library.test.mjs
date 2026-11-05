@@ -2466,6 +2466,7 @@ test("why OneDrive made a copy (addendum 3 D5): plan_changed {why: \"refused\"} 
     assert.deepEqual([w.bodies[2].mode, w.bodies[2].version], ["copy", "qx:AAA"], "sent again as a copy against the old base");
     assert.deepEqual(toasts, ["OneDrive would not replace the plan, so your work was saved as 'A900 Bid - iPad 2026-11-04 1030.takeoff' next to it - nothing was overwritten."]);
     assert.ok(!news.some((n) => n[0] === "copy"), "no 'copy' news to the app (its words blame an office save)");
+    assert.deepEqual(news[news.length - 1], ["sent", {}], "'sent' instead: its 'sending' line ends (the frame's bar says where the work went)");
     // an older broker (no why), or "changed": the copy words
     for (const why of [null, "changed"]) {
       toasts.length = 0;

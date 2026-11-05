@@ -739,8 +739,8 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   asked with `landed: true` and only checks; a session found gone after its last byte is asked of the broker's commit
   too, never of `plan_save_done`. A copy made because OneDrive would not replace the plan (`plan_changed` `why:
   "refused"`) is told without blaming anyone: "OneDrive would not replace the plan, so your work was saved as '<name>'
-  next to it - nothing was overwritten." (and the takeoff app is not sent its "copy" news, whose words say the office
-  saved); a changed plan, or an older broker with no `why`, keeps the copy words. A kept save without its hash (the
+  next to it - nothing was overwritten." (the takeoff app is told "sent", never its "copy" news, whose words say the
+  office saved); a changed plan, or an older broker with no `why`, keeps the copy words. A kept save without its hash (the
   spool could not load `js/quickxor.js`) is hashed again in a second worker pass before it is sent or settled; one the
   broker settles only with a hash (`not_saved` `need: "hash"`, a deferred replace past 48 hours) is never settled
   without it - it waits and is tried again. The broker's switch turned off after a save was kept (503 `save_back_off`)
