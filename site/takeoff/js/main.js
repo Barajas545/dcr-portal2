@@ -21,15 +21,15 @@ import { openAfterAsking, isPhoneOrTablet, deviceWord, PORTAL_SAFARI_IF_ASKED } 
 import {
   deliverFile, afterSave, saveFileName, isStandalone, downloadUrlKeepMs, lateArrival, STILL_COMING,
   savedStill, nextDraftHomes, draftHomeFor, HANDHELD_SAVE, REPLACE_WARNING, savesToPortal, portalNewsWords,
-  draftFate, planOfPortalCopy, portalCopyDraftKey, afterLateKept,
+  draftFate, afterLateKept, findDraft, draftKeptNow, remoteSaveBytes, remoteSaveRefused, remoteSaveRefusedWords,
 } from './core/save-route.js';
 import {
   HANDOFF_WAIT_MS, RENEW_WAIT_MS, SAVE_WAIT_MS, parsePortalHash, readyMessage, renewMessage,
   offlineMessage, openFromMessage, linkFromMessage, portalPeer, fromPeer, peerTargets, newSaveReq, askPortalToKeep,
 } from './core/portal-handoff.js';
 import {
-  detectEmbedded, plansSourceFor, EMBEDDED_IDLE, EMBEDDED_NO_KEEP, EMBEDDED_NOTHING, NO_SAVE_BACK, TO_ONEDRIVE_HINT,
-  COPY_TO_FILES,
+  detectEmbedded, plansSourceFor, EMBEDDED_IDLE, EMBEDDED_NO_KEEP, EMBEDDED_NOTHING, noSaveBackWords, TO_ONEDRIVE_HINT,
+  COPY_TO_FILES, DRAFT_OF_ANYONE,
 } from './core/embedded.js';
 import { PlansArchive } from './ui/plans-archive.js';
 import { PLANS_SOURCE } from './site-config.js';
@@ -89,6 +89,11 @@ const app = {
   // nextDraftHomes). Empty for a takeoff started from a PDF until its first
   // confirmed save.
   draftHomes: [],
+  // Inside the portal, its word for the person signed in (ptt-open's `who`):
+  // drafts are written and found under it, so on an iPad two people share
+  // one's unsaved work is never offered to the other (js/core/drafts.js
+  // draftWho). '' everywhere else, and from a portal that sends none.
+  draftWho: '',
   // The Plans Library copy the open project reads its sheets from, and the
   // lock that keeps the portal from deleting it — null for any other file.
   // See openLibraryCopy().
@@ -2684,6 +2689,11 @@ async function saveProjectOnce({ saveAs = false } = {}) {
     return;
   }
 
+  // A big plan opened over the internet on a phone or a tablet: composing it
+  // would bring every sheet into memory whole and close the app. Not even
+  // tried — the work is kept, and the person told why and what to do.
+  if (await refuseBigRemoteSave()) return;
+
   // A project opened from a Plans Library copy reads every untouched sheet
   // out of that copy as it is written. If the portal has removed or replaced
   // the copy since, those reads fail part-way through — or, where a download
@@ -2943,6 +2953,30 @@ async function saveProjectOnce({ saveAs = false } = {}) {
 }
 
 /**
+ * Save of a plan opened over the internet on a phone or a tablet, whose
+ * sheets on the server are over REMOTE_SAVE_CAP_BYTES (js/core/save-route.js
+ * remoteSaveRefused): writeProject would read every one of them whole into
+ * memory before any file could leave, and the page's process — inside the
+ * portal, the portal's page too — would be killed (review MEM-1). So it is
+ * never composed: the draft is written (a few seconds at most, as Save's
+ * own), and the person is told, in a dialog, why and what to do. Resolves
+ * whether Save was refused.
+ */
+async function refuseBigRemoteSave() {
+  const remoteBytes = remoteSaveBytes(app.pages.saveSources(), app.pages.saveRevisionSources());
+  if (!remoteSaveRefused({ handheld, remoteBytes })) return false;
+  const dirty = app.project.dirty;
+  const drafted = await Promise.race([saveDraftNow(), new Promise(r => setTimeout(() => r(false), 4000))]);
+  const words = remoteSaveRefusedWords({
+    name: app.fileName || suggestedFileName(), remoteBytes, device, embedded, dirty,
+    keptIn: drafted ? draftHomeFor(app.draftHomes, app.pages.pageCount) : '',
+  });
+  setStatus(words);
+  await D.alertDialog('Not saved', words);
+  return true;
+}
+
+/**
  * Re-point every page source at the file that was just written.
  *
  * Cheap: it re-reads the header and the index, not the sheets. Failing is not
@@ -3066,7 +3100,7 @@ async function keepChangesAsDraft(now) {
   const work = app.project.buildSaveMetadata();
   const info = { pageCount: app.pages.pageCount, name: app.fileName || '' };
   for (const key of draftKeysNow()) await putDraft(key, work, info);
-  if (now) await putDraft(draftKey(app.fileName, now.size), work, info);
+  if (now) await putDraft(draftKey(app.fileName, now.size, app.draftWho), work, info);
   await D.alertDialog('Changed since you opened it', now
     ? `${app.fileName} was replaced in the folder after you opened it — saved on `
       + 'another computer, or brought down by OneDrive. The drawings of the copy '
@@ -3167,8 +3201,8 @@ async function adoptIfInArchive(handle, file) {
 function draftKeysNow() {
   const homes = app.draftHomes || [];
   return homes.length
-    ? homes.map(h => draftKey(h.name, h.size))
-    : [draftKey(app.fileName || suggestedFileName(), app.fileSize || 0)];
+    ? homes.map(h => draftKey(h.name, h.size, app.draftWho))
+    : [draftKey(app.fileName || suggestedFileName(), app.fileSize || 0, app.draftWho)];
 }
 
 /** Write the draft now, under every key it may be found by. Resolves whether one was written. */
@@ -3188,6 +3222,25 @@ async function saveDraftNow() {
 }
 
 /**
+ * window.TakeoffApp.saveDraftNow(), for the portal's frame: its Close awaits
+ * this (up to 3 s) before it removes this page, which then gets no time to
+ * write the draft its pagehide starts. Resolves true once the draft is kept,
+ * or when nothing needed keeping; false when it could not be written
+ * (js/core/save-route.js draftKeptNow). Never rejects.
+ */
+async function keepDraftForPortal() {
+  try {
+    return await draftKeptNow({
+      dirty: app.project.dirty,
+      hasWork: !!app.pages.pageCount || [...app.project.allItems()].length > 0,
+      write: saveDraftNow,
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Offer back the draft of the file just opened, if there is one.
  *
  * `portal`: the plan came from the portal (or this page is inside it). Its
@@ -3199,32 +3252,20 @@ async function saveDraftNow() {
  * finds the work drafted under the plan it was saved from: the same bytes,
  * so the same size (planOfPortalCopy — or, when the broker cut the plan's
  * name to fit, the one draft of a plan the copy's name begins, at that size:
- * portalCopyDraftKey).
+ * portalCopyDraftKey). Inside the portal only the signed-in person's drafts
+ * are found (app.draftWho); one kept before the portal said who is offered
+ * with a word that it may be someone else's, and never dropped (`legacy`:
+ * findDraft).
  */
 async function offerDraftRestore(file, { portal = false } = {}) {
-  const own = draftKey(file.name, file.size);
-  const keys = [own];
-  const plan = portal ? planOfPortalCopy(file.name) : '';
-  if (plan) keys.push(draftKey(plan, file.size));
-  let key = '';
-  let draft = null;
-  for (const k of keys) {
-    const d = await getDraft(k);
-    if (d && d.payload) { key = k; draft = d; break; }
-  }
-  // A copy whose name does not give its plan's back: the broker cut a long
-  // name to fit (or tidied its end). Its plan is looked for among the
-  // drafts' keys — the names, no draft read (portalCopyDraftKey).
-  if (!draft && plan) {
-    const k = portalCopyDraftKey(file.name, file.size, await listDraftKeys());
-    const d = k ? await getDraft(k) : null;
-    if (d && d.payload) { key = k; draft = d; }
-  }
-  if (!draft) return;
+  const found = await findDraft({ name: file.name, size: file.size, portal, who: app.draftWho },
+    { get: getDraft, keys: listDraftKeys });
+  if (!found) return;
+  const { key, draft, own, legacy } = found;
 
   // A draft older than the file has already been saved into it — when the
   // file's date is this app's own save (draftFate).
-  if (draftFate({ savedAt: draft.savedAt, fileModified: file.lastModified, byDate: !portal }) === 'drop') {
+  if (!legacy && draftFate({ savedAt: draft.savedAt, fileModified: file.lastModified, byDate: !portal }) === 'drop') {
     await dropDraft(key);
     return;
   }
@@ -3244,9 +3285,13 @@ async function offerDraftRestore(file, { portal = false } = {}) {
     'Unsaved work found',
     `There is takeoff for "${file.name}" from ${when} that was never saved `
     + `into the file — the tab was most likely closed or reloaded first.`
+    + (legacy ? `\n\n${DRAFT_OF_ANYONE}` : '')
     + `\n\nRestore it?`,
     { okLabel: 'Restore it' });
-  if (!ok) { await dropDraft(key); return; }
+  if (!ok) {
+    if (!legacy) await dropDraft(key);
+    return;
+  }
 
   app.project.loadFrom({
     metadata: draft.payload,
@@ -3268,7 +3313,9 @@ async function offerDraftRestore(file, { portal = false } = {}) {
   setStatus('Unsaved work restored. Save it into the file to keep it.');
   // Found under the plan a copy was made from: kept under this file's own
   // keys from now on — written there first, then taken from the plan's.
-  if (key !== own && await saveDraftNow()) await dropDraft(key);
+  // One kept before the portal said who is written under this person's
+  // keys too, and left where it was.
+  if (key !== own && await saveDraftNow() && !legacy) await dropDraft(key);
 }
 
 // Hidden, not unloading: this is the event a discarded tab actually gets.
@@ -5012,6 +5059,9 @@ async function receiveFromPortal(nonce) {
   // From here on the peer is the address the plan came from, and nothing else.
   const pinned = { ...peer, origin };
   tellPortalOffline(pinned, nonce);
+  // Inside the portal the drafts are the signed-in person's: set before the
+  // plan opens, so its draft is looked for under that person's word.
+  if (embedded) app.draftWho = plan.who || '';
   if (plan.kind === 'file') {
     // Wrapped only to carry the plan's name and the version's date; no bytes
     // are copied. The copy is the portal's: Save never writes into it (Save
@@ -5059,9 +5109,14 @@ async function receiveFromPortal(nonce) {
     app.portal = { peer: pinned, nonce, kind: 'link', name: plan.name, canSave: false, hold: null, epoch: openEpoch };
     // A plan opened over the internet is never handed back. Inside the
     // portal, where a plan saved on the device can be, the way its work may
-    // reach OneDrive is said now (NO_SAVE_BACK: only where the portal lets
-    // this person save plans back). In a tab of its own nothing is promised.
-    if (embedded) setStatus(`Opened ${plan.name} from OneDrive, over the internet. ${NO_SAVE_BACK}`);
+    // reach OneDrive is said now (only where the portal lets this person save
+    // plans back), with what Save does here — for a plan too big to make a
+    // file of on this device, that it keeps the changes instead
+    // (noSaveBackWords). In a tab of its own nothing is promised.
+    if (embedded) {
+      const remoteBytes = remoteSaveBytes(app.pages.saveSources(), app.pages.saveRevisionSources());
+      setStatus(`Opened ${plan.name} from OneDrive, over the internet. ${noSaveBackWords({ remoteBytes, device, handheld })}`);
+    }
   }
 }
 
@@ -5080,8 +5135,9 @@ function portalLinkOpen() {
  *
  * While it waits the bar says so and no update may reload the page
  * (portalSaving). The portal may say it is at it — 'keeping', with how far
- * (it copies a big plan into its storage first) — and each word starts the
- * wait again; how far goes on the bar ("Saving to the portal… 45%").
+ * (it copies a big plan into its storage first) — and each one that got
+ * further starts the wait again; how far goes on the bar ("Saving to the
+ * portal… 45%").
  * After 'kept' the portal may say how its send to OneDrive goes; that is
  * shown on the status line, and nothing waits for it — except a 'copy' (the
  * plan changed in the office meanwhile, and the save was filed as a separate
@@ -5104,6 +5160,13 @@ async function handToPortal(blob, name, { pages = 0, epoch = openEpoch } = {}) {
   const after = { copy: false, said: '' };
   try {
     const file = new File([blob], name, { type: 'application/octet-stream' });
+    // If the portal keeps it, these very bytes are what reopening the plan
+    // hands over — also when its 'kept' comes after this page has gone (the
+    // wait ran out, then the frame was closed): so the drafts written from
+    // now on go under this file too (a pending home: review LW-5).
+    if (epoch === openEpoch) {
+      app.draftHomes = nextDraftHomes(app.draftHomes, { name, size: file.size, pages }, { pending: true });
+    }
     const { ending, why, stop, late } = await askPortalToKeep({
       peer: p.peer, nonce: p.nonce, req: newSaveReq(), name, size: file.size, file,
     }, {
@@ -5883,6 +5946,10 @@ window.TakeoffApp = {
   app, viewport, renderer, controller, itemsPanel, thumbs, calloutPreview,
   goToPage, loadProjectFile, importPdfFile, saveProject, runAction, newProject,
   requestDraw, pageFinalLabel,
+  // The portal's frame, before its Close removes this page: keep the draft
+  // now (Promise<boolean>; contract addendum 2 C2b). Same-origin callers only
+  // — another site cannot reach this window's properties at all.
+  saveDraftNow: keepDraftForPortal,
   // Plan revisions — the same entry points the panel and the bar call, so a
   // test drives the real path rather than a parallel one.
   versionView, overlay, versionBar, revisionsPanel,

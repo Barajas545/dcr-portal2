@@ -60,6 +60,8 @@
  * the real download and the real "Your file is ready" dialog.
  */
 
+import { draftKey, draftKeyTail, draftWho } from './drafts.js';
+
 /**
  * Above this the share sheet is not offered at all: the file downloads.
  *
@@ -280,6 +282,98 @@ const MB = n => `${Math.round(Number(n) / 1048576)} MB`;
 export const HANDHELD_SAVE = `Save gives you a new file: through the share sheet up to ${MB(SHARE_CAP_BYTES)} `
   + '(choose Save to Files), and above that, or where the browser cannot share a file, as a download into '
   + 'Downloads (Files › Downloads on an iPad).';
+
+/* ── a big plan opened over the internet, on a phone or a tablet ────────────
+
+   A plan opened over the internet (js/core/remote-file.js: the portal had no
+   room to keep it on the device, or a link) has its sheets on the server.
+   Composing a save of it reads every one of them WHOLE into memory first
+   (js/core/takeoff-file.js encodePageSource: RemoteSlice.blob() is
+   `new Blob([await arrayBuffer()])`), before the share sheet or the download
+   is reached. On a phone or a tablet that is the page's process killed —
+   inside the portal, the portal's page with it, and any send it had going —
+   and Save can never succeed (review MEM-1). Until a writer that streams the
+   sheets exists, such a save is not composed at all above a cap: the work is
+   kept as a draft, and the person is told plainly why and what to do. */
+
+/**
+ * Above this many bytes of sheets still on the server, a phone or a tablet
+ * does not compose a save of a plan opened over the internet. 300 MB: twice
+ * the share sheet's cap (whose copies are three times the file), and about a
+ * fifth of what kills the page's process on most iPhones, beside the decoded
+ * sheets the app already holds. The plan sets this is about are 500 MB to
+ * 2.3 GB.
+ */
+export const REMOTE_SAVE_CAP_BYTES = 300 * 1024 * 1024;
+
+/**
+ * How many bytes a save would bring down whole first: every page and
+ * revision source that is a slice not held as a Blob (a RemoteSlice — the one
+ * encodePageSource reads with blob()). A plan on the device is a Blob, and
+ * costs nothing; new sheets are in memory already.
+ */
+export function remoteSaveBytes(pageSources = [], revisionSources = []) {
+  let n = 0;
+  const count = s => {
+    if (!s || s.kind !== 'slice' || !s.data) return;
+    if (typeof Blob !== 'undefined' && s.data instanceof Blob) return;
+    n += Math.max(0, Number(s.data.size) || 0);
+  };
+  for (const s of Array.isArray(pageSources) ? pageSources : []) count(s);
+  for (const set of Array.isArray(revisionSources) ? revisionSources : []) {
+    for (const s of Array.isArray(set) ? set : []) count(s);
+  }
+  return n;
+}
+
+/** Whether Save refuses to compose: a phone or a tablet, over REMOTE_SAVE_CAP_BYTES of sheets on the server. */
+export function remoteSaveRefused({ handheld = false, remoteBytes = 0, cap = REMOTE_SAVE_CAP_BYTES } = {}) {
+  return handheld === true && Number(remoteBytes) > cap;
+}
+
+/** What Save does for such a plan, said where HANDHELD_SAVE would be (a plan opened over the internet). */
+export function remoteSaveWords({ remoteBytes = 0, device = 'device' } = {}) {
+  return `Save cannot make a file of this plan on this ${device}: it was opened over the internet, and all `
+    + `${MB(remoteBytes)} of its drawings would have to come into the ${device}'s memory at once, which closes the app. `
+    + `Save keeps your changes on this ${device} instead.`;
+}
+
+/**
+ * What Save does on a phone or a tablet for the plan open — HANDHELD_SAVE,
+ * unless it is a plan opened over the internet that Save cannot make a file
+ * of here (remoteSaveRefused): never a promise of a file that cannot come.
+ */
+export function handheldSaveWords({ remoteBytes = 0, device = 'device', handheld = true } = {}) {
+  return remoteSaveRefused({ handheld, remoteBytes }) ? remoteSaveWords({ remoteBytes, device }) : HANDHELD_SAVE;
+}
+
+/**
+ * The words when Save refused to compose such a plan (main.js
+ * refuseBigRemoteSave): what happened, where the work is, and what to do.
+ *
+ *   name      the plan's file name
+ *   keptIn    the name of a file whose reopening offers the draft back
+ *             (draftHomeFor), '' when there is none
+ *   dirty     there were unsaved changes
+ *   embedded  inside the portal (its 📐 and Plans Library), or a tab of its own
+ */
+export function remoteSaveRefusedWords({
+  name = 'the plan', remoteBytes = 0, device = 'device', embedded = false, keptIn = '', dirty = true,
+} = {}) {
+  const what = `Not saved: ${name} was opened over the internet, and Save cannot make a file of it on this ${device} — `
+    + `all ${MB(remoteBytes)} of its drawings would have to come into the ${device}'s memory at once, which closes the app.`;
+  if (dirty && !keptIn) return `${what} Your changes are still here, in this page only: keep it open.`;
+  const kept = dirty
+    ? `Your changes are kept on this ${device}: opening ${keptIn} again offers them back.`
+    : 'There were no unsaved changes, so nothing is lost.';
+  const restore = dirty ? ', choose “Restore it” when it offers your changes' : '';
+  const how = embedded
+    ? `To save it: free some room on this ${device} (the portal's Plans Library can remove plans you no longer `
+      + `need), open the plan again from 📐 so the portal keeps it on this ${device}${restore}, then Save.`
+    : `To save it: open the plan from a copy on this ${device} instead — pick it in the Files app (the OneDrive `
+      + `app's files)${dirty ? ', choose “Restore it” if it offers your changes' : ''} — then Save.`;
+  return `${what} ${kept} ${how}`;
+}
 
 /**
  * Said wherever Save to Files is suggested. The file keeps the name it was
@@ -561,14 +655,27 @@ export function savedStill({ epochAtSave = 0, epochNow = 0, changesAtCompose, ch
  *             write through a handle: in place, or Save As to a new file the
  *             project carries on in); false for a share or a download, whose
  *             new file may sit anywhere, or beside the one it was opened from
+ *   pending   true for a file that is not known to hold the project yet: a
+ *             save handed to the portal, as it is posted (main.js
+ *             handToPortal). The portal keeps exactly those bytes, so that is
+ *             the file the plan is reopened as if it keeps them — even when
+ *             its 'kept' comes after this page has gone (the wait ran out and
+ *             the frame was closed: review LW-5). Nothing is dropped for it:
+ *             the save may yet be refused, and the newest saved file is still
+ *             the one the portal holds then.
  *
- * Kept: the one it was opened from (the first), and the newest saved one.
+ * Kept: the one it was opened from (the first), and the newest saved one —
+ * and, for a pending file, that file as well (`pending: true`), in place of
+ * any earlier pending one. A save that is confirmed leaves no pending file.
  */
-export function nextDraftHomes(homes = [], saved = null, { replaces = false } = {}) {
+export function nextDraftHomes(homes = [], saved = null, { replaces = false, pending = false } = {}) {
   const ok = h => h && typeof h.name === 'string' && h.name && Number(h.size) > 0;
   const key = h => `${h.name}|${Number(h.size)}`;
-  const list = replaces ? [] : (Array.isArray(homes) ? homes.filter(ok).slice(0, 1) : []);
-  if (ok(saved)) list.push({ name: saved.name, size: Number(saved.size), pages: Number(saved.pages) || 0 });
+  const held = replaces ? [] : (Array.isArray(homes) ? homes.filter(h => ok(h) && !h.pending) : []);
+  const list = pending ? [...held.slice(0, 1), ...held.slice(1).slice(-1)] : held.slice(0, 1);
+  if (ok(saved)) {
+    list.push({ name: saved.name, size: Number(saved.size), pages: Number(saved.pages) || 0, ...(pending ? { pending: true } : {}) });
+  }
   const seen = new Set();
   return list.filter(h => (seen.has(key(h)) ? false : (seen.add(key(h)), true)));
 }
@@ -583,6 +690,32 @@ export function draftHomeFor(homes = [], pageCount = 0) {
   const n = Number(pageCount) || 0;
   const h = (Array.isArray(homes) ? homes : []).find(x => x && x.name && Number(x.size) > 0 && Number(x.pages) === n);
   return h ? h.name : '';
+}
+
+/**
+ * The answer of window.TakeoffApp.saveDraftNow() (main.js), which the
+ * portal's frame calls — same-origin, from its page — before its Close takes
+ * this page away (contract addendum 2 C2b, review FRAME-1). A frame its page
+ * removes gets no time after its pagehide: the draft that event starts, an
+ * IndexedDB write, never lands. So the portal asks first, and waits for it
+ * (up to 3 s).
+ *
+ *   dirty    the project has unsaved changes
+ *   hasWork  there is anything to keep (a sheet, or an item)
+ *   write()  writes the draft under every key it may be found by, resolving
+ *            whether it was written (main.js saveDraftNow)
+ *
+ * Resolves true once the draft is kept, or when nothing needed keeping;
+ * false only when there was work to keep and it could not be written (a full
+ * or blocked store). Never rejects.
+ */
+export async function draftKeptNow({ dirty = false, hasWork = false, write } = {}) {
+  if (dirty !== true || !hasWork) return true;
+  try {
+    return (await write()) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** How much later than its draft a file may be dated and still be the save that draft went into. */
@@ -685,12 +818,14 @@ export function portalCopyKind(copy, plan) {
  * one whose name it only begins (cut), next. '' when there is none, or more
  * than one could be: a wrong match would need a plan of that beginning AND
  * of exactly those bytes' size, and two of them give none, never a guess.
+ * `who`: only that person's drafts (draftKey's "|@<who>"), or with none,
+ * only the drafts of no person.
  */
-export function portalCopyDraftKey(copy, size, keys) {
+export function portalCopyDraftKey(copy, size, keys, who = '') {
   const n = Number(size);
   if (typeof copy !== 'string' || !PORTAL_COPY_RE.test(copy.normalize('NFC'))) return '';
   if (!Number.isSafeInteger(n) || n <= 0 || !Array.isArray(keys)) return '';
-  const tail = `|${n}`;
+  const tail = draftKeyTail(n, who);
   const found = { whole: [], cut: [] };
   for (const k of keys) {
     if (typeof k !== 'string' || !k.endsWith(tail)) continue;
@@ -701,6 +836,55 @@ export function portalCopyDraftKey(copy, size, keys) {
   }
   const best = found.whole.length ? found.whole : found.cut;
   return best.length === 1 ? best[0] : '';
+}
+
+/**
+ * The draft to offer back for a file just opened (main.js offerDraftRestore),
+ * with no draft read but the one found:
+ *
+ *   name, size  the file's
+ *   portal      a plan the portal handed over, or this page is inside it: a
+ *               separate copy the portal made of a save also finds the draft
+ *               of the plan it was made from (planOfPortalCopy, and among the
+ *               keys portalCopyDraftKey)
+ *   who         inside the portal, its word for the person signed in
+ *               (js/core/drafts.js draftWho): the drafts are that person's,
+ *               and another person's are never found — on an iPad two
+ *               people share, one's unsaved work is never offered to the
+ *               other, nor dropped by the other's "no" (review PRICE-4)
+ *   store       { get(key) → the draft or null, keys() → every key }
+ *
+ * A draft written before the portal said who (a key with no person) is still
+ * found for a person who has none of their own — `legacy`: offered, never
+ * dropped (it may be another person's, and dropping it would lose their
+ * work), for this release.
+ *
+ * → { key, draft, own, legacy } or null — `own` the key the file's own
+ * draft goes under now.
+ */
+export async function findDraft({ name, size, portal = false, who = '' } = {}, { get, keys } = {}) {
+  const me = draftWho(who);
+  const own = draftKey(name, size, me);
+  const plan = portal ? planOfPortalCopy(name) : '';
+  const look = async w => {
+    const exact = [draftKey(name, size, w)];
+    if (plan) exact.push(draftKey(plan, size, w));
+    for (const k of exact) {
+      const d = await get(k);
+      if (d && d.payload) return { key: k, draft: d };
+    }
+    // A copy whose name does not give its plan's back: the broker cut a long
+    // name to fit (or tidied its end) — looked for among the keys.
+    if (!plan) return null;
+    const k = portalCopyDraftKey(name, size, await keys(), w);
+    const d = k ? await get(k) : null;
+    return d && d.payload ? { key: k, draft: d } : null;
+  };
+  const mine = await look(me);
+  if (mine) return { ...mine, own, legacy: false };
+  if (!me) return null;
+  const old = await look('');
+  return old ? { ...old, own, legacy: true } : null;
 }
 
 /**

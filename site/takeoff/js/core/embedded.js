@@ -42,7 +42,7 @@
  */
 
 import { parsePortalHash, framedBySameSite } from './portal-handoff.js';
-import { HANDHELD_SAVE } from './save-route.js';
+import { HANDHELD_SAVE, handheldSaveWords } from './save-route.js';
 
 /** sessionStorage: this tab's frame has been the portal's (the hand-over's address is gone after the first load). */
 export const EMBEDDED_KEY = 'ptt.embedded.v1';
@@ -114,6 +114,28 @@ export const TO_ONEDRIVE_HINT = 'A plan opened over the internet is not saved ba
   + 'If the portal lets you save plans back, open it again from 📐 when this device has room to keep it: '
   + 'Save then hands it to the portal.';
 export const NO_SAVE_BACK = `${TO_ONEDRIVE_HINT} ${HANDHELD_SAVE}`;
+
+/**
+ * The words said when such a plan opens: NO_SAVE_BACK — unless it is too big
+ * for Save to make a file of it on this phone or tablet (js/core/save-route.js
+ * remoteSaveRefused: its sheets would all come into memory at once), when
+ * what Save does there is said instead (review MEM-1). Never a promise of a
+ * file that cannot come.
+ *
+ *   remoteBytes  its sheets' bytes on the server (remoteSaveBytes)
+ */
+export function noSaveBackWords({ remoteBytes = 0, device = 'device', handheld = true } = {}) {
+  return `${TO_ONEDRIVE_HINT} ${handheldSaveWords({ remoteBytes, device, handheld })}`;
+}
+
+/**
+ * Said in "Unsaved work found" inside the portal, for a draft kept before the
+ * portal said who is signed in (js/core/save-route.js findDraft `legacy`):
+ * it may be another person's, and saying no leaves it as it is.
+ */
+export const DRAFT_OF_ANYONE = 'It was kept on this device before the portal told this app who is signed in, so on a '
+  + 'device more than one person uses it may be someone else\'s work. Restore it only if it is yours: Cancel leaves it '
+  + 'as it is.';
 
 /** The fallback offered beside a save the portal did not keep: P1's share sheet or download, under its own name. */
 export const COPY_TO_FILES = 'Save a copy to Files';
