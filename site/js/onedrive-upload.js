@@ -122,7 +122,7 @@ export function createUploader(parts) {
     return {
       id: j.id, projectId: j.projectId, name: j.name, label: j.label, folder: j.folder, relDir: j.relDir, size: j.size,
       sent: j.sent, pct: j.size ? Math.min(100, Math.round((j.sent / j.size) * 100)) : 0, state: j.state, error: j.error,
-      tries: j.tries, result: j.result, landed: !!j.landed, code: j.code || "",
+      tries: j.tries, result: j.result, landed: !!j.landed, code: j.code || "", retryAfter: j.retryAfter || null,
       canRetry: (j.state === "failed" || j.state === "cancelled") && !j.landed,
     };
   }
@@ -351,8 +351,11 @@ export function createUploader(parts) {
         if (stopped(j)) return null;
         if (RETRYABLE.indexOf(code) !== -1) {
           // the bytes are in the session: Retry asks the broker to commit them again (never a second upload: the session
-          // and its offset are kept, so the chunk loop finds every byte sent and goes straight to the commit)
-          setState(j, "failed", { error: "Your save is sent; OneDrive's last step did not get through. Retry.", code });
+          // and its offset are kept, so the chunk loop finds every byte sent and goes straight to the commit). A
+          // Retry-After the broker gave (its version check waiting on OneDrive) goes with it: the Plans Library asks
+          // again on a timer then (contract addendum 4 E7)
+          setState(j, "failed", { error: "Your save is sent; OneDrive's last step did not get through. Retry.", code,
+            retryAfter: e && Number(e.retryAfter) > 0 ? Number(e.retryAfter) : null });
           return null;
         }
         // not_saved, or a refusal (a ticket or an address the broker does not take): nothing of this session counts -
@@ -450,6 +453,7 @@ export function createUploader(parts) {
     j.state = "waiting";
     j.error = "";
     j.code = "";
+    j.retryAfter = null;
     j.tries = 0;
     emitNow({ type: "waiting", job: pub(j) });
     pump();

@@ -72,9 +72,12 @@
                                      crossed is put back) -> planSaveDone's answer (mode "replace" or "copy") plus
                                      `verified` on a replace (true: the history shows this save right over the base; false:
                                      the history could not say); 409 plan_changed {retry: "copy", why: "changed" |
-                                     "refused"}: the session is dropped - send the save again with mode "copy" and the old
-                                     base ("refused": OneDrive would not replace the plan, nobody saved anything; an older
-                                     broker says no why: "changed"). `landed` true: the last chunk answered the file
+                                     "refused" | "unproved"}: the session is dropped - send the save again with mode "copy"
+                                     and the old base ("refused": OneDrive would not replace the plan, nobody saved
+                                     anything; "unproved": OneDrive gave no hash, so the broker could not prove whether
+                                     the plan holds this save over an office save - nothing was put back, contract
+                                     addendum 4 E1; an older broker says no why: "changed"). Without `hash`: 409
+                                     not_saved {need: "hash"} (E1 - js/plan-library.js never asks so). `landed` true: the last chunk answered the file
                                      (OneDrive did not wait for the broker's commit) - the broker only checks it. The
                                      upload URL goes to the broker (its own sessions' only: it checks it against the
                                      ticket) and nowhere else;
@@ -85,8 +88,10 @@
                                      version history as a commit (DCR Desktop 2's repair round 2: a crossing it put back
                                      is its 409 not_saved; js/plan-library.js adopts such a replace only with it); 409
                                      not_saved when OneDrive did not get the whole file (send it again) - with
-                                     `need: "hash"` in its info
-                                     when a deferred replace's ticket is past 48 hours and no hash came (addendum 3 D4).
+                                     `need: "hash"` in its info for a deferred replace's ticket without a hash (at any
+                                     age since contract addendum 4 E1; js/plan-library.js never asks so), and `why:
+                                     "unproved"` when OneDrive gave no hash to prove what the plan holds (E1: the save
+                                     goes again as a copy).
                                      `hash`: the save's quickXorHash (js/quickxor.js) - with OneDrive's own, the broker's
                                      proof (a byte-identical re-save is saved, an office save of the same size is not);
                                      the ticket settles for 30 days;
@@ -116,8 +121,8 @@ export const ITEM_ID = /^[A-Za-z0-9!_.-]{8,128}$/;
 
 // the broker's own error codes (handler.ts ERRORS): a 404 whose body carries one is the broker's answer, not the gateway's
 // (not_saved: plan_save_done's / plan_save_commit's "OneDrive did not get the whole file", {need: "hash"} when only the
-// save's hash can settle it; plan_changed: plan_save_commit's "the plan changed while the save was sent" with {retry:
-// "copy", why} - the save is sent again as a separate file; save_back_off: plan_save_session while the broker's switch
+// save's hash can settle it, {why: "unproved"} when OneDrive gave none to prove it; plan_changed: plan_save_commit's "the
+// plan changed while the save was sent" with {retry: "copy", why} - the save is sent again as a separate file; save_back_off: plan_save_session while the broker's switch
 // ONEDRIVE_PLAN_SAVE does not allow the project - contract addendum 3 D1)
 export const CONTRACT = Object.freeze(["invalid", "unauthorized", "forbidden", "not_downloadable", "not_found", "method_not_allowed",
   "other_folder", "not_a_folder", "not_this_upload", "too_large", "file_type", "server_error", "onedrive_failed",

@@ -57,6 +57,7 @@ import {
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
   purgeText, lostSave, onlineNote, hashOk, sendWaitMs, refusedTold, saveBackOffWords, uncheckedReplace, uncheckedWords,
+  needHashWords, unprovedTold, uncheckedTold, checkAgainMs,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord, planWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -1367,7 +1368,12 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
    LW-7 - and past that the save is looked for by its hash alone), so a save that landed is never sent twice, nor made
    into a copy of itself. A deferred replace settled that way is taken only on the broker's version check (its answer
    carries `verified`; a crossed office save it put back answers not_saved, and the save goes again as a copy): never
-   on an older broker's word alone (uncheckedReplace - repair round 2, S1).
+   on an older broker's word alone (uncheckedReplace - repair round 2, S1). Contract addendum 4: a replace is never
+   started, committed or settled without the save's hash (E1: none even after hashKept - the save waits, need_hash); a
+   check the broker could not prove (why "unproved": OneDrive gave no hash) sends the save again as a copy, told in
+   words that never say "nothing was overwritten" (unprovedTold); a replace adopted that nobody checked against office
+   saves - verified false, or found by its hash alone - is told so (uncheckedTold, E2); and a settle's or commit's 503
+   with a Retry-After is asked again on a timer while the page is open (E7: askAgainLater).
 
    While a save is kept or sent the frame's Close asks first (plan-frame.js guard) and leaving the page asks too. */
 
@@ -1382,14 +1388,24 @@ let upl = null;
 /** At most one "keeping" word to the app this often while a save is kept (takeoff-web needs one within 120 s). */
 export const BEAT_MS = 2000;
 let transportFn = null;
+let uploaderParts = null;     // a test's more parts of the uploader (useTransport)
 
-/** A test's stand-in for OneDrive's upload address (the page's: XMLHttpRequest, js/onedrive-upload.js xhrTransport). */
-export function useTransport(fn) {
+/** A test's stand-in for OneDrive's upload address (the page's: XMLHttpRequest, js/onedrive-upload.js xhrTransport);
+    `parts`: more of the uploader's parts a test sets (its maxTries, say). */
+export function useTransport(fn, parts) {
   transportFn = fn || null;
+  uploaderParts = parts || null;
   upl = null;
 }
 
 const here = () => (HAS ? window : null);
+
+/** A save that waits for its hash (contract addendum 4 E1: a replace is never started, committed or settled without
+    the save's quickXorHash; the spool and hashKept's second pass could not work it out): never final, a long wait
+    (map/plan-library.js LONG_WAIT), its local copy never dropped. */
+function needHash() {
+  return err("need_hash", needHashWords(deviceWord(here())));
+}
 
 /** A refusal of the broker's, in the words of a save (the broker's own for the rest). */
 function sendError(x) {
@@ -1431,10 +1447,13 @@ async function copiesNamed(projectId, name, size) {
     name, hash, mode?, why?} - name: the plan's file name as the record has it (the broker's way to the plan when an
     office save made it a new item: review Q3-1); hash: the save's quickXorHash; mode "copy" once the broker dropped a
     replace (plan_changed), and why its "why" (contract addendum 3 D5: "refused" - OneDrive would not replace the plan,
-    nobody saved anything - or "changed"; the words the person is told follow it). */
+    nobody saved anything - or "changed"; the words the person is told follow it; contract addendum 4 E1: "unproved" -
+    the broker could not prove whether the plan holds this save over an office save). A replace is never started,
+    committed or settled without the hash (E1): without one the save waits (need_hash) - a copy may go without. */
 const planBroker = {
   session: async function (j) {
     const m = j.meta || {};
+    if (m.mode !== "copy" && !hashOk(m.hash)) throw needHash();
     let s;
     try {
       s = await onedrive.planSaveSession({ projectId: j.projectId, itemId: m.itemId, version: m.base, size: j.size, modified: m.savedAt, name: m.name,
@@ -1448,7 +1467,7 @@ const planBroker = {
         if (!c || !hasLocal(c) || c.local.file !== m.file) return undefined;
         const sends = (Array.isArray(c.local.sends) ? c.local.sends : []).concat([Object.assign({ file: m.file, ticket: s.ticket, mode: s.mode, name: s.name,
           size: j.size, at: nowIso(), hash: hashOk(m.hash) ? m.hash : null }, s.commit === "broker" ? { commit: "broker" } : {},
-          s.mode === "copy" && m.why === "refused" ? { why: "refused" } : {})]).slice(-MAX_SENDS);
+          s.mode === "copy" && (m.why === "refused" || m.why === "unproved") ? { why: m.why } : {})]).slice(-MAX_SENDS);
         return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
       });
     } catch (e) { /* a note only: the send goes on */ }
@@ -1462,18 +1481,29 @@ const planBroker = {
   // from this page's memory (never stored).
   commit: async function (j) {
     const m = j.meta || {};
+    // (the session was started with the hash: a commit without one is never asked - contract addendum 4 E1)
+    if (!hashOk(m.hash)) throw needHash();
     try {
       return await onedrive.planSaveCommit({ projectId: j.projectId, itemId: m.itemId, ticket: j.session.ticket, uploadUrl: j.session.uploadUrl, hash: m.hash,
         landed: j.chunkLanded === true });
     } catch (x) {
       if (x && x.code === "plan_changed") {
-        // the broker dropped the session (the plan changed, or OneDrive would not replace it): sent again at once as a
-        // separate file, against the same base (the broker's {retry: "copy"}); its why picks the words (an older broker
-        // says none: "changed")
+        // the broker dropped the session (the plan changed, or OneDrive would not replace it, or it could not prove
+        // whether the plan holds this save over an office save): sent again at once as a separate file, against the
+        // same base (the broker's {retry: "copy"}); its why picks the words (an older broker says none: "changed")
+        const why = x.info && x.info.why;
         m.mode = "copy";
-        m.why = x.info && x.info.why === "refused" ? "refused" : "changed";
+        m.why = why === "refused" || why === "unproved" ? why : "changed";
         x.restart = true;
+        // ("unproved" is kept with the save: a later send of it goes as a copy too, in those words - E1)
+        if (m.why === "unproved") {
+          try {
+            await mutate("plans", m.key, (c) => (c && hasLocal(c) && c.local.file === m.file ? Object.assign({}, c, { local: Object.assign({}, c.local, { why: "unproved" }) }) : undefined));
+          } catch (e) { /* a note only: this send goes on as the copy */ }
+        }
       }
+      // the broker takes a deferred replace only with the hash (E1): waits, never final (the session is not kept)
+      if (x && x.code === "not_saved" && x.info && x.info.need === "hash") throw needHash();
       throw x;
     }
   },
@@ -1488,7 +1518,7 @@ const planBroker = {
 
 function uploader() {
   if (upl) return upl;
-  upl = createUploader({ send: transportFn || xhrTransport(), broker: planBroker });
+  upl = createUploader(Object.assign({}, uploaderParts || {}, { send: transportFn || xhrTransport(), broker: planBroker }));
   upl.onChange(onUploads);
   return upl;
 }
@@ -1818,7 +1848,7 @@ async function failSend(key, file, x) {
   changed(key);
   news(key, "failed", { why: x && x.message });
   if (!frameIsOpen()) return;
-  if (x && (x.code === "save_back_off" || x.code === "unchecked")) frameSay(x.message, "warn");
+  if (x && (x.code === "save_back_off" || x.code === "unchecked" || x.code === "need_hash")) frameSay(x.message, "warn");
   else frameSay("Your save is kept on this " + deviceWord(here()) + " but was not sent to OneDrive: " + String((x && x.message) || "").replace(/[.\s]+$/, "") + ".", "warn");
 }
 
@@ -1828,7 +1858,11 @@ async function failSend(key, file, x) {
  * exists because OneDrive would not replace the plan (plan_changed {why: "refused"}, contract addendum 3 D5) - told
  * without blaming the office (refusedTold), and the takeoff app is told "sent" then, never its "copy" news (takeoff-web's
  * words for a copy say someone in the office saved the plan; "sent" ends its "sending" line - the frame's bar says
- * where the work went). -> {sent, mode, name}.
+ * where the work went). "unproved" (contract addendum 4 E1: the broker could not prove whether the plan holds an
+ * earlier send of this save over an office save): the copy told in words that never say "nothing was overwritten"
+ * (unprovedTold), the app told "sent" likewise. A replace nobody could check against office saves (E2: `why`
+ * "unchecked" - found by its hash alone -, or the broker's `verified: false`): told so (uncheckedTold), never the plain
+ * "it replaced the plan". -> {sent, mode, name}.
  */
 async function commitSent(key, file, ans, size, why) {
   if (!ans || ans.saved !== true || Number(ans.size) !== Number(size)) {
@@ -1839,7 +1873,7 @@ async function commitSent(key, file, ans, size, why) {
   await downloadReleased(key, 15000);
   let a = null;
   await mutate("plans", key, function (c) {
-    a = adoptSent(c, file, ans, nowIso());
+    a = adoptSent(c, file, ans, nowIso(), why);
     return a.rec || undefined;
   });
   if (!a) a = { rec: null, copy: null, old: [file] };
@@ -1856,13 +1890,16 @@ async function commitSent(key, file, ans, size, why) {
   for (const n of a.old) await retire(n);
   changed(key);
   if (a.rec && ans.mode === "copy" && a.copy) {
-    const noBlame = why === "refused";
-    const told = noBlame ? refusedTold(ans.name) : copyTold(ans.name, deviceWord(here()));
+    const noBlame = why === "refused" || why === "unproved";
+    const told = why === "unproved" ? unprovedTold(ans.name, deviceWord(here())) : why === "refused" ? refusedTold(ans.name) : copyTold(ans.name, deviceWord(here()));
     if (noBlame) news(key, "sent"); else news(key, "copy", { name: ans.name });
     if (frameIsOpen()) frameSay(told, "warn"); else toastOf(told, "info");
   } else if (a.rec && ans.mode === "replace") {
     news(key, "sent");
-    if (frameIsOpen()) frameSay("Your save is in OneDrive: it replaced the plan there.");
+    if (why === "unchecked" || ans.verified === false) {
+      const told = uncheckedTold(deviceWord(here()));
+      if (frameIsOpen()) frameSay(told, "warn"); else toastOf(told, "info");
+    } else if (frameIsOpen()) frameSay("Your save is in OneDrive: it replaced the plan there.");
   }
   return { sent: true, mode: ans.mode, name: ans.name };
 }
@@ -1907,38 +1944,57 @@ async function landedByHash(r, s) {
     is taken only when the broker checked it by the plan's version history (its answer carries `verified`; a crossed
     office save it put back is its 409 not_saved: the session is over, the save goes again - a copy): one it did not
     check (an older broker: uncheckedReplace) is never adopted - the save waits ("unchecked"), its session kept, and
-    the broker is asked again later (repair round 2, S1). */
+    the broker is asked again later (repair round 2, S1). Contract addendum 4: a deferred replace's session is never
+    settled without its hash (E1 - none, even after hashKept: the current save's waits, need_hash; an older save's is
+    over); one the broker could not prove (not_saved {why: "unproved"}: OneDrive gave no hash) is over and marks the save
+    `why: "unproved"` - it goes again as a copy, told in those words; and a replace found by its hash alone (a ticket
+    that no longer unseals: past the broker's 30 days, or its secret rotated) is adopted in the unchecked words (E2). */
 async function settle(key, skip) {
   const r = await get("plans", key);
   if (!r || !hasLocal(r)) return null;
   for (const s of (Array.isArray(r.local.sends) ? r.local.sends : []).slice()) {
     if (!s || !s.ticket || s.ticket === skip) continue;
     const own = s.file === r.local.file;
-    let ans = null, byHash = false;
-    try {
-      ans = await landedSave(r, s);
-    } catch (x) {
-      const code = x && x.code;
-      if (code === "not_saved" && x.info && x.info.need === "hash" && own) {
-        const y = err("need_hash", "This save can be checked only with its hash, which this " + deviceWord(here()) + " could not work out just now. It stays here and is tried again later.");
+    let ans = null, byHash = false, ask = true;
+    // (E1: a deferred replace settled only with its hash - never asked without it)
+    if (s.commit === "broker" && s.mode !== "copy" && !hashOk(s.hash)) {
+      if (own) {
+        const y = needHash();
         await failSend(key, r.local.file, y);
         throw y;
       }
-      // a ticket past the broker's 30 days: looked for by the save's hash alone (else the session is over)
+      ask = false;
+    }
+    try {
+      if (ask) ans = await landedSave(r, s);
+    } catch (x) {
+      const code = x && x.code;
+      if (code === "not_saved" && x.info && x.info.need === "hash" && own) {
+        const y = needHash();
+        await failSend(key, r.local.file, y);
+        throw y;
+      }
+      // the broker could not prove whether the plan holds this save over an office save (E1): the session is over, and
+      // the save goes again as a copy, told so
+      if (code === "not_saved" && x.info && x.info.why === "unproved") {
+        await mutate("plans", key, (c) => (c && hasLocal(c) ? Object.assign({}, c, { local: Object.assign({}, c.local, { why: "unproved" }) }) : undefined));
+      }
+      // a ticket that no longer unseals (past the broker's 30 days; its secret rotated): looked for by the save's hash
+      // alone (else the session is over)
       if (code === "invalid" && x.field === "ticket") { ans = await landedByHash(r, s); byHash = true; }
       // not there (not_saved), a ticket run out or a plan no longer there: the session is over; OneDrive or the
       // connection: asked again next time
       else if (code !== "not_saved" && code !== "invalid" && code !== "not_found") throw x;
     }
     if (ans && Number(ans.size) === Number(s.size)) {
-      // (found by its hash alone past the broker's 30 days: no ticket is left to check it with - the plan holds exactly
-      // these bytes, nobody saved over them since)
+      // (found by its hash alone: no ticket is left to check it with - the plan holds exactly these bytes, which is
+      // true, but nobody checked them against office saves: the unchecked words, E2)
       if (!byHash && uncheckedReplace(s, ans)) {
         const y = err("unchecked", uncheckedWords(deviceWord(here())));
         await failSend(key, r.local.file, y);
         throw y;
       }
-      const out = await commitSent(key, s.file, ans, s.size, s.why);
+      const out = await commitSent(key, s.file, ans, s.size, byHash && ans.mode === "replace" ? "unchecked" : s.why);
       if (s.file === r.local.file) return out;
       continue;
     }
@@ -1984,6 +2040,16 @@ async function sendNow(key) {
   const file = r.local.file;
   // a session resumed in this page carries the save's hash from now on (hashed again by hashKept)
   if (park && park.meta && !hashOk(park.meta.hash) && hashOk(r.local.hash)) park.meta.hash = r.local.hash;
+  // after a settle the broker could not prove (contract addendum 4 E1, "unproved"): sent again as a copy, told so
+  const unproved = r.local.why === "unproved";
+  // no replace is ever started or committed without the save's hash (E1): it waits on this device until one is
+  // worked out (hashKept, at the next send) - a copy may go without
+  const asCopy = park && park.meta ? park.meta.mode === "copy" : unproved;
+  if (!asCopy && !hashOk(r.local.hash) && !(park && park.meta && hashOk(park.meta.hash))) {
+    const x = needHash();
+    await failSend(key, file, x);
+    throw x;
+  }
   if (!baseOk(r.local.base)) {
     const x = err("bad_base", "This save cannot be matched to a version of the plan in OneDrive. It stays on this device: use Save a copy to Files in the takeoff app.");
     await failSend(key, file, x);
@@ -2008,7 +2074,8 @@ async function sendNow(key) {
   if (park && up.retry(park.id)) { id = park.id; meta = park.meta; }
   else {
     if (park) up.remove(park.id);
-    meta = { key, itemId: r.itemId, base: r.local.base, file, savedAt: r.local.savedAt, ticket: "", name: r.name, hash: hashOk(r.local.hash) ? r.local.hash : null };
+    meta = Object.assign({ key, itemId: r.itemId, base: r.local.base, file, savedAt: r.local.savedAt, ticket: "", name: r.name, hash: hashOk(r.local.hash) ? r.local.hash : null },
+      unproved ? { mode: "copy", why: "unproved" } : {});
     id = up.add({ projectId: r.projectId, file: f, name: r.name, label: r.number || "", meta }).id;
   }
   delete parked[key];
@@ -2029,7 +2096,8 @@ async function sendNow(key) {
   if (end.state === "cancelled") { up.remove(id); changed(key); return { cancelled: true }; }
   // not sent: its session kept for a resume in this page when it lives (a connection that did not come back)
   if (end.canRetry && end.code !== "not_saved") parked[key] = { id, file, meta }; else up.remove(id);
-  const x = err(end.code || "not_sent", end.error || "The save was not sent to OneDrive.");
+  // (a commit the broker answered 503 with a Retry-After carries it: asked again on a timer - contract addendum 4 E7)
+  const x = err(end.code || "not_sent", end.error || "The save was not sent to OneDrive.", end.retryAfter ? { retryAfter: end.retryAfter } : undefined);
   await failSend(key, file, x);
   throw x;
 }
@@ -2042,6 +2110,8 @@ async function sendNow(key) {
 export function sendSaved(itemId, opts) {
   const key = keyOf(itemId);
   if (sendCalls[key]) return sendCalls[key];
+  // a send of this plan's save runs now: its timer (E7, below) is done with
+  stopAgain(key);
   const manual = !!(opts && opts.manual);
   const p = (async function () {
     if (!PLAN_SAVE_BACK) throw err("off", "Sending saves to OneDrive is switched off for now: the save stays on this device.");
@@ -2059,8 +2129,66 @@ export function sendSaved(itemId, opts) {
   })();
   sendCalls[key] = p;
   const clear = function () { if (sendCalls[key] === p) delete sendCalls[key]; };
-  p.then(clear, clear);
+  p.then(clear, function (x) { clear(); askAgainLater(key, itemId, x); });
   return p;
+}
+
+/* A settle or a commit the broker answered 503 with a Retry-After (its version check waits on OneDrive's hash, a
+   restore did not go through; contract addendum 4 E7) is asked again on a timer while this page is open - not only at
+   the next page or the person's Retry: at the Retry-After, at least 30 s and at most the long wait (map/plan-library.js
+   checkAgainMs), its save's retryAt moved to then (so the timer's send is due, and another page waits as long). One timer
+   per send (a plan's save); it stops when the page hides, or when a send of that save runs (it settles then, or fails
+   again - another 503 with a Retry-After sets a new one). */
+const againTimers = {};    // key -> the timer's id
+let againClock = null;     // a test's stand-in for setTimeout / clearTimeout ({set(fn, ms), clear(id)}: useAgainClock)
+let againDoc = null, againWin = false;
+/** A test's clock for E7's timers (null: the page's). */
+export function useAgainClock(c) {
+  againClock = c || null;
+}
+const clockOf = () => againClock || { set: (fn, ms) => setTimeout(fn, ms), clear: (t) => clearTimeout(t) };
+function stopAgain(key) {
+  if (!Object.prototype.hasOwnProperty.call(againTimers, key)) return;
+  try { clockOf().clear(againTimers[key]); } catch (e) { /* gone */ }
+  delete againTimers[key];
+}
+function stopAllAgain() {
+  Object.keys(againTimers).forEach(stopAgain);
+}
+function pageHidden() {
+  return typeof document !== "undefined" && !!document && document.visibilityState === "hidden";
+}
+function hookAgain() {
+  // the page hidden (another app in front, the screen locked) or left: every timer stops (the next page, the page in
+  // front again with its own sends, or the person's Retry asks again)
+  const d = typeof document !== "undefined" ? document : null;
+  if (d && d !== againDoc && typeof d.addEventListener === "function") {
+    againDoc = d;
+    d.addEventListener("visibilitychange", function () { if (d.visibilityState === "hidden") stopAllAgain(); });
+  }
+  if (!againWin && HAS && typeof window.addEventListener === "function") {
+    againWin = true;
+    window.addEventListener("pagehide", stopAllAgain);
+  }
+}
+async function askAgainLater(key, itemId, x) {
+  const ra = x && Number(x.retryAfter);
+  if (!(ra > 0) || pageHidden()) return;
+  const ms = checkAgainMs(ra);
+  try {
+    const at = new Date(Date.now() + ms).toISOString();
+    const c = await mutate("plans", key, (r) => (r && hasLocal(r) ? Object.assign({}, r, { local: Object.assign({}, r.local, { retryAt: at }) }) : undefined));
+    if (!c || !hasLocal(c)) return;
+  } catch (e) { return; }
+  // another send of it began meanwhile (a new save kept, a Retry), or the page hid: no timer
+  if (sendCalls[key] || pageHidden()) return;
+  hookAgain();
+  stopAgain(key);
+  againTimers[key] = clockOf().set(function () {
+    delete againTimers[key];
+    if (pageHidden()) return;
+    sendSaved(itemId).catch(function () { /* the row says why (another 503 sets the next timer) */ });
+  }, ms);
 }
 
 /** This person's saves waiting here, sent one at a time (maybeCheck); a failure of OneDrive's or the connection's

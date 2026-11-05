@@ -47,7 +47,11 @@
    * sendWaitMs(code, fails)    how long a failed send waits (LONG_WAIT: the broker's switch off, a broker not deployed);
    * refusedTold / saveBackOffWords  the words of a copy OneDrive would not replace, and of a save the switch holds;
    * uncheckedReplace / uncheckedWords  a deferred replace a later page found landed that the broker did not check by
-                                the plan's version history (never adopted: it waits), and its words.
+                                the plan's version history (never adopted: it waits), and its words;
+   * needHashWords / unprovedTold / uncheckedTold  the words of a save that waits for its hash (contract addendum 4 E1),
+                                of a copy the broker could not prove went over nothing (E1's "unproved"), and of a
+                                replace adopted that nobody could check against office saves (E2);
+   * checkAgainMs(retryAfter)   when a check the broker answered 503 with a Retry-After is asked again (E7).
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -377,12 +381,16 @@ export function projectBatches(records, n) {
       state     "waiting" | "sending" | "failed" (a "sending" no window is running is waiting again);
       error, code, fails, retryAt   the last failed send and when it is tried again by itself;
       notSaved  how often OneDrive said it did not get this save whole (409 not_saved): past NOT_SAVED_MAX it waits;
-      sends     [{file, ticket, mode, name, size, at, hash, commit}]: sessions this device opened whose end it never heard (the page
+      sends     [{file, ticket, mode, name, size, at, hash, commit, why?}]: sessions this device opened whose end it never heard (the page
                 closed after the last byte, say) - settled with plan_save_done before anything is sent again, so a
                 save that landed is never sent twice (nor made into a copy of itself). The ticket is the broker's sealed
-                word for plan_save_done, never an upload address: those stay in the page's memory.}
-   and `sent` {mode: "replace" | "copy" | "lost", name, at, was?} the last one's outcome, shown a while (SENT_NOTE_MS);
-   `was` (lost only): the save as it was, until a later check confirms its file is gone (lostSave). */
+                word for plan_save_done, never an upload address: those stay in the page's memory. `why` (a copy):
+                "refused" or "unproved" - the words it is told in;
+      why?      "unproved": a settle the broker could not prove (not_saved {why: "unproved"}, contract addendum 4 E1) -
+                the save goes again as a copy, told in those words (kept by a later save of the same opening).}
+   and `sent` {mode: "replace" | "copy" | "lost", name, at, was?, why?} the last one's outcome, shown a while
+   (SENT_NOTE_MS); `was` (lost only): the save as it was, until a later check confirms its file is gone (lostSave);
+   `why` "unproved" (a copy): the row never says "nothing was overwritten". */
 
 /** How long "Sent" / "Saved as a separate file" stays on a row after the send. */
 export const SENT_NOTE_MS = 3 * 24 * 3600 * 1000;
@@ -398,9 +406,20 @@ export const NOT_SAVED_MAX = 2;
     final: the broker's switch turned off (save_back_off, contract addendum 3 D1 - it is turned on again by hand), a
     broker older than this page (not_deployed: its 400 invalid for the field "op", D6 - deployed later) and a deferred
     replace a later page found in OneDrive that the broker did not check (unchecked: uncheckedReplace - a broker older
-    than its repair round 2, checked once that one is deployed). */
-export const LONG_WAIT = Object.freeze(["save_back_off", "not_deployed", "unchecked"]);
+    than its repair round 2, checked once that one is deployed), and a save that waits for its hash (need_hash: the
+    spool and the second worker pass could not work it out - contract addendum 4 E1: a replace is never sent, committed
+    or settled without it; the local copy is never dropped). */
+export const LONG_WAIT = Object.freeze(["save_back_off", "not_deployed", "unchecked", "need_hash"]);
 export const LONG_WAIT_MS = 30 * 60 * 1000;
+/** A check the broker answered 503 with a Retry-After (its version check waiting on OneDrive's hash, a restore that did
+    not go through) is asked again on a timer while the page is open (contract addendum 4 E7): at the Retry-After, at
+    least this, at most LONG_WAIT_MS. */
+export const CHECK_AGAIN_MIN_MS = 30 * 1000;
+/** The timer's wait for a Retry-After of `retryAfter` seconds (E7). */
+export function checkAgainMs(retryAfter) {
+  const s = Number(retryAfter);
+  return Math.min(LONG_WAIT_MS, Math.max(CHECK_AGAIN_MIN_MS, Number.isFinite(s) && s > 0 ? s * 1000 : 0));
+}
 
 /** The wait before a failed send (`code`, its `fails`-th failure) goes again by itself: backoffMs, and at least
     LONG_WAIT_MS for a LONG_WAIT code. */
@@ -443,14 +462,16 @@ export function baseOk(v) {
 /**
  * The record once a save is kept here (`file`: its spooled copy, `size` its bytes, `hash` their quickXorHash) ->
  * {rec, old}: `old` is an earlier save it replaces (its file goes; a session opened for it stays in `sends` to be
- * settled). `base` stays the first save's: everything after it was done on that version too.
+ * settled). `base` stays the first save's: everything after it was done on that version too - and so does an
+ * "unproved" mark (`why`: the broker could not prove whether an earlier save of it went over an office save - contract
+ * addendum 4 E1 - so this one goes as a copy too, told in those words).
  */
 export function withSave(rec, file, size, nowIso, base, hash) {
   const prev = hasLocal(rec) ? rec.local : null;
   const sends = prev && Array.isArray(prev.sends) ? prev.sends.slice(-MAX_SENDS) : [];
   return {
-    rec: Object.assign({}, rec, { sent: null, local: { file, base: prev ? prev.base : base || rec.version, savedAt: nowIso, size: Number(size) || 0,
-      hash: hashOk(hash) ? hash : null, state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends } }),
+    rec: Object.assign({}, rec, { sent: null, local: Object.assign({ file, base: prev ? prev.base : base || rec.version, savedAt: nowIso, size: Number(size) || 0,
+      hash: hashOk(hash) ? hash : null, state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends }, prev && prev.why === "unproved" ? { why: "unproved" } : {}) }),
     old: prev && prev.file !== file ? prev.file : "",
   };
 }
@@ -533,8 +554,10 @@ export function keptAs(rec, f) {
  *     downloads OneDrive's version by itself once nothing waits here), the saved bytes become a record of their own for
  *     the copy (`copy`: it opens on this device with no download), and `sent` says so;
  *   no record (removed meanwhile): nothing kept, the sent copy goes.
+ * `why` "unproved" (a copy sent because the broker could not prove whether the plan holds an earlier send of it over an
+ * office save - contract addendum 4 E1): `sent` keeps it, so the row never says "nothing was overwritten".
  */
-export function adoptSent(rec, file, ans, nowIso) {
+export function adoptSent(rec, file, ans, nowIso, why) {
   if (!rec) return { rec: null, copy: null, old: [file] };
   const mine = hasLocal(rec) && rec.local.file === file;
   const replace = ans.mode === "replace" && ans.id === rec.itemId;
@@ -557,7 +580,7 @@ export function adoptSent(rec, file, ans, nowIso) {
       copy: null, old,
     };
   }
-  const sent = { mode: "copy", name: String(ans.name || ""), id: String(ans.id || ""), at: nowIso };
+  const sent = Object.assign({ mode: "copy", name: String(ans.name || ""), id: String(ans.id || ""), at: nowIso }, why === "unproved" ? { why: "unproved" } : {});
   const local = mine ? null : hasLocal(rec) ? Object.assign({}, rec.local, { sends: rest(rec.local) }) : rec.local || null;
   const copy = mine ? { key: rec.owner + "|" + ans.id, owner: rec.owner, itemId: ans.id, projectId: rec.projectId, number: rec.number,
     projectTitle: rec.projectTitle, name: ver.name, folder: rec.folder, file, size: ver.size, modified: ver.modified, version: ver.version,
@@ -581,6 +604,31 @@ export function uncheckedReplace(s, ans) {
 export function uncheckedWords(device) {
   return "This save reached OneDrive, but the portal's OneDrive connection could not check yet that it did not cover an office save. It stays on this " +
     (device || "device") + " and is checked again later.";
+}
+
+/** The words of a save that waits for its hash (contract addendum 4 E1: a replace is never sent, committed or settled
+    without the save's quickXorHash - this device could not work it out yet): the row's and the frame bar's. */
+export function needHashWords(device) {
+  return "This save is getting ready to send - it waits on this " + (device || "device") + ".";
+}
+
+/** What the person is told when the save became a separate file because the broker could not prove whether an earlier
+    send of it went over an office save (plan_changed / not_saved `why: "unproved"`, contract addendum 4 E1: OneDrive
+    gave no hash): never "nothing was overwritten" - the plan may hold this device's bytes over an office save. */
+export function unprovedTold(name, device) {
+  const d = device || "device";
+  return "Your work was saved as '" + String(name || "") + "' next to the plan. OneDrive could not show whether your " + d +
+    "'s version went over an office save - if someone saved this plan in the office while your " + d +
+    " was sending, ask them to check the plan's version history in OneDrive.";
+}
+
+/** What the person is told when a replace is adopted that nobody could check against office saves (contract addendum 4
+    E2): the broker answered `verified: false` (no version history to read), or the save was found in OneDrive by its
+    hash alone (its ticket no longer unseals: a rotated secret, or past the broker's 30 days). It did replace the plan -
+    that much is true - but never "nothing was overwritten". */
+export function uncheckedTold(device) {
+  return "Your save is in OneDrive: it replaced the plan there. It could not be checked against office saves this time - if someone saved this plan " +
+    "in the office while your " + (device || "device") + " was sending, ask them to check the plan's version history in OneDrive.";
 }
 
 /** A send in progress: 0-99 (100 only once OneDrive said it has it). */
@@ -607,7 +655,7 @@ export function saveStateOf(rec, live, now, elsewhere) {
   const s = rec.sent;
   const t = Date.parse((s && s.at) || "");
   if (!s || !isFinite(t) || now - t >= SENT_NOTE_MS || t > now + 60 * 1000) return null;
-  if (s.mode === "copy") return { state: "copy", name: String(s.name || "") };
+  if (s.mode === "copy") return Object.assign({ state: "copy", name: String(s.name || "") }, s.why === "unproved" ? { why: "unproved" } : {});
   if (s.mode === "lost") return { state: "lost" };
   return { state: "sent" };
 }
@@ -623,8 +671,15 @@ export function saveText(st, device) {
   if (st.state === "failed" && st.code === "save_back_off") return saveBackOffWords(d);
   // a save in OneDrive the broker did not check (uncheckedReplace): never "Not sent"
   if (st.state === "failed" && st.code === "unchecked") return uncheckedWords(d);
+  // a save waiting for its hash (contract addendum 4 E1): nothing to retry - it goes once this device has worked it out
+  if (st.state === "failed" && st.code === "need_hash") return needHashWords(d);
   if (st.state === "failed") return "Not sent — tap to retry" + (st.why ? " (" + String(st.why).replace(/[.\s]+$/, "") + ")" : "");
   if (st.state === "sent") return "Sent to OneDrive";
+  // a copy the broker could not prove went over nothing (E1's "unproved"): never "nothing was overwritten"
+  if (st.state === "copy" && st.why === "unproved") {
+    return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — OneDrive could not show whether your " + d +
+      "'s version went over an office save: check the plan's version history in OneDrive";
+  }
   if (st.state === "copy") return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — nothing was overwritten";
   if (st.state === "lost") return "The save kept on this " + d + " was lost: the browser cleared this site's storage";
   return "";
