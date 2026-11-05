@@ -46,6 +46,8 @@
     offline: (() => { try { return sessionStorage.getItem(SS_OFFLINE) === "1"; } catch (e) { return false; } })(),
     colleagues: ls.get(LS_COLLEAGUES) !== "0",
     latency: 70,
+    // the least time one chunk of an upload to the demo's OneDrive takes (setUploadDelay: an e2e's slow send)
+    uploadMs: 0,
   };
   // "offline" in the demo is what a phone without signal reports too: navigator.onLine is false, so the
   // pages say "no signal" and the upload queue waits for the "online" event, as on a real phone
@@ -814,7 +816,7 @@
     const size = body && body.size !== undefined ? body.size : 0;
     if (method === "PUT" && size) {
       const steps = Math.max(1, Math.min(12, Math.ceil(size / (256 * 1024))));
-      const total = Math.min(4000, (size / UPLOAD_SPEED) * 1000);
+      const total = Math.max(state.uploadMs, Math.min(4000, (size / UPLOAD_SPEED) * 1000));
       for (let i = 1; i <= steps; i++) {
         await sleep(total / steps);
         if (state.offline) throw new TypeError("Failed to fetch (demo: offline)");
@@ -1123,6 +1125,8 @@
     pcStep: () => (engine.p6 ? engine.p6.pc.step() : null), answerChats: () => (engine.p6 ? engine.p6.pc.answerChats() : 0),
     isOffline: () => state.offline,
     setLatency: (ms) => { state.latency = Math.max(0, Number(ms) || 0); },
+    /** every chunk sent to the demo's OneDrive takes at least this long (0: as fast as its made-up speed) */
+    setUploadDelay: (ms) => { state.uploadMs = Math.max(0, Number(ms) || 0); },
     opsCount: () => ops.length,
   };
   if (typeof window !== "undefined") console.info("%cDCR Portal 2 demo mode%c made-up data, no network to Supabase (window.DCR2Demo)", "background:#e07a1f;color:#fff;padding:2px 6px;border-radius:4px", "");

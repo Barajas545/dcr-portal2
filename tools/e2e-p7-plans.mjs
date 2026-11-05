@@ -25,13 +25,22 @@
      shows the two sheets; a ready from the page itself or with another word is never answered; (vii) a first visit:
      the frame's page never reloads (the copy's own worker first) and its #portal=<word> arrives; (ii) an edit (the
      app's own undoable step), and Close asks first; (iii) the app's own File › Save -> "Saving to the portal…" with
-     "keeping" -> "kept" -> the app marks the project saved -> the demo's OneDrive gets it (plan_save_session /
-     plan_save_done) -> "sent" on the app's status line; the record holds exactly the bytes the app saved and OneDrive
-     got, the edit in them (no plan_link, no download), and a later check takes OneDrive's hash with no plan_link; a
-     ptt-save from the page itself is never heard; (iv) the office saves the plan (officeSave), and the next Save of
-     the same opening becomes a separate file: said on the frame's bar and on the app's status line, the plan's record
-     untouched, the copy a record of its own; the menu's row says so after Close; (viii) a second opening on that page
-     (the portal's dialog host made already): Close's question answered by real taps, and the app keeps its draft first. (v) A person with prices but without
+     "keeping" -> "kept" -> the app marks the project saved -> the demo's OneDrive gets it as DCR Desktop 2's broker
+     takes a replace since the review round (contract addendum 2): plan_save_session with the plan's name, every chunk
+     202, plan_save_commit with the session's own address and the save's quickXorHash -> "sent" on the app's status
+     line; the record holds exactly the bytes the app saved and OneDrive got, the edit in them (no plan_link, no
+     download), and a later check takes OneDrive's REAL hash of them with no plan_link; a ptt-save from the page itself
+     is never heard; (iv) the office saves the plan (officeSave), and the next Save of the same opening becomes a
+     separate file: said on the frame's bar and on the app's status line, the plan's record untouched, the copy a record
+     of its own; the menu's row says so after Close; (viii) a second opening on that page (the portal's dialog host made
+     already): Close's question answered by real taps, and the app's own TakeoffApp.saveDraftNow keeps its draft before
+     its frame goes. (ix) the review round's walks, each on a plan of its own: an office save that lands WHILE the save
+     goes up -> the same upload becomes a copy, said in the portal and the app, the office's save still the plan; a
+     desktop-style save (the old item into Backups, a new one on the name) before the Save -> a copy found by name; a
+     byte-identical re-save -> saved, one session and one commit, no loop; two openings of one plan in two tabs -> the
+     second Save refused in plain words while the first's kept save waits, which then goes whole; Close while dirty
+     during a running send -> the danger question, the send finishes, and the draft survives (the admin's reopen offers
+     it); and the per-person word: a second price person on the same tablet is not offered the first's draft. (v) A person with prices but without
      "Can upload to OneDrive" (the accountant): the app opens without canSave and its Save goes to the share sheet (a
      stand-in: headless Chrome has none, and the frame is given Safari's lack of file pickers), nothing handed to the
      portal or sent. (vi) A tablet without prices: 📐 says "Plans are for the people who see prices", and nothing is
@@ -238,15 +247,19 @@ async function main() {
       " adopted: r.adopted || null, expect: !!r.expect, dl: r.dl || null })); })()");
     /** every broker op the page asks from now on (the demo's functions.invoke) */
     const watchOps = (p) => p.eval("(() => { const c = DCR2Demo.engine; if (!c.__opsWatched) { const inv = c.invoke; c.invoke = function (ctx, name, body) {" +
-      " if (name === 'onedrive' && body) window.__ops.push(body.op); return inv.apply(this, arguments); }; c.__opsWatched = true; } window.__ops = []; return true; })()");
+      " const r = inv.apply(this, arguments); if (name === 'onedrive' && body) { window.__ops.push(body.op);" +
+      " window.__opsSeen.push({ op: body.op, body: JSON.parse(JSON.stringify(body)), status: r && r.status, data: r && r.data ? JSON.parse(JSON.stringify(r.data)) : null }); }" +
+      " return r; }; c.__opsWatched = true; } window.__ops = []; window.__opsSeen = []; return true; })()");
+    /** the quickXorHash (site/js/quickxor.js, in the demo's bundle) of a stored or posted Blob, in the page */
+    const QXOF = "(async (b) => { const h = new DCR2QuickXor.QuickXorHash(); for (let a = 0; a < b.size; a += 8388608) h.update(new Uint8Array(await b.slice(a, a + 8388608).arrayBuffer())); return h.base64(); })";
     /** a made-up but real takeoff project as the demo's plan of `number` (this page): composed by the copy's own writer */
-    const putFixture = (p, number, title) => p.eval("(async () => { const { writeProject } = await import('/takeoff/js/core/takeoff-file.js');" +
+    const putFixture = (p, number, title, plan) => p.eval("(async () => { const { writeProject } = await import('/takeoff/js/core/takeoff-file.js');" +
       " const sheet = async (label, hue) => { const c = new OffscreenCanvas(1200, 800); const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 1200, 800);" +
       " g.strokeStyle = 'hsl(' + hue + ' 60% 35%)'; g.lineWidth = 6; g.strokeRect(40, 40, 1120, 720); g.fillStyle = '#111'; g.font = 'bold 40px sans-serif'; g.fillText(label, 70, 110);" +
       " return { kind: 'png', data: new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()) }; };" +
       " const blob = await writeProject({ metadata: { project_name: " + JSON.stringify(title) + ", annotations: {}, measurements: {}, page_labels: ['A1', 'A2'] }," +
       " pageSources: [await sheet('A1 MADE UP', 210), await sheet('A2 MADE UP', 20)] });" +
-      " return DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').setPlanFixture(" + JSON.stringify(number) + ", blob); })()");
+      " return DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').setPlanFixture(" + JSON.stringify(number) + ", blob" + (plan ? ", " + JSON.stringify(plan) : "") + "); })()");
     /** a JS dialog in the walk (the app's or the portal's) is answered at once and noted (never blocks the walk) */
     const answerDialogs = (p) => {
       p.dialogs = [];
@@ -256,6 +269,11 @@ async function main() {
         p.call("Page.handleJavaScriptDialog", { accept: false }).catch(() => null);
       });
     };
+    /** the takeoff app's drafts on this site (takeoff-web js/core/drafts.js): [{key, client}] */
+    const DRAFTS = "(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('ptt-drafts'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
+      " if (!d.objectStoreNames.contains('drafts')) { d.close(); return []; } const keys = await new Promise((res) => { const q = d.transaction('drafts').objectStore('drafts').getAllKeys(); q.onsuccess = () => res(q.result); });" +
+      " const vals = await new Promise((res) => { const q = d.transaction('drafts').objectStore('drafts').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
+      " return keys.map((k, i) => ({ key: String(k), client: vals[i] && vals[i].payload ? vals[i].payload.client_name || null : null })); })";
     /** the frame's app (its window, from the page: one site) */
     const APP = "document.getElementById('ptfFrame').contentWindow";
     /** the project page of the sandbox A267, its 📐 there */
@@ -376,8 +394,16 @@ async function main() {
         s1.dirty === false && s1.status.some((t) => /the portal sends it to OneDrive/.test(t)) && /^The portal sent .+ to OneDrive\.$/.test(s1.now), JSON.stringify({ status: s1.status, now: s1.now }));
       const r1 = (await records(T)).find((r) => r.itemId === fx.id);
       const ops1 = await T.eval("window.__ops");
-      check("tablet (iii): sent with one session and its check - no plan_link, no download", ops1.indexOf("plan_save_session") !== -1 && ops1.indexOf("plan_save_done") !== -1 &&
-        ops1.indexOf("plan_link") === -1, JSON.stringify(ops1));
+      const seen1 = await T.eval("window.__opsSeen.filter(x => /^plan_save_/.test(x.op))");
+      const sess1 = seen1.find((x) => x.op === "plan_save_session");
+      const comm1 = seen1.find((x) => x.op === "plan_save_commit");
+      const hash1 = await T.eval("(async () => " + QXOF + "(window.__saveFiles[window.__saveFiles.length - 1]))()");
+      check("tablet (iii): sent as the broker takes a replace now - one session (the plan's name with it, commit 'broker'), then the broker's commit with the session's own address and the save's quickXorHash; no plan_save_done, no plan_link",
+        JSON.stringify(seen1.map((x) => x.op)) === JSON.stringify(["plan_save_session", "plan_save_commit"]) && ops1.indexOf("plan_link") === -1 &&
+        sess1.body.name === fx.name && sess1.data.mode === "replace" && sess1.data.commit === "broker" &&
+        comm1.body.upload_url === sess1.data.upload_url && comm1.body.ticket === sess1.data.ticket && comm1.body.hash === hash1 && comm1.data.mode === "replace",
+        JSON.stringify({ ops1, sess: sess1 && { name: sess1.body.name, mode: sess1.data && sess1.data.mode, commit: sess1.data && sess1.data.commit },
+          commit: comm1 && { same: comm1.body.upload_url === (sess1 && sess1.data.upload_url), hash: comm1.body.hash, mode: comm1.data && comm1.data.mode }, hash1 }));
       const same1 = await T.eval("(async () => { const L = await import('/js/plan-library.js'); const f = await (await (await (await navigator.storage.getDirectory())" +
         ".getDirectoryHandle('plan-library')).getFileHandle(" + JSON.stringify(r1 ? r1.file : "x") + ")).getFile();" +
         " const sent = window.__saveFiles[window.__saveFiles.length - 1]; const od = DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').planBlobOf(" + JSON.stringify(fx.id) + ");" +
@@ -397,12 +423,13 @@ async function main() {
       // a later check (the Plans Library's Check now, here in the page): OneDrive's hash of the same bytes is taken as the
       // version - no plan_link, nothing downloaded
       await T.eval("window.__ops = []; true");
+      await T.eval("DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').hashed().then(() => true)");
       const chk = await T.eval("(async () => { const L = await import('/js/plan-library.js'); const s = await L.checkUpdates(); await L.clearHolds(); await L.autoWork(); return s; })()");
       const r2 = (await records(T)).find((r) => r.itemId === fx.id);
       const ops2 = await T.eval("window.__ops");
       check("tablet (iii): a later check takes OneDrive's hash of the saved bytes as the version, and needs no plan_link",
-        !!r2 && /^qx:demo-saved-/.test(r2.version) && !r2.expect && r2.file === r1.file && ops2.indexOf("plan_link") === -1 && ops2.indexOf("plans_list") !== -1,
-        JSON.stringify({ chk, ops2, version: r2 && r2.version }));
+        !!r2 && r2.version === "qx:" + hash1 && !r2.expect && r2.file === r1.file && ops2.indexOf("plan_link") === -1 && ops2.indexOf("plans_list") !== -1,
+        JSON.stringify({ chk, ops2, version: r2 && r2.version, hash1 }));
       // (iv) the office saves the plan; the next Save of this opening becomes a separate file - said in the portal and the app
       const office = await T.eval("DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive').officeSave(" + JSON.stringify(fx.full) + ")");
       await T.eval("(() => { const p = " + APP + ".TakeoffApp.app.project; p.transact('e2e: a second edit', () => { p.metadata.client_name = 'Made-up client (e2e), second edit'; });" +
@@ -457,9 +484,11 @@ async function main() {
       await T.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(copyRec ? copyRec.itemId : "") + "]').click(); true");
       await T.until("(() => { try { const t = " + APP + ".TakeoffApp; return !!(t && t.app.portal && t.app.project.pageCount === 2); } catch (e) { return false; } })()", 30000);
       const hostNow = await T.eval("(() => { const h = document.getElementById('dcrModalHost'); return h ? { there: true, inert: !!h.inert } : { there: false }; })()");
-      // takeoff-web's TakeoffApp.saveDraftNow (contract C2b) stands in here: the vendored copy may not have it yet
-      await T.eval("(() => { const w = " + APP + "; window.__draft = null; w.TakeoffApp.saveDraftNow = () => new Promise((r) => setTimeout(() => {" +
-        " window.__draft = { frameThere: !!document.getElementById('ptfFrame'), dirty: w.TakeoffApp.app.project.dirty }; r(true); }, 300));" +
+      // takeoff-web's own TakeoffApp.saveDraftNow (contract C2b; the copy has it since b634dd6), watched: when it is called
+      // (the frame still there) and what it answered
+      await T.eval("(() => { const w = " + APP + "; window.__draft = null; const real = w.TakeoffApp.saveDraftNow;" +
+        " window.__draftReal = typeof real === 'function'; w.TakeoffApp.saveDraftNow = async () => { const at = { frameThere: !!document.getElementById('ptfFrame'), dirty: w.TakeoffApp.app.project.dirty };" +
+        " const kept = await real(); window.__draft = Object.assign(at, { kept }); return kept; };" +
         " const p = w.TakeoffApp.app.project; p.transact('e2e: an edit before Close', () => { p.metadata.client_name = 'Made-up client (e2e), third edit'; }); return p.dirty; })()");
       await tap("#ptfClose");
       await T.until("!!document.querySelector('#dcrModalHost.open #dcrMoYes')", 5000);
@@ -471,10 +500,260 @@ async function main() {
       check("tablet (viii): a second opening on the same page - Close's question takes taps (the portal's dialog host is never made inert), and the frame closes",
         hostNow.there && !hostNow.inert && ask2.title === "Close the takeoff app?" && ask2.yes === "Close without saving" && ask2.hit === "dcrMoYes" && closedByTap,
         JSON.stringify({ hostNow, ask2, closedByTap }));
-      check("tablet (viii): before its frame goes, the app is asked to keep its draft (TakeoffApp.saveDraftNow, waited for)",
-        !!draft && draft.frameThere === true && draft.dirty === true, JSON.stringify(draft));
+      const drafts8 = await T.eval(DRAFTS + "()");
+      check("tablet (viii): before its frame goes, the app keeps its draft - its own TakeoffApp.saveDraftNow, waited for: the draft is in its store, with the edit",
+        (await T.eval("window.__draftReal")) === true && !!draft && draft.frameThere === true && draft.dirty === true && draft.kept === true &&
+        drafts8.some((d) => d.client === "Made-up client (e2e), third edit"), JSON.stringify({ draft, drafts8 }));
       if (!closedByTap) await T.eval("(() => { const m = document.querySelector('#dcrModalHost.open #dcrMoNo'); if (m) m.click(); return true; })()");
       check("tablet: no dialog of the browser's own was opened by the app or the portal", !T.dialogs.length, JSON.stringify(T.dialogs));
+    }, T);
+
+    /* ── 4d (ix). the review round's walks (contract addendum 2; review Q3-1, Q3-2, BRK-1, BRK-4, BRK-5, LW-1, FRAME-1,
+       PRICE-4) with the REAL app on the same shared tablet, each on a plan of A267 of its own (a made-up real .takeoff):
+       an office save WHILE the save goes up; a desktop save before it; an identical re-save; two openings in two tabs;
+       Close while dirty during a running send; and the per-person word on the drafts ── */
+    const OD = "DCR2Demo.engine.exts.find(x => x.name === 'p7-onedrive')";
+    const shotOf = async (p, file) => {
+      if (SHOTS === "none") return;
+      await p.call("Page.bringToFront").catch(() => null);
+      const took = await Promise.race([p.shot(file), sleep(25000).then(() => null)]);
+      if (took) shots.push(took);
+    };
+    /** the page hears the frame's ptt-saves (their Files kept to compare) */
+    const hearSaves = (p) => p.eval("(() => { if (window.__hearing) return true; window.__hearing = true; window.__saveFiles = window.__saveFiles || [];" +
+      " window.addEventListener('message', (e) => { const f = document.getElementById('ptfFrame'); if (f && e.source === f.contentWindow && e.data && e.data.type === 'ptt-save') window.__saveFiles.push(e.data.file); }); return true; })()");
+    const APP_READY = "(() => { try { const t = " + APP + ".TakeoffApp; return !!(t && t.app.portal && t.app.project.pageCount === 2); } catch (e) { return false; } })()";
+    const DRAFT_ASKED = "(() => { try { const h = " + APP + ".document.querySelector('.dlg-head'); return !!h && h.textContent === 'Unsaved work found'; } catch (e) { return false; } })()";
+    /** the plan `id` opened from the project page's 📐 menu (opened afresh) in the frame; the app's news and status watched.
+        `ready`: what to wait for (the app with the plan, by default) */
+    async function openPlan(p, id, ready) {
+      await p.eval("(() => { const x = document.querySelector('.pl-sheet .pl-x'); if (x) x.click(); return true; })()");
+      await sleep(300);
+      await p.eval("document.querySelector('#pjPlans a[data-plan-menu]').click(); true");
+      await p.until("!!document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(id) + "]')", 10000);
+      await p.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(id) + "]').click(); true");
+      await p.until(ready || APP_READY, 30000);
+      await p.eval("(() => { const w = " + APP + "; w.__states = []; w.__status = []; w.addEventListener('message', (e) => { if (e.data && e.data.type === 'ptt-save-state' && e.source === w.parent)" +
+        " w.__states.push({ req: e.data.req, state: e.data.state, pct: e.data.pct, name: e.data.name, why: e.data.why }); });" +
+        " new w.MutationObserver(() => w.__status.push(w.document.getElementById('statusText').textContent)).observe(w.document.getElementById('statusText'), { childList: true, characterData: true, subtree: true }); return true; })()");
+    }
+    const editApp = (p, client) => p.eval("(() => { const q = " + APP + ".TakeoffApp.app.project; q.transact('e2e: an edit', () => { q.metadata.client_name = " + JSON.stringify(client) + "; }); return q.dirty; })()");
+    /** the app's own File › Save -> {states, status, dirty} once one of `ends` came (sent, copy, failed, refused by default) */
+    async function saveApp(p, ends) {
+      const e = JSON.stringify(ends || ["sent", "copy", "failed", "refused", "no-room"]);
+      await p.eval("(() => { const w = " + APP + "; w.__states.length = 0; w.__status.length = 0; return true; })()");
+      await p.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+      await p.until(APP + ".__states.some(s => " + e + ".indexOf(s.state) !== -1)", 60000);
+      await sleep(500);
+      return p.eval("(() => { const w = " + APP + "; return { states: w.__states, status: w.document.getElementById('statusText').textContent, dirty: w.TakeoffApp.app.project.dirty }; })()");
+    }
+    /** the frame's ✕ Close, and "Close without saving" when it asks */
+    async function closeFrame(p) {
+      if (!(await p.eval("!!document.getElementById('ptfFrame')"))) return;
+      await p.eval("document.getElementById('ptfClose').click(); true");
+      await p.until("!!document.querySelector('#dcrModalHost.open #dcrMoYes') || !document.getElementById('ptfFrame')", 6000).catch(() => null);
+      if (await p.eval("!!document.querySelector('#dcrModalHost.open #dcrMoYes')")) await p.eval("document.getElementById('dcrMoYes').click(); true");
+      await p.until("!document.getElementById('ptfFrame')", 8000);
+    }
+    const lastSaveSame = (p, other) => p.eval("(async () => { const f = window.__saveFiles; const b = async (x) => new Uint8Array(await x.arrayBuffer()); const eq = (x, y) => !!x && !!y && x.length === y.length && x.every((v, i) => v === y[i]);" +
+      " const s = await b(f[f.length - 1]); const o = " + other + "; return o ? eq(s, await b(o)) : false; })()");
+    const planOps = (p) => p.eval("window.__opsSeen.filter(x => /^plan_save_/.test(x.op)).map(x => ({ op: x.op, item: x.body.item_id, name: x.body.name, bodyMode: x.body.mode," +
+      " hash: x.body.hash || null, url: x.body.upload_url || null, status: x.status, mode: x.data && x.data.mode, commit: x.data && x.data.commit, upload: x.data && x.data.upload_url || null, id: x.data && x.data.id, answerName: x.data && x.data.name }))");
+    const COPY_BAR = /Someone saved this plan in the office after your iPad got it\. Your work was saved as '.+' next to it - nothing was overwritten\./;
+    const COPY_APP = /^Someone saved this plan in the office after this iPad got it\. Your work was saved as “.+” next to it — nothing was overwritten\.$/;
+    const plansNow = (p) => p.eval("(async () => { const od = await import('/js/repo/onedrive.js'); return ((await od.plansList([" + J.sandbox + "]))[" + JSON.stringify(String(J.sandbox)) + "] || { files: [] }).files; })()");
+    /** a tap: real input at the element's centre */
+    const tapOn = async (p, sel) => {
+      const box = await p.eval("(() => { const r = document.querySelector(" + JSON.stringify(sel) + ").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()");
+      for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) await p.call("Input.dispatchMouseEvent", Object.assign({ type, x: box.x, y: box.y }, type === "mouseMoved" ? {} : { button: "left", clickCount: 1 }));
+    };
+    const whoOf = (p) => p.eval("(async () => { const L = await import('/js/plan-library.js'); const P = await import('/js/map/plans.js'); return P.whoWord(L.owner()); })()");
+
+    await attempt("a tablet, the review round's walks (ix): office save during the upload, desktop save, identical re-save, two openings, Close during a send, the per-person drafts", async () => {
+      await closeFrame(T);
+      await openReal(T);
+      await hearSaves(T);
+      await watchOps(T);
+
+      // (ix-a) the office saves the plan WHILE the iPad's replace goes up: the broker commits the SAME upload as a copy beside
+      // it (review Q3-2, BRK-1) - said in the portal and the app; the office's save is still the plan
+      const fa = await putFixture(T, "A267", "A267 Rev 2 made-up plan (e2e)", "A267 Rev 2.takeoff");
+      await openPlan(T, fa.id);
+      await editApp(T, "Made-up client (e2e, office during the upload)");
+      await T.eval(OD + ".duringUpload(" + JSON.stringify(fa.full) + ", 'office'); window.__ops = []; window.__opsSeen = []; true");
+      const sa = await saveApp(T);
+      const ca = sa.states.find((x) => x.state === "copy");
+      const opsA = await planOps(T);
+      const commitA = opsA.find((x) => x.op === "plan_save_commit");
+      const bytesA = await T.eval("(async () => { const ext = " + OD + "; const sent = window.__saveFiles[window.__saveFiles.length - 1]; const b = async (x) => new Uint8Array(await x.arrayBuffer());" +
+        " const eq = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]); const s = await b(sent); const c = ext.planBlobOf(" + JSON.stringify((commitA && commitA.id) || "") + ");" +
+        " return { copyIsSave: !!c && eq(s, await b(c)), planIsSave: eq(s, await b(ext.planBlobOf(" + JSON.stringify(fa.id) + "))) }; })()");
+      const barA = await T.eval("document.getElementById('ptfSay').textContent");
+      check("tablet (ix-a): an office save landing WHILE the save went up - the broker committed the same upload as a copy (one session, its commit), the office's save still the plan",
+        !!ca && /^A267 Rev 2 - iPad \d{4}-\d{2}-\d{2} \d{4}\.takeoff$/.test(ca.name || "") && sa.dirty === false &&
+        JSON.stringify(opsA.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "copy"]]) &&
+        opsA[0].commit === "broker" && bytesA.copyIsSave && !bytesA.planIsSave, JSON.stringify({ states: sa.states, opsA, bytesA }));
+      check("tablet (ix-a): ...and both the portal and the app say so (nothing was overwritten)", COPY_BAR.test(barA) && COPY_APP.test(sa.status), JSON.stringify({ barA, status: sa.status }));
+      await shotOf(T, "plans_frame_during_copy_tablet.png");
+      await closeFrame(T);
+
+      // (ix-b) the office's DESKTOP app saved the plan while the iPad had it open (the old item moved into Backups, a new
+      // item on the name): the session names the plan, the broker finds it by name - a copy beside it (review Q3-1, BRK-4)
+      const fb = await putFixture(T, "A267", "L1 walls - made-up plan (e2e)", "L1 walls.takeoff");
+      await openPlan(T, fb.id);
+      await editApp(T, "Made-up client (e2e, after a desktop save)");
+      const dk = await T.eval(OD + ".desktopSave(" + JSON.stringify(fb.full) + ")");
+      await T.eval("window.__ops = []; window.__opsSeen = []; true");
+      const sb = await saveApp(T);
+      const cb = sb.states.find((x) => x.state === "copy");
+      const opsB = await planOps(T);
+      const listedB = await plansNow(T);
+      const barB = await T.eval("document.getElementById('ptfSay').textContent");
+      check("tablet (ix-b): a desktop-style save (a new item on the name) - the save went as a copy beside the plan, found by its name; never a 404 left on the device",
+        !!dk && !!cb && /^L1 walls - iPad \d{4}-\d{2}-\d{2} \d{4}\.takeoff$/.test(cb.name || "") &&
+        JSON.stringify(opsB.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "copy"], ["plan_save_done", "copy"]]) &&
+        opsB[0].item === fb.id && opsB[0].name === fb.name && !!opsB[1].hash &&
+        !listedB.some((f) => f.id === fb.id) && listedB.some((f) => f.id === dk.id && f.name === fb.name && f.version === dk.version) &&
+        listedB.some((f) => f.name === cb.name) && COPY_BAR.test(barB) && COPY_APP.test(sb.status), JSON.stringify({ dk, states: sb.states, opsB, status: sb.status }));
+
+      // (ix-c) Save again with nothing changed (the same opening: now on its copy): byte-identical saves are saved - one
+      // session and the broker's commit, never not_saved, never sent again and again (review BRK-5)
+      let pair = null;
+      for (let i = 0; i < 3 && !pair; i++) {
+        await T.eval("window.__ops = []; window.__opsSeen = []; true");
+        const r = await saveApp(T);
+        if (await lastSaveSame(T, "f[f.length - 2]")) pair = { r, ops: await planOps(T) };
+      }
+      await T.eval(OD + ".hashed().then(() => true)");
+      const copyNow = pair ? (await plansNow(T)).find((f) => f.name === cb.name) : null;
+      const hashC = await T.eval("(async () => " + QXOF + "(window.__saveFiles[window.__saveFiles.length - 1]))()");
+      check("tablet (ix-c): a byte-identical re-save is saved - a replace committed by the broker, its version OneDrive's hash of those same bytes; no not_saved, no second upload",
+        !!pair && pair.r.states[pair.r.states.length - 1].state === "sent" && !pair.r.states.some((x) => x.state === "failed") &&
+        JSON.stringify(pair.ops.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
+        !!copyNow && copyNow.version === "qx:" + hashC, JSON.stringify({ pair, copyNow, hashC }));
+      await closeFrame(T);
+
+      // (ix-d) two openings of one plan, two tabs of this tablet (review LW-1): the first's Save is kept here (no signal: it
+      // waits), the second's is refused in plain words - its app keeps its work - and the first's save is intact, then sent
+      const fc = await putFixture(T, "A267", "A267 Rev 2 - two openings of one plan (e2e, made up)", "A267 Rev 2.takeoff");
+      const b64 = await T.eval("(async () => { const u = new Uint8Array(await " + OD + ".planBlobOf(" + JSON.stringify(fc.id) + ").arrayBuffer()); let s = '';" +
+        " for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return btoa(s); })()");
+      const T2 = await newPage(cdp, "tablet-admin-2", OUT); pages.push(T2);
+      answerDialogs(T2);
+      await T2.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
+      await T2.size(1024, 768, true);
+      await signIn(T2, "admin", "dashboard.html");
+      await openReal(T2);
+      await watchOps(T2);
+      // the demo's OneDrive is this tab's own: the same made-up plan file there too
+      await T2.eval("(() => { const u = Uint8Array.from(atob(" + JSON.stringify(b64) + "), (c) => c.charCodeAt(0)); return " + OD + ".setPlanFixture('A267', new Blob([u]), 'A267 Rev 2.takeoff'); })()");
+      await hearSaves(T2);
+      await openPlan(T, fc.id);
+      await openPlan(T2, fc.id);
+      // the first opening's save goes to OneDrive slowly (a big plan on a slow line): it waits on this tablet meanwhile
+      await T.eval("DCR2Demo.setUploadDelay(15000); window.__ops = []; true");
+      let firstFile = null;
+      try {
+        await editApp(T, "Made-up client (e2e, the first opening)");
+        const s1 = await saveApp(T, ["kept", "refused", "failed", "no-room"]);
+        await T.until("window.__ops.indexOf('plan_save_session') !== -1", 10000);
+        const rec1 = (await records(T)).find((r) => r.itemId === fc.id);
+        firstFile = rec1 && rec1.local ? rec1.local.file : null;
+        check("tablet (ix-d): the first opening's Save is kept on the tablet, and is on its way to OneDrive", s1.states.some((x) => x.state === "kept") && !!firstFile &&
+          rec1.local.state === "sending", JSON.stringify({ states: s1.states, local: rec1 && rec1.local }));
+        await editApp(T2, "Made-up client (e2e, the second opening)");
+        const s2 = await saveApp(T2, ["kept", "refused", "failed", "no-room"]);
+        const ref = s2.states.find((x) => x.state === "refused");
+        const said2 = await T2.eval(APP + ".document.body.innerText");
+        const rec2 = (await records(T2)).find((r) => r.itemId === fc.id);
+        check("tablet (ix-d): the second opening's Save is refused in plain words - its app keeps its work and says it was not saved - and the first's save is still the one waiting",
+          !!ref && /another window or tab on this iPad that is not in OneDrive yet/.test(ref.why || "") && /The portal did not take this save/.test(said2) &&
+          s2.dirty === true && !!rec2 && rec2.local && rec2.local.file === firstFile, JSON.stringify({ states: s2.states, dirty: s2.dirty, local: rec2 && rec2.local && rec2.local.file, firstFile }));
+        await shotOf(T2, "plans_frame_refused_tablet.png");
+        const intact = await T.eval("(async () => { const f = await (await (await (await navigator.storage.getDirectory()).getDirectoryHandle('plan-library')).getFileHandle(" +
+          JSON.stringify(firstFile || "x") + ")).getFile(); const a = new Uint8Array(await f.arrayBuffer()); const s = window.__saveFiles[window.__saveFiles.length - 1];" +
+          " const b = new Uint8Array(await s.arrayBuffer()); return a.length === b.length && a.every((v, i) => v === b[i]); })()");
+        check("tablet (ix-d): the first opening's kept save is intact (its bytes are exactly what its app saved)", intact === true);
+        await T.until("(async () => { const L = await import('/js/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " + JSON.stringify(fc.id) + "); return !!r && !!r.save && r.save.state === 'sent'; })()", 40000);
+      } finally {
+        await T.eval("DCR2Demo.setUploadDelay(0); true").catch(() => null);
+      }
+      const odD = await lastSaveSame(T, OD + ".planBlobOf(" + JSON.stringify(fc.id) + ")");
+      const recD = (await records(T)).find((r) => r.itemId === fc.id);
+      check("tablet (ix-d): ...and it reached OneDrive whole (the plan replaced by exactly those bytes)", odD === true && !!recD && !recD.local && recD.sent && recD.sent.mode === "replace",
+        JSON.stringify({ odD, sent: recD && recD.sent }));
+      await closeFrame(T2);
+      await closeFrame(T);
+
+      // (ix-e) Close while there are unsaved changes AND a save is being sent (review FRAME-1): the danger question with the
+      // send's sentence after it; the app keeps its draft before its frame goes; the send finishes in the page; and the
+      // draft survives - the admin's reopening offers it
+      const who1 = await whoOf(T);
+      const fd = await putFixture(T, "A267", "A267 Bid - Close while it is sent (e2e, made up)", "A267 Bid.takeoff");
+      await openPlan(T, fd.id);
+      await editApp(T, "Made-up client (e2e, saved, then closed while it went)");
+      await T.eval("DCR2Demo.setUploadDelay(10000); window.__ops = []; true");
+      await T.eval("(() => { const w = " + APP + "; w.__states.length = 0; return true; })()");
+      await T.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+      let sizeE = 0;
+      try {
+        await T.until(APP + ".__states.some(s => s.state === 'kept') && window.__ops.indexOf('plan_save_session') !== -1", 30000);
+        await sleep(300);
+        sizeE = await T.eval("window.__saveFiles[window.__saveFiles.length - 1].size");
+        await editApp(T, "Made-up client (e2e, an edit after the Save)");
+        await tapOn(T, "#ptfClose");
+        await T.until("!!document.querySelector('#dcrModalHost.open #dcrMoYes')", 5000);
+        const askE = await T.eval("({ title: document.querySelector('#dcrModalHost .dcr-mo-t').textContent, text: (document.querySelector('#dcrModalHost .dcr-mo-m') || {}).textContent || '', yes: document.getElementById('dcrMoYes').textContent," +
+          " danger: document.getElementById('dcrMoYes').className })");
+        await shotOf(T, "plans_frame_close_sending_tablet.png");
+        await tapOn(T, "#dcrMoYes");
+        await T.until("!document.getElementById('ptfFrame')", 8000);
+        const sendingStill = await T.eval("(async () => { const L = await import('/js/plan-library.js'); return ((await L.list()).find(r => r.itemId === " + JSON.stringify(fd.id) + ") || {}).save; })()");
+        check("tablet (ix-e): Close with unsaved changes while the save is sent - the danger question first, the send's sentence after it; the frame closes at the tap",
+          askE.title === "Close the takeoff app?" && askE.yes === "Close without saving" && /dcr-mo-danger/.test(askE.danger) && /being sent to OneDrive/.test(askE.text),
+          JSON.stringify({ askE, sendingStill }));
+        await T.until("(async () => { const L = await import('/js/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " + JSON.stringify(fd.id) + "); return !!r && !!r.save && r.save.state === 'sent'; })()", 30000);
+      } finally {
+        await T.eval("DCR2Demo.setUploadDelay(0); true").catch(() => null);
+      }
+      const draftsE = await T.eval(DRAFTS + "()");
+      const keyE = fd.name + "|" + sizeE + "|@" + who1;
+      check("tablet (ix-e): the send went on after the frame closed (Sent), and the app's draft with the later edit is kept under the saved file and this person's word",
+        draftsE.some((d) => d.key === keyE && d.client === "Made-up client (e2e, an edit after the Save)"), JSON.stringify({ keyE, draftsE }));
+
+      // (ix-f) the per-person word (review PRICE-4): a second person with prices on this same tablet opens the same plan -
+      // the same name and size - and is NOT offered the first person's draft
+      const T3 = await newPage(cdp, "tablet-manager-prices", OUT); pages.push(T3);
+      answerDialogs(T3);
+      await T3.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
+      await T3.size(1024, 768, true);
+      await signIn(T3, emailOf.manager_prices, "dashboard.html");
+      await openReal(T3);
+      const b64e = await T.eval("(async () => { const u = new Uint8Array(await " + OD + ".planBlobOf(" + JSON.stringify(fd.id) + ").arrayBuffer()); let s = '';" +
+        " for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return btoa(s); })()");
+      await T3.eval("(() => { const u = Uint8Array.from(atob(" + JSON.stringify(b64e) + "), (c) => c.charCodeAt(0)); return " + OD + ".setPlanFixture('A267', new Blob([u]), " + JSON.stringify(fd.name) + "); })()");
+      await openPlan(T3, fd.id);
+      await sleep(2500);
+      const offer3 = await T3.eval("(() => { const w = " + APP + "; const h = w.document.querySelector('.dlg-head'); return { dialog: h ? h.textContent : '', who: w.TakeoffApp.app.draftWho," +
+        " size: w.TakeoffApp.app.fileSize, name: w.TakeoffApp.app.fileName }; })()");
+      const who3 = await whoOf(T3);
+      check("tablet (ix-f): a second price person on this tablet opens the same plan (same name, same size) and is not offered the first person's draft",
+        offer3.dialog !== "Unsaved work found" && offer3.who === who3 && who3 !== who1 && offer3.size === sizeE && offer3.name === fd.name &&
+        (await T3.eval(DRAFTS + "()")).some((d) => d.key === keyE), JSON.stringify({ offer3, who1, who3 }));
+      await closeFrame(T3);
+      // ...and the first person's own reopening offers it (it was kept all along)
+      // (the app asks before it is ready: the question holds the opening)
+      await openPlan(T, fd.id, "(" + DRAFT_ASKED + " || " + APP_READY + ")");
+      await T.until(DRAFT_ASKED, 8000).catch(() => null);
+      const offer1 = await T.eval("(() => { const h = " + APP + ".document.querySelector('.dlg-head'); return h ? h.textContent : ''; })()");
+      await shotOf(T, "plans_frame_draft_offer_tablet.png");
+      check("tablet (ix-e/f): the first person's own reopening offers the draft back", offer1 === "Unsaved work found", offer1);
+      await T.eval("(() => { const b = Array.from(" + APP + ".document.querySelectorAll('.dlg-foot button')).find(x => /Restore it/.test(x.textContent)); if (b) b.click(); return !!b; })()");
+      await T.until(APP_READY, 15000).catch(() => null);
+      await sleep(600);
+      check("tablet (ix-e): restored, the later edit is back in the app", (await T.eval(APP + ".TakeoffApp.app.project.metadata.client_name")) === "Made-up client (e2e, an edit after the Save)");
+      await closeFrame(T);
+      check("tablet (ix): no dialog of the browser's own in the second tabs", !T2.dialogs.length && !T3.dialogs.length, JSON.stringify([T2.dialogs, T3.dialogs]));
     }, T);
 
     /* ── 4c. a person with prices but WITHOUT "Can upload to OneDrive" (Q2): the real app opens without canSave, and its

@@ -1029,16 +1029,17 @@
       /** the Plans Library: a takeoff file's new version ("<folder>/<path>", as the takeoff folder lists it) */
       setPlanVersion(full, version) { if (version) planVersions.set(full, version); else planVersions.delete(full); revs.set(full, (revs.get(full) || 0) + 1); },
       /** a browser e2e that drives the REAL takeoff app (tools/e2e-p7-plans.mjs): `blob`, a made-up but real .takeoff
-          project, is the first plan of project `number` in this tab from now on - its bytes, size and a version of its
-          own - until a save of it lands or the office saves it (officeSave). -> {id, name, full, size, version} | null */
-      setPlanFixture(number, blob) {
+          project, is the first plan of project `number` (or its plan called `name`) in this tab from now on - its bytes,
+          size and a version of its own - until a save of it lands or the office saves it (officeSave).
+          -> {id, name, full, size, version} | null */
+      setPlanFixture(number, blob, name) {
         const p = rows.projects.find((x) => x.number === number && !x.deleted_at);
-        const f = p ? planFilesOf(p)[0] : null;
+        const f = p ? (name ? planFilesOf(p).find((x) => x.name === name) || null : planFilesOf(p)[0]) : null;
         if (!f || !blob || !(blob.size > 0)) return null;
         fixtures.set(f.full, { size: blob.size, version: "qx:demo-fixture-" + blob.size, modified: nowIso() });
         savedBytes.set(f.full, blob);
         revs.set(f.full, (revs.get(f.full) || 0) + 1);
-        const g = planFilesOf(p)[0];
+        const g = planFilesOf(p).find((x) => x.full === f.full);
         return { id: g.id, name: g.name, full: g.full, size: g.size, version: g.version };
       },
       /** the bytes the demo's OneDrive holds now for the takeoff file `itemId` (a plan or a copy of one), or null */
