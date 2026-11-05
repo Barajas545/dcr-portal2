@@ -40,7 +40,14 @@
      byte-identical re-save -> saved, one session and one commit, no loop; two openings of one plan in two tabs -> the
      second Save refused in plain words while the first's kept save waits, which then goes whole; Close while dirty
      during a running send -> the danger question, the send finishes, and the draft survives (the admin's reopen offers
-     it); and the per-person word: a second price person on the same tablet is not offered the first's draft. (v) A person with prices but without
+     it); and the per-person word: a second price person on the same tablet is not offered the first's draft; the second
+     opening's refusal (contract addendum 3 D7) promises nothing, and the plan reopened - the first opening's save by then -
+     offers its work back as an earlier version's. (x) the repair round's walks (contract addendum 3): the broker's switch
+     (the demo's localStorage "dcr2-demo-plan-save") off - no Save to OneDrive offered, the app's Save goes to the share
+     sheet - and "only:A267" - offered on A267's plans only, never on A024's; OneDrive ignoring the deferral with an office
+     save during the upload - the office save stays the plan, the work arrives as a copy with the copy words (the broker
+     told landed, the crossing put back); the PUT commit refused - the POST commits it, verified; both refused - a copy in
+     neutral words, and the app is never told the office saved. (v) A person with prices but without
      "Can upload to OneDrive" (the accountant): the app opens without canSave and its Save goes to the share sheet (a
      stand-in: headless Chrome has none, and the frame is given Safari's lack of file pickers), nothing handed to the
      portal or sent. (vi) A tablet without prices: 📐 says "Plans are for the people who see prices", and nothing is
@@ -244,7 +251,7 @@ async function main() {
     const records = (p) => p.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
       " const all = await new Promise((res) => { const q = d.transaction('plans').objectStore('plans').getAll(); q.onsuccess = () => res(q.result); }); d.close();" +
       " return all.map(r => ({ key: r.key, itemId: r.itemId, name: r.name, file: r.file, size: r.size, version: r.version, local: r.local || null, sent: r.sent || null," +
-      " adopted: r.adopted || null, expect: !!r.expect, dl: r.dl || null })); })()");
+      " adopted: r.adopted || null, expect: !!r.expect, dl: r.dl || null, saveBack: r.saveBack === true })); })()");
     /** every broker op the page asks from now on (the demo's functions.invoke) */
     const watchOps = (p) => p.eval("(() => { const c = DCR2Demo.engine; if (!c.__opsWatched) { const inv = c.invoke; c.invoke = function (ctx, name, body) {" +
       " const r = inv.apply(this, arguments); if (name === 'onedrive' && body) { window.__ops.push(body.op);" +
@@ -558,7 +565,8 @@ async function main() {
     const lastSaveSame = (p, other) => p.eval("(async () => { const f = window.__saveFiles; const b = async (x) => new Uint8Array(await x.arrayBuffer()); const eq = (x, y) => !!x && !!y && x.length === y.length && x.every((v, i) => v === y[i]);" +
       " const s = await b(f[f.length - 1]); const o = " + other + "; return o ? eq(s, await b(o)) : false; })()");
     const planOps = (p) => p.eval("window.__opsSeen.filter(x => /^plan_save_/.test(x.op)).map(x => ({ op: x.op, item: x.body.item_id, name: x.body.name, bodyMode: x.body.mode," +
-      " hash: x.body.hash || null, url: x.body.upload_url || null, status: x.status, mode: x.data && x.data.mode, commit: x.data && x.data.commit, upload: x.data && x.data.upload_url || null, id: x.data && x.data.id, answerName: x.data && x.data.name }))");
+      " hash: x.body.hash || null, url: x.body.upload_url || null, status: x.status, mode: x.data && x.data.mode, commit: x.data && x.data.commit, upload: x.data && x.data.upload_url || null, id: x.data && x.data.id, answerName: x.data && x.data.name," +
+      " landed: x.body.landed === true, verified: x.data ? x.data.verified : undefined, error: x.data && x.data.error, why: x.data && x.data.why }))");
     const COPY_BAR = /Someone saved this plan in the office after your iPad got it\. Your work was saved as '.+' next to it - nothing was overwritten\./;
     const COPY_APP = /^Someone saved this plan in the office after this iPad got it\. Your work was saved as “.+” next to it — nothing was overwritten\.$/;
     const plansNow = (p) => p.eval("(async () => { const od = await import('/js/repo/onedrive.js'); return ((await od.plansList([" + J.sandbox + "]))[" + JSON.stringify(String(J.sandbox)) + "] || { files: [] }).files; })()");
@@ -661,7 +669,7 @@ async function main() {
         firstFile = rec1 && rec1.local ? rec1.local.file : null;
         check("tablet (ix-d): the first opening's Save is kept on the tablet, and is on its way to OneDrive", s1.states.some((x) => x.state === "kept") && !!firstFile &&
           rec1.local.state === "sending", JSON.stringify({ states: s1.states, local: rec1 && rec1.local }));
-        await editApp(T2, "Made-up client (e2e, the second opening)");
+        await editApp(T2, "Made-up client (e2e, the second opening, whose save the portal will not take)");
         const s2 = await saveApp(T2, ["kept", "refused", "failed", "no-room"]);
         const ref = s2.states.find((x) => x.state === "refused");
         const said2 = await T2.eval(APP + ".document.body.innerText");
@@ -682,7 +690,23 @@ async function main() {
       const recD = (await records(T)).find((r) => r.itemId === fc.id);
       check("tablet (ix-d): ...and it reached OneDrive whole (the plan replaced by exactly those bytes)", odD === true && !!recD && !recD.local && recD.sent && recD.sent.mode === "replace",
         JSON.stringify({ odD, sent: recD && recD.sent }));
+      // (contract addendum 3 D7) the refused opening was promised nothing - and its work is not lost: its Close keeps its
+      // draft, and the plan reopened (the first opening's save by now, another size) offers it back as an earlier version's
       await closeFrame(T2);
+      await closeFrame(T);
+      await openPlan(T, fc.id, "(" + DRAFT_ASKED + " || " + APP_READY + ")");
+      await T.until(DRAFT_ASKED, 8000).catch(() => null);
+      const offerD = await T.eval("(() => { const w = " + APP + "; const h = w.document.querySelector('.dlg-head'); let d = h; for (let i = 0; d && i < 4 && !/Restore/.test(d.innerText || ''); i++) d = d.parentElement;" +
+        " return { head: h ? h.textContent : '', text: d ? d.innerText : '', size: w.TakeoffApp.app.fileSize }; })()");
+      check("tablet (ix-d, D7): reopened - handed the first opening's save - the plan offers the refused opening's work back, in the earlier version's words",
+        offerD.head === "Unsaved work found" && /These are your unsaved changes from an earlier version of this plan \(.+\)\. Restoring them replaces what is open now\./.test(offerD.text) &&
+        offerD.size === (recD && recD.size), JSON.stringify(offerD));
+      await shotOf(T, "plans_frame_earlier_draft_tablet.png");
+      await T.eval("(() => { const b = Array.from(" + APP + ".document.querySelectorAll('.dlg-foot button')).find(x => /Restore it/.test(x.textContent)); if (b) b.click(); return !!b; })()");
+      await T.until(APP_READY, 15000).catch(() => null);
+      await sleep(600);
+      check("tablet (ix-d, D7): restored, the refused opening's edit is back in the app",
+        (await T.eval(APP + ".TakeoffApp.app.project.metadata.client_name")) === "Made-up client (e2e, the second opening, whose save the portal will not take)");
       await closeFrame(T);
 
       // (ix-e) Close while there are unsaved changes AND a save is being sent (review FRAME-1): the danger question with the
@@ -754,6 +778,155 @@ async function main() {
       check("tablet (ix-e): restored, the later edit is back in the app", (await T.eval(APP + ".TakeoffApp.app.project.metadata.client_name")) === "Made-up client (e2e, an edit after the Save)");
       await closeFrame(T);
       check("tablet (ix): no dialog of the browser's own in the second tabs", !T2.dialogs.length && !T3.dialogs.length, JSON.stringify([T2.dialogs, T3.dialogs]));
+    }, T);
+
+    /* ── 4e (x). the repair round's walks (contract addendum 3) with the REAL app: the broker's switch (D1), and every
+       replace checked by the plan's version history (D2, D3, D5) - the demo broker as DCR Desktop 2's since its repair
+       round, its Microsoft in the modes the pages leave open (graphModes) ── */
+    /** openPlan, and an offer of unsaved work (a draft an earlier walk left of this plan's name, offered since takeoff-web
+        bc69633 as an earlier version's) declined: these walks are about the save, not the drafts */
+    async function openPlanNoDraft(p, id) {
+      await openPlan(p, id, "(" + DRAFT_ASKED + " || " + APP_READY + ")");
+      if (await p.eval(DRAFT_ASKED)) {
+        await p.eval("(() => { const b = Array.from(" + APP + ".document.querySelectorAll('.dlg-foot button')).find(x => !/Restore it/.test(x.textContent)); if (b) b.click(); return !!b; })()");
+        await p.until(APP_READY, 15000);
+      }
+    }
+    const NOPICKERS = "if (location.pathname.indexOf('/takeoff/') === 0) { for (const k of ['showOpenFilePicker', 'showSaveFilePicker', 'showDirectoryPicker']) { try { delete window[k]; } catch (e) { /* */ } } }";
+    const TS = await newPage(cdp, "tablet-admin-switch", OUT); pages.push(TS);
+    answerDialogs(TS);
+    // the frame as Safari on an iPad has it: no File System Access (the share sheet takes a Save the portal is not offered)
+    await TS.call("Page.addScriptToEvaluateOnNewDocument", { source: NOPICKERS });
+    await attempt("a tablet, the broker's switch (x, D1): off - no Save to OneDrive offered, the app's Save goes to the share sheet; only:A267 - offered on A267's plans, never on A024's", async () => {
+      await TS.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
+      await TS.size(1024, 768, true);
+      await signIn(TS, "admin", "dashboard.html");
+      const share = (p) => p.eval("(() => { const w = " + APP + "; w.__shared = []; w.navigator.canShare = () => true; w.navigator.share = (d) => { w.__shared.push((d.files || []).map(f => ({ name: f.name, size: f.size }))); return Promise.resolve(); }; return true; })()");
+      const canSave = (p) => p.eval("(() => { const t = " + APP + ".TakeoffApp; return { canSave: t.app.portal.canSave, kind: t.app.portal.kind, name: t.app.portal.name }; })()");
+      try {
+        // off (the broker's default): plans_list / plan_link say save_back false - the frame offers nothing
+        await TS.eval("localStorage.setItem('dcr2-demo-plan-save', 'off'); true");
+        await openReal(TS);
+        await hearSaves(TS);
+        await watchOps(TS);
+        const fx = await putFixture(TS, "A267", "A267 Bid - the switch off (e2e, made up)", "A267 Bid.takeoff");
+        await openPlanNoDraft(TS, fx.id);
+        const off = await canSave(TS);
+        const recOff = (await records(TS)).find((r) => r.itemId === fx.id);
+        await share(TS);
+        await editApp(TS, "Made-up client (e2e, the switch off)");
+        await TS.eval("window.__ops = []; window.__opsSeen = []; true");
+        await TS.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+        for (let i = 0; i < 20; i++) {
+          const done = await TS.eval("(() => { const w = " + APP + "; if (w.__shared.length) return 'shared'; const b = Array.from(w.document.querySelectorAll('button')).find(x => x.offsetParent !== null &&" +
+            " /^(Share|Save a copy|Save to Files|Save|OK|Continue)\\b/i.test(x.textContent.trim()) && x.closest('.dlg, .dialog, [role=dialog], .modal, .sheet')); if (b) { b.click(); return 'clicked'; } return ''; })()");
+          if (done === "shared") break;
+          await sleep(300);
+        }
+        await sleep(600);
+        const outOff = await TS.eval("(() => { const w = " + APP + "; return { shared: w.__shared }; })()");
+        const opsOff = await TS.eval("window.__ops");
+        check("tablet (x, D1): the switch off - the app got the plan without canSave (the record's save_back false), and its Save went to the share sheet: nothing handed to the portal, nothing sent",
+          off.kind === "file" && off.canSave === false && !!recOff && recOff.saveBack === false && outOff.shared.length === 1 && /\.takeoff$/.test(outOff.shared[0][0].name) &&
+          (await TS.eval("window.__saveFiles.length")) === 0 && opsOff.indexOf("plan_save_session") === -1, JSON.stringify({ off, saveBack: recOff && recOff.saveBack, outOff, opsOff }));
+        await shotOf(TS, "plans_frame_switch_off_tablet.png");
+        await closeFrame(TS);
+        // only:A267 - offered on A267's plan...
+        await TS.eval("localStorage.setItem('dcr2-demo-plan-save', 'only:A267'); true");
+        await openPlanNoDraft(TS, fx.id);
+        const onA = await canSave(TS);
+        const recOn = (await records(TS)).find((r) => r.itemId === fx.id);
+        await closeFrame(TS);
+        // ...never on another project's (A024's plan, a made-up real one)
+        const a024 = await db(TS, "R.projects.find(p => p.number === 'A024').id");
+        await TS.goto(base + "/project.html?id=" + a024, 400);
+        await TS.until("!!document.querySelector('#pjPlans:not([hidden]) a[data-plan-menu]')", 10000);
+        const fy = await putFixture(TS, "A024", "A024 Framing - only:A267 (e2e, made up)");
+        await openPlanNoDraft(TS, fy.id);
+        const onB = await canSave(TS);
+        const recB = (await records(TS)).find((r) => r.itemId === fy.id);
+        check("tablet (x, D1): only:A267 - the Save to OneDrive is offered on A267's plan (canSave), never on A024's",
+          onA.canSave === true && !!recOn && recOn.saveBack === true && onB.kind === "file" && onB.canSave === false && !!recB && recB.saveBack === false,
+          JSON.stringify({ onA, onB, a: recOn && recOn.saveBack, b: recB && recB.saveBack }));
+        await closeFrame(TS);
+      } finally {
+        await TS.eval("localStorage.removeItem('dcr2-demo-plan-save'); true").catch(() => null);
+      }
+      check("tablet (x): no dialog of the browser's own", !TS.dialogs.length, JSON.stringify(TS.dialogs));
+    }, TS);
+
+    await attempt("a tablet, the version check (x, D2/D3/D5): OneDrive ignoring the deferral with an office save during the upload - the office save stays the plan, the work a copy in the copy words; the PUT refused - the POST commits it; both refused - a copy in neutral words", async () => {
+      await closeFrame(T);
+      await T.call("Page.bringToFront").catch(() => null);
+      await openReal(T);
+      await hearSaves(T);
+      await watchOps(T);
+      const bytesOf = (id) => "(async () => { const ext = " + OD + "; const sent = window.__saveFiles[window.__saveFiles.length - 1]; const b = async (x) => new Uint8Array(await x.arrayBuffer());" +
+        " const eq = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]); const s = await b(sent); const c = ext.planBlobOf(" + JSON.stringify(id || "") + ");" +
+        " return !!c && eq(s, await b(c)); })()";
+      try {
+        // (x-a) OneDrive commits at the last chunk itself, and an office save landed during the upload
+        await T.eval(OD + ".graphModes({ reset: true, deferCommit: 'ignored' }); true");
+        const fa = await putFixture(T, "A267", "A267 Rev 2 - the deferral ignored (e2e, made up)", "A267 Rev 2.takeoff");
+        await openPlanNoDraft(T, fa.id);
+        await editApp(T, "Made-up client (e2e, OneDrive committed at the last chunk)");
+        await sleep(2500);                                    // the office's save comes later than the version the app has
+        await T.eval(OD + ".duringUpload(" + JSON.stringify(fa.full) + ", 'office'); " + OD + ".logLines(true); window.__ops = []; window.__opsSeen = []; true");
+        const sa = await saveApp(T);
+        const ca = sa.states.find((x) => x.state === "copy");
+        const opsA = await planOps(T);
+        const logA = await T.eval(OD + ".logLines()");
+        const planIsSave = await T.eval(bytesOf(fa.id));
+        const copyIsSave = await T.eval(bytesOf((opsA.find((x) => x.op === "plan_save_done") || {}).id));
+        const barA = await T.eval("document.getElementById('ptfSay').textContent");
+        const nowA = (await plansNow(T)).find((f) => f.id === fa.id);
+        check("tablet (x-a, D3): OneDrive committed at the last chunk over an office save - the portal told the broker (landed), which put the office save back; the work went again as a copy",
+          JSON.stringify(opsA.map((x) => [x.op, x.landed, x.mode || x.error])) === JSON.stringify([["plan_save_session", false, "replace"], ["plan_save_commit", true, "plan_changed"],
+            ["plan_save_session", false, "copy"], ["plan_save_done", false, "copy"]]) && opsA[1].why === "changed" &&
+          logA.indexOf("onedrive plan_save_commit: OneDrive committed at the last chunk: deferCommit not honoured here") !== -1 &&
+          logA.indexOf("onedrive plan_save_commit: crossed: the office save was put back") !== -1, JSON.stringify({ opsA, logA }));
+        check("tablet (x-a): ...the office save stays the plan, the iPad's work is the copy - and both the portal and the app say so in the copy words",
+          !!ca && /^A267 Rev 2 - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(\d\))?\.takeoff$/.test(ca.name || "") && !planIsSave && copyIsSave && !!nowA && /^qx:demo-office-/.test(nowA.version) &&
+          COPY_BAR.test(barA) && COPY_APP.test(sa.status) && sa.dirty === false, JSON.stringify({ states: sa.states, planIsSave, copyIsSave, version: nowA && nowA.version, barA, status: sa.status }));
+        await shotOf(T, "plans_frame_landed_copy_tablet.png");
+        await closeFrame(T);
+        // (x-b) Example 7's PUT refused (a OneDrive that commits a deferred session by its POST only): the POST commits it
+        await T.eval(OD + ".graphModes({ reset: true, putCommit: 'refused' }); " + OD + ".logLines(true); true");
+        const fb = await putFixture(T, "A267", "A267 Rev 2 - the PUT refused (e2e, made up)", "A267 Rev 2.takeoff");
+        await openPlanNoDraft(T, fb.id);
+        await editApp(T, "Made-up client (e2e, the PUT refused)");
+        await T.eval("window.__ops = []; window.__opsSeen = []; true");
+        const sb = await saveApp(T);
+        const opsB = await planOps(T);
+        const logB = await T.eval(OD + ".logLines()");
+        check("tablet (x-b, D2): the PUT commit refused - the broker's POST commits it: a replace, verified by the version history, the plan is the save",
+          sb.states[sb.states.length - 1].state === "sent" && JSON.stringify(opsB.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
+          opsB[1].verified === true && logB.indexOf("onedrive plan_save_commit: the PUT commit was refused (400): the POST commit") !== -1 && (await T.eval(bytesOf(fb.id))) === true,
+          JSON.stringify({ states: sb.states, opsB, logB }));
+        await closeFrame(T);
+        // (x-c) both commit forms refused: plan_changed {why: "refused"} - a copy, told without blaming the office, and the
+        // app never hears a "copy" (its words say the office saved)
+        await T.eval(OD + ".graphModes({ reset: true, putCommit: 'refused', postStatus: 400 }); true");
+        const fc2 = await putFixture(T, "A267", "A267 Rev 2 - both refused (e2e, made up)", "A267 Rev 2.takeoff");
+        await openPlanNoDraft(T, fc2.id);
+        await editApp(T, "Made-up client (e2e, OneDrive would not replace it)");
+        await T.eval("window.__ops = []; window.__opsSeen = []; true");
+        const sc = await saveApp(T, ["kept", "refused", "failed", "no-room"]);
+        await T.until("(async () => { const L = await import('/js/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " + JSON.stringify(fc2.id) + "); return !!r && !!r.save && (r.save.state === 'copy' || r.save.state === 'failed'); })()", 30000);
+        await sleep(500);
+        const opsC = await planOps(T);
+        const barC = await T.eval("document.getElementById('ptfSay').textContent");
+        const appC = await T.eval("(() => { const w = " + APP + "; return { states: w.__states.map(x => x.state), status: w.document.getElementById('statusText').textContent }; })()");
+        check("tablet (x-c, D5): both commit forms refused - the work went as a copy, and the portal says so in neutral words; the app hears no 'copy' and never says the office saved",
+          sc.states.some((x) => x.state === "kept") && JSON.stringify(opsC.map((x) => [x.op, x.mode || x.error])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "plan_changed"],
+            ["plan_save_session", "copy"], ["plan_save_done", "copy"]]) && opsC[1].why === "refused" &&
+          /^OneDrive would not replace the plan, so your work was saved as 'A267 Rev 2 - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(\d\))?\.takeoff' next to it - nothing was overwritten\.$/.test(barC) &&
+          appC.states.indexOf("copy") === -1 && !/office/i.test(appC.status), JSON.stringify({ opsC, barC, appC }));
+        await shotOf(T, "plans_frame_refused_copy_tablet.png");
+        await closeFrame(T);
+      } finally {
+        await T.eval(OD + ".graphModes({ reset: true }); true").catch(() => null);
+      }
     }, T);
 
     /* ── 4c. a person with prices but WITHOUT "Can upload to OneDrive" (Q2): the real app opens without canSave, and its
