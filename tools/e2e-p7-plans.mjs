@@ -53,7 +53,11 @@
      hash to prove a crossing ("unproved"): a copy, told without "nothing was overwritten", the app told "sent"; no
      version history (verified false): the unchecked words; and the house model in two lots' folders (the same name,
      the same bytes): each lot's unsaved work is its own draft (the portal's plan word in ptt-open), never offered on
-     the other. (v) A person with prices but without
+     the other. (xii) the final checker's round 3b (DCR Desktop 2 9969d61, takeoff-web d1cbf16): the broker's check
+     waiting on OneDrive's hash (its 503 why "checking") is said as a check - the frame's bar, the row, the app and the
+     frame's Close question - never "not sent"; the office saves again meanwhile: "unproved" (the admin's line, nothing
+     put back), never "nothing was overwritten", the app told "sent" (it listened through); and a copy's own plan word
+     in the "copy" news: the work done after the save comes back from the copy, never from the plan. (v) A person with prices but without
      "Can upload to OneDrive" (the accountant): the app opens without canSave and its Save goes to the share sheet (a
      stand-in: headless Chrome has none, and the frame is given Safari's lack of file pickers), nothing handed to the
      portal or sent. (vi) A tablet without prices: 📐 says "Plans are for the people who see prices", and nothing is
@@ -547,7 +551,7 @@ async function main() {
       await p.eval("document.querySelector('.pl-sheet [data-pl-act=\"open\"][data-id=" + JSON.stringify(id) + "]').click(); true");
       await p.until(ready || APP_READY, 30000);
       await p.eval("(() => { const w = " + APP + "; w.__states = []; w.__status = []; w.addEventListener('message', (e) => { if (e.data && e.data.type === 'ptt-save-state' && e.source === w.parent)" +
-        " w.__states.push({ req: e.data.req, state: e.data.state, pct: e.data.pct, name: e.data.name, why: e.data.why }); });" +
+        " w.__states.push({ req: e.data.req, state: e.data.state, pct: e.data.pct, name: e.data.name, why: e.data.why, plan: e.data.plan }); });" +
         " new w.MutationObserver(() => w.__status.push(w.document.getElementById('statusText').textContent)).observe(w.document.getElementById('statusText'), { childList: true, characterData: true, subtree: true }); return true; })()");
     }
     const editApp = (p, client) => p.eval("(() => { const q = " + APP + ".TakeoffApp.app.project; q.transact('e2e: an edit', () => { q.metadata.client_name = " + JSON.stringify(client) + "; }); return q.dirty; })()");
@@ -1139,6 +1143,122 @@ async function main() {
         await T.eval("window.__noHash = false; if (window.__RealWorker) { window.Worker = window.__RealWorker; delete window.__RealWorker; } " + OD + ".passTime(0); " + OD + ".graphModes({ reset: true }); true").catch(() => null);
       }
       check("tablet (xi): no dialog of the browser's own", !T.dialogs.length, JSON.stringify(T.dialogs));
+    }, T);
+
+    /* ── 4g (xii). the final checker's round 3b (DCR Desktop 2 9969d61, takeoff-web d1cbf16) with the REAL app: the
+       check's own wait said as a check; a newer office save on top while it waits - "unproved"; a copy's own plan word -
+       the work after the save comes back from the copy, never from the plan ── */
+    await attempt("a tablet, the final checker's round 3b (xii): the version check waits on OneDrive - 'being checked' on the bar, the row, the app and Close's question (never 'not sent'); the office saves again meanwhile - unproved, never 'nothing was overwritten'; a copy's own word - the work after the save comes back from the copy alone", async () => {
+      await closeFrame(T);
+      await T.call("Page.bringToFront").catch(() => null);
+      await openReal(T);
+      await hearSaves(T);
+      await watchOps(T);
+      const CHECKING = "Your save is being checked against office saves in OneDrive - keep the portal open; there is nothing to do. It stays on this iPad meanwhile.";
+      const BY_HAND = "onedrive plan_save_commit: crossed: not put back (newer save): check the plan's version history by hand";
+      const bar = () => T.eval("document.getElementById('ptfSay').textContent");
+      const appNow = () => T.eval("(() => { const w = " + APP + "; return { states: w.__states.map(x => x.state), status: w.document.getElementById('statusText').textContent }; })()");
+      try {
+        // (xii-a) OneDrive commits at the last chunk over an office save X and has no hash of it yet: the check waits
+        await T.eval(OD + ".graphModes({ reset: true, deferCommit: 'ignored', hashes: 'off' }); true");
+        const fa = await putFixture(T, "A267", "A267 Rev 2 - the check waits (e2e, made up)", "A267 Rev 2.takeoff");
+        await openPlanNoDraft(T, fa.id);
+        await editApp(T, "Made-up client (e2e, checked against office saves)");
+        await sleep(2500);                                    // the office's save comes later than the version the app has
+        await T.eval(OD + ".duringUpload(" + JSON.stringify(fa.full) + ", 'office'); " + OD + ".logLines(true); window.__ops = []; window.__opsSeen = []; true");
+        await T.eval("(() => { const w = " + APP + "; w.__states.length = 0; w.__status.length = 0; return true; })()");
+        await T.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+        await T.until("document.getElementById('ptfSay').textContent === " + JSON.stringify(CHECKING), 30000);
+        await T.until(APP + ".__states.some(s => s.state === 'checking')", 10000);
+        const barA = await bar();
+        const appA = await appNow();
+        const rowA = await T.eval("(async () => { const L = await import('/js/plan-library.js'); const M = await import('/js/map/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " +
+          JSON.stringify(fa.id) + "); return r && r.save ? { st: r.save, text: M.saveText(r.save, 'iPad') } : null; })()");
+        check("tablet (xii-a): the broker's check waits on OneDrive's hash (503 why checking) - the portal's bar, the row and the app say the save is being checked, never 'not sent'",
+          barA === CHECKING && !!rowA && rowA.st.state === "checking" && rowA.text === CHECKING && appA.states.indexOf("failed") === -1 &&
+          /is being checked against office saves/.test(appA.status) && !/not sent|could not/i.test(appA.status + barA), JSON.stringify({ barA, rowA, appA }));
+        await shotOf(T, "plans_frame_checking_tablet.png");
+        // Close while it is checked: the question says so (it goes on in the page); Cancel keeps the app open
+        await tapOn(T, "#ptfClose");
+        await T.until("!!document.querySelector('#dcrModalHost.open #dcrMoYes')", 5000);
+        const askA = await T.eval("({ title: document.querySelector('#dcrModalHost .dcr-mo-t').textContent, text: (document.querySelector('#dcrModalHost .dcr-mo-m') || {}).textContent || '' })");
+        await T.eval("document.getElementById('dcrMoNo').click(); true");
+        await sleep(400);
+        check("tablet (xii-a): Close while it is checked asks first, in the check's words; Cancel keeps the app open",
+          askA.title === "Still checking in OneDrive" && /is being checked against office saves in OneDrive/.test(askA.text) && !/being sent/.test(askA.text) &&
+          (await T.eval("!!document.getElementById('ptfFrame')")), JSON.stringify(askA));
+        // the office saves AGAIN (Y) before the check could finish: the next ask answers "unproved" - nothing put back over
+        // Y, the work a copy, in words that never say "nothing was overwritten"; the app hears "sent" (it listened through)
+        await T.eval("(async () => { const ext = " + OD + "; ext.graphModes({ hashes: 'on' }); ext.officeSave(" + JSON.stringify(fa.full) + "); await ext.hashed(); return true; })()");
+        await T.until(APP + ".__states.some(s => s.state === 'sent' || s.state === 'copy')", 90000);
+        await sleep(800);
+        const opsA = await planOps(T);
+        const logA = await T.eval(OD + ".logLines()");
+        const barA2 = await bar();
+        const appA2 = await appNow();
+        const nowA = (await plansNow(T)).find((f) => f.id === fa.id);
+        const commits = opsA.filter((x) => x.op === "plan_save_commit");
+        const lastC = commits[commits.length - 1] || {};
+        check("tablet (xii-a, N1): a newer office save on top while the check waited - the broker said unproved (its admin's line) and put nothing back over it; the work went as a copy",
+          commits.length >= 2 && commits.slice(0, -1).every((x) => x.error === "busy" && x.why === "checking") && lastC.error === "plan_changed" && lastC.why === "unproved" &&
+          logA.indexOf(BY_HAND) !== -1 && logA.indexOf("onedrive plan_save_commit: crossed: the office save was put back") === -1 && !!nowA && /^qx:demo-office-/.test(nowA.version) &&
+          opsA.some((x) => x.op === "plan_save_session" && x.bodyMode === "copy"), JSON.stringify({ opsA, logA }));
+        check("tablet (xii-a): ...the portal says OneDrive could not show it went over nothing (never 'nothing was overwritten'); the app heard 'checking', then 'sent' - never 'failed', never 'copy'",
+          /^Your work was saved as 'A267 Rev 2 - iPad .+' next to the plan\. OneDrive could not show whether your iPad's version went over an office save/.test(barA2) &&
+          !/nothing was overwritten/.test(barA2 + appA2.status) && appA2.states.indexOf("checking") !== -1 && appA2.states.indexOf("failed") === -1 && appA2.states.indexOf("copy") === -1 &&
+          appA2.states[appA2.states.length - 1] === "sent", JSON.stringify({ barA2, appA2 }));
+        await closeFrame(T);
+        // (xii-b) a copy's own word: the office saved the plan during the upload - the same upload is the copy; the
+        // "copy" news names the copy's word (the one the portal opens the copy with), the work done after the save is
+        // kept with the copy alone - opening the copy offers it back; the plan (the office's version, the same sheets)
+        // offers nothing of it. (A plan of its own: no draft of an earlier walk is under its word.)
+        await T.eval(OD + ".graphModes({ reset: true }); true");
+        const ROOF = "Roof.takeoff";
+        const who = await whoOf(T);
+        check("tablet (xii-b): a made-up plan of its own in A267's folder", !!(await T.eval(OD + ".addPlanFile('A267', " + JSON.stringify(ROOF) + ")")));
+        const fb = await putFixture(T, "A267", "Roof - a copy's own word (e2e, made up)", ROOF);
+        await openPlanNoDraft(T, fb.id);
+        const wordB = await appPlan(T);
+        await editApp(T, "Made-up client (e2e, saved as a copy)");
+        await sleep(2500);                                    // the office's save comes later than the version the app has
+        await T.eval(OD + ".duringUpload(" + JSON.stringify(fb.full) + ", 'office'); window.__ops = []; window.__opsSeen = []; true");
+        const sb = await saveApp(T);
+        const cb = sb.states.find((x) => x.state === "copy") || {};
+        const copyB = await T.eval("(async () => { const L = await import('/js/plan-library.js'); const P = await import('/js/map/plans.js'); const r = (await L.list()).find(x => x.name === " +
+          JSON.stringify(cb.name || "") + "); return r ? { id: r.itemId, size: r.size, word: await P.planWord(r.number, r.folder, r.name), plan: await P.planWord(r.number, r.folder, " + JSON.stringify(ROOF) + ") } : null; })()");
+        await editApp(T, "Made-up client (e2e, after the copy)");
+        await closeFrame(T);
+        const draftsB = await T.eval(DRAFTS + "()");
+        const keyB = (cb.name || "") + "|" + (copyB && copyB.size) + "|@" + who + "|#" + (copyB && copyB.word);
+        check("tablet (xii-b): the 'copy' news carries the copy's own plan word - the one the portal opens the copy with, never the plan's; the work after the save is kept under the copy's key alone",
+          !!copyB && /^Roof - iPad \d{4}-\d{2}-\d{2} \d{4}(?: \(\d\))?\.takeoff$/.test(cb.name || "") && /^[A-Za-z0-9_-]{12}$/.test(cb.plan || "") && cb.plan === copyB.word &&
+          copyB.word !== wordB && copyB.plan === wordB && draftsB.some((d) => d.key === keyB && d.client === "Made-up client (e2e, after the copy)") &&
+          !draftsB.some((d) => d.key.endsWith("#" + wordB) && d.client === "Made-up client (e2e, after the copy)"), JSON.stringify({ cb, copyB, wordB, keyB, draftsB }));
+        // the copy opened: its work offered back, and restored
+        await openPlan(T, copyB.id, "(" + DRAFT_ASKED + " || " + APP_READY + ")");
+        await T.until(DRAFT_ASKED, 8000).catch(() => null);
+        const offerB = await T.eval("(() => { const h = " + APP + ".document.querySelector('.dlg-head'); return { head: h ? h.textContent : '', plan: " + APP + ".TakeoffApp.app.draftPlan }; })()");
+        await shotOf(T, "plans_frame_copy_word_tablet.png");
+        await T.eval("(() => { const b = Array.from(" + APP + ".document.querySelectorAll('.dlg-foot button')).find(x => /Restore it/.test(x.textContent)); if (b) b.click(); return !!b; })()");
+        await T.until(APP_READY, 15000).catch(() => null);
+        await sleep(600);
+        const backB = await T.eval(APP + ".TakeoffApp.app.project.metadata.client_name");
+        check("tablet (xii-b): the copy opened (its own word) offers the work done after the save, and restored it is that work",
+          offerB.head === "Unsaved work found" && offerB.plan === copyB.word && backB === "Made-up client (e2e, after the copy)", JSON.stringify({ offerB, backB }));
+        await closeFrame(T);
+        // the plan at the office's version (real sheets, the same count): nothing of that work offered there
+        await putFixture(T, "A267", "Roof - the office's version (e2e, made up)", ROOF);
+        await openPlan(T, fb.id, "(" + DRAFT_ASKED + " || " + APP_READY + ")");
+        await sleep(2500);
+        const askedB = await T.eval(DRAFT_ASKED);
+        const planB = await appPlan(T);
+        check("tablet (xii-b): the plan opened at the office's version offers nothing of the copy's work (never twice, never over the office's save)",
+          askedB === false && planB === wordB, JSON.stringify({ askedB, planB, wordB }));
+        await closeFrame(T);
+      } finally {
+        await T.eval(OD + ".graphModes({ reset: true }); true").catch(() => null);
+      }
+      check("tablet (xii): no dialog of the browser's own", !T.dialogs.length, JSON.stringify(T.dialogs));
     }, T);
 
     /* ── 4c. a person with prices but WITHOUT "Can upload to OneDrive" (Q2): the real app opens without canSave, and its
