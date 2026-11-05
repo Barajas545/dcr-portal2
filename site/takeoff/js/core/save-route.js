@@ -572,7 +572,7 @@ export function savesToPortal({ portal = null, libraryCopy = null, saveAs = fals
 
 /**
  * The status line for the portal's word about a kept save while it sends it
- * to OneDrive (SAVE_NEWS, or a send that failed after 'kept') — '' for
+ * to OneDrive and checks it (SAVE_NEWS, or a send that failed after 'kept') — '' for
  * anything else ('keeping', while the portal keeps the file, goes on the bar:
  * main.js handToPortal). Words only: nothing waits for these.
  */
@@ -588,6 +588,11 @@ export function portalNewsWords(news, { name = 'the plan', device = 'device' } =
     case 'copy':
       return `Someone saved this plan in the office after this ${device} got it. Your work was saved as `
         + `${news.name ? `“${news.name}”` : 'a separate file'} next to it — nothing was overwritten.`;
+    case 'checking':
+      // OneDrive has the save, and the portal's check against office saves
+      // waits on OneDrive: neither "not sent" nor "failed" — nothing to do.
+      return `Your save of ${name} is in OneDrive and is being checked against office saves — keep the portal open; `
+        + `there is nothing to do. It is saved on this ${device}.`;
     case 'failed':
       return `The portal could not send ${name} to OneDrive yet${news.why ? `: ${news.why.replace(/[.\s]+$/, '')}` : ''}. `
         + `It is saved on this ${device}, and the portal's Plans Library sends it again.`;
@@ -692,17 +697,70 @@ export function savedStill({ epochAtSave = 0, epochNow = 0, changesAtCompose, ch
  * Kept: the one it was opened from (the first), and the newest saved one —
  * and, for a pending file, that file as well (`pending: true`), in place of
  * any earlier pending one. A save that is confirmed leaves no pending file.
+ * `saved.plan`: the portal's word for that file when it is a plan of its own
+ * (a separate copy the portal made of a save, named with a word of its own:
+ * homesAfterPortalCopy) — its drafts go under that word (draftHomeKeys).
  */
 export function nextDraftHomes(homes = [], saved = null, { replaces = false, pending = false } = {}) {
   const ok = h => h && typeof h.name === 'string' && h.name && Number(h.size) > 0;
-  const key = h => `${h.name}|${Number(h.size)}`;
+  const key = h => `${h.name}|${Number(h.size)}|${h.plan || ''}`;
   const held = replaces ? [] : (Array.isArray(homes) ? homes.filter(h => ok(h) && !h.pending) : []);
   const list = pending ? [...held.slice(0, 1), ...held.slice(1).slice(-1)] : held.slice(0, 1);
   if (ok(saved)) {
-    list.push({ name: saved.name, size: Number(saved.size), pages: Number(saved.pages) || 0, ...(pending ? { pending: true } : {}) });
+    const plan = draftPlan(saved.plan);
+    list.push({ name: saved.name, size: Number(saved.size), pages: Number(saved.pages) || 0, ...(plan ? { plan } : {}),
+      ...(pending ? { pending: true } : {}) });
   }
   const seen = new Set();
   return list.filter(h => (seen.has(key(h)) ? false : (seen.add(key(h)), true)));
+}
+
+/**
+ * The keys a project's drafts are written under (main.js draftKeysNow): one
+ * per home (nextDraftHomes), each under the person's word (`who`) and the
+ * portal's word for the plan open (`plan`, js/core/drafts.js draftKey) — or,
+ * for a home that is a plan of its own (a separate copy the portal named:
+ * homesAfterPortalCopy), under that home's own word. A home's own word
+ * counts only inside a portal that names its plans (`plan` given).
+ */
+export function draftHomeKeys(homes = [], who = '', plan = '') {
+  const word = draftPlan(plan);
+  return (Array.isArray(homes) ? homes : []).map(h => draftKey(h.name, h.size, who, (word && draftPlan(h.plan)) || word));
+}
+
+/**
+ * The homes once the portal has said it filed a kept save as a separate copy
+ * (its 'copy' news: the plan changed in the office after this device got it,
+ * main.js followPortalCopy). The plan's own name now opens the office's
+ * version, and only the copy holds this save.
+ *
+ *   copy  { name, size, pages, plan } — the copy's name, the bytes posted
+ *         (the copy is exactly those), the sheets composed, and the portal's
+ *         word for the copy: the one it hands the copy over with later
+ *   who, plan  the person's word and the plan's (app.draftWho, app.draftPlan)
+ *
+ * → { homes, leave }
+ *   With a word for the person, the plan and the copy: the copy is the only
+ *   home, under its own word — opening the copy offers the work back, as its
+ *   own — and `leave`: once the work is written there, the drafts this
+ *   opening kept under the plan's homes go (main.js), so the plan, at the
+ *   office's version, never offers that work too: restoring it there would
+ *   put it over the office's save, and declining it on one would leave it
+ *   offered on the other.
+ *   Without them (a portal that gives the copy no word): the copy becomes a
+ *   home beside the file the plan was opened from, both under the plan's
+ *   word, and nothing is left (`leave` false). Inside a portal that names its
+ *   plans the copy is then handed with a word of its own and finds none of
+ *   it: the work comes back from the plan instead — and not at all when the
+ *   office's save changed the plan's sheet count (offerDraftRestore leaves a
+ *   draft of another sheet count alone, and says so).
+ */
+export function homesAfterPortalCopy(homes = [], copy = {}, { who = '', plan = '' } = {}) {
+  const c = copy && typeof copy === 'object' ? copy : {};
+  const word = draftWho(who) && draftPlan(plan) ? draftPlan(c.plan) : '';
+  const home = { name: c.name, size: c.size, pages: c.pages };
+  if (!word) return { homes: nextDraftHomes(homes, home), leave: false };
+  return { homes: nextDraftHomes(homes, { ...home, plan: word }, { replaces: true }), leave: true };
 }
 
 /**

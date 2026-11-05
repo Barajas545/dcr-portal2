@@ -22,7 +22,7 @@ import {
   deliverFile, afterSave, saveFileName, isStandalone, downloadUrlKeepMs, lateArrival, STILL_COMING,
   savedStill, nextDraftHomes, draftHomeFor, HANDHELD_SAVE, REPLACE_WARNING, savesToPortal, portalNewsWords,
   draftFate, afterLateKept, findDraft, draftKeptNow, remoteSaveBytes, remoteSaveRefused, remoteSaveRefusedWords,
-  earlierDraftWords, EARLIER_DRAFT_ASK, draftTwins,
+  earlierDraftWords, EARLIER_DRAFT_ASK, draftTwins, draftHomeKeys, homesAfterPortalCopy,
 } from './core/save-route.js';
 import {
   HANDOFF_WAIT_MS, RENEW_WAIT_MS, SAVE_WAIT_MS, parsePortalHash, readyMessage, renewMessage,
@@ -2639,12 +2639,12 @@ async function loadProjectFile(file, handle = null, { library = null, archive = 
     syncTitle();
     // Inside the portal, or a plan it handed over: its date is the portal's,
     // and a draft is never dropped by it (offerDraftRestore).
-    await offerDraftRestore(file, { portal: embedded || fromPortal });
+    openDraftNote = (await offerDraftRestore(file, { portal: embedded || fromPortal })) || '';
     const mb = (file.size / 1048576).toFixed(file.size > 1e9 ? 0 : 1);
-    setStatus(
+    setStatus(withOpenDraftNote(
       `Opened ${file.name} — ${opened.pageCount} sheet${opened.pageCount === 1 ? '' : 's'}, ${mb} MB` +
       (opened.revisions.length ? `, ${opened.revisions.length} revision set(s)` : '')
-    );
+    ));
     primeWatch();
     sayLeftOutAtOpen();
     return true;
@@ -3201,7 +3201,8 @@ async function adoptIfInArchive(handle, file) {
 /**
  * The keys this project's draft is written under: one for every file whose
  * reopening may offer it back (app.draftHomes — the file it was opened from,
- * and the last one it was saved into). A takeoff with no file yet keeps the
+ * and the last one it was saved into; a separate copy the portal named with
+ * a word of its own, under that word: draftHomeKeys). A takeoff with no file yet keeps the
  * one key it always had, named after the project; nothing ever opens a file
  * of size 0, so that one is never offered back, and the words for an
  * unconfirmed save do not say it is (afterSave keptIn).
@@ -3209,7 +3210,7 @@ async function adoptIfInArchive(handle, file) {
 function draftKeysNow() {
   const homes = app.draftHomes || [];
   return homes.length
-    ? homes.map(h => draftKey(h.name, h.size, app.draftWho, app.draftPlan))
+    ? draftHomeKeys(homes, app.draftWho, app.draftPlan)
     : [draftKey(app.fileName || suggestedFileName(), app.fileSize || 0, app.draftWho, app.draftPlan)];
 }
 
@@ -3267,8 +3268,11 @@ async function keepDraftForPortal() {
  * name to fit, the one draft of a plan the copy's name begins, at that size:
  * portalCopyDraftKey) — under the word the copy was handed with: inside a
  * portal that names its plans, the copy is a plan of its own (another word),
- * and that work comes back from the plan it was saved from instead (its own
- * draft, or an earlier version's). Inside the portal only the signed-in
+ * and its draft is the one kept under that word once the portal named the
+ * copy in its news (followPortalCopy); with no word in the news, that work
+ * comes back from the plan it was saved from instead (its own draft, or an
+ * earlier version's — not when the office's save changed the sheet count:
+ * then it is left alone, and the open says so). Inside the portal only the signed-in
  * person's drafts of the plan handed over are found (app.draftWho,
  * app.draftPlan); one kept
  * before the portal said who is offered with a word that it may be someone
@@ -3280,6 +3284,10 @@ async function keepDraftForPortal() {
  * person answers, the other keys of theirs that hold exactly the same work
  * of that plan go with the one offered (draftTwins), so work they turned
  * down is never offered again.
+ *
+ * Resolves what it said of a draft it left alone (another sheet count: no
+ * one is asked), for the open's own status line to keep (openDraftNote) —
+ * '' otherwise.
  */
 async function offerDraftRestore(file, { portal = false } = {}) {
   const store = { get: getDraft, keys: listDraftKeys };
@@ -3299,10 +3307,11 @@ async function offerDraftRestore(file, { portal = false } = {}) {
   // the draft was written, those indices point at different sheets — so this
   // refuses rather than quietly putting a wall on the wrong drawing.
   if (draft.pageCount != null && draft.pageCount !== app.pages.pageCount) {
-    setStatus(`Unsaved work found for this file, but it was measured against `
+    const words = `Unsaved work found for this file, but it was measured against `
       + `${draft.pageCount} sheets and this file has ${app.pages.pageCount}. `
-      + `It has been left alone rather than landing on the wrong drawings.`);
-    return;
+      + `It has been left alone rather than landing on the wrong drawings.`;
+    setStatus(words);
+    return words;
   }
 
   const when = new Date(draft.savedAt).toLocaleString();
@@ -3350,6 +3359,18 @@ async function offerDraftRestore(file, { portal = false } = {}) {
   // The file's own: it stays where it is, and its twins go.
   if (key === own) for (const k of twins) await dropDraft(k);
   else if (await saveDraftNow() && !legacy) for (const k of [key, ...twins]) await dropDraft(k);
+}
+
+/**
+ * What offerDraftRestore said of a draft it left alone at the latest open
+ * ('' when nothing): the open's own status lines come after it (loadProjectFile,
+ * and inside the portal receiveFromPortal's), and would otherwise put it
+ * out at once — the person would never hear that unsaved work exists.
+ */
+let openDraftNote = '';
+function withOpenDraftNote(text) {
+  if (!openDraftNote) return text;
+  return `${/[.!?]$/.test(text) ? text : `${text}.`} ${openDraftNote}`;
 }
 
 /**
@@ -5140,7 +5161,7 @@ async function receiveFromPortal(nonce) {
     const opened = await loadProjectFile(file, null, { library: hold, fromPortal: true, plan: plan.plan });
     if (opened) {
       app.portal = { peer: pinned, nonce, kind: 'file', name: plan.name, canSave: !!plan.canSave, hold, epoch: openEpoch };
-      setStatus(plan.updateAvailable
+      setStatus(withOpenDraftNote(plan.updateAvailable
         ? 'Opened the copy saved on this device — a newer version is in the Plans Archive; the portal downloads it while it is open.'
         : plan.canSave
           ? `Opened ${plan.name}, saved on this ${device} by the portal. Save keeps your work on this ${device}, `
@@ -5150,7 +5171,7 @@ async function receiveFromPortal(nonce) {
               ? 'Save goes to Save As.'
               : handheld
                 ? `${HANDHELD_SAVE} The portal's copy is not changed.`
-                : 'Save downloads a new copy; the portal\'s copy is not changed.'));
+                : 'Save downloads a new copy; the portal\'s copy is not changed.')));
     }
     return;
   }
@@ -5171,7 +5192,7 @@ async function receiveFromPortal(nonce) {
     // (noSaveBackWords). In a tab of its own nothing is promised.
     if (embedded) {
       const remoteBytes = remoteSaveBytes(app.pages.saveSources(), app.pages.saveRevisionSources());
-      setStatus(`Opened ${plan.name} from OneDrive, over the internet. ${noSaveBackWords({ remoteBytes, device, handheld })}`);
+      setStatus(withOpenDraftNote(`Opened ${plan.name} from OneDrive, over the internet. ${noSaveBackWords({ remoteBytes, device, handheld })}`));
     }
   }
 }
@@ -5244,7 +5265,8 @@ async function handToPortal(blob, name, { pages = 0, epoch = openEpoch } = {}) {
         }
         if (news.state === 'copy' && news.name) {
           after.copy = true;
-          followPortalCopy({ name: news.name, size: file.size, pages, epoch });
+          void followPortalCopy({ name: news.name, size: file.size, pages, epoch, plan: news.plan })
+            .catch(() => { /* drafts only */ });
         }
       },
       waitMs: SAVE_WAIT_MS,
@@ -5305,18 +5327,30 @@ async function settleLateKept(word, { stop, after, name, size, pages, epochAtSav
  * The portal filed a kept save as a separate copy, `name` (the plan changed
  * in the office after this device got it): the plan's own name now opens the
  * office's version, and only the copy holds this save. So the copy becomes a
- * home of the project's drafts — the file it was opened from stays one — and
- * work not saved yet is drafted there at once: reopening the copy offers it
- * back. Inside a portal that names its plans (app.draftPlan), the copy's
- * home is keyed by THIS plan's word, and the portal hands the copy with a
- * word of its own: there the work comes back from the plan's own file
- * instead (the first home), never from another plan's drafts. Nothing
- * changes when another project is open by now.
+ * home of the project's drafts, and work not saved yet is drafted there at
+ * once: reopening the copy offers it back (js/core/save-route.js
+ * homesAfterPortalCopy). Inside a portal that names its plans, with the
+ * copy's own word (`plan`, the one the portal hands the copy over with), the
+ * copy is the only home, under that word — and once the work is written
+ * there, the drafts this opening kept under the plan's homes go, so the
+ * plan, at the office's version, never offers the same work over the
+ * office's save (none goes when that write fails). With no word for the
+ * copy, the file the plan was opened from stays a home, both under the
+ * plan's word: the copy, handed with a word of its own, finds none of it,
+ * and the work comes back from the plan — not at all when the office's save
+ * changed the plan's sheet count (offerDraftRestore leaves it alone, and
+ * says so). Nothing changes when another project is open by now.
  */
-function followPortalCopy({ name, size, pages, epoch }) {
+async function followPortalCopy({ name, size, pages, epoch, plan = '' }) {
   if (epoch !== openEpoch) return;
-  app.draftHomes = nextDraftHomes(app.draftHomes, { name, size, pages });
-  void saveDraftNow();
+  const before = draftKeysNow();
+  const next = homesAfterPortalCopy(app.draftHomes, { name, size, pages, plan }, { who: app.draftWho, plan: app.draftPlan });
+  app.draftHomes = next.homes;
+  const unsaved = app.project.dirty;
+  const written = await saveDraftNow();
+  if (!next.leave || (unsaved && !written)) return;
+  const now = new Set(draftKeysNow());
+  for (const k of before) if (!now.has(k)) await dropDraft(k);
 }
 
 /**
