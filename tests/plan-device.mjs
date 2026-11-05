@@ -287,8 +287,10 @@ export function installDevice(o) {
       const clear = (id) => { timers.delete(id); clearTimeout(id); clearInterval(id); };
       const self = { onmessage: null, postMessage(m) { setTimeout(function () { if (!me.terminated && me.onmessage) me.onmessage({ data: m }); }, 0); } };
       this.self = self;
+      // a worker's importScripts: the site's file beside it, run in the worker's own global (js/quickxor.js)
+      const importScripts = (...names) => names.forEach((n) => vm.runInContext(readFileSync(fileURLToPath(new URL(n, url)), "utf8"), ctx, { filename: n }));
       const ctx = vm.createContext({ self, navigator: { storage: { getDirectory: async () => scopedDir(fs.root, me.owned) } }, FileSystemFileHandle: fs.FileHandle,
-        setTimeout: later, clearTimeout: clear, setInterval: every, clearInterval: clear,
+        setTimeout: later, clearTimeout: clear, setInterval: every, clearInterval: clear, importScripts,
         fetch: opt.fetch || (async () => { throw new Error("no network here"); }),
         AbortController, Blob, File, Promise, Uint8Array, ArrayBuffer, Date, Math, String, Number, Array, Error, Object, console });
       vm.runInContext(src, ctx, { filename: "plan-library-worker.js" });

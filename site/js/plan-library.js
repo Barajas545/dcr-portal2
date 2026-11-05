@@ -56,7 +56,7 @@ import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
-  purgeText, lostSave, onlineNote,
+  purgeText, lostSave, onlineNote, hashOk,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -1506,7 +1506,8 @@ frameGuard(function () {
     text: "Your save is on this " + d + " and is being sent to OneDrive (" + pct + "%). It carries on after the takeoff app closes: keep the portal open on this screen until it says Sent." };
 });
 
-/** Copy the app's Blob into the library file `name` (the worker's op "spool") -> {size, magic} | {error, cut?}.
+/** Copy the app's Blob into the library file `name` (the worker's op "spool") -> {size, magic, hash} | {error, cut?}.
+    `hash`: OneDrive's quickXorHash of the bytes copied (js/quickxor.js, computed from the worker's own slices), or null.
     onProgress(done): the worker's own progress - only when its bytes moved (review LW-6: the app's "keeping" is real
     progress, never a beat of a stuck read). `cut`: the worker was ended (its watchdog, its failure) without tidying its
     file - keepSave removes it. */
@@ -1534,7 +1535,7 @@ function runSpool(key, name, blob, size, onProgress) {
         dog.moved();
         if (!over && typeof onProgress === "function") { try { onProgress(d); } catch (e) { /* words only */ } }
       }
-      else if (m.type === "spooled") end({ size: m.size, magic: m.magic });
+      else if (m.type === "spooled") end({ size: m.size, magic: m.magic, hash: hashOk(m.hash) ? m.hash : null });
       else if (m.type === "error") end({ error: err("spool", m.message || "The save could not be kept on this device.", { status: m.status }) });
       else if (m.type === "cancelled") end({ error: err("spool", "Keeping the save stopped. Save again.") });
     };
@@ -1626,7 +1627,7 @@ export async function keepSave(itemId, save, tell, line) {
       await mutate("plans", key, function (c) {
         if (!c) return undefined;
         if (otherOpening(c, line)) { other = true; return undefined; }
-        const a = withSave(c, name, w.size, nowIso(), saveBase(c, line));
+        const a = withSave(c, name, w.size, nowIso(), saveBase(c, line), w.hash);
         old = a.old;
         base = a.rec.local.base;
         kept = true;

@@ -361,6 +361,9 @@ export function projectBatches(records, n) {
                 later save before it is sent keeps it): the broker replaces the plan only while OneDrive still holds
                 that version, else the save becomes a separate file beside it (Q3);
       savedAt, size;
+      hash      OneDrive's quickXorHash of the save's bytes (js/quickxor.js: the spool worker computes it from the slices it
+                writes; null when it could not), sent to plan_save_commit / plan_save_done - with OneDrive's own hash of
+                the item, the broker's proof that it holds exactly these bytes (contract addendum 2, C3b);
       state     "waiting" | "sending" | "failed" (a "sending" no window is running is waiting again);
       error, code, fails, retryAt   the last failed send and when it is tried again by itself;
       sends     [{file, ticket, mode, name, size, at}]: sessions this device opened whose end it never heard (the page
@@ -391,22 +394,27 @@ export function lostSave(rec) {
   return s && s.mode === "lost" && s.was && hasLocal({ local: s.was }) ? s.was : null;
 }
 
+/** A quickXorHash as Graph reports one (base64, 28 characters): the only form the broker takes. */
+export function hashOk(h) {
+  return typeof h === "string" && /^[A-Za-z0-9+/]{27}=$/.test(h);
+}
+
 /** A version string as the broker gives one (plans_list's): the base a save is sent against. */
 export function baseOk(v) {
   return typeof v === "string" && v.length > 0 && v.length <= 200;
 }
 
 /**
- * The record once a save is kept here (`file`: its spooled copy, `size` its bytes) -> {rec, old}: `old` is an earlier
- * save it replaces (its file goes; a session opened for it stays in `sends` to be settled). `base` stays the first
- * save's: everything after it was done on that version too.
+ * The record once a save is kept here (`file`: its spooled copy, `size` its bytes, `hash` their quickXorHash) ->
+ * {rec, old}: `old` is an earlier save it replaces (its file goes; a session opened for it stays in `sends` to be
+ * settled). `base` stays the first save's: everything after it was done on that version too.
  */
-export function withSave(rec, file, size, nowIso, base) {
+export function withSave(rec, file, size, nowIso, base, hash) {
   const prev = hasLocal(rec) ? rec.local : null;
   const sends = prev && Array.isArray(prev.sends) ? prev.sends.slice(-MAX_SENDS) : [];
   return {
     rec: Object.assign({}, rec, { sent: null, local: { file, base: prev ? prev.base : base || rec.version, savedAt: nowIso, size: Number(size) || 0,
-      state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends } }),
+      hash: hashOk(hash) ? hash : null, state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends } }),
     old: prev && prev.file !== file ? prev.file : "",
   };
 }

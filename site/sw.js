@@ -94,8 +94,9 @@ const SHELL = [
   "js/map/plan-library.js", "js/plan-pictures.js",
   // the takeoff app inside the portal on a phone or tablet (v5): the frame only - the copy itself (takeoff/) is its own
   // worker's, never this list's; and the save back's purge of the copy's own stores (published with v5: P3 and P4 go
-  // out together, so no new name)
-  "js/plan-frame.js", "js/takeoff-stores.js",
+  // out together, so no new name), and the save's quickXorHash the worker computes (importScripts: it keeps a save with
+  // no signal too)
+  "js/plan-frame.js", "js/takeoff-stores.js", "js/quickxor.js",
   // the contacts' pictures (Books release A3): Search draws them
   "js/pages/avatar.js", "js/repo/contacts.js",
   // check-off notes (v4): the box on a note in the Log tab, the Board's panel and Log History

@@ -14,6 +14,9 @@ import * as lib from "../site/js/map/plan-library.js";
 import { menuRows } from "../site/js/pages/plan-buttons.js";
 import { available, loadFake, freshEngine, clientAs } from "./pages-engine.mjs";
 
+await import("../site/js/quickxor.js");
+const QX = globalThis.DCR2QuickXor;
+
 const AT = "2026-10-26T18:00:00.000Z";
 const NOW = Date.parse(AT);
 const F1 = { id: "01FAKEPLAN0001", name: "A900 Bid.takeoff", folder: "A900 - 12 Made Up Lane", size: 1234, modified: AT, version: "qx:AAA" };
@@ -754,7 +757,7 @@ test("demo hooks for the real-app e2e: a made-up real .takeoff as a project's pl
 /* ── the save back (P4; owner decisions Q1-Q3, 2026-11-04; contract C3): the rules ──────────────────────────────── */
 
 const SAVE = "p1-x-2.takeoff";
-const local = (over) => Object.assign({ file: SAVE, base: "qx:AAA", savedAt: AT, size: 2000, state: "waiting", error: "", code: "", fails: 0,
+const local = (over) => Object.assign({ file: SAVE, base: "qx:AAA", savedAt: AT, size: 2000, hash: null, state: "waiting", error: "", code: "", fails: 0,
   retryAt: null, sends: [] }, over || {});
 
 test("the save back's rules: a save waiting here is never downloaded over, kept by a sweep, sent by itself once its wait is over", () => {
@@ -1040,6 +1043,8 @@ test("keepSave: the takeoff app's Save is copied into a NEW file in slices of 8 
   assert.ok(r.local && r.local.file !== before.file && lib.FILE_RE.test(r.local.file), "a new library file");
   assert.deepEqual([r.local.base, r.local.size, r.local.state, r.file, r.version], ["qx:AAA", p.blob.size, "waiting", before.file, "qx:AAA"]);
   assert.ok(await same(new Blob([LIBFILES()[r.local.file]]), p.bytes), "the very bytes of the save");
+  // OneDrive's quickXorHash of them, from the worker's own slices (contract addendum 2, C3b): the broker's proof
+  assert.equal(r.local.hash, QX.quickXorHash(p.bytes), "the save's quickXorHash, kept with it");
   assert.ok(LIBFILES()[before.file], "the plan's own copy stays (the app still reads it)");
   assert.deepEqual(w.calls, [], "nothing asked of the broker offline");
   // the row says so; and it is what a phone opens (map: open hands local.file)

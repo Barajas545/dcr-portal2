@@ -23,7 +23,7 @@
                    {type: "progress", id, done}
                    {type: "need-url", id}
                    {type: "done", id, size, magic}
-                   {type: "spooled", id, size, magic}
+                   {type: "spooled", id, size, magic, hash}
                    {type: "cancelled", id, done}
                    {type: "error", id, message, status, done}
 
@@ -35,8 +35,13 @@
    handed, plus its own changes: a 2 GB plan is copied on a phone as well as on a desktop), never writes into a file
    that is already there, and leaves nothing behind when it fails (a copy cut short is removed: the takeoff app keeps
    the save until the page says "kept"). Its size is checked against the file it made, and its first bytes are
-   answered (the page checks the takeoff MAGIC). */
+   answered (the page checks the takeoff MAGIC). It also answers OneDrive's quickXorHash of the save, computed from the
+   very slices it writes (js/quickxor.js; contract addendum 2, C3b): the broker compares it with OneDrive's own hash of
+   what the save became there (null when this browser could not load js/quickxor.js: the save is kept all the same). */
 "use strict";
+
+// OneDrive's quickXorHash (self.DCR2QuickXor), for a spool
+try { importScripts("quickxor.js"); } catch (e) { /* no hash: a save is kept and sent without one */ }
 
 var DIR = "plan-library";
 var CHUNK = 8 * 1024 * 1024;              // one Range request
@@ -174,6 +179,7 @@ async function spool(m) {
   if (job) { post({ type: "error", id: m.id, message: "This worker is already busy.", status: 0, done: null }); return; }
   job = { id: m.id, url: "", size: 0, cancelled: false, pos: 0 };
   var ah = null, dir = null, made = false, pos = 0, told = 0;
+  var qx = self.DCR2QuickXor ? new self.DCR2QuickXor.QuickXorHash() : null;
   // a word every 10 s while a slow write goes on - only when bytes moved since the last word (review LW-6): a read that
   // never settles goes silent, so the page's watchdog and the app's own wait still end it
   var beat = setInterval(function () { if (job && job.pos > told) { told = job.pos; post({ type: "progress", id: job.id, done: job.pos }); } }, 10000);
@@ -203,6 +209,7 @@ async function spool(m) {
       var wrote;
       try { wrote = ah.write(buf, { at: pos }); } catch (we) { throw noRoom(); }
       if (typeof wrote === "number" && wrote !== buf.byteLength) throw noRoom();     // a short write: the device is full
+      if (qx) qx.update(buf);
       pos = end;
       job.pos = pos;
       var now = Date.now();
@@ -215,7 +222,7 @@ async function spool(m) {
     if (head.length) ah.read(head, { at: 0 });
     var magic = String.fromCharCode.apply(null, Array.prototype.slice.call(head));
     ah.close(); ah = null;
-    post({ type: "spooled", id: job.id, size: got, magic: magic });
+    post({ type: "spooled", id: job.id, size: got, magic: magic, hash: qx ? qx.base64() : null });
   } catch (e) {
     try { if (ah) ah.close(); } catch (e2) { /* closed */ }
     // a copy cut short is never kept (the takeoff app still has the save)
