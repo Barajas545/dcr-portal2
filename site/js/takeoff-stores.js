@@ -32,8 +32,11 @@ export const ARCHIVE_STORE = "kv";
 export const KEPT_DIR = "plans-kept";
 export const TAKEOFF_KEYS = Object.freeze(["ptt.keptPlans.v1", "ptt.recent.v1"]);
 export const USERS_KEY = "dcr2-takeoff-users";
-/** How long the purge waits for the drafts' database to go (the takeoff app may hold it open in a frame: then its
-    records are cleared now, and the database itself goes once the app closes). */
+/** How long the purge waits for the drafts' database to go. The takeoff app may hold it open in a frame (its drafts.js
+    keeps one connection while it runs): the delete then stays queued and runs once the app closes - meanwhile the app
+    still reads its drafts, and the purge answers "waiting" (the users hint stays, so the next online page asks again).
+    Nothing else is asked of that database meanwhile: a browser queues a second connection behind the delete, and one
+    that came after it would CREATE an empty database the app could never keep a draft in (review PRICE-1). */
 export const DRAFTS_WAIT_MS = 5000;
 
 function local() {
@@ -60,33 +63,14 @@ export function noteTakeoffUser(id, store) {
   } catch (e) { /* a hint only */ }
 }
 
-/** A database's records cleared through a connection of our own (no version change: the app's own stays open). */
-function clearStore(idb, name, store) {
-  return new Promise(function (resolve, reject) {
-    let r;
-    try { r = idb.open(name); } catch (e) { reject(e); return; }
-    r.onsuccess = function () {
-      const d = r.result;
-      try {
-        if (!d.objectStoreNames.contains(store)) { d.close(); resolve(); return; }
-        const tx = d.transaction(store, "readwrite");
-        tx.objectStore(store).clear();
-        tx.oncomplete = function () { try { d.close(); } catch (e) { /* */ } resolve(); };
-        tx.onerror = tx.onabort = function () { try { d.close(); } catch (e) { /* */ } reject(tx.error); };
-      } catch (e) { try { d.close(); } catch (x) { /* */ } reject(e); }
-    };
-    r.onerror = function () { reject(r.error); };
-  });
-}
-
-/** The drafts' database deleted (-> "deleted"), or - held open by the app in a frame - its records cleared now and the
-    database deleted once the app lets go ("cleared"); "waiting" / "failed" when neither could be done in time. */
+/** The drafts' database deleted (-> "deleted"); held open by the app in a frame, the delete stays queued and runs once
+    the app lets go ("waiting" - its drafts are still there until then); "failed" when the browser refused it. */
 export function dropDrafts(idb, wait) {
-  return dropDb(idb, DRAFTS_DB, DRAFTS_STORE, wait);
+  return dropDb(idb, DRAFTS_DB, wait);
 }
 
-/** The takeoff app's database `name` deleted, as dropDrafts (its one store `store` cleared when the app holds it). */
-function dropDb(idb, name, store, wait) {
+/** The takeoff app's database `name` deleted, as dropDrafts. */
+function dropDb(idb, name, wait) {
   const f = idb || (typeof indexedDB !== "undefined" ? indexedDB : null);
   if (!f || typeof f.deleteDatabase !== "function") return Promise.resolve("none");
   return new Promise(function (resolve) {
@@ -97,8 +81,8 @@ function dropDb(idb, name, store, wait) {
     try { r = f.deleteDatabase(name); } catch (e) { finish("failed"); return; }
     r.onsuccess = function () { finish("deleted"); };
     r.onerror = function () { finish("failed"); };
-    // the request stays queued: it deletes the database once the app's connection closes
-    r.onblocked = function () { clearStore(f, name, store).then(function () { finish("cleared"); }, function () { finish("waiting"); }); };
+    // blocked (the app holds it open): the request stays queued and deletes it once the app's connection closes - so
+    // nothing more is asked of it here (an open now would wait behind the delete, then make an empty database)
   });
 }
 
@@ -124,8 +108,8 @@ export async function purgeTakeoffStores(env) {
     }
   } catch (x) { out.kept = "failed"; }
   out.drafts = await dropDrafts(e.idb, e.wait);
-  out.archive = await dropDb(e.idb, ARCHIVE_DB, ARCHIVE_STORE, e.wait);
-  const gone = (how) => how === "deleted" || how === "none" || how === "cleared";
+  out.archive = await dropDb(e.idb, ARCHIVE_DB, e.wait);
+  const gone = (how) => how === "deleted" || how === "none";
   if (store) {
     TAKEOFF_KEYS.forEach(function (k) {
       try { if (store.getItem(k) !== null) { store.removeItem(k); out.keys++; } } catch (x) { /* */ }

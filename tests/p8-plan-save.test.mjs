@@ -378,7 +378,25 @@ test("the frame's Close while a save is kept (closing can stop it) or sent (it g
   assert.match(fr, /if \(t && typeof t === "object"\) return t;/);
 });
 
-test("takeoff-stores.js: the takeoff app's drafts, kept copies and their indexes go from this site; held open by the app, its drafts are cleared now and the database goes once it lets go", async () => {
+/** takeoff-web's own drafts.js open (site/takeoff/js/core/drafts.js: one connection kept while the app runs, no
+    versionchange handler): -> the connection, or the error when its store is not there (a database made without it). */
+function appDrafts(idb) {
+  return new Promise((done) => {
+    const r = idb.open("ptt-drafts", 1);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains("drafts")) r.result.createObjectStore("drafts"); };
+    r.onsuccess = () => {
+      const d = r.result;
+      try {
+        const t = d.transaction("drafts", "readwrite");
+        t.objectStore("drafts").put({ unit_cost: 1.5 }, "next");
+        t.oncomplete = () => done({ d, kept: true });
+      } catch (e) { done({ d, kept: false, error: e.name }); }
+    };
+  });
+}
+const settle = async (n) => { for (let i = 0; i < (n || 20); i++) await new Promise((r) => setTimeout(r, 0)); };
+
+test("takeoff-stores.js: the takeoff app's drafts, kept copies and their indexes go from this site; held open by the app, its database goes once the app lets go - and is never made again empty (PRICE-1)", async () => {
   const idb = fakeIndexedDB();
   const fs = fakeOPFS();
   const store = fakeStorage();
@@ -402,31 +420,45 @@ test("takeoff-stores.js: the takeoff app's drafts, kept copies and their indexes
   TS.noteTakeoffUser("u2", store);
   TS.noteTakeoffUser("u1", store);
   assert.deepEqual(TS.takeoffUsers(store), ["u2", "u1"], "ids only, once each");
-  idb.blockDelete = true;                                    // the app in a frame holds its database open
-  const out = await TS.purgeTakeoffStores({ root: fs.root, idb, store, wait: 2000 });
-  assert.deepEqual(out, { kept: "removed", drafts: "cleared", archive: "deleted", keys: 2 });
+  // the app in a frame holds its database open (drafts.js: no versionchange handler) - the delete waits behind it
+  const out = await TS.purgeTakeoffStores({ root: fs.root, idb, store, wait: 100 });
+  assert.deepEqual(out, { kept: "removed", drafts: "waiting", archive: "deleted", keys: 2 });
   assert.equal(idb.dbs.has("ptt-plans-archive"), false, "the Plans Archive's names and paths are gone");
   assert.equal(fs.root.entries.has("plans-kept"), false);
   assert.equal(fs.root.entries.has("plan-library"), true, "the Plans Library's own folder is not the takeoff app's");
-  assert.deepEqual(idb.rows("ptt-drafts", "drafts"), [], "its drafts cleared now");
-  assert.deepEqual([store.getItem("ptt.keptPlans.v1"), store.getItem("ptt.recent.v1"), store.getItem(TS.USERS_KEY)], [null, null, null]);
+  assert.deepEqual(idb.rows("ptt-drafts", "drafts"), [{ unit_cost: 4.25 }], "the open app still has its drafts: nothing can clear them while it holds them");
+  assert.deepEqual([store.getItem("ptt.keptPlans.v1"), store.getItem("ptt.recent.v1")], [null, null]);
+  assert.deepEqual(TS.takeoffUsers(store), ["u2", "u1"], "the hint stays (the drafts did not go yet): the next online page asks again");
   assert.deepEqual([store.getItem("ptt.settings.v1"), store.getItem("ptt.catalog.user.v1")], ["x", "x"], "its settings and own catalog stay");
-  // nothing there: nothing to do, nothing fails
-  idb.blockDelete = false;
+  // the frame closes: the queued delete runs - and nothing the purge asked makes the database again (an open queued
+  // behind the delete would make it EMPTY: the next app's drafts could never be kept)
   app.close();
+  await settle();
+  assert.equal(idb.dbs.has("ptt-drafts"), false, "gone once the app let go, and not made again");
+  const next = await appDrafts(idb);
+  assert.deepEqual([next.kept, next.error], [true, undefined], "the next takeoff app on this site keeps its drafts again");
+  assert.deepEqual(idb.rows("ptt-drafts", "drafts"), [{ unit_cost: 1.5 }]);
+  next.d.close();
+  // a second purge with nothing holding it: all of it goes, the hint too
+  assert.deepEqual(await TS.purgeTakeoffStores({ root: fs.root, idb, store, wait: 100 }), { kept: "none", drafts: "deleted", archive: "deleted", keys: 0 });
+  assert.equal(store.getItem(TS.USERS_KEY), null);
+  // nothing there: nothing to do, nothing fails
   assert.deepEqual(await TS.purgeTakeoffStores({ root: fakeOPFS().root, idb: fakeIndexedDB(), store: fakeStorage(), wait: 50 }), { kept: "none", drafts: "deleted", archive: "deleted", keys: 0 });
-  // the archive held open (a tab of its own still running): its records cleared now, the hint kept until it really goes
+  // the archive held open (a tab of its own still running): it goes once that tab lets go; the hint kept until then
   const idb2 = fakeIndexedDB();
   const store2 = fakeStorage();
   TS.noteTakeoffUser("u1", store2);
+  let tab = null;
   await new Promise((done) => {
     const r = idb2.open("ptt-plans-archive", 1);
     r.onupgradeneeded = () => r.result.createObjectStore("kv");
-    r.onsuccess = () => { const t = r.result.transaction("kv", "readwrite"); t.objectStore("kv").put("handle", "folder"); t.oncomplete = done; };
+    r.onsuccess = () => { tab = r.result; const t = tab.transaction("kv", "readwrite"); t.objectStore("kv").put("handle", "folder"); t.oncomplete = done; };
   });
-  idb2.blockDelete = true;
-  assert.deepEqual(await TS.purgeTakeoffStores({ root: fakeOPFS().root, idb: idb2, store: store2, wait: 2000 }), { kept: "none", drafts: "deleted", archive: "cleared", keys: 0 });
-  assert.deepEqual(idb2.rows("ptt-plans-archive", "kv"), []);
+  assert.deepEqual(await TS.purgeTakeoffStores({ root: fakeOPFS().root, idb: idb2, store: store2, wait: 100 }), { kept: "none", drafts: "deleted", archive: "waiting", keys: 0 });
+  assert.deepEqual(TS.takeoffUsers(store2), ["u1"]);
+  tab.close();
+  await settle();
+  assert.equal(idb2.dbs.has("ptt-plans-archive"), false, "gone once the tab let go, and not made again");
   assert.ok(read("takeoff/js/core/plans-folder.js").includes("export function idbBackend(name = 'ptt-plans-archive', store = 'kv')"), "takeoff-web's own names");
   // the names are takeoff-web's own (the vendored copy's)
   assert.match(read("takeoff/js/core/drafts.js"), /const DB_NAME = 'ptt-drafts';/);

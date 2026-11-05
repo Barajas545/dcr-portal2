@@ -9,17 +9,35 @@ import vm from "node:vm";
 
 const dom = (name, message) => Object.assign(new Error(message || name), { name });
 
-/* ── IndexedDB: databases of stores of structured-cloned values, requests answered on a later turn ── */
+/* ── IndexedDB: databases of stores of structured-cloned values, requests answered on a later turn ──
+   As a browser's (the spec's connection queue): the opens and deletes of one database run one at a time in the order
+   asked - an open asked while a delete waits runs only after that delete; a delete waits ("blocked") while a
+   connection stays open after its versionchange; an open that creates a database fires upgradeneeded, and aborting
+   that upgrade (request.transaction.abort()) leaves no database behind. ── */
 export function fakeIndexedDB() {
   const dbs = new Map();              // name -> {version, stores: Map(name -> {keyPath, data: Map})}
   const conns = new Set();
+  const queues = new Map();           // name -> the opens and deletes asked, in order (the first one runs)
   const later = (fn) => setTimeout(fn, 0);
+  const openTo = (name) => Array.from(conns).filter((c) => c.name === name && !c.closed);
+  function enqueue(name, run) {
+    const q = queues.get(name) || [];
+    queues.set(name, q);
+    q.push(run);
+    if (q.length === 1) later(function () { run(next); });
+    function next() {
+      q.shift();
+      if (q.length) { const r = q[0]; later(function () { r(next); }); } else queues.delete(name);
+    }
+  }
+  const closeWaiters = [];            // deletes waiting for the connections of a database to close
+  function closedOne() { closeWaiters.slice().forEach((w) => w()); }
   function connection(name, entry) {
     const d = {
       name, version: entry.version, onversionchange: null, onclose: null, closed: false,
       objectStoreNames: { contains: (n) => entry.stores.has(n) },
       createObjectStore(n, o) { entry.stores.set(n, { keyPath: o && o.keyPath, data: new Map() }); return {}; },
-      close() { d.closed = true; conns.delete(d); },
+      close() { if (d.closed) return; d.closed = true; conns.delete(d); closedOne(); },
       transaction(names, mode) {
         const tx = { mode, error: null, oncomplete: null, onerror: null, onabort: null, pending: 0, over: false };
         const settle = () => later(function () {
@@ -58,30 +76,60 @@ export function fakeIndexedDB() {
     return d;
   }
   return {
-    dbs, conns, blockDelete: false,
+    dbs, conns, queues,
     open(name, version) {
-      const r = { result: null, error: null, onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null };
-      later(function () {
+      const r = { result: null, error: null, transaction: null, onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null };
+      enqueue(name, function (next) {
         let entry = dbs.get(name);
+        const created = !entry;
         const want = version === undefined ? (entry ? entry.version : 1) : version;
+        const old = entry ? entry.version : 0;
         const fresh = !entry || entry.version < want;
+        const before = entry ? new Set(entry.stores.keys()) : null;
         if (!entry) { entry = { version: want, stores: new Map() }; dbs.set(name, entry); }
         entry.version = want;
-        r.result = connection(name, entry);
-        if (fresh && r.onupgradeneeded) r.onupgradeneeded({ target: r });
+        const c = connection(name, entry);
+        r.result = c;
+        if (fresh) {
+          let aborted = false;
+          r.transaction = { abort() { aborted = true; } };
+          if (r.onupgradeneeded) r.onupgradeneeded({ target: r, oldVersion: old, newVersion: want });
+          r.transaction = null;
+          if (aborted) {
+            // the upgrade undone: a database it created is no more, an older one is as it was
+            c.close();
+            if (created) dbs.delete(name);
+            else { entry.version = old; Array.from(entry.stores.keys()).forEach((k) => { if (!before.has(k)) entry.stores.delete(k); }); }
+            r.result = undefined;
+            r.error = dom("AbortError", "the upgrade was aborted");
+            if (r.onerror) r.onerror({ target: r });
+            next();
+            return;
+          }
+        }
         if (r.onsuccess) r.onsuccess({ target: r });
+        next();
       });
       return r;
     },
     deleteDatabase(name) {
-      const self = this;
       const r = { onsuccess: null, onerror: null, onblocked: null };
-      later(function () {
-        const open = Array.from(conns).filter((c) => c.name === name);
-        open.forEach((c) => { if (c.onversionchange) c.onversionchange({}); });
-        if (self.blockDelete && open.some((c) => !c.closed)) { if (r.onblocked) r.onblocked({}); return; }
-        dbs.delete(name);
-        if (r.onsuccess) r.onsuccess({});
+      enqueue(name, function (next) {
+        openTo(name).forEach((c) => { if (c.onversionchange) c.onversionchange({ oldVersion: c.version, newVersion: null }); });
+        const go = function () {
+          dbs.delete(name);
+          if (r.onsuccess) r.onsuccess({});
+          next();
+        };
+        if (!openTo(name).length) { go(); return; }
+        // blocked: it stays queued (and every open asked after it waits) until the last connection closes
+        if (r.onblocked) r.onblocked({});
+        const wait = function () {
+          if (openTo(name).length) return;
+          closeWaiters.splice(closeWaiters.indexOf(wait), 1);
+          later(go);
+        };
+        closeWaiters.push(wait);
       });
       return r;
     },
