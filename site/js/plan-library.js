@@ -56,7 +56,7 @@ import {
   DIR, MAGIC, FILE_RE, RETRY_CAP_MS, fileNameFor, statusOf, applyCheck, dueForCheck, needsWork, dueForWork, withFailure, backoffMs,
   brokerWide, holding, keepSet, pruneHanded, projectBatches, fmtSize, hashOf, inSubFolder, deviceOpenStep, afterFetch,
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
-  purgeText, lostSave,
+  purgeText, lostSave, onlineNote,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -1262,9 +1262,7 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
   const online = !(HAS && navigator.onLine === false);
   const writable = online && (await canWrite());
   const viaOnline = function (why) {
-    const note = why === "space"
-      ? "Not enough room on this device for this plan, so it opened online: it needs the internet while it is open, and nothing is kept here."
-      : "This browser cannot keep plans on the device, so it opened online: it needs the internet while it is open.";
+    const note = onlineNote(why);
     openOnline(o.projectId, o.number, { id: itemId }, function (res) { done(Object.assign({ online: why, note }, res)); }, { title });
     frameSay(note, "warn");
   };

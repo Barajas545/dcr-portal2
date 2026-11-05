@@ -596,7 +596,7 @@ test("plan-frame.js: a same-site frame of the copy, over everything, with Close;
 
 /* ── open on a phone or a tablet: on the device first (js/plan-library.js openOnDevice) ─────────────────────── */
 
-test("a phone or a tablet opens a plan from a copy on the device: saved first, online only without room (and said so)", async () => {
+test("a phone or a tablet opens a plan from a copy on the device: saved first, online only without room (and said so - also that a big plan may not save from there: MEM-1)", async () => {
   const L = await import("../site/js/map/plan-library.js");
   assert.equal(L.deviceOpenStep({ have: true, online: true, writable: true }), "fetch", "online: brought up to OneDrive's version first");
   assert.equal(L.deviceOpenStep({ have: false, online: true, writable: true }), "fetch", "not on the device: saved first");
@@ -619,7 +619,12 @@ test("a phone or a tablet opens a plan from a copy on the device: saved first, o
   assert.match(fn, /res = r \? await resume\(itemId\)\s*: await save\(\{ projectId: o\.projectId, number: o\.number, projectTitle: o\.projectTitle, file: o\.file \}\);/,
     "the library's own download (its green bar)");
   assert.match(fn, /if \(!still\(\)\) \{ done\(\{ ok: false, why: "closed" \}\); return; \}/, "a menu closed meanwhile opens nothing");
-  assert.match(fn, /Not enough room on this device for this plan, so it opened online/);
+  assert.match(fn, /const note = onlineNote\(why\);/);
+  assert.match(L.onlineNote("space"), /^Not enough room on this device for this plan, so it opened online/);
+  // and that a Save of a big plan may not work from there (the app's Save of a plan opened online reads it whole into
+  // memory: review MEM-1) - what to do instead
+  assert.match(L.onlineNote("space"), /Saving may not work from there for a big plan - free some room, then open it again from the Plans Library so this device keeps it before you save\.$/);
+  assert.match(L.onlineNote("unsupported"), /^This browser cannot keep plans on the device, so it opened online/);
   assert.match(fn, /openOnline\(o\.projectId, o\.number, \{ id: itemId \}/);
   assert.ok(fn.indexOf("open(itemId,") !== -1, "then the file itself");
   // the save back (P4): offered only in the frame, to a person who may save back (tests/p8-plan-save.test.mjs)

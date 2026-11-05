@@ -11,6 +11,7 @@
    * fileNameFor(owner, id, v, stamp)  one download's file name on this device (never the same twice; plain characters);
    * statusOf(rec, job)         saved | outdated | downloading | paused | stopped | gone | denied | missing;
    * deviceOpenStep / afterFetch  how a phone or a tablet opens a plan: from a copy on the device, saved first;
+   * onlineNote(why)            what the person is told when it opened online instead (no room, a browser that cannot);
    * progressOf(row, done, size), progressHtml(p)  a row's green bar: filling while it saves, full once it is saved;
    * applyCheck(rec, answer)     a record after a plans_list answer for its project ({files} | null: not visible);
    * dueForCheck / needsWork     when to ask for new versions, and which saved plans to download again;
@@ -178,6 +179,17 @@ export function afterFetch(code, have) {
   if (code === "space" || code === "unsupported") return "online";
   if (code === "forbidden" || code === "removed" || code === "signin") return "fail";
   return have ? "open" : "fail";
+}
+
+/** What a phone or a tablet is told when a plan opened ONLINE instead (afterFetch / deviceOpenStep "online"): `why`
+    "space" (no room to keep it) or "unsupported" (a browser that cannot keep plans). With no room it also says that a
+    Save may not work from there for a big plan (review MEM-1: the takeoff app's Save of a plan opened online reads the
+    whole plan into memory; kept on the device first, the portal keeps it by slices instead). */
+export function onlineNote(why) {
+  return why === "space"
+    ? "Not enough room on this device for this plan, so it opened online: it needs the internet while it is open, and nothing is kept here. " +
+      "Saving may not work from there for a big plan - free some room, then open it again from the Plans Library so this device keeps it before you save."
+    : "This browser cannot keep plans on the device, so it opened online: it needs the internet while it is open.";
 }
 
 /** The words of a status, for a row (`hasCopy`: a saved copy is on the device, so it still opens). */
