@@ -25,6 +25,12 @@
      must be OneDrive's - fake_graph.ts hashes with the broker's quickxor.ts), an office save during the upload made the
      same upload's copy, a desktop-style save (the old item moved into Backup, a new one on the name) a copy found by
      name, a byte-identical re-save saved, and a commit whose answer was lost settled by plan_save_done with the hash;
+     and, once the broker has its repair round (contract addendum 3: save_back_off), the switch ONEDRIVE_PLAN_SAVE (off:
+     save_back false and plan_save_session 503 save_back_off; only:<number>), and every replace checked by the plan's
+     version history - OneDrive ignoring the deferral with an office save during the upload (the last chunk's 200 sent
+     back as landed: crossed, the office save put back, the save a copy), the PUT commit refused (the POST commits it,
+     verified), both refused (plan_changed why "refused": the copy without blame), no history (verified false) and a
+     deferred replace's ticket past 48 hours without a hash (not_saved need "hash");
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -92,11 +98,16 @@ export async function run(h) {
   const HAS_SAVE = Array.isArray(fn.OPS) && fn.OPS.includes("plan_save_session");
   // and the review round's deferred commit (contract addendum 2, C1b)
   const HAS_COMMIT = Array.isArray(fn.OPS) && fn.OPS.includes("plan_save_commit");
+  // and the repair round (contract addendum 3): the switch, the version check, landed, why, need hash
+  const HAS_SWITCH = !!(fn.ERRORS && fn.ERRORS.save_back_off);
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
+  let planSave;                        // ONEDRIVE_PLAN_SAVE for a check (undefined: test_world.ts's own)
+  const logs = [];                     // the broker's log lines (op, statuses, the save back's lines - never a name or an id)
   const deps = {
     settings: () => {
       const s = Object.assign({}, TW.SETTINGS_OK, { ONEDRIVE_HOST: od.ONEDRIVE_HOST });
       if (!takeoffSet) delete s.ONEDRIVE_TAKEOFF_ITEM_ID;
+      if (planSave !== undefined) s.ONEDRIVE_PLAN_SAVE = planSave;
       return s;
     },
     caller: async (jwt) => { const s = subOf(jwt); return Object.values(PEOPLE).some((p) => p.id === s) ? { id: s } : null; },
@@ -113,7 +124,7 @@ export async function run(h) {
     fetch: (url, init) => g.fetch(url, init),
     now: () => clock.t,
     sleep: async (ms) => { clock.t += ms; },
-    log: () => {},
+    log: (m) => { logs.push(String(m)); if (logs.length > 500) logs.shift(); },
   };
   const before = client.functions;
   client.functions = {
@@ -152,7 +163,8 @@ export async function run(h) {
       const last = g.lastChunk(req.url, bytes);
       if (last.status === 202) return res(202, { expirationDateTime: new Date(clock.t + 86400000).toISOString(), nextExpectedRanges: [] });
       if (loseFinal) { loseFinal = false; throw Object.assign(new Error("No connection"), { code: "offline" }); }
-      return res(201, { id: last.item.id, name: last.item.name, size: last.item.size });
+      // 200 (an existing file's new bytes: a replace OneDrive committed itself) or 201 (a new file), as the fake says
+      return res(last.status, { id: last.item.id, name: last.item.name, size: last.item.size });
     }
     const it = g.completeUpload(req.url, Number(m[3]));
     if (loseFinal) { loseFinal = false; throw Object.assign(new Error("No connection"), { code: "offline" }); }
@@ -177,8 +189,12 @@ export async function run(h) {
       done: (j, itemId, ticket) => od.planSaveDone(j.projectId, itemId, ticket, meta && meta.hash),
       commit: async (j) => {
         try {
-          return await od.planSaveCommit({ projectId: j.projectId, itemId: (meta && meta.itemId) || planId, ticket: j.session.ticket, uploadUrl: j.session.uploadUrl, hash: meta && meta.hash });
-        } catch (x) { if (x && x.code === "plan_changed" && meta) { meta.mode = "copy"; x.restart = true; } throw x; }
+          return await od.planSaveCommit({ projectId: j.projectId, itemId: (meta && meta.itemId) || planId, ticket: j.session.ticket, uploadUrl: j.session.uploadUrl,
+            hash: meta && meta.hash, landed: j.chunkLanded === true });
+        } catch (x) {
+          if (x && x.code === "plan_changed" && meta) { meta.mode = "copy"; meta.why = x.info && x.info.why === "refused" ? "refused" : "changed"; x.restart = true; }
+          throw x;
+        }
       },
       find: async () => [],
     },
@@ -193,7 +209,7 @@ export async function run(h) {
         .concat(HAS_LIBRARY ? ["plans_list", "plan_link"] : []).concat(HAS_SAVE ? ["plan_save_session", "plan_save_done"] : [])
         .concat(HAS_COMMIT ? ["plan_save_commit"] : []).sort(), "the ops");
       same(Object.keys(fn.ERRORS).sort(), od.CONTRACT.filter((c) => (HAS_PLANS || !/^takeoff_/.test(c)) &&
-        (HAS_SAVE || (c !== "not_saved" && c !== "plan_changed"))).sort(), "every error code the broker answers is one repo/onedrive.js reads");
+        (HAS_SAVE || (c !== "not_saved" && c !== "plan_changed")) && (HAS_SWITCH || c !== "save_back_off")).sort(), "every error code the broker answers is one repo/onedrive.js reads");
       ok(fn.ALLOWED_ORIGINS.includes("https://portal.dcrframing.com"), "the site's origin is allowed in CORS");
       same(fn.CHUNK_MULTIPLE, OD.CHUNK_UNIT, "320 KiB");
       same(fn.MAX_CHUNK_BYTES, OD.MAX_CHUNK, "191 x 320 KiB");
@@ -467,6 +483,91 @@ export async function run(h) {
           same((await od.planSaveDone(pid, fresh.id, s4.ticket, h4)).mode, "replace", "settled by plan_save_done with the hash");
           same((await od.planSaveCommit({ projectId: pid, itemId: fresh.id, ticket: s4.ticket, uploadUrl: s4.uploadUrl, hash: h4 })).mode, "replace", "the commit asked again: settled, no copy");
           same((await refused(() => od.planSaveDone(pid, fresh.id, s4.ticket, QX.quickXorHash(b3)), "not_saved", "another hash")).status, 409, "another hash is not this save");
+          client.as(null);
+        });
+      }
+      if (!HAS_SWITCH) {
+        results.push({ section, name: "the save back's repair round: the broker has no save_back_off yet (contract addendum 3) - its check waits for it", ok: true });
+      } else {
+        await check("the save back's repair round (contract addendum 3) through Portal 2's parts over the REAL broker: the switch (off: save_back false, 503 save_back_off; only:<number>); every replace checked by the version history - OneDrive ignoring the deferral with an office save during the upload is put back and sent as a copy (landed), a refused PUT commits by the POST (verified), both refused is plan_changed why refused, no history is unverified; a hashless deferred ticket past 48 hours needs the hash", async () => {
+          client.as(id("admin"));
+          const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)]; };
+          const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+          ok(!!tf, "the made-up project's takeoff folder");
+          const it = g.file(tf.id, made.number + " Roof.takeoff", 10);
+          const planOf = async () => (await files()).files.find((x) => x.id === it.id);
+          const reset = () => Object.assign(g.script, { deferCommit: "honoured", putCommit: "accepted", putIfMatch: "honoured", postIfMatch: "honoured", postStatus: 0,
+            versions: "on", restoreStatus: 0 });
+          const sendIt = async (meta, bytes) => {
+            const plan = await planOf();
+            const up = planUploader(it.id, plan.version, Object.assign(meta, { name: plan.name, hash: QX.quickXorHash(bytes) }));          // (meta: the check reads its why after)
+            up.add({ projectId: pid, file: new File([bytes], plan.name), name: plan.name });
+            return (await settle(up))[0];
+          };
+          const bytesN = (n, v) => new Uint8Array(n).fill(v);
+          try {
+            // (D1) the switch: off - save_back false for the admin, plan_save_session 503 save_back_off; only another project's
+            // number - the same; only this one's - on
+            for (const [v, on] of [["off", false], ["only:A999T9", false], ["only:" + made.number, true], ["not a setting", false], [undefined, true]]) {
+              planSave = v;
+              const p = await files();
+              same(p.saveBack, on, "plans_list save_back, " + String(v));
+              same((await od.planLink(pid, it.id)).saveBack, on, "plan_link save_back, " + String(v));
+              if (!on) same((await refused(() => od.planSaveSession({ projectId: pid, itemId: it.id, version: p.files.find((x) => x.id === it.id).version, size: 5 }), "save_back_off", String(v))).status, 503, String(v));
+            }
+            ok(logs.some((l) => /ONEDRIVE_PLAN_SAVE not understood: off/.test(l)) && !logs.some((l) => /not a setting/.test(l)), "a setting not understood is said, never its value");
+            planSave = undefined;
+            // (D3) OneDrive ignoring the deferral, an office save landing during the upload: the last chunk commits over it (200);
+            // Portal 2 says so (landed), the broker's version check finds the office save under it, puts it back, and the
+            // same save goes again as a copy - the office save stays the plan
+            reset();
+            g.script.deferCommit = "ignored";
+            logs.length = 0;
+            atLast = () => { clock.t += 5000; g.write(it.id, 77); };
+            const b1 = bytesN(2 * OD.CHUNK_UNIT + 5, 31);
+            const m1 = {};
+            const j1 = await sendIt(m1, b1);
+            same([j1.state, j1.result && j1.result.mode, m1.why], ["done", "copy", "changed"], "a copy: " + j1.error);
+            ok(logs.some((l) => /OneDrive committed at the last chunk: deferCommit not honoured here/.test(l)), "the broker heard landed");
+            ok(logs.some((l) => /crossed: the office save was put back/.test(l)), "and put the office save back");
+            same((await planOf()).size, 77, "the office save is the plan again");
+            same(j1.result.version, "qx:" + QX.quickXorHash(b1), "the copy holds exactly the save");
+            // (D2 attempt B) the PUT commit refused (a OneDrive that commits a deferred session by its POST only): the POST
+            reset();
+            g.script.putCommit = "refused";
+            logs.length = 0;
+            clock.t += 5000;
+            const b2 = bytesN(OD.CHUNK_UNIT + 7, 32);
+            const j2 = await sendIt({}, b2);
+            same([j2.state, j2.result && j2.result.mode, j2.result && j2.result.verified], ["done", "replace", true], "replaced by the POST: " + j2.error);
+            ok(logs.some((l) => /the PUT commit was refused \(400\): the POST commit/.test(l)), "the PUT, then the POST");
+            // (D5) both refused: plan_changed {why: "refused"} - sent again as a copy, nobody blamed
+            g.script.postStatus = 400;
+            clock.t += 5000;
+            const m3 = {};
+            const j3 = await sendIt(m3, bytesN(OD.CHUNK_UNIT + 9, 33));
+            same([j3.state, j3.result && j3.result.mode, m3.why], ["done", "copy", "refused"], "a copy: " + j3.error);
+            // no version history to read: saved, verified false (the go-live self-test's line)
+            reset();
+            g.script.versions = "failing";
+            logs.length = 0;
+            clock.t += 5000;
+            const j4 = await sendIt({}, bytesN(OD.CHUNK_UNIT + 11, 34));
+            same([j4.state, j4.result && j4.result.mode, j4.result && j4.result.verified], ["done", "replace", false], "unverified: " + j4.error);
+            ok(logs.some((l) => /version history not available: unverified/.test(l)), "said in the log");
+            // (D4) a deferred replace's ticket past 48 hours without a hash: not_saved {need: "hash"}
+            reset();
+            const p5 = await planOf();
+            const s5 = await od.planSaveSession({ projectId: pid, itemId: it.id, version: p5.version, size: 9, name: p5.name });
+            same(s5.commit, "broker", "a deferred replace");
+            clock.t += 49 * 3600 * 1000;
+            const e5 = await refused(() => od.planSaveDone(pid, it.id, s5.ticket), "not_saved", "48 hours, no hash");
+            same([e5.status, e5.info && e5.info.need], [409, "hash"], "the hash is needed");
+          } finally {
+            reset();
+            atLast = null;
+            planSave = undefined;
+          }
           client.as(null);
         });
       }
