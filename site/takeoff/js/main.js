@@ -4,7 +4,7 @@ import {
   openProject, writeProject, readProjectSummary, FILE_EXTENSION, LEGACY_EXTENSION,
   STANDALONE_PAGE,
 } from './core/takeoff-file.js';
-import { draftKey, putDraft, getDraft, dropDraft, listDraftKeys } from './core/drafts.js';
+import { draftKey, draftNumber, putDraft, getDraft, dropDraft, listDraftKeys } from './core/drafts.js';
 import { CalloutPreview } from './ui/callout-preview.js';
 import { resolveUiMode } from './ui/settings.js';
 import { RemoteFile } from './core/remote-file.js';
@@ -22,7 +22,7 @@ import {
   deliverFile, afterSave, saveFileName, isStandalone, downloadUrlKeepMs, lateArrival, STILL_COMING,
   savedStill, nextDraftHomes, draftHomeFor, HANDHELD_SAVE, REPLACE_WARNING, savesToPortal, portalNewsWords,
   draftFate, afterLateKept, findDraft, draftKeptNow, remoteSaveBytes, remoteSaveRefused, remoteSaveRefusedWords,
-  earlierDraftWords,
+  earlierDraftWords, EARLIER_DRAFT_ASK, draftTwins,
 } from './core/save-route.js';
 import {
   HANDOFF_WAIT_MS, RENEW_WAIT_MS, SAVE_WAIT_MS, parsePortalHash, readyMessage, renewMessage,
@@ -95,6 +95,12 @@ const app = {
   // one's unsaved work is never offered to the other (js/core/drafts.js
   // draftWho). '' everywhere else, and from a portal that sends none.
   draftWho: '',
+  // Inside the portal, the project number the open plan was handed with
+  // (ptt-open's `number`): written into its drafts, so a draft of the same
+  // name at another size is offered as an earlier version of THIS plan only,
+  // never another job's plan of that name (js/core/drafts.js draftNumber).
+  // '' for any other file, and everywhere else.
+  draftNumber: '',
   // The Plans Library copy the open project reads its sheets from, and the
   // lock that keeps the portal from deleting it — null for any other file.
   // See openLibraryCopy().
@@ -2558,7 +2564,7 @@ async function openProjectFile({ beforeOpen = null } = {}) {
  * inside one of this device's plan folders is treated the same, so Save
  * guards it the same way whichever door it came in by.
  */
-async function loadProjectFile(file, handle = null, { library = null, archive = null, fromPortal = false } = {}) {
+async function loadProjectFile(file, handle = null, { library = null, archive = null, fromPortal = false, number = '' } = {}) {
   openEpoch += 1;
   showProgress('Opening project…', 0, 1, file.name);
   try {
@@ -2588,6 +2594,7 @@ async function loadProjectFile(file, handle = null, { library = null, archive = 
     app.fileName = file.name;
     app.fileSize = file.size;
     app.draftHomes = nextDraftHomes([], { name: file.name, size: file.size, pages: opened.pageCount });
+    app.draftNumber = embedded ? draftNumber(number) : '';
     // The bytes as opened, for File > Keep on This Device: a File from the
     // Plans Archive folder or a file picker (a portal link's remote file is
     // not one, and a copy already on this device needs no second copy).
@@ -3099,7 +3106,7 @@ async function projectSourcesReadable() {
  */
 async function keepChangesAsDraft(now) {
   const work = app.project.buildSaveMetadata();
-  const info = { pageCount: app.pages.pageCount, name: app.fileName || '' };
+  const info = draftInfo();
   for (const key of draftKeysNow()) await putDraft(key, work, info);
   if (now) await putDraft(draftKey(app.fileName, now.size, app.draftWho), work, info);
   await D.alertDialog('Changed since you opened it', now
@@ -3206,13 +3213,18 @@ function draftKeysNow() {
     : [draftKey(app.fileName || suggestedFileName(), app.fileSize || 0, app.draftWho)];
 }
 
+/** What a draft carries beside the work: its sheet count, the file's name, and inside the portal the plan's number (app.draftNumber). */
+function draftInfo() {
+  return { pageCount: app.pages.pageCount, name: app.fileName || '', ...(app.draftNumber ? { number: app.draftNumber } : {}) };
+}
+
 /** Write the draft now, under every key it may be found by. Resolves whether one was written. */
 async function saveDraftNow() {
   try {
     if (!app.project.dirty) return false;
     if (!app.pages.pageCount && ![...app.project.allItems()].length) return false;
     const work = app.project.buildSaveMetadata();
-    const info = { pageCount: app.pages.pageCount, name: app.fileName || '' };
+    const info = draftInfo();
     // All at once, not one after another: a page being hidden may have only
     // moments left, and the last-saved file's key matters as much as the first.
     const wrote = await Promise.all(draftKeysNow().map(key => putDraft(key, work, info)));
@@ -3257,17 +3269,19 @@ async function keepDraftForPortal() {
  * are found (app.draftWho); one kept before the portal said who is offered
  * with a word that it may be someone else's, and never dropped (`legacy`:
  * findDraft). With none of this person's for the file, inside the portal,
- * their newest draft of the plan at another size is offered, said to be of
- * an earlier version, and never dropped unasked (`earlier`: findDraft).
+ * their newest draft of the same plan (its name and the portal's project
+ * number) at another size is offered, said to be of an earlier version,
+ * and dropped only when the person says "Discard them" (`earlier`:
+ * findDraft, askEarlierDraft). Whatever the person answers, the other keys
+ * of theirs that hold exactly the same work go with the one offered
+ * (draftTwins), so work they turned down is never offered again.
  */
 async function offerDraftRestore(file, { portal = false } = {}) {
-  const found = await findDraft({ name: file.name, size: file.size, portal, who: app.draftWho, embedded },
-    { get: getDraft, keys: listDraftKeys });
+  const store = { get: getDraft, keys: listDraftKeys };
+  const found = await findDraft({ name: file.name, size: file.size, portal, who: app.draftWho, embedded, number: app.draftNumber },
+    store);
   if (!found) return;
-  const { key, draft, own, legacy, earlier, twins } = found;
-  // An earlier version's draft goes, when the person's answer lets it go,
-  // with the other keys that hold exactly the same work (findDraft twins).
-  const keysOfIt = [key, ...twins];
+  const { key, draft, own, legacy, earlier } = found;
 
   // A draft older than the file has already been saved into it — when the
   // file's date is this app's own save (draftFate).
@@ -3287,17 +3301,22 @@ async function offerDraftRestore(file, { portal = false } = {}) {
   }
 
   const when = new Date(draft.savedAt).toLocaleString();
-  const ok = await D.confirmDialog(
-    'Unsaved work found',
-    earlier
-      ? `${earlierDraftWords(when)}\n\nRestore them?`
-      : `There is takeoff for "${file.name}" from ${when} that was never saved `
+  const answer = earlier
+    ? await askEarlierDraft(when)
+    : await D.confirmDialog(
+      'Unsaved work found',
+      `There is takeoff for "${file.name}" from ${when} that was never saved `
         + `into the file — the tab was most likely closed or reloaded first.`
         + (legacy ? `\n\n${DRAFT_OF_ANYONE}` : '')
         + `\n\nRestore it?`,
-    { okLabel: 'Restore it' });
-  if (!ok) {
-    if (!legacy) for (const k of keysOfIt) await dropDraft(k);
+      { okLabel: 'Restore it' }) ? 'restore' : 'discard';
+  if (answer === 'later') return;
+  // The same work under this person's other files (one opening drafts it
+  // under every file it may come back from), looked for only now: it goes
+  // with the one offered. One of no person is never dropped.
+  const twins = legacy ? [] : await draftTwins(found, store, app.draftWho);
+  if (answer !== 'restore') {
+    if (!legacy) for (const k of [key, ...twins]) await dropDraft(k);
     return;
   }
 
@@ -3323,7 +3342,30 @@ async function offerDraftRestore(file, { portal = false } = {}) {
   // keys from now on — written there first, then taken from the plan's.
   // One kept before the portal said who is written under this person's
   // keys too, and left where it was. An earlier version's, with its twins.
-  if (key !== own && await saveDraftNow() && !legacy) for (const k of keysOfIt) await dropDraft(k);
+  // The file's own: it stays where it is, and its twins go.
+  if (key === own) for (const k of twins) await dropDraft(k);
+  else if (await saveDraftNow() && !legacy) for (const k of [key, ...twins]) await dropDraft(k);
+}
+
+/**
+ * Ask about an earlier version's draft (findDraft `earlier`), in the
+ * contract's words: 'restore', 'discard' — or 'later' ("Not now", or the
+ * dialog closed), which leaves it where it is. Never dropped unasked.
+ */
+function askEarlierDraft(when) {
+  return D.showDialog(close => {
+    const body = D.el('div');
+    body.style.cssText = 'font-size:12.5px;line-height:1.6;white-space:pre-line';
+    body.textContent = `${earlierDraftWords(when)}\n\n${EARLIER_DRAFT_ASK}`;
+    return D.dlg({
+      title: 'Unsaved work found', body,
+      buttons: [
+        D.button('Not now', '', () => close('later')),
+        D.button('Discard them', 'danger', () => close('discard')),
+        D.button('Restore it', 'primary', () => close('restore')),
+      ],
+    });
+  }).then(v => (v === 'restore' || v === 'discard' ? v : 'later'));
 }
 
 // Hidden, not unloading: this is the event a discarded tab actually gets.
@@ -3933,6 +3975,7 @@ function newProject() {
   app.fileSize = 0;
   // No file to offer a draft back from until its first confirmed save.
   app.draftHomes = [];
+  app.draftNumber = '';
   app.sourceFile = null;
   app.archive = null;
   app.saveStartIn = null;
@@ -5089,7 +5132,7 @@ async function receiveFromPortal(nonce) {
     // prices goes; a copy kept by this app belongs to the device, out of the
     // portal's reach.
     const hold = { name: plan.name, file, portal: true, number: plan.number, release() {} };
-    const opened = await loadProjectFile(file, null, { library: hold, fromPortal: true });
+    const opened = await loadProjectFile(file, null, { library: hold, fromPortal: true, number: plan.number });
     if (opened) {
       app.portal = { peer: pinned, nonce, kind: 'file', name: plan.name, canSave: !!plan.canSave, hold, epoch: openEpoch };
       setStatus(plan.updateAvailable
@@ -5112,7 +5155,7 @@ async function receiveFromPortal(nonce) {
     size: plan.size,
     lastModified: plan.lastModified,
     renew: portalRenewer(pinned, nonce),
-  }), null, { fromPortal: true });
+  }), null, { fromPortal: true, number: plan.number });
   if (opened) {
     app.portal = { peer: pinned, nonce, kind: 'link', name: plan.name, canSave: false, hold: null, epoch: openEpoch };
     // A plan opened over the internet is never handed back. Inside the

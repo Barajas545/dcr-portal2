@@ -14,7 +14,8 @@
  *
  * A draft is keyed to the file it came from (name and byte length), so
  * reopening that file is what offers it back. It is never restored silently.
- * Inside the portal it is keyed to the person too (draftWho).
+ * Inside the portal it is keyed to the person too (draftWho), and carries
+ * the plan's project number (draftNumber).
  */
 
 import { WHO_RE } from './portal-handoff.js';
@@ -66,6 +67,21 @@ function tx(mode, fn) {
  */
 export function draftWho(who) {
   return typeof who === 'string' && WHO_RE.test(who) ? who : '';
+}
+
+/**
+ * The plan a draft is of, inside the portal: the project number the portal
+ * handed it with (ptt-open's `number`, e.g. "A000T1"), trimmed — or '' for
+ * anything else. Kept in the draft (its `number`), never in its key: the key
+ * is "<name>|<size>|@<who>" for the portal too. Two jobs can share a plan's
+ * name, so a draft of that name at another size is an earlier version of
+ * THIS plan only when it carries this plan's number (js/core/save-route.js
+ * findDraft). Compared in any case, as the portal's broker compares numbers.
+ */
+export function draftNumber(number) {
+  if (typeof number !== 'string') return '';
+  const n = number.normalize('NFC').trim();
+  return n.length >= 1 && n.length <= 40 && !/[\u0000-\u001f\u007f]/.test(n) ? n : '';
 }
 
 /** The end of a draft's key after the file's name: "|<size>", and "|@<who>" for a person's (draftWho). */
