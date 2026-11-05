@@ -683,10 +683,16 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   keeps the copy byte-exact. Its own worker (`takeoff/sw.js`, scope `takeoff/`) keeps it offline; the portal's worker
   (v5) lets everything under `takeoff/` through.
 - **The hand-over** is the computer's (`js/plan-handoff.js` `talk`: ptt-ready, ptt-open, ptt-renew/ptt-link,
-  ptt-offline), with the frame's window and this site's origin as the peer. The frame registers the copy's worker and
-  waits for it before loading (else the app reloads itself under the portal's worker and loses the word).
+  ptt-offline), with the frame's window and this site's origin as the peer; in the frame `ptt-open` also carries `who`
+  (`map/plans.js whoWord`: an opaque 12-character word per person, never the id) so the app keeps one person's drafts
+  apart from another's. The frame registers the copy's worker and waits for it before loading (else the app reloads
+  itself under the portal's worker and loses the word).
+- **Close** asks first while the app has unsaved changes (always the danger question, with any save in flight said
+  after it), then has the app keep its draft (`TakeoffApp.saveDraftNow`, at most 3 s) before the frame goes. The
+  portal's own dialog host is never made inert, so the question always takes taps.
 - **Open on a phone or a tablet** puts the plan on the device first (the Plans Library's download, its green bar), then
-  hands it over as a file; no room: it opens online and says so. The doors that led to the Plans Archive (📐, the menu's
+  hands it over as a file; no room: it opens online and says so (and that a Save of a big plan may not work from
+  there). The doors that led to the Plans Archive (📐, the menu's
   foot, Floor Plans, the Takeoffs tab) lead to the 📐 menu or the Plans Library there; people without prices are told
   "Plans are for the people who see prices".
 - **Tests.** `tests/p8-takeoff-frame.test.mjs`; `tools/e2e-p7-plans.mjs` 4b walks a tablet through it in headless Chrome.
@@ -716,8 +722,11 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   `dcr2-plan-rd:<file>|<word>` other windows see), and goes once the frame closes when no record names it (no week's
   grace on this route: the frame is followed exactly, so plan-sized copies never pile up).
 - **Rows.** The Plans Library and the 📐 menu say Saved on this iPad / Sending 45% / Sent / Saved as a separate file /
-  Not sent — tap to retry, with Send now / Retry. A purge on lost prices takes the saves waiting here too, and on this
-  site the takeoff app's own drafts (`ptt-drafts`) and kept copies (`plans-kept`).
+  Not sent — tap to retry, with Send now / Retry. A purge on lost prices takes the saves waiting here too, and - for a
+  person who opened the takeoff app in the frame here - on this site the takeoff app's own drafts (`ptt-drafts`) and
+  kept copies (`plans-kept`); the page says how many plans and unsent saves went. A second window's Save never
+  replaces another opening's waiting save (it is refused, the app keeps its draft), and a passing storage error never
+  counts as a lost save.
 - **Before the owner's write grant** on the takeoff folder the broker answers 503 and a save just waits on the device.
 - **Tests.** `tests/p7-library.test.mjs` (the rules, and the library over a made-up phone: `tests/plan-device.mjs` with
   the REAL worker), `tests/p8-plan-save.test.mjs`, `tests/p7-onedrive-repo.test.mjs`, `tests/p7-onedrive-upload.test.mjs`;
