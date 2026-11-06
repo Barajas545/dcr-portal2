@@ -39,6 +39,7 @@
 //      wide section detail gets a wide window instead of two thick bars.
 
 import { cropGeometry } from '../core/page-store.js';
+import { wheelInOut } from '../render/zoom-floor.js';
 
 /**
  * The size budgets, in CSS pixels. Width and height are a budget for the
@@ -1056,9 +1057,13 @@ export class CalloutPreview {
                               -dy / Math.max(1, this.box.h)));
         return;
       }
+      // No up or down in it (a tilt wheel, a sideways swipe): no zoom. The
+      // sheet's rule, Shift's sideways notch included (zoom-floor.js).
+      const dir = wheelInOut(ev);
+      if (!dir) return;
       const step = 1 + clamp(Number(this.host.zoomStep?.()) || 15, 2, 50) / 100;
       const { fx, fy } = frac(ev);
-      this._zoomBy(ev.deltaY < 0 ? step : 1 / step, fx, fy);
+      this._zoomBy(dir === 'in' ? step : 1 / step, fx, fy);
     }, { passive: false });
 
     body.addEventListener('dblclick', ev => {

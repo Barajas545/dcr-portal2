@@ -13,6 +13,7 @@ import * as D from './dialogs.js';
 import { DEFAULT_DPI } from '../core/units.js';
 import { PREVIEW_SIZES } from './callout-preview.js';
 import { PLANS_SOURCE } from '../site-config.js';
+import { zoomFloorWords, ZOOM_FLOOR_TIP } from '../render/zoom-floor.js';
 
 const STORAGE_KEY = 'ptt.settings.v1';
 
@@ -22,6 +23,12 @@ export const DEFAULT_SETTINGS = {
   marker_scale: 1.0,               // clamped 0.6–2.2 by the marker layer
   zoom_step_percent: 15,
   wheel_mode: 'zoom',              // zoom (CAD style) | scroll (touchpad style)
+  // A plain notch out, a pinch or the minus button stops where the whole
+  // sheet fits the screen, so a drawing never shrinks past readable by
+  // accident; Shift on the wheel (a fresh pinch from Fit) goes on past it.
+  // The desktop's own key and default. A NEW key, for the reason at the top
+  // of this file: it reaches every install, ticked.
+  zoom_out_stops_at_fit: true,
   background_color: '#1e1e1e',
   // The layout the app runs in. `null` means the user has never chosen.
   //
@@ -152,6 +159,25 @@ export class Settings {
       const zoomStep = D.field(form, 'Zoom per tick',
         D.input(String(v.zoom_step_percent), 'number', { min: '2', max: '50', step: '1' }));
 
+      // The zoom stop (desktop Settings > Viewing). Its words name the keys
+      // that go past Fit, and those change with the wheel: said from what is
+      // picked above, before OK (3.07). The touch layout says how a finger
+      // goes past first.
+      const touchLayout = resolveUiMode(v) === 'touch';
+      const floorBox = D.input('', 'checkbox');
+      floorBox.checked = v.zoom_out_stops_at_fit !== false;
+      const floorWrap = D.el('div', 'radio-row');
+      const fl = D.el('label');
+      fl.title = ZOOM_FLOOR_TIP;
+      fl.appendChild(floorBox);
+      const floorWords = D.el('span', null, zoomFloorWords(wheel.value, touchLayout));
+      fl.appendChild(floorWords);
+      floorWrap.appendChild(fl);
+      D.field(form, '', floorWrap);
+      wheel.addEventListener('change', () => {
+        floorWords.textContent = zoomFloorWords(wheel.value, touchLayout);
+      });
+
       const marker = D.field(form, 'Marker size',
         D.input(String(v.marker_scale), 'number', { min: '0.6', max: '2.2', step: '0.05' }),
         'Count bubbles and window/door symbols. 1.0 is as designed.');
@@ -216,6 +242,7 @@ export class Settings {
             default_zoom_mode: zoomMode.value,
             wheel_mode: wheel.value,
             zoom_step_percent: clamp(Number(zoomStep.value) || 15, 2, 50),
+            zoom_out_stops_at_fit: floorBox.checked,
             marker_scale: clamp(Number(marker.value) || 1, 0.6, 2.2),
             background_color: bg.value,
             page_nav_keys: nav.value,

@@ -34,6 +34,7 @@ import {
   makeCallout, HIGHLIGHT_COLORS, PEN_COLORS,
   DEFAULT_HIGHLIGHT_WIDTH, DEFAULT_PEN_WIDTH, ERASER_RADIUS_PX,
 } from './markup.js';
+import { wheelInOut } from '../render/zoom-floor.js';
 
 /** The takeoff tools — the ones that produce a quantity. */
 export const TAKEOFF_TOOLS = [
@@ -253,6 +254,14 @@ export class ToolController extends EventTarget {
      * @type {((dx:number, dy:number) => void)|null}
      */
     this.overlayDrag = null;
+
+    /**
+     * The zoom floor (js/render/zoom-floor.js ZoomFloor), set by the app:
+     * the wheel and the pinch zoom through it, so zooming out stops at the
+     * whole sheet. Without one they zoom the viewport as they always did.
+     * @type {import('../render/zoom-floor.js').ZoomFloor|null}
+     */
+    this.zoomGate = null;
 
     this.uiScale = 1.0;
     this.markerScale = 1.0;
@@ -894,7 +903,9 @@ export class ToolController extends EventTarget {
    * whatever the first finger had started is stood down first.
    */
   _enterPinch() {
-    const [a, b] = [...this._pointers.values()];
+    // The pinch is THESE two fingers, by pointerId (see _updatePinch).
+    const ids = [...this._pointers.keys()].slice(0, 2);
+    const [a, b] = ids.map(id => this._pointers.get(id));
     if (!a || !b) return;
     this._clearLongPress();
     this._pendingTap = null;
@@ -913,26 +924,51 @@ export class ToolController extends EventTarget {
     // whatever it had moved.
     this._settlePress();
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const startDist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
     this._pinch = {
-      startDist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      ids,
+      startDist,
       startZoom: this.viewport.zoom,
       lastMid: mid,
       rect: this.canvas.getBoundingClientRect(),
+      // This pinch's say about the zoom floor: whether it started at Fit
+      // (and so may go past it), and whether it is holding there now.
+      hold: this.zoomGate ? this.zoomGate.pinchStart(startDist) : null,
     };
     this.emit('changed');
   }
 
-  /** Spread zooms about the point between the fingers; sliding both pans. */
+  /**
+   * Spread zooms about the point between the fingers; sliding both pans.
+   *
+   * Through the zoom floor, step by step from the last move: an absolute
+   * target from where the pinch began kept falling after the stop, so
+   * spreading the fingers did nothing until they were back where the stop
+   * had been hit. Held at Fit, the drift is ignored and the sheet stays
+   * centred until the fingers spread again.
+   *
+   * Measured between the pinch's OWN two fingers: a palm that landed as
+   * well neither moves it nor counts as one of its moves, and read as "the
+   * first two fingers down" the pinch carried on between the finger left
+   * and the palm when one of its own lifted, jumping by their distance.
+   */
   _updatePinch() {
-    const [a, b] = [...this._pointers.values()];
-    if (!a || !b || !this._pinch) return;
+    if (!this._pinch) return;
+    const [a, b] = this._pinch.ids.map(id => this._pointers.get(id));
+    if (!a || !b) return;
     const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const r = this._pinch.rect;
-    this.viewport.panBy(mid.x - this._pinch.lastMid.x,
-                        mid.y - this._pinch.lastMid.y);
-    this.viewport.setZoomAt(mid.x - r.left, mid.y - r.top,
-                            this._pinch.startZoom * dist / this._pinch.startDist);
+    const dx = mid.x - this._pinch.lastMid.x;
+    const dy = mid.y - this._pinch.lastMid.y;
+    if (this.zoomGate && this._pinch.hold) {
+      this.zoomGate.pinchMove(this._pinch.hold,
+        { sx: mid.x - r.left, sy: mid.y - r.top, dx, dy, dist });
+    } else {
+      this.viewport.panBy(dx, dy);
+      this.viewport.setZoomAt(mid.x - r.left, mid.y - r.top,
+                              this._pinch.startZoom * dist / this._pinch.startDist);
+    }
     this._pinch.lastMid = mid;
     this.emit('changed');
     this.emit('zoom-changed', { zoom: this.viewport.zoom });
@@ -996,7 +1032,10 @@ export class ToolController extends EventTarget {
       if (this._pointers.has(ev.pointerId)) {
         this._pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
       }
-      if (this._pinch) { this._updatePinch(); return; }
+      if (this._pinch) {
+        if (this._pinch.ids.includes(ev.pointerId)) this._updatePinch();
+        return;
+      }
       if (this._lpStart
           && Math.hypot(ev.clientX - this._lpStart.x,
                         ev.clientY - this._lpStart.y) > TAP_SLOP) {
@@ -1122,7 +1161,8 @@ export class ToolController extends EventTarget {
     const wasTouch = ev.pointerType === 'touch';
     if (wasTouch) {
       this._pointers.delete(ev.pointerId);
-      if (this._pinch && this._pointers.size < 2) {
+      // Either of the pinch's own fingers lifting ends it.
+      if (this._pinch && this._pinch.ids.includes(ev.pointerId)) {
         this._pinch = null;
         // The finger still down must not carry on as a pan or a tap: the
         // gesture the estimator made was a zoom, and it is over.
@@ -1281,7 +1321,16 @@ export class ToolController extends EventTarget {
       if (ev.shiftKey && dx === 0) { dx = dy; dy = 0; }
       this.viewport.panBy(-dx, -dy);
     } else {
-      this.viewport.zoomAt(sx, sy, ev.deltaY < 0 ? step : 1 / step);
+      // A tilt wheel, a sideways swipe, Alt+wheel: nothing says in or out,
+      // so nothing zooms (after preventDefault: the page never scrolls).
+      // Shift+wheel, which browsers send sideways, is still a notch -- and
+      // the one that goes past the whole sheet (Ctrl+Shift when the wheel
+      // scrolls: Ctrl is what brought it here).
+      const dir = wheelInOut(ev);
+      if (!dir) return;
+      const factor = dir === 'in' ? step : 1 / step;
+      if (this.zoomGate) this.zoomGate.zoomAt(sx, sy, factor, !!ev.shiftKey, 'wheel');
+      else this.viewport.zoomAt(sx, sy, factor);
     }
     this.emit('changed');
     this.emit('zoom-changed', { zoom: this.viewport.zoom });

@@ -73,6 +73,7 @@ import {
   revPageCount, revPageLabel, revisionLabel, workingVersionOf,
   sizesMatch, sizeRefusal, itemRevId,
 } from './core/revisions.js';
+import { ZoomFloor, PinchHold, fitPlace, pinchPlace, wheelInOut, pictureZoom, pictureRect, zoomFloorLine, zoomOutTip, wheelHelp, pinchHelp, PICTURE_STEP } from './render/zoom-floor.js';
 
 const $ = id => document.getElementById(id);
 
@@ -151,6 +152,23 @@ const controller = new ToolController({
     showItemMenu: (item, ev) => showItemMenu(item, ev, { from: 'canvas' }),
   },
 });
+
+// Zooming out stops at the whole sheet (desktop 3.06; js/render/zoom-floor.js).
+// It measures the drawing ON SCREEN -- a revision up on other paper is
+// fitted by its own paper -- and keeps Viewport.fit's 16 px margin, so F,
+// the floor and the 'Fit 21%' readout are one answer. The wheel and the
+// pinch go through it (controller.zoomGate), and so do the buttons, Zoom to
+// item and a change of size (an iPad turned, a panel opened).
+const zoomFloor = new ZoomFloor(viewport, {
+  size: () => shownDrawingSize(),
+  enabled: () => zoomStopsAtFit(),
+  page: () => app.currentPage,
+  drawingKey: () => String(versionView.revId || ''),
+  refused: via => sayZoomFloorOnce(via),
+  margin: 16,
+});
+controller.zoomGate = zoomFloor;
+viewport.onResize = (w, h) => zoomFloor.resized(w, h);
 
 const itemsPanel = new ItemsPanel({
   root: $('itemsPanel'),
@@ -394,7 +412,8 @@ function drawFrame() {
     markup: controller.markupPreview(),
     ppf: app.project.pagePpf(app.currentPage),
   });
-  $('zoomLabel').textContent = `${Math.round(viewport.zoom * 100)}%`;
+  // On the floor the number alone does not say why the zoom stopped.
+  $('zoomLabel').textContent = zoomFloor.label();
 }
 
 controller.addEventListener('changed', () => { requestDraw(); syncMobileBar(); });
@@ -595,7 +614,19 @@ async function goToPage(index, { version } = {}) {
   requestDraw();
 
   syncVersionUi();
-  if (want) await showSheetVersion(index, want, { announce: false, flip: false });
+  if (want) {
+    // The default zoom above framed the sheet's OWN drawing, all there was.
+    // When the drawing that goes up is on other paper, the landing ends
+    // framed on THAT one -- as the desktop's held turn settles on the
+    // revision's Fit -- unless he zoomed or moved the sheet while it was
+    // being decoded (ZoomFloor.unmoved: the flip itself is no move).
+    const framed = first && !pendingFit ? zoomFloor.mark() : null;
+    const up = await showSheetVersion(index, want, { announce: false, flip: false });
+    if (up && framed && ticket === pageTicket && browsingOtherVersion() && zoomFloor.unmoved(framed)) {
+      pendingFit = !applyDefaultZoom();
+      requestDraw();
+    }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1192,15 +1223,24 @@ function showingOldVersion() {
   return String(versionView.revId || '') !== String(newestOf(app.currentPage) || '');
 }
 
-/** Put the sheet's own drawing back. Draws; touches nothing else. */
+/**
+ * Put the sheet's own drawing back. Draws; touches nothing else -- but the
+ * view's centre, which stays where the desktop's flip keeps it when the
+ * revision was on other paper (ZoomFloor.keepPan).
+ */
 function clearVersion({ draw = true } = {}) {
-  if (!versionView.revId && !versionView.bitmap) return false;
+  // A revision still being decoded is dropped as well: it was asked for the
+  // drawing being cleared, and going up when it lands put one sheet's
+  // reissue over the next sheet he had turned to meanwhile.
   versionTicket += 1;
+  if (!versionView.revId && !versionView.bitmap) return false;
+  const was = shownDrawingSize();
   versionView.revId = '';
   versionView.revPage = null;
   versionView.set = -1;
   versionView.bitmap = null;
   versionView.size = null;
+  zoomFloor.keepPan(was);
   app.pages.lruSize = MAIN_LRU;
   controller.cancel();
   if (draw) { syncVersionUi(); requestDraw(); }
@@ -1279,11 +1319,15 @@ async function showSheetVersion(page, revId, { announce = true, flip = true } = 
   }
   if (ticket !== versionTicket) return false;            // the user moved on
 
+  // A flip keeps the zoom and the desktop's pan: a revision on other paper
+  // comes up where the drawing it replaces was centred, not in its corner.
+  const was = shownDrawingSize();
   versionView.revId = want;
   versionView.revPage = hit.revPage;
   versionView.set = set;
   versionView.bitmap = bmp;
   versionView.size = { width: bmp.width, height: bmp.height };
+  zoomFloor.keepPan(was);
   app.pages.lruSize = MAIN_LRU_COMPARING;
   controller.cancel();
   syncVersionUi();
@@ -1409,7 +1453,7 @@ function showImageViewer(bmp, title, legend = '') {
     d.appendChild(wrap);
 
     const foot = D.el('div', 'dlg-foot');
-    const hint = D.el('span', 'imgview-hint', 'scroll to zoom · drag to pan');
+    const hint = D.el('span', 'imgview-hint', 'scroll or pinch to zoom · drag to pan');
     foot.appendChild(hint);
     const ok = D.el('button', 'btn primary', 'Close');
     ok.addEventListener('click', () => close(null));
@@ -1417,10 +1461,16 @@ function showImageViewer(bmp, title, legend = '') {
     d.appendChild(foot);
 
     const src = bmp.bitmap || bmp;
-    let zoom = 1;
-    let ox = 0;
-    let oy = 0;
-    let fitted = false;
+    const pic = { w: src.width, h: src.height };
+    // The view relative to the picture's own fit: vz 1 IS the whole picture,
+    // (px, py) how far it sits off centre (the desktop's _RefCanvas, in
+    // zoom-floor.js). Relative, so a window that changes size keeps showing
+    // what it showed.
+    let view = { vz: 1, px: 0, py: 0 };
+    const boxOf = () => {
+      const r = wrap.getBoundingClientRect();
+      return { w: r.width, h: r.height, left: r.left, top: r.top };
+    };
 
     const paint = () => {
       const r = wrap.getBoundingClientRect();
@@ -1434,45 +1484,107 @@ function showImageViewer(bmp, title, legend = '') {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = '#101010';
       ctx.fillRect(0, 0, r.width, r.height);
-      if (!fitted) {
-        zoom = Math.min(r.width / src.width, r.height / src.height);
-        ox = (r.width - src.width * zoom) / 2;
-        oy = (r.height - src.height * zoom) / 2;
-        fitted = true;
-      }
+      const at = pictureRect(view, { w: r.width, h: r.height }, pic);
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(src, ox, oy, src.width * zoom, src.height * zoom);
+      ctx.drawImage(src, at.x, at.y, pic.w * at.scale, pic.h * at.scale);
+    };
+
+    // Zooming out stops at the whole picture, centred, the way the sheet's
+    // does (the same Settings box); Shift on the wheel, or a fresh pinch from
+    // the whole picture, goes on down to half of it.
+    const zoomBy = (factor, sx, sy, past, dead = 0.001) => {
+      view = pictureZoom(view, factor, sx, sy, boxOf(), pic,
+        { past, stops: zoomStopsAtFit(), dead }).v;
     };
 
     wrap.addEventListener('wheel', ev => {
       ev.preventDefault();
-      const r = wrap.getBoundingClientRect();
-      const mx = ev.clientX - r.left;
-      const my = ev.clientY - r.top;
-      const k = ev.deltaY < 0 ? 1.15 : 1 / 1.15;
+      // A tilt wheel or a sideways swipe: no zoom (Shift's sideways notch is one).
+      const dir = wheelInOut(ev);
+      if (!dir) return;
+      const b = boxOf();
       // Zoom about the pointer, so what is under it stays under it.
-      ox = mx - (mx - ox) * k;
-      oy = my - (my - oy) * k;
-      zoom *= k;
+      zoomBy(dir === 'in' ? PICTURE_STEP : 1 / PICTURE_STEP,
+        ev.clientX - b.left, ev.clientY - b.top, !!ev.shiftKey);
       paint();
     }, { passive: false });
 
+    // One finger (or the mouse) drags. Two pinch, about the point between
+    // them, under the same stop: a pinch that stopped at the whole picture
+    // holds it there, centred, until the fingers spread again. The pinch is
+    // ITS two fingers, by pointerId: a palm that lands as well moves
+    // nothing, and when one of the two lifts the pinch is over -- read as
+    // "the first two fingers down", it carried on between the one left and
+    // the palm, and jumped by their distance in one step.
     let drag = null;
+    let pinch = null;
+    const fingers = new Map();
+    const pair = ids => {
+      const [a, b] = ids.map(id => fingers.get(id));
+      return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+               mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    };
+    // Where the view stands against the whole picture (null: the box off).
+    const fitRatio = () => (zoomStopsAtFit() ? view.vz : null);
     wrap.addEventListener('pointerdown', ev => {
+      wrap.setPointerCapture?.(ev.pointerId);
+      if (ev.pointerType === 'touch') {
+        fingers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        if (fingers.size === 2 && !pinch) {
+          drag = null;
+          const ids = [...fingers.keys()];
+          const p = pair(ids);
+          // At the whole picture it holds -- the picture too, when it is
+          // centred there; dragged aside, the two fingers still slide it.
+          const at = pinchPlace(fitPlace(view.vz, zoomStopsAtFit() ? 1 : null), view.px === 0 && view.py === 0);
+          pinch = { ids, hold: new PinchHold(p.dist, at), mx: p.mx, my: p.my };
+          return;
+        }
+        if (fingers.size > 1) return;              // a palm, or the pinch's own
+      }
       drag = { x: ev.clientX, y: ev.clientY };
-      wrap.setPointerCapture(ev.pointerId);
     });
     wrap.addEventListener('pointermove', ev => {
+      if (fingers.has(ev.pointerId)) fingers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pinch) {
+        if (!pinch.ids.includes(ev.pointerId)) return;   // a palm's move is not the pinch's
+        const p = pair(pinch.ids);
+        const s = pinch.hold.step(p.dist);
+        const dx = p.mx - pinch.mx, dy = p.my - pinch.my;
+        pinch.mx = p.mx;
+        pinch.my = p.my;
+        // Held at the whole picture the drift is ignored, unless it is aside.
+        const [mx, my] = pinch.hold.drift(s, dx, dy);
+        if (mx || my) view = { ...view, px: view.px + mx, py: view.py + my };
+        if (s.refused || s.ignore) {
+          if (mx || my) paint();
+          return;
+        }
+        const b = boxOf();
+        zoomBy(s.factor, p.mx - b.left, p.my - b.top, s.past, 0);
+        pinch.hold.after(s.factor, fitRatio());
+        paint();
+        return;
+      }
       if (!drag) return;
-      ox += ev.clientX - drag.x;
-      oy += ev.clientY - drag.y;
+      view = { ...view, px: view.px + ev.clientX - drag.x, py: view.py + ev.clientY - drag.y };
       drag = { x: ev.clientX, y: ev.clientY };
       paint();
     });
-    const stop = () => { drag = null; };
+    const stop = ev => {
+      fingers.delete(ev.pointerId);
+      // Either of the pinch's own fingers lifting ends it, and the finger
+      // still down does not carry on as a drag: the gesture was a zoom.
+      if (pinch && pinch.ids.includes(ev.pointerId)) pinch = null;
+      drag = null;
+    };
     wrap.addEventListener('pointerup', stop);
     wrap.addEventListener('pointercancel', stop);
+    // Safari's own pinch would zoom the whole page out from under it.
+    for (const t of ['gesturestart', 'gesturechange', 'gestureend']) {
+      wrap.addEventListener(t, ev => ev.preventDefault());
+    }
 
     // The dialog has no size until it is in the document, so the first paint
     // has to wait — but it must not wait on requestAnimationFrame ALONE. A
@@ -1848,27 +1960,46 @@ async function composeDiff(oldImg, newImg, { dx = 0, dy = 0 } = {}) {
   return bmp;
 }
 
+/**
+ * The drawing on screen, in page pixels. A revision up for comparison is
+ * fitted, floored and centred by its OWN paper: F used to fit the sheet's
+ * own drawing under a revision on other paper.
+ */
+function shownDrawingSize() {
+  const img = browsingOtherVersion() ? versionView.bitmap : pageImage;
+  return img && img.width > 0 && img.height > 0 ? { w: img.width, h: img.height } : null;
+}
+
+/** Settings: "Stop zooming out when the whole sheet fits the screen". */
+function zoomStopsAtFit() {
+  return app.settings.get('zoom_out_stops_at_fit') !== false;
+}
+
 /** Frame the current sheet. Returns false if the canvas has no size yet. */
 function applyDefaultZoom() {
-  if (!pageImage) return false;
-  viewport.resize();
-  if (!viewport.measured) return false;
-  const rect = { x: 0, y: 0, w: pageImage.width, h: pageImage.height };
   const mode = app.settings.get('default_zoom_mode');
-  if (mode === '100') {
-    viewport.zoom = 1;
-    viewport.centerOn(rect.w / 2, rect.h / 2);
-    return true;
-  }
-  return mode === 'width' ? viewport.fitWidth(rect) : viewport.fit(rect);
+  // A sheet comes up at its own zoom: a zoom past Fit taken on the last one
+  // is not a choice made here (the desktop's _apply_default_zoom).
+  zoomFloor.opening();
+  return applyDefaultZoomTo(mode === '100' || mode === 'width' ? mode : 'fit');
 }
 
 function applyDefaultZoomTo(mode) {
-  if (!pageImage) return false;
+  const s = shownDrawingSize();
+  if (!s) return false;
   viewport.resize();
   if (!viewport.measured) return false;
-  const rect = { x: 0, y: 0, w: pageImage.width, h: pageImage.height };
-  return mode === 'width' ? viewport.fitWidth(rect) : viewport.fit(rect);
+  // Fit is the zoom floor's own answer, so F lands exactly on the floor
+  // and the next notch out is refused rather than a hair short of it.
+  if (mode === 'fit') return zoomFloor.fit();
+  if (mode === '100') {
+    viewport.zoom = 1;
+    viewport.centerOn(s.w / 2, s.h / 2);
+  } else if (!viewport.fitWidth({ x: 0, y: 0, w: s.w, h: s.h })) {
+    return false;
+  }
+  zoomFloor.chosen();               // a zoom he set: a number, not Fit
+  return true;
 }
 
 function pageFinalLabel(idx) {
@@ -3967,11 +4098,11 @@ function showItemMenu(item, ev, { from = 'canvas' } = {}) {
     setStatus('Showing this item only — View ▸ Show Everything to come back');
   });
   add('Zoom to item', () => {
-    const bb = boundingBox(item.points || []);
-    if (bb.w || bb.h) {
-      viewport.fit({ x: bb.x - bb.w * 0.4, y: bb.y - bb.h * 0.4, w: bb.w * 1.8, h: bb.h * 1.8 });
-      requestDraw();
-    }
+    // The desktop's zoom_to_measurement: a box 1.8 times the item but never
+    // under 12% of the sheet -- so a single count or a straight run has one
+    // too -- at most 8x, and never out past the whole sheet: a count spread
+    // across the sheet lands on Fit.
+    if (zoomFloor.zoomToItem(item.points || [], item.type)) requestDraw();
   });
   menu.appendChild(document.createElement('hr'));
   // Delete takes exactly what was asked, as on the desktop. From the Items
@@ -4248,19 +4379,24 @@ async function runAction(act) {
       break;
     case 'settings': await app.settings.open(onSettingsChanged); break;
 
-    case 'zoom-in': viewport.zoomBy(1.2); requestDraw(); break;
-    case 'zoom-out': viewport.zoomBy(1 / 1.2); requestDraw(); break;
+    case 'zoom-in': zoomFloor.zoomIn(); requestDraw(); break;
+    // The wheel's floor too, and never past it: only Shift on the wheel (a
+    // fresh pinch from Fit) goes further.
+    case 'zoom-out': zoomFloor.zoomOut(); requestDraw(); break;
     case 'zoom-fit':
       if (pageImage) {
         pendingFit = !applyDefaultZoomTo('fit');
         requestDraw();
       }
       break;
-    case 'zoom-100':
+    case 'zoom-100': {
       viewport.zoom = 1;
-      if (pageImage) viewport.centerOn(pageImage.width / 2, pageImage.height / 2);
+      const s = shownDrawingSize();
+      if (s) viewport.centerOn(s.w / 2, s.h / 2);
+      zoomFloor.chosen();
       requestDraw();
       break;
+    }
     case 'zoom-width':
       if (pageImage) {
         pendingFit = !applyDefaultZoomTo('width');
@@ -4447,6 +4583,9 @@ function onSettingsChanged() {
   // The nudge shortcut steps aside when the arrows are the page-turn keys.
   const nav = app.settings.get('page_nav_keys');
   controller.arrowsNavigatePages = nav === 'leftright' || nav === 'updown';
+  // The minus button says what it does, from the settings it depends on.
+  const tip = zoomOutTip(zoomStopsAtFit(), app.settings.get('wheel_mode'));
+  for (const b of document.querySelectorAll('[data-act="zoom-out"]')) b.title = tip;
   // Where plans come from may have changed: the start screen follows.
   if (!$('emptyState').hidden) renderStartLists();
   requestDraw();
@@ -4742,6 +4881,12 @@ async function showRecent() {
 }
 
 async function showShortcuts() {
+  // What the wheel does is two settings' worth, so it is said from them
+  // (the desktop's _wheel_help), and the pinch beside it.
+  const stops = zoomStopsAtFit();
+  const wheelText = wheelHelp(app.settings.get('wheel_mode'), stops);
+  const cut = wheelText.indexOf(' — ');
+  const wheelWhat = wheelText.slice(cut + 3);
   const rows = [
     ['R', 'Pan / Select'], ['D', 'Measure'], ['A', 'Area'], ['H', 'Slope Roof'],
     ['K', 'Pitch'], ['P', 'Polyline'], ['C', 'Count'], ['W', 'Windows'],
@@ -4756,7 +4901,8 @@ async function showShortcuts() {
     ['Right-drag / Middle-drag', 'Pan, from any tool'],
     ['Shift while drawing', 'Constrain to 45° (not Pitch)'],
     ['Shift while highlighting', 'Keep the stroke straight'],
-    ['Wheel', 'Zoom about the cursor'],
+    [wheelText.slice(0, cut), wheelWhat.charAt(0).toUpperCase() + wheelWhat.slice(1)],
+    ['Pinch', pinchHelp(stops)],
     ['Del', 'Delete the selection'],
     ['Arrows', 'Nudge the selection (Shift for 10px)'],
     ['Page Up / Page Down', 'Previous / next sheet'],
@@ -4968,6 +5114,34 @@ function setStatus(text) {
       $('statusText').textContent = HINTS[controller.mode] || 'Ready';
     }, 6000);
   }
+}
+
+// Why zooming out stopped -- said once a session, not on every refused
+// notch (the desktop's _say_zoom_floor_once): a fast spin sends thirty of
+// them, and the status line is where the tools say what they want next. The
+// wheel's words are the desktop's; a pinch, or the minus button pressed by a
+// finger, says how a finger goes on. By the INPUT, not the layout: every
+// browser is in the touch layout until it picks one, a desktop with a mouse
+// included, and the one line it gets must not tell it to pinch.
+let zoomFloorSaid = false;
+function sayZoomFloorOnce(via) {
+  if (zoomFloorSaid) return;
+  zoomFloorSaid = true;
+  setStatus(zoomFloorLine(via, app.settings.get('wheel_mode'),
+    via !== 'wheel' && pressedByFinger()));
+}
+
+// What pressed last: a finger (or a pencil), or a mouse. Heard in the
+// capture phase, so a press is counted before anything can stop it.
+let lastPressFinger = false;
+document.addEventListener('pointerdown', ev => {
+  lastPressFinger = ev.pointerType === 'touch' || ev.pointerType === 'pen';
+}, true);
+
+/** The last press was a finger's, or there is no mouse or trackpad to scroll with. */
+function pressedByFinger() {
+  if (lastPressFinger) return true;
+  try { return !window.matchMedia('(any-pointer: fine)').matches; } catch { return false; }
 }
 
 function syncTitle() {

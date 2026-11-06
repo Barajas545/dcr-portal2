@@ -26,6 +26,12 @@ export class Viewport {
     // an early return on that, so single-sheet arithmetic is not merely
     // equivalent to what it was — it is the same expression.
     this._frame = null;
+    // The last size the canvas really had (both sides past one pixel), and
+    // who hears when it changes: the zoom floor (ZoomFloor.resized), which
+    // keeps a view at Fit at the new Fit.
+    this._seen = null;
+    /** @type {((oldW: number, oldH: number) => void)|null} */
+    this.onResize = null;
   }
 
   /**
@@ -42,7 +48,18 @@ export class Viewport {
 
   get pageFrame() { return this._frame; }
 
-  /** Match the backing store to the element's box. Returns true if it changed. */
+  /**
+   * Match the backing store to the element's box. Returns true if it changed.
+   *
+   * A new size (an iPad turned, a panel opened, the toolbars pinned) keeps
+   * the page point at the centre of the canvas where it was, as the desktop
+   * does: anchored at the top-left, a rotation left the sheet off to one
+   * side and partly off screen. Then onResize hears the size it had, so a
+   * view at Fit can be put at the new Fit. A change of device pixel ratio
+   * alone (a window moved to another monitor) is not a new size; nor is a
+   * canvas that has none yet, or has none for a moment while hidden -- the
+   * size it comes back to is compared with the last one it really had.
+   */
   resize() {
     const rect = this.canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -54,6 +71,16 @@ export class Viewport {
     this.dpr = dpr;
     this.canvas.width = Math.round(w * dpr);
     this.canvas.height = Math.round(h * dpr);
+    if (this.measured) {
+      const was = this._seen;
+      this._seen = { w, h };
+      if (was && (was.w !== w || was.h !== h)) {
+        this.origin.x += (was.w - w) / (2 * this.zoom);
+        this.origin.y += (was.h - h) / (2 * this.zoom);
+        // A way of looking is never a reason for a frame to fail.
+        try { this.onResize?.(was.w, was.h); } catch (err) { console.error(err); }
+      }
+    }
     return true;
   }
 
