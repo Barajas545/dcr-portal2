@@ -1488,10 +1488,11 @@ test("demo broker as DCR Desktop 2 48dc59e (repair round 4, contract addendum 5)
       if (op === "plan_save_commit") assert.equal(w3.info.retry, "copy");
       ext.passTime(0);
     }
-    // (F4) two POSTs of one save overlap: request 1's lands, request 2's is refused 400 - decided on the plan read after
-    // that attempt (it holds this save): checked, a replace, verified - never "OneDrive would not replace the plan"
+    // (F4) two POSTs of one save overlap: request 1's lands, request 2's is refused 400 (the committed session kept, so
+    // Microsoft refuses it rather than answering 404) - decided on the plan read after that attempt (it holds this
+    // save): checked, a replace, verified - never "OneDrive would not replace the plan"
     {
-      ext.graphModes({ reset: true, putCommit: "refused", postStatus: 400 });
+      ext.graphModes({ reset: true, putCommit: "refused", postStatus: 400, afterCommit: "usable" });
       const pl = await fresh("A267 Bid.takeoff");
       ext.betweenWalkAndCommit(pl.full, "self");
       const raw = bytesOf(327680 + 160, 96);
@@ -1548,6 +1549,12 @@ test("demo broker as DCR Desktop 2 48dc59e (repair round 4, contract addendum 5)
       const s = await upload(pl, raw);
       const d = await doneOf(pl, s, raw);
       assert.deepEqual([d.code, d.info && d.info.why], ["not_saved", undefined], "never landed, the plan untouched: the plain not_saved");
+      // ...with no version history to read the plan's content tag is the only proof - and it is enough
+      ext.graphModes({ reset: true, versions: "off" });
+      const pl2 = await fresh("L1 walls.takeoff");
+      const s2 = await upload(pl2, bytesOf(327680 + 181, 98));
+      const d2 = await doneOf(pl2, s2, bytesOf(327680 + 181, 98));
+      assert.deepEqual([d2.code, d2.info && d2.info.why], ["not_saved", undefined], "no history, the plan's tag the session's: the plain not_saved");
     }
   } finally {
     ext.graphModes({ reset: true });
