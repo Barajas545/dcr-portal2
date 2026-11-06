@@ -62,7 +62,12 @@
      first page of the versions), never "nothing was overwritten"; a restore Microsoft keeps refusing - "being checked"
      for its 30 minutes, then "not put back": a copy, the office asked to restore its save; two tabs of the tablet and
      one save - one commit at a time, and after a lost answer neither tab asks the broker again before its longest run
-     is over (then once: the replace it was, verified). (v) A person with prices but without
+     is over (then once: the replace it was, verified). (xiv) contract addendum 6 (takeoff-web 257351b, DCR Desktop 2
+     e1fd4c4): a send that may have landed is settled before it is dropped - the commit lands and its answer is lost;
+     the commit asked again after the broker's longest run meets an expired sign-in (the gateway's 401 "Invalid JWT"):
+     the save is kept on the iPad and waits, said so on the bar and the row (never "not sent"; the app hears nothing
+     new); signed in again, that very session is settled first (plan_save_done, never a new session) and the words follow
+     the broker's proof - the replace it was, verified. (v) A person with prices but without
      "Can upload to OneDrive" (the accountant): the app opens without canSave and its Save goes to the share sheet (a
      stand-in: headless Chrome has none, and the frame is given Safari's lack of file pickers), nothing handed to the
      portal or sent. (vi) A tablet without prices: 📐 says "Plans are for the people who see prices", and nothing is
@@ -1434,6 +1439,94 @@ async function main() {
         await T.eval("window.__slowCommit = 0; window.__loseCommit = false; " + OD + ".passTime(0); " + OD + ".graphModes({ reset: true }); true").catch(() => null);
       }
       check("tablet (xiii): no dialog of the browser's own", !T.dialogs.length && !(T4 && T4.dialogs.length), JSON.stringify([T.dialogs, T4 && T4.dialogs]));
+    }, T);
+
+    /* ── 4i (xiv). contract addendum 6 H2 with the REAL app on a tablet: a send that may have landed is settled before it
+       is dropped - the commit lands and its answer is lost (the broker committed it); once the broker's longest run is
+       over the commit is asked again and the sign-in has expired (the gateway's own 401 "Invalid JWT"): the save is
+       kept on this iPad and waits, in words that say so (never "not sent"; the app hears nothing new); signed in again,
+       the settle runs first - plan_save_done on that very session, never a new session - and the words follow the
+       broker's proof: the replace it was, verified ── */
+    await attempt("a tablet, contract addendum 6 (xiv): a lost commit answer, then 401 on the retry - kept and waits; signed in again, the settle runs first and the words follow the broker's proof", async () => {
+      await closeFrame(T).catch(() => null);
+      await T.call("Page.bringToFront").catch(() => null);
+      await openReal(T);
+      await hearSaves(T);
+      await watchOps(T);
+      const LOST = "OneDrive's answer about this save has not reached this iPad yet - the portal asks again in a few minutes. Keep the portal open; there is nothing to do. It stays on this iPad meanwhile.";
+      const WAITS = "Your sign-in to the portal has expired - sign in again. Your save is kept on this iPad and waits: it may already be in OneDrive, and the portal checks it there before anything is sent again.";
+      const bar = () => T.eval("document.getElementById('ptfSay').textContent");
+      const appNow = () => T.eval("(() => { const w = " + APP + "; return { states: w.__states.map(x => x.state), status: w.document.getElementById('statusText').textContent }; })()");
+      const rowOf = (id) => T.eval("(async () => { const L = await import('/js/plan-library.js'); const M = await import('/js/map/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " +
+        JSON.stringify(id) + "); return r && r.save ? { st: r.save, text: M.saveText(r.save, 'iPad') } : null; })()");
+      const sendL = (id) => T.eval("(async () => { const L = await import('/js/plan-library.js'); try { const r = await L.sendSaved(" + JSON.stringify(id) + ", { manual: true }); return { ok: r }; } catch (e) { return { code: e.code, message: e.message }; } })()");
+      const gate = () => T.eval("JSON.parse(localStorage.getItem('e2e-gate') || '[]')");
+      try {
+        await T.eval(OD + ".graphModes({ reset: true }); true");
+        const fx = await putFixture(T, "A267", "L1 walls - a lost answer, then signed out (e2e, made up)", "L1 walls.takeoff");
+        // the gateway in front of the broker, in this page: the first commit's answer lost after the broker committed it
+        // (window.__gateLose); while window.__signedOut, every plan_save_commit / plan_save_done answered 401 "Invalid JWT"
+        // by the gateway itself (the broker never asked) - each noted in the page's storage
+        await T.eval("(async () => { const { db } = await import('/js/repo/_db.js'); const c = await db(); if (c.__gate) return true; c.__gate = true; const inv = c.functions.invoke.bind(c.functions);" +
+          " const note = (op, what, ticket) => { const a = JSON.parse(localStorage.getItem('e2e-gate') || '[]'); a.push({ op, what, ticket }); localStorage.setItem('e2e-gate', JSON.stringify(a)); };" +
+          " c.functions.invoke = async (name, o) => { const b = (o && o.body) || {}; const ask = b.op === 'plan_save_commit' || b.op === 'plan_save_done';" +
+          " if (ask && window.__signedOut) { note(b.op, '401', b.ticket); return { data: null, error: { name: 'FunctionsHttpError', context: new Response(JSON.stringify({ code: 401, message: 'Invalid JWT' }), { status: 401, headers: { 'content-type': 'application/json' } }) } }; }" +
+          " const r = await inv(name, o);" +
+          " if (b.op === 'plan_save_commit' && window.__gateLose) { window.__gateLose = false; note(b.op, 'lost', b.ticket); return { data: null, error: { name: 'FunctionsFetchError', message: 'Failed to send', context: new TypeError('offline (e2e)') } }; }" +
+          " if (ask) note(b.op, 'answered', b.ticket); return r; }; return true; })()");
+        await openPlanNoDraft(T, fx.id);
+        await editApp(T, "Made-up client (e2e, a lost answer, then signed out)");
+        await T.eval("localStorage.removeItem('e2e-gate'); window.__gateLose = true; window.__signedOut = false; window.__ops = []; window.__opsSeen = []; true");
+        await T.eval("(() => { const w = " + APP + "; w.__states.length = 0; w.__status.length = 0; return true; })()");
+        await T.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+        await T.until("(async () => { const L = await import('/js/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " + JSON.stringify(fx.id) + "); return !!r && !!r.local && r.local.code === 'answer_lost'; })()", 60000);
+        const bar0 = await bar();
+        // the broker's longest run over (the save's marks moved back by it), and meanwhile the sign-in expired
+        await T.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
+          " const old = new Date(Date.now() - 421000).toISOString(); await new Promise((res) => { const tx = d.transaction('plans', 'readwrite'); const st = tx.objectStore('plans');" +
+          " st.getAll().onsuccess = (e) => { e.target.result.filter(r => r.itemId === " + JSON.stringify(fx.id) + " && r.local).forEach(r => { r.local.retryAt = old;" +
+          " r.local.sends = (r.local.sends || []).map(s => Object.assign({}, s, s.asking ? { asking: old } : {}, s.lost ? { lost: old } : {})); st.put(r); }); }; tx.oncomplete = res; }); d.close(); return true; })()");
+        await T.eval(OD + ".hashed().then(() => true)");
+        await T.eval("window.__signedOut = true; true");
+        const out1 = await sendL(fx.id);
+        await sleep(500);
+        const rec1 = (await records(T)).find((r) => r.itemId === fx.id);
+        const row1 = await rowOf(fx.id);
+        const bar1 = await bar();
+        const app1 = await appNow();
+        const gate1 = await gate();
+        const ticket = gate1.length ? gate1[0].ticket : "";
+        check("tablet (xiv, H2): the commit's answer lost, then the retried commit met an expired sign-in (401 'Invalid JWT') - the session kept, the save waits on this iPad in words that say so on the bar and the row (never 'not sent'); the app heard nothing new",
+          bar0 === LOST && out1.code === "unsettled" && out1.message === WAITS &&
+          JSON.stringify(gate1.map((x) => [x.op, x.what])) === JSON.stringify([["plan_save_commit", "lost"], ["plan_save_commit", "401"]]) && !!ticket && gate1[1].ticket === ticket &&
+          !!rec1 && !!rec1.local && rec1.local.state === "failed" && rec1.local.code === "unsettled" && rec1.local.error === WAITS &&
+          rec1.local.sends.some((x) => x.ticket === ticket) && !!row1 && row1.text === WAITS && bar1 === WAITS &&
+          !/not sent/i.test(row1.text + bar1) && app1.states.indexOf("failed") === -1 && app1.states.indexOf("copy") === -1,
+          JSON.stringify({ bar0, out1, gate1, local: rec1 && rec1.local, row1, bar1, app1 }));
+        await shotOf(T, "plans_frame_unsettled_tablet.png");
+        // signed in again: the next send settles that session first - plan_save_done with its ticket and hash, never a
+        // new session - and the words follow the broker's proof (the demo broker's check: the replace it was, verified)
+        await T.eval("window.__signedOut = false; window.__ops = []; window.__opsSeen = []; true");
+        const out2 = await sendL(fx.id);
+        await T.until(APP + ".__states.some(s => s.state === 'sent' || s.state === 'copy')", 30000).catch(() => null);
+        await sleep(500);
+        const ops2 = await planOps(T);
+        const gate2 = await gate();
+        const bar2 = await bar();
+        const app2 = await appNow();
+        const rec2 = (await records(T)).find((r) => r.itemId === fx.id);
+        const after = gate2.slice(gate1.length);
+        check("tablet (xiv, H2): ...signed in again, that very session is settled first (plan_save_done with its ticket, never a new session) - the replace it was, verified; the bar says it replaced the plan, the app hears 'sent' - never the office's 'nothing was overwritten'",
+          !!out2.ok && out2.ok.sent === true && out2.ok.mode === "replace" && !!after.length && after[0].op === "plan_save_done" && after[0].ticket === ticket &&
+          !ops2.some((x) => x.op === "plan_save_session") && ops2.length >= 1 && ops2[0].op === "plan_save_done" && !!ops2[0].hash && ops2[ops2.length - 1].verified === true &&
+          !!rec2 && !rec2.local && !!rec2.sent && rec2.sent.mode === "replace" && bar2 === "Your save is in OneDrive: it replaced the plan there." &&
+          app2.states[app2.states.length - 1] === "sent" && app2.states.indexOf("failed") === -1 && app2.states.indexOf("copy") === -1 && !/nothing was overwritten/.test(bar2 + app2.status),
+          JSON.stringify({ out2, after, ops2, bar2, app2, sent: rec2 && rec2.sent }));
+        await closeFrame(T);
+      } finally {
+        await T.eval("window.__signedOut = false; window.__gateLose = false; " + OD + ".graphModes({ reset: true }); true").catch(() => null);
+      }
+      check("tablet (xiv): no dialog of the browser's own", !T.dialogs.length, JSON.stringify(T.dialogs));
     }, T);
 
     /* ── 4c. a person with prices but WITHOUT "Can upload to OneDrive" (Q2): the real app opens without canSave, and its
