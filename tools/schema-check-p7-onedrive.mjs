@@ -53,7 +53,11 @@
      keeps refusing (503 checking for HASH_WAIT_MS, then plan_changed / not_saved why "not_put_back" - Portal 2's copyWhyOf
      and notSavedWhyOf, its words), the listing's 503 after a 2xx commit (why "checking": the uploader's job in the check)
      while a 503 before any commit stays unmarked, and two commits of one save overlapping with the If-Match ignored and
-     the session usable (the device's own double commit: verified, nothing put back);
+     the session usable (the device's own double commit: verified, nothing put back); and, once the broker has its repair
+     round 5 (contract addendum 6 H1: "the restore's answer was lost"), a crossing's restore that goes through but answers
+     a gateway's 504 or nothing - ONE restore POST, read from the history again: the plain "changed" (Portal 2: the copy
+     words), and past HASH_WAIT_MS from a later page the plain not_saved, never not_put_back - and one that did not go
+     through and answered 503 (the check's 503: an answer, never a lost one; then not_put_back at the bound);
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -135,6 +139,9 @@ export async function run(h) {
   // and its repair round 4 (contract addendum 5: plain words only on proof, not_put_back, every 503 after the bytes may be
   // on the plan says "checking", the device's own double commit verified)
   const HAS_R4 = HAS_R3B && typeof fn.PLAN_NOT_PUT_BACK === "string";
+  // and its repair round 5 (contract addendum 6 H1: a restore is ONE POST, and one whose answer does not say whether it
+  // went through is read from the version history again) - no new export: its log line is the mark
+  const HAS_R5 = HAS_R4 && /the restore's answer was lost/.test(readFileSync(path.join(FN, "handler.ts"), "utf8"));
   let onFetch = null;                  // a check's: run before a request reaches the fake Graph (an office save just then)
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   let planSave;                        // ONEDRIVE_PLAN_SAVE for a check (undefined: test_world.ts's own)
@@ -1111,6 +1118,112 @@ export async function run(h) {
             // code - the broker's own answers above (busy, not_authorized, plan_changed, not_saved) never count
             same([PL.answerLostOf({ code: "offline", status: 0 }), PL.answerLostOf({ code: "failed", status: 504, info: { message: "x" } }), PL.answerLostOf(w5), PL.answerLostOf(pre)],
               [true, true, false, false], "a lost answer is not the broker's");
+          } finally {
+            reset();
+            atLast = null;
+            onFetch = null;
+          }
+          client.as(null);
+        });
+      }
+      if (!HAS_R5) {
+        results.push({ section, name: "the save back's repair round 5 (contract addendum 6): the broker does not read a lost restore answer from the history yet - its check waits for it", ok: true });
+      } else {
+        await check("the save back's repair round 5 (contract addendum 6 H1) through Portal 2's parts over the REAL broker: a crossing's restore that goes through but answers a gateway's 504 (or nothing at all) - ONE restore POST, read from the version history again: the plain changed from plan_save_commit (Portal 2's copy words), the office save the plan again; a later page past HASH_WAIT_MS - the plain not_saved, never not_put_back; a restore that did not go through and answered 503 - the check's 503 (Portal 2: checking, an answer, never a lost one), then not_put_back at the bound", async () => {
+          client.as(id("admin"));
+          const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)]; };
+          const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+          ok(!!tf, "the made-up project's takeoff folder");
+          const it = g.file(tf.id, made.number + " Eaves.takeoff", 10);
+          const planOf = async () => (await files()).files.find((x) => x.id === it.id);
+          const reset = () => Object.assign(g.script, { deferCommit: "honoured", putCommit: "accepted", putIfMatch: "honoured", postIfMatch: "honoured", postStatus: 0,
+            versions: "on", versionsStatus: 403, versionsPage: 0, restoreStatus: 0, hashLater: false, afterCommit: "gone" });
+          const bytesN = (n, v) => new Uint8Array(n).fill(v);
+          const same8 = (a, b) => !!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]);
+          const restores = () => g.calls.filter((c) => c.method === "POST" && /\/restoreVersion$/.test(new URL(c.url).pathname)).length;
+          const BACK_LOST = "crossed: the office save was put back (the restore's answer was lost; the version history shows it)";
+          /** the restore POSTs as they leave the broker; `how`: "through 504" / "through timeout" - OneDrive puts the version
+              back and the broker hears a gateway's 504 / nothing; "503" - Microsoft answers 503, nothing put back */
+          const watchRestores = (how) => {
+            const saved = deps.fetch;
+            const posts = [];
+            deps.fetch = async (url, init) => {
+              const m = String((init && init.method) || "GET").toUpperCase();
+              if (m !== "POST" || !/\/restoreVersion$/.test(new URL(url).pathname)) return saved(url, init);
+              posts.push(clock.t);
+              if (how === "503") return new Response(JSON.stringify({ error: { code: "serviceNotAvailable" } }), { status: 503, headers: { "Content-Type": "application/json" } });
+              await saved(url, init);
+              if (how === "through timeout") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+              return new Response(JSON.stringify({ error: { code: "gatewayTimeout" } }), { status: 504, headers: { "Content-Type": "application/json" } });
+            };
+            return { posts, stop: () => { deps.fetch = saved; } };
+          };
+          /** a proved crossing: OneDrive commits the iPad's bytes at the last chunk over an office save X */
+          let n = 0;
+          const crossed = async () => {
+            reset();
+            g.script.deferCommit = "ignored";
+            clock.t += 5000;
+            const b = bytesN(OD.CHUNK_UNIT + 80 + (++n), 76);
+            let office = null;
+            atLast = () => { clock.t += 5000; office = g.write(it.id, 78).content.slice(); };
+            const plan = await planOf();
+            const s = await od.planSaveSession({ projectId: pid, itemId: it.id, version: plan.version, size: b.length, name: plan.name });
+            same([s.mode, s.commit], ["replace", "broker"], "a deferred replace");
+            const put = (a, z) => transport({ method: "PUT", url: s.uploadUrl, headers: { "Content-Range": "bytes " + a + "-" + z + "/" + b.length }, body: new Blob([b.subarray(a, z + 1)]) });
+            same((await put(0, OD.CHUNK_UNIT - 1)).status, 202, "a chunk");
+            same((await put(OD.CHUNK_UNIT, b.length - 1)).status, 200, "committed at the last chunk over X");
+            return { s, b, office: () => office };
+          };
+          try {
+            // plan_save_commit (landed), the restore gone through but answered 504 / nothing: one POST, the plain changed
+            for (const how of ["through 504", "through timeout"]) {
+              const c = await crossed();
+              logs.length = 0;
+              const r0 = restores();
+              const w = watchRestores(how);
+              let e;
+              try { e = await refused(() => od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: c.s.ticket, uploadUrl: c.s.uploadUrl, hash: QX.quickXorHash(c.b), landed: true }), "plan_changed", how); }
+              finally { w.stop(); }
+              same([e.status, e.info && e.info.why, e.info && e.info.retry, PL.copyWhyOf(e.info && e.info.why), w.posts.length, restores() - r0], [409, "changed", "copy", "changed", 1, 1], how + ": one POST, the plain changed " + JSON.stringify(logs));
+              ok(logs.includes("onedrive plan_save_commit: " + BACK_LOST), how + ": its line " + JSON.stringify(logs));
+              ok(!logs.some((l) => /newer save|by hand/.test(l)), how + ": no false line " + JSON.stringify(logs));
+              ok(same8(g.items.get(it.id).content, c.office()), how + ": the office save is the plan again");
+              ok(/Someone saved this plan in the office/.test(PL.copyTold("x.takeoff", "iPad")), "Portal 2's copy words for it");
+            }
+            // the checker's R2: a later page past HASH_WAIT_MS, the restore gone through but answered 504 - the plain not_saved,
+            // never not_put_back
+            {
+              const c = await crossed();
+              clock.t += fn.HASH_WAIT_MS + 30 * 60 * 1000;
+              logs.length = 0;
+              const w = watchRestores("through 504");
+              let e;
+              try { e = await refused(() => od.planSaveDone(pid, it.id, c.s.ticket, QX.quickXorHash(c.b)), "not_saved", "R2"); }
+              finally { w.stop(); }
+              same([e.status, e.info && e.info.why, PL.notSavedWhyOf(e.info && e.info.why), w.posts.length], [409, undefined, "", 1], "R2: the plain not_saved " + JSON.stringify(logs));
+              ok(logs.includes("onedrive plan_save_done: " + BACK_LOST) && !logs.some((l) => /could not be put back|by hand/.test(l)), "R2: " + JSON.stringify(logs));
+              ok(same8(g.items.get(it.id).content, c.office()), "R2: the office save is the plan again");
+            }
+            // not gone through, answered 503: the check's 503 with the lost answer's line - an answer (never a lost one);
+            // past the bound, this save still the newest: not_put_back
+            {
+              const c = await crossed();
+              logs.length = 0;
+              const ask = () => od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: c.s.ticket, uploadUrl: c.s.uploadUrl, hash: QX.quickXorHash(c.b), landed: true });
+              const w = watchRestores("503");
+              let w1, w2;
+              try {
+                w1 = await refused(ask, "busy", "503, not through");
+                same([w1.status, w1.info && w1.info.why, PL.checkWaitOf(w1), PL.answerLostOf(w1), w.posts.length], [503, "checking", true, false, 1], "503: the check's 503, one POST");
+                ok(logs.includes("onedrive plan_save_commit: crossed: the restore's answer was lost: checking again"), "503: its line " + JSON.stringify(logs));
+                clock.t += fn.HASH_WAIT_MS + 60 * 1000;
+                logs.length = 0;
+                w2 = await refused(ask, "plan_changed", "503 past the bound");
+              } finally { w.stop(); }
+              same([w2.info && w2.info.why, PL.copyWhyOf(w2.info && w2.info.why), w.posts.length], ["not_put_back", "not_put_back", 2], "past the bound, this save still the newest: not_put_back (one POST in each request)");
+              ok(logs.includes("onedrive plan_save_commit: crossed: the office save could not be put back: put it back by hand from the version history"), "its line " + JSON.stringify(logs));
+            }
           } finally {
             reset();
             atLast = null;
