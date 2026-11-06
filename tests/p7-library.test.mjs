@@ -921,7 +921,10 @@ test("demo broker as DCR Desktop 2's since the repair round (contract addendum 3
       ext.logLines(true);
       const er = await refusal(onedrive.planSaveCommit(body));
       assert.deepEqual([er.code, er.status], [status === 403 ? "not_authorized" : "busy", 503], status + ": the restore did not go through - asked again");
-      assert.ok(ext.logLines().includes("onedrive plan_save_commit: crossed: the office save could not be put back (" + status + "): asked again"), JSON.stringify(ext.logLines()));
+      // (DCR Desktop 2 e1fd4c4, contract addendum 6 H1: a 503 does not say whether it went through - the history read
+      // again shows it did not; a plain refusal, 423 / 403, says so itself)
+      assert.ok(ext.logLines().includes(status === 503 ? "onedrive plan_save_commit: crossed: the restore's answer was lost: checking again"
+        : "onedrive plan_save_commit: crossed: the office save could not be put back (" + status + "): asked again"), JSON.stringify(ext.logLines()));
       assert.equal((await files(a267.id)).find((x) => x.id === pr.id).version, "qx:" + QX.quickXorHash(rr), status + ": still the iPad's bytes (no plan_changed yet)");
       ext.graphModes({ restoreStatus: 0 });
       const ok2 = await refusal(onedrive.planSaveCommit(body));
@@ -4371,6 +4374,107 @@ test("once a send was in the broker's check, its later 503s are the check too, m
     assert.equal(e4 && e4.code, "busy", "no longer in the check: busy as before");
     await settleDown();
   } finally { LIB.useAgainClock(null); }
+});
+
+test("demo broker as DCR Desktop 2 e1fd4c4 (repair round 5, contract addendum 6 H1): a restore is one POST and an answer that does not say whether it went through is read from the history again - gone through but answered 504 / 503 / nothing: the plain 'changed' (plan_save_done: the plain not_saved) with its line, the office save the plan again, also past the 30 minutes (never not_put_back); not gone through and its answer lost: 503 checking ('the restore's answer was lost'), then at the 30 minutes not_put_back only with this save still the newest; a plain refusal as before", { skip }, async () => {
+  let shift = 0;
+  FK = await loadFake();
+  E = FK.createEngine({ maxFileSize: 500 * 1024 * 1024, clock: () => new Date(Date.now() + shift) });
+  E.load(FK.seed({ now: new Date() }));
+  const a267 = project("A267");
+  const ext = E.exts.find((x) => x.name === "p7-onedrive");
+  const files = async () => (await onedrive.plansList([a267.id]))[String(a267.id)].files;
+  const fresh = async (name) => {
+    const f = (await files()).find((x) => x.name === name);
+    const fx = ext.setPlanFixture("A267", new Blob([bytesOf(5000, 11)]), name);
+    return Object.assign({}, f, { size: fx.size, version: fx.version, modified: (await files()).find((x) => x.id === f.id).modified, full: fx.full });
+  };
+  // (the engine's clock: OneDrive's and the broker's together - passTime moves the broker's alone)
+  const past = (ms) => { shift += ms; };
+  const upload = async (plan, raw) => {
+    const s = await onedrive.planSaveSession({ projectId: a267.id, itemId: plan.id, version: plan.version, size: raw.length, name: plan.name });
+    for (const [a, z] of [[0, 327679], [327680, raw.length - 1]]) ext.http("PUT", s.uploadUrl, { "Content-Range": "bytes " + a + "-" + z + "/" + raw.length }, new Blob([raw.subarray(a, z + 1)]));
+    return s;
+  };
+  const has = (op, line) => ext.logLines().includes("onedrive " + op + ": " + line);
+  const BACK_LOST = "crossed: the office save was put back (the restore's answer was lost; the version history shows it)";
+  const LOST = "crossed: the restore's answer was lost: checking again";
+  const restores = (plan) => ext.versionsOf(plan.id).filter((v) => v.app === "demo-app-dcr-portal-onedrive").length;
+  try {
+    as("admin");
+    // a proved crossing (OneDrive committed at the last chunk over an office save X), its one restore gone through
+    let n = 0;
+    const crossed = async (modes) => {
+      ext.graphModes(Object.assign({ reset: true, deferCommit: "ignored" }, modes));
+      const pl = await fresh("A267 Rev 2.takeoff");
+      past(3000);
+      ext.duringUpload(pl.full, "office");
+      const raw = bytesOf(327680 + 170 + (++n), 97);
+      const s = await upload(pl, raw);
+      await ext.hashed();
+      const ask = (op) => refusal(op === "plan_save_commit"
+        ? onedrive.planSaveCommit({ projectId: a267.id, itemId: pl.id, ticket: s.ticket, uploadUrl: s.uploadUrl, hash: QX.quickXorHash(raw), landed: true })
+        : onedrive.planSaveDone(a267.id, pl.id, s.ticket, QX.quickXorHash(raw)));
+      return { pl, raw, ask };
+    };
+    for (const op of ["plan_save_commit", "plan_save_done"]) {
+      for (const how of [504, 503, "timeout"]) {
+        const name = op + ", gone through, answered " + how;
+        const c = await crossed({ restoreLost: how });
+        ext.logLines(true);
+        const r0 = restores(c.pl);
+        const e = await c.ask(op);
+        assert.deepEqual([e.code, e.status, e.info && e.info.why], op === "plan_save_commit" ? ["plan_changed", 409, "changed"] : ["not_saved", 409, undefined], name + ": " + JSON.stringify(ext.logLines()));
+        assert.ok(has(op, BACK_LOST), name + ": " + JSON.stringify(ext.logLines()));
+        assert.ok(!ext.logLines().some((l) => /newer save|by hand/.test(l)), name);
+        assert.match((await files()).find((x) => x.id === c.pl.id).version, /^qx:demo-office-/, name + ": the office save is the plan again");
+        assert.equal(restores(c.pl), r0 + 1, name + ": one restore (the version put back names this app)");
+        // Portal 2's words for it: the broker's proof - the copy words (changed), or a plain not_saved (the save goes again)
+        assert.equal(op === "plan_save_commit" ? lib.copyWhyOf(e.info.why) : lib.notSavedWhyOf(e.info && e.info.why), op === "plan_save_commit" ? "changed" : "", name);
+      }
+    }
+    // the checker's R2: a later page past the 30 minutes, the restore gone through but answered 504 - the plain not_saved,
+    // never not_put_back (the office save is the plan again)
+    {
+      const c = await crossed({ restoreLost: 504 });
+      past(31 * 60 * 1000);
+      ext.logLines(true);
+      const e = await c.ask("plan_save_done");
+      assert.deepEqual([e.code, e.info && e.info.why], ["not_saved", undefined], "R2: " + JSON.stringify(ext.logLines()));
+      assert.ok(has("plan_save_done", BACK_LOST) && !ext.logLines().some((l) => /could not be put back|by hand/.test(l)), "R2: " + JSON.stringify(ext.logLines()));
+    }
+    // not gone through, its answer lost (a 503, a 429, a 500): 503 checking with the lost answer's line; the retry tries once
+    // more; at the 30 minutes, this save still the newest: not_put_back
+    for (const status of [503, 429, 500]) {
+      for (const op of ["plan_save_commit", "plan_save_done"]) {
+        const name = op + ", " + status + ", not gone through";
+        const c = await crossed({ restoreStatus: status });
+        ext.logLines(true);
+        const r0 = restores(c.pl);
+        const w1 = await c.ask(op);
+        assert.deepEqual([w1.code, w1.status, w1.info && w1.info.why, lib.checkWaitOf(w1), lib.answerLostOf(w1)], ["busy", 503, "checking", true, false], name);
+        assert.ok(has(op, LOST), name + ": " + JSON.stringify(ext.logLines()));
+        assert.equal(restores(c.pl), r0, name + ": nothing put back");
+        past(31 * 60 * 1000);
+        ext.logLines(true);
+        const w2 = await c.ask(op);
+        assert.deepEqual([w2.code, w2.info && w2.info.why], [op === "plan_save_commit" ? "plan_changed" : "not_saved", "not_put_back"], name + ": " + JSON.stringify(ext.logLines()));
+        assert.ok(has(op, "crossed: the office save could not be put back: put it back by hand from the version history"), name);
+      }
+    }
+    // a plain refusal (423) before the bound: as before - the refusal's own line, asked again
+    {
+      const c = await crossed({ restoreStatus: 423 });
+      ext.logLines(true);
+      const w = await c.ask("plan_save_commit");
+      assert.deepEqual([w.code, w.info && w.info.why], ["busy", "checking"]);
+      assert.ok(has("plan_save_commit", "crossed: the office save could not be put back (423): asked again"), JSON.stringify(ext.logLines()));
+    }
+  } finally {
+    ext.graphModes({ reset: true });
+    ext.passTime(0);
+    as("admin");
+  }
 });
 
 test("a save is never adopted while another deferred replace of it is open (contract addendum 6 H2): a copy of the save a later page finds landed waits until the replace's session is settled - that session is asked of the broker in the same pass, never dropped, nothing new sent; once the broker settles it, the copy is adopted", async () => {

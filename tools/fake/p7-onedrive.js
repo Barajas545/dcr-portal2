@@ -76,16 +76,21 @@
      committed as the copy beside it (the copy name of the session's minute) - or, refuseCopyCommits(true) in a node
      test, 409 plan_changed {retry: "copy", why: "changed"} with the session dropped; the session gone (committed earlier,
      the answer lost): plan_save_done's checks. Every replace committed is then checked by the plan's version history
-     (handler.ts verify, as DCR Desktop 2 48dc59e has it - contract addendum 5 G1: plain words only on proof): OneDrive's
+     (handler.ts verify, as DCR Desktop 2 e1fd4c4 has it - contract addendum 5 G1: plain words only on proof): OneDrive's
      hash of the plan the device's, the newest version that plan, and right under it - past versions PROVED this save's
      own (its size, since the ticket, written by this app: the device's overlapping request committed it twice) - the
      base: verified true; the newest version the base itself, byte for byte this save (an identical re-save found landed
      without its commit) - verified true, nothing put back; under this save a version PROVED not this save (another size,
      older than the ticket, another app named: the commit crossed an office save - one between the walk and the commit
      with the If-Match ignored, the PUT's or the POST's, or at the last chunk of a session OneDrive committed itself) - put
-     back (restoreVersion), then 409 plan_changed {why: "changed"}; a restore Microsoft refuses - 503 (busy, or
-     onedrive_not_authorized for 401 / 403) until 30 minutes after this save's version was made, then 409 plan_changed
-     {why: "not_put_back"} with the admin's line (G3); OneDrive's hash not there yet - 503 busy for 30 minutes after the
+     back (restoreVersion, ONE POST per request: DCR Desktop 2 e1fd4c4, contract addendum 6 H1), then 409 plan_changed
+     {why: "changed"}; a restore Microsoft refuses plainly (a 4xx but 408 / 429) - 503 (busy, or onedrive_not_authorized
+     for 401 / 403); one whose answer does not say whether it went through (429, 408, a 5xx, none) - the history read
+     again in the same request: put back (its newest the crossed version's size, not this save's, this app's, made since
+     the restore was sent, right on this save's version) the plain "changed" with its line, else 503 checking with "the
+     restore's answer was lost"; each until 30 minutes after this save's version was made, then 409 plan_changed {why:
+     "not_put_back"} with the admin's line (G3) - only when that history still shows this save's version the newest, else
+     "unproved"; OneDrive's hash not there yet - 503 busy for 30 minutes after the
      plan's change, then "unproved"; no history to read - verified false; every 503 after the bytes may be on the plan
      (the check's: its hash wait, a restore not done, the listing's moment of trouble) carries why "checking" (G4); a
      newer save on top, the plan gone from its folder, this save on the crossed version more than once, a version of its
@@ -101,7 +106,7 @@
      commit, never the same upload as a copy - by OneDrive's hash, else waited for as above; the 48 hours past, nothing
      is committed, and a replace found landed is checked too. The demo's OneDrive keeps each plan's versions (this tab:
      who wrote each - this app, or nobody named), and graphModes({deferCommit, putCommit, putIfMatch, postIfMatch,
-     postStatus, versions, versionsStatus, versionsPage, restoreStatus, hashes, afterCommit}) chooses what Microsoft does
+     postStatus, versions, versionsStatus, versionsPage, restoreStatus, restoreLost, hashes, afterCommit}) chooses what Microsoft does
      where its pages leave it open, as DCR Desktop 2's fake_graph.ts does; betweenWalkAndCommit(path) puts an office
      save between the walk a commit reads and that commit (attempt A's walk and its PUT; the PUT refused, attempt B's walk and its POST) -
      betweenWalkAndCommit(path, "self"): this very session's commit by another request of the device's, its retry while
@@ -686,13 +691,15 @@
        postStatus (the zero-length POST answers that status); versions "on" | "off" (only the current one, nothing kept)
        | "failing" (the listing answers versionsStatus: 403 - a refusal, the history unreadable - by default; 429 or a
        5xx but 501 is a moment's trouble: handler.ts asks again, repair round 2 S6); restoreStatus (restoreVersion answers
-       that status); hashes "on" | "off" (the demo's OneDrive never hashes what lands: its version stays the "sm:" form -
+       that status, nothing put back); restoreLost (0, or 504 / 503 / "timeout": the restore GOES THROUGH, and the broker
+       hears that status - a gateway's - or none at all, graph.ts restoreVersion's 0: contract addendum 6 H1's lost
+       answer); hashes "on" | "off" (the demo's OneDrive never hashes what lands: its version stays the "sm:" form -
        Microsoft's pages promise no time for the hash); afterCommit "gone" | "usable" (DCR Desktop 2 fake_graph.ts's: a
        committed session's upload URL answers as gone, or still takes a commit - Microsoft's page does not say);
        versionsPage (0: every version in one answer) - the listing cut to its first page, with an @odata.nextLink (its
        `more`: fake_graph.ts's script.versionsPage, CONTRACT-5 G1). */
     const GRAPH = { deferCommit: "honoured", putCommit: "accepted", putIfMatch: "honoured", postIfMatch: "honoured", postStatus: 0, versions: "on",
-      versionsStatus: 403, versionsPage: 0, restoreStatus: 0, hashes: "on", afterCommit: "gone" };
+      versionsStatus: 403, versionsPage: 0, restoreStatus: 0, restoreLost: 0, hashes: "on", afterCommit: "gone" };
     const graph = Object.assign({}, GRAPH);
     /* each plan's version history (this tab): item id -> its earlier versions, oldest first ({size, modified, version,
        blob, app}: blob null for made-up bytes of that size; app the application its lastModifiedBy names, or null) - the
@@ -724,7 +731,7 @@
       return [cur].concat(h.map((v, i) => ({ id: (i + 1) + ".0", modified: v.modified, size: v.size, app: v.app || null })).reverse());
     }
     /** POST items/<id>/versions/<vid>/restoreVersion: that version's bytes become a new current one (the history keeps
-        every version) -> the status */
+        every version) -> the status (restoreLost: it went through, but the answer the broker hears is that one - or 0) */
     function restoreVersion(f, vid) {
       if (graph.restoreStatus) return graph.restoreStatus;
       const h = graph.versions === "off" ? [] : history.get(f.id) || [];
@@ -737,6 +744,7 @@
       const p = rows.projects.find((x) => !x.deleted_at && planFilesOf(x).some((g) => g.full === f.full));
       commitInsert(TABLE, { id: nextId(TABLE), item_id: f.id, project_id: p ? p.id : null, parent_id: null, name: f.name, folder: false, size: v.size,
         mime: "application/octet-stream", created_at: nowIso(), modified_at: nowIso(), by_app: true, takeoff: f.full, version: v.version });
+      if (graph.restoreLost) return graph.restoreLost === "timeout" ? 0 : Number(graph.restoreLost) || 0;
       return 204;
     }
     /** the plan's bytes replaced (a new version, the same id), or the copy added to its folder */
@@ -933,7 +941,7 @@
         trouble - says why "checking" (Portal 2 tells it from OneDrive busy before anything was committed). (The demo's
         answers carry no Retry-After header: the uploader's own waits.) */
     const checkWait = (code) => answer(503, Object.assign(checkBusy(code).data, { why: "checking" }));
-    /** handler.ts verify / check (contract addendum 3 D2 step 4; DCR Desktop 2 48dc59e - contract addendum 5 G1, G3,
+    /** handler.ts verify / check (contract addendum 3 D2 step 4; DCR Desktop 2 e1fd4c4 - contract addendum 5 G1, G3,
         G4): after a replace's commit (or one found landed), the plan afresh, then its version history (the whole first
         page). Its ends, each on its proof - anything else "unproved", nothing put back, the admin's line:
         - OneDrive's hash of the plan the device's, the newest version that plan, and right under it - past versions
@@ -942,8 +950,12 @@
           base itself by the hash: verified;
         - the plan this save by the hash, no history to read, or a ticket naming no base: verified false;
         - CROSSED: under this save a version PROVED not this save (another size, older than the ticket, another app
-          named): put back (restoreVersion), plan_changed "changed"; a restore not 2xx: 503 checking until HASH_WAIT_MS
-          after this save's version was made, then plan_changed "not_put_back" with the admin's line;
+          named): put back (restoreVersion, one POST), plan_changed "changed"; a restore refused plainly (a 4xx but 408 /
+          429): 503 checking; one whose answer does not say (429, 408, a 5xx, none): the history read again - put back
+          there, "changed" (DCR Desktop 2 e1fd4c4, contract addendum 6 H1), else 503 checking ("the restore's answer was
+          lost"); each until HASH_WAIT_MS after this save's version was made, then plan_changed "not_put_back" with the
+          admin's line - only when the history read after the restore shows this save's version still the newest, else
+          "unproved";
         - OneDrive's hash not there yet: hashWait; a newer save on top, the plan gone from its folder, this save on the
           crossed version more than once, a version of its size under it nothing proves an office save's, a listing that
           does not reach back: "unproved". */
@@ -1005,18 +1017,43 @@
       if (under.size === t.s && at(under.modified) >= since && (under.app === null || under.app === APP)) {
         return unproved(op, "crossed: not proved (the version under this save has its size)");
       }
+      const sent = nowMs();
       const status = restoreVersion(it, under.id);
       if (status >= 200 && status < 300) {
         log(op, "crossed: the office save was put back");
         return planChanged("changed");
       }
+      // DCR Desktop 2 e1fd4c4 (contract addendum 6 H1): the restore is one POST. Only a plain refusal (a 4xx but 408 /
+      // 429) says it did not go through; throttled, a 5xx, no answer at all (0) - not known: it may have gone through
+      const refused = status >= 400 && status < 500 && status !== 408 && status !== 429;
       // contract addendum 5 G3: the restore's bound - HASH_WAIT_MS after this save's version was made
-      if (nowMs() - at(top.modified) > HASH_WAIT_MS) {
+      const late = nowMs() - at(top.modified) > HASH_WAIT_MS;
+      if (refused && !late) {
+        log(op, "crossed: the office save could not be put back (" + status + "): asked again");
+        return checkWait(status === 401 || status === 403 ? "onedrive_not_authorized" : "busy");
+      }
+      // the history read again, AFTER the restore's one try (the plan afresh; a moment's trouble shows nothing either way)
+      const now = planFilesOf(p).find((x) => x.id === t.t) || null;
+      const lv = now ? listing(now) : null;
+      const back = Array.isArray(lv) ? lv : null;
+      const isTop = (v) => !!v && v.size === top.size && near(at(v.modified), at(top.modified));
+      // it went through: the newest version is the one put back - the crossed version's size (another than this save's),
+      // this app named as its writer, made since the restore was sent - right on this save's version
+      if (back && back.length >= 2 && back[0].size === under.size && under.size !== t.s && back[0].app === APP
+          && at(back[0].modified) >= sent - SKEW_MS && isTop(back[1])) {
+        log(op, "crossed: the office save was put back (the restore's answer was lost; the version history shows it)");
+        return planChanged("changed");
+      }
+      if (!late) {
+        log(op, "crossed: the restore's answer was lost: checking again");
+        return checkWait("busy");
+      }
+      // G3's bound: not_put_back only when the history read after the last try shows this save's version still the newest
+      if (back && back.length > 0 && isTop(back[0])) {
         log(op, "crossed: the office save could not be put back: put it back by hand from the version history");
         return planChanged("not_put_back");
       }
-      log(op, "crossed: the office save could not be put back (" + status + "): asked again");
-      return checkWait(status === 401 || status === 403 ? "onedrive_not_authorized" : "busy");
+      return unproved(op, "crossed: not proved (the version history read after the restore does not show whether it went through)");
     }
     /** the session is gone (committed earlier, the answer lost; or run out): looked for as plan_save_done does, a replace
         then checked as a commit is */
