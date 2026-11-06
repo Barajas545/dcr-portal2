@@ -836,8 +836,10 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
     checked against office saves" also while the broker waits for OneDrive's hash of a version that only has the save's
     size. "failed" says "the portal's Plans Library sends it again" also for a failure that waits for the person's
     Retry (not found, too large, the kept copy lost, the base not matched, refused, not saved twice). "sent" after an
-    unproved, not put back or refused copy says "The portal sent <plan> to OneDrive.", naming the plan, not the copy. In
-    every case the portal's own bar over the app and its row carry the exact words.
+    unproved, not put back or refused copy says "The portal sent <plan> to OneDrive.", naming the plan, not the copy. And
+    while a save waits for a lost answer or to be settled (an expired sign-in), the app hears nothing new, so its last
+    line stays ("The portal is sending <plan> to OneDrive — 99%. It is saved on this iPad."). In every case the portal's
+    own bar over the app and its row carry the exact words.
   - A request that never answers and never errors (no answer, no timeout) keeps that send waiting in that page until
     the browser ends it. Nothing is asked twice meanwhile: another tab waits too (the send's Web Lock while the request
     holds it; without Web Locks, the send's mark for the broker's longest run). The row keeps its last words.
