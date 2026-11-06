@@ -464,10 +464,19 @@ export function askTile(setup) {
  * The Count tool asks WHAT is being counted before it is entered, so that
  * every click afterwards just adds to the same item. Carrying on with an
  * existing count is the common case, so it comes first.
+ *
+ * `note`: why a tap is asking at all, when it asks instead of making a count
+ * by itself (a Posts/Hardware count framed on the desktop, which this app
+ * cannot make). Said above everything else.
  */
-export function askCountItem({ existing = [] }) {
+export function askCountItem({ existing = [], note = '' }) {
   return showDialog(close => {
     const body = el('div');
+    if (note) {
+      const why = el('div', 'hint', note);
+      why.style.cssText = 'margin:0 0 12px;color:var(--warn);line-height:1.4';
+      body.appendChild(why);
+    }
 
     if (existing.length) {
       body.appendChild(el('div', 'hint', 'Carry on with a count already on this sheet:'));

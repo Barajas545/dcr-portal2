@@ -460,8 +460,16 @@ controller.addEventListener('mode-changed', ev => {
   syncToolOptions(ev.detail.mode);
   syncMarkupWidth();
 });
-// The tool changed what its Item box holds (a job switch emptied it).
+// The tool changed what its Item box holds: arming put the count's name
+// there, the form at a tap named it, a job switch emptied it.
 controller.addEventListener('tool-name', () => syncToolOptions(controller.mode));
+// The Count bar's own Undo and Redo follow the history, like the top bar's.
+app.project.addEventListener('history-changed', () => syncCountHistoryButtons());
+// Another job comes in with no history (reset() empties it and says nothing
+// on 'history-changed'): Undo stayed on, titled with the last job's step,
+// and a press did nothing -- in both bars. Counting carries on through an
+// open, so the Count bar is still up.
+app.project.addEventListener('reset', () => { syncHistoryButtons(); syncCountHistoryButtons(); });
 
 app.project.addEventListener('items-changed', () => {
   itemsPanel.refresh();
@@ -2267,6 +2275,13 @@ $('chromeEdge').addEventListener('pointerdown', ev => {
   window.addEventListener('pointercancel', stop);
 });
 $('chrome').addEventListener('pointerenter', () => { clearTimeout(chromeHold); });
+// The options bar is parked from where the tool's button is, and syncChrome
+// asks at the START of the slide: pulled down, the bar was left at the top
+// of the sheet, under the toolbars, its Undo and Redo out of reach; put
+// away, it hung where the button had been. Parked again once it has moved.
+$('chrome').addEventListener('transitionend', ev => {
+  if (ev.target === $('chrome') && ev.propertyName === 'transform') placeToolOptions(controller.mode);
+});
 $('chrome').addEventListener('pointerleave', ev => {
   // Mouse only. A finger lifting fires pointerleave, so on a tablet this
   // closed the stack 420ms after every tap — taking the menu that had just
@@ -2313,7 +2328,43 @@ function syncToolOptions(mode) {
     nameInput.placeholder = 'Item name…';
     nameInput.setAttribute('list', 'catalogNames');
     nameInput.addEventListener('input', () => { o.pendingName = nameInput.value; });
+    // Return (the iPad's return or Done) means "that's the name": the box
+    // lets go of the keyboard, so the on-screen keyboard drops and the next
+    // tap and Cmd+Z reach the drawing (desktop ToolNameBox._accept_name).
+    // The key is the box's, and goes no further: the document's own Escape
+    // (it runs before its typing-in-a-box check) closed the revisions
+    // panel, cleared an overlay, or took an older drawing he was counting
+    // on to the newest -- and the next tap counted on another drawing.
+    nameInput.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        o.pendingName = nameInput.value;
+        nameInput.blur();
+      }
+    });
     parts.push([mode === 'count' ? 'Counting' : 'Item', nameInput]);
+  }
+
+  // Counting on a tablet: the top bar slides away on every tap on the
+  // sheet, so taking a mark back cost two taps and the bar closed again on
+  // the next mark. The Count bar stays up while the tool is live; these do
+  // exactly what the top bar's Undo and Redo do (data-act, the same
+  // dispatcher), and a finger can hit them.
+  if (mode === 'count') {
+    for (const [act, glyph, word] of [['undo', '↶', 'Undo'], ['redo', '↷', 'Redo']]) {
+      const b = D.el('button', 'tb-btn', `${glyph} ${word}`);
+      b.type = 'button';
+      b.dataset.act = act;
+      b.dataset.countHistory = act;
+      b.style.minWidth = '64px';
+      b.style.minHeight = '44px';
+      // A press hands the keyboard back to the drawing, as a mode button
+      // does: left on the button, a Space or a Return from a keyboard took
+      // another step back, with nothing on screen to show why.
+      b.addEventListener('click', () => $('canvas')?.focus({ preventScroll: true }));
+      parts.push(['', b]);
+    }
   }
 
   if (mode === 'linear_count') {
@@ -2359,11 +2410,23 @@ function syncToolOptions(mode) {
   if (!parts.length) { bar.hidden = true; return; }
 
   for (const [label, node] of parts) {
-    bar.appendChild(D.el('span', 'tb-label', label));
+    if (label) bar.appendChild(D.el('span', 'tb-label', label));
     bar.appendChild(node);
   }
+  syncCountHistoryButtons();
   bar.hidden = false;
   placeToolOptions(mode);
+}
+
+/** The Count bar's Undo and Redo: off when there is nothing to take back. */
+function syncCountHistoryButtons() {
+  for (const b of $('toolOpts').querySelectorAll('button[data-count-history]')) {
+    const undo = b.dataset.countHistory === 'undo';
+    const can = undo ? app.project.canUndo : app.project.canRedo;
+    const what = undo ? app.project.undoLabel : app.project.redoLabel;
+    b.disabled = !can;
+    b.title = can ? `${undo ? 'Undo' : 'Redo'} ${what}` : `Nothing to ${undo ? 'undo' : 'redo'}`;
+  }
 }
 
 function TILE_SIZE_OPTIONS() {
@@ -2396,14 +2459,24 @@ function placeToolOptions(mode) {
   const ar = document.getElementById('app').getBoundingClientRect();
   const bw = bar.offsetWidth || 260;
   let x = br.left - ar.left;
-  x = Math.max(6, Math.min(x, ar.width - bw - 6));
+  // Kept over the drawing: hung from a button near the middle, a wide bar
+  // (Count's, with its Undo and Redo) reached over the Items panel's head
+  // on an iPad. Its right edge stops at the sheet's; where the sheet is too
+  // narrow for it, the left edge still wins.
+  const right = Math.min(ar.width, $('stage').getBoundingClientRect().right - ar.left);
+  x = Math.max(6, Math.min(x, right - bw - 6));
   bar.style.left = `${x}px`;
   // With the stack slid away the button it hangs from is off the top of the
   // window, and following it would park this bar at a negative offset where
   // the tool's own options cannot be reached at all.
   const stageTop = $('stage').getBoundingClientRect().top - ar.top;
   const under = br.bottom - ar.top + 4;
-  bar.style.top = `${Math.max(stageTop + 6, under)}px`;
+  // Pulled down over the sheet, the toolbars cover everything under them
+  // (they sit above this bar): it hangs below the whole stack then, where
+  // the Count bar's Undo and Redo can still be reached. Pinned, or slid
+  // away, the stack ends at or above the sheet and changes nothing here.
+  const below = $('chrome').getBoundingClientRect().bottom - ar.top + 4;
+  bar.style.top = `${Math.max(stageTop + 6, under, below)}px`;
 }
 
 window.addEventListener('resize', () => placeToolOptions(controller.mode));

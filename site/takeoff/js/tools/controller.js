@@ -26,7 +26,7 @@ import {
 } from '../core/units.js';
 import { nextPaletteColor, peekPaletteColor } from '../render/theme.js';
 import { STANDALONE_PAGE } from '../core/takeoff-file.js';
-import { onThisVersion } from '../core/revisions.js';
+import { onThisVersion, itemRevId } from '../core/revisions.js';
 import { CountingModel, applyBooking } from '../core/counting.js';
 import {
   MARKUP_TOOLS, MARKUP_HINTS, MarkupState, beginStroke, extendStroke,
@@ -299,15 +299,33 @@ export class ToolController extends EventTarget {
     // click after that just adds a point to the same item.
     this.countTarget = null;
     this.countSpec = null;
+    // The answers the armed count was made from, kept past the first tap
+    // that spends countSpec: a step that takes the item back off the sheet
+    // arms them again (desktop _count_answers). null for a count carried on,
+    // which is made again from the item itself (countAnswersAgain).
+    this.countAnswers = null;
     // The name the clicks are being counted under: the armed count's, or the
     // Item box's once a click was counted under it (desktop _count_named).
-    // A job switch empties the box only while it still shows this name.
+    // A job switch empties the box only while it still shows this name, and
+    // a DIFFERENT name in the box starts the next item.
     this.countNamed = '';
+    // The counts held on other drawings, oldest first (desktop _count_left):
+    // back on a drawing counted on, taps go to the newest one held there.
+    // Item objects, found again by _uid after every restore (_rearmCount).
+    this.countLeft = [];
+    // A Posts/Hardware count (desktop framing) a step took off the sheet:
+    // this app cannot make its lumber again, so the next tap asks the form
+    // rather than make it again bare -- from its answers or by its name.
+    this.countMustAsk = false;
     // Which job this is: one more every time another comes in. A form asked
     // about one job and answered in the next is no answer (_ask).
     this._job = 0;
     // Another job: the count held for the last one is put down.
     this.project.addEventListener('reset', () => this._dropPerProject());
+    // Every item object was just replaced -- an undo, a redo, a long press
+    // putting a trembled shape back: the count being placed, and the ones
+    // held on other drawings, are found again in the store put back.
+    this.project.addEventListener('restored', ev => this._rearmCount((ev.detail || {}).before));
     // Anything that moves the history while a press on a shape is held -- a
     // Ctrl+Z, a Ctrl+Y -- ends that press: its release must not then keep,
     // or put back, a picture of the job from before that edit (the
@@ -354,7 +372,14 @@ export class ToolController extends EventTarget {
       if (!armed) return false;
     }
     this.cancel();
+    const was = this.mode;
     this.mode = mode;
+    // Picking up a tool from another tool starts a new item: the Item box
+    // is emptied (desktop _sync_tool_options -> clear_name), after the count
+    // form has put its name there -- so Count picked up from Pan starts
+    // empty, and Count pressed again while counting keeps the armed name.
+    // Not said on its own: 'mode-changed' below draws the bar again.
+    if (mode !== was) this.options.pendingName = '';
     this.canvas.style.cursor = CURSORS[mode] || 'default';
     this.emit('mode-changed', { mode });
     this.emit('status', { text: HINTS[mode] || '' });
@@ -363,37 +388,142 @@ export class ToolController extends EventTarget {
 
   async _armCount() {
     const page = this.getCurrentPage();
+    // Only the counts on the drawing on screen (desktop _arm_count_item):
+    // one traced on another drawing of the sheet takes no tap from here.
     const existing = (this.project.measurements[page] || [])
-      .filter(m => m.type === 'count');
+      .filter(m => m.type === 'count' && this._onScreen(m));
     const choice = await this._ask(this.host.askCountItem?.({ existing }));
     if (!choice) return false;
     if (choice.continueItem) {
-      this.countTarget = choice.continueItem;
-      this.countSpec = null;
+      // Picked from a list made before the form went up; a step taken while
+      // it was up replaced every item object, so it is found again.
+      const it = this._inStore(choice.continueItem) ? choice.continueItem
+        : this._foundAgain(choice.continueItem);
+      if (!it) {
+        this.emit('status', { text: 'That count is no longer on the sheet — nothing was armed' });
+        return false;
+      }
+      this.armCount(it, null);
       this.emit('status', {
-        text: `Carrying on with "${choice.continueItem.name}" — every click adds one`,
+        text: `Carrying on with "${it.name}" — every click adds one`,
       });
     } else {
-      this.countTarget = null;
-      this.countSpec = choice.spec;
+      this.armCount(null, choice.spec);
       this.emit('status', {
         text: `Counting "${choice.spec.name}" — every click adds one`,
       });
     }
-    this.countNamed = countChoiceName(choice);
     return true;
   }
 
   /**
+   * What the next count taps belong to (desktop arm_count): `target`, an
+   * existing count to carry on with, or `spec`, the answers for a new one,
+   * made on the first tap so that arming and changing your mind leaves
+   * nothing behind. The answers are kept past that tap (countAnswers), the
+   * Item box shows the name (countNamed: what the tool itself put there),
+   * and nothing held on another drawing is this choice.
+   */
+  armCount(target, spec) {
+    this.countTarget = target || null;
+    this.countSpec = spec ? { ...spec } : null;
+    this.countAnswers = this.countSpec;
+    this.countMustAsk = false;
+    const name = String((target ? target.name : spec && spec.name) || '').trim();
+    this._syncToolName(name);
+    this.countNamed = name;
+    this.countLeft = [];
+  }
+
+  /**
    * Nothing armed for the next count click: no item to add to, no answers to
-   * start one from, no name kept from the last one (desktop
-   * forget_armed_count). The Item box belongs to the app and is not touched.
+   * start one from, no name kept from the last one, nothing held on another
+   * drawing (desktop forget_armed_count). The Item box belongs to the app
+   * and is not touched.
    */
   forgetArmedCount() {
     this.countTarget = null;
     this.countSpec = null;
+    this.countAnswers = null;
     this.countNamed = '';
+    this.countLeft = [];
+    this.countMustAsk = false;
     this.options.countCategory = '';
+  }
+
+  /**
+   * Show in the Item box the name the count really has, so the next tap
+   * carries on with it (desktop _sync_tool_name). Said only when it changes:
+   * the app draws the whole bar again, and never while he is typing in it.
+   */
+  _syncToolName(name) {
+    const n = String(name || '').trim();
+    if (this.options.pendingName === n) return;
+    this.options.pendingName = n;
+    this.emit('tool-name', { name: n });
+  }
+
+  /** Is this very object an item in the store? (identity, not likeness) */
+  _inStore(m) {
+    if (!m) return false;
+    for (const [, it] of this.project.allItems()) if (it === m) return true;
+    return false;
+  }
+
+  /**
+   * The store's own copy of a count, by its runtime _uid. A restore puts a
+   * copy of every item back; the copy keeps the _uid, and no other item
+   * ever carries it, so this IS that count -- the desktop's likeness
+   * ranking (_count_found_again) is not needed here.
+   */
+  _foundAgain(m) {
+    const f = m && m._uid ? this.project.findItem(m._uid) : null;
+    return f ? f.item : null;
+  }
+
+  /**
+   * After a restore (Project 'restored': an undo, a redo, a long press
+   * putting a trembled shape back), the count being placed follows onto the
+   * store put back (desktop _restore_state -> _rearm_count). `before` is the
+   * store the restore threw away.
+   *
+   * Found again: the taps carry on with the store's own copy. Not there
+   * because the step took it off the sheet (Ctrl+Z of its first tap): the
+   * answers it was made from are armed again, so the next tap starts it
+   * exactly as the first did, with no form; the old object stays armed
+   * beside them, so a Ctrl+Y that brings it back finds it. A count carrying
+   * the desktop's Posts/Hardware framing is NOT made again: its lumber and
+   * hardware cannot be worked out here, so the next tap asks, and the status
+   * line says why. The counts held on other drawings are found again too.
+   */
+  _rearmCount(before) {
+    const t = this.countTarget;
+    if (t) {
+      const found = this._foundAgain(t);
+      if (found) {
+        this.countTarget = found;
+        this.countSpec = null;
+        this.countMustAsk = false;
+      } else if (storeHolds(before, t)) {
+        const answers = countAnswersAgain(t, this.countAnswers);
+        this.countAnswers = answers;
+        if (pyTruthy(answers.framing)) {
+          this.countSpec = null;
+          this.countMustAsk = true;
+          if (this.mode === 'count') {
+            this.emit('status', { text: framedAskWords(t.name, 'taken', 'the next tap') });
+          }
+        } else {
+          this.countSpec = answers;
+        }
+      }
+    }
+    const back = [];
+    for (const m of this.countLeft) {
+      const f = this._foundAgain(m);
+      if (f && f !== this.countTarget && !back.includes(f)) back.push(f);
+    }
+    this.countLeft = back;
   }
 
   /**
@@ -418,8 +548,7 @@ export class ToolController extends EventTarget {
     this._dropPress();
     const shown = String(this.options.pendingName || '').trim();
     if (this.mode === 'count' && shown && shown === String(this.countNamed || '').trim()) {
-      this.options.pendingName = '';
-      this.emit('tool-name', { name: '' });
+      this._syncToolName('');
     }
     this.forgetArmedCount();
     this._lastFloor = '';
@@ -837,6 +966,8 @@ export class ToolController extends EventTarget {
       // kept the change. What it moved is taken back before the menu opens
       // (which finds the shape again, where it was).
       if (this._preDrag && this._dragMoved) {
+        // (restore() says 'restored': the count tool finds its counts in
+        // the store put back -- every item object is a new one now.)
         this.project.restore(this._preDrag);
         // Not an undo level (the store is the pre-press store again), but
         // still a change: a save composed while the tremble stood holds the
@@ -1839,81 +1970,271 @@ export class ToolController extends EventTarget {
     }), 'Array');
   }
 
+  /**
+   * One count tap (desktop _add_count_point). In this order:
+   *
+   *   0. a name in the Item box that the tool did not put there for this
+   *      count -- typed or picked since -- puts the armed count down: a new
+   *      name starts the next item, as the Count hint says;
+   *   0b. back on a drawing where a count is held (countLeft), the newest one
+   *      held there takes the tap, while the box shows its name or is empty;
+   *   1. the armed count, when it is on the drawing on screen;
+   *   2. the armed answers: the first tap makes the item;
+   *   3. by the name in the box: the first count of that name on this
+   *      drawing, or a new one, with no form;
+   *   4. nothing to go on: the form.
+   *
+   * Every item is matched BY IDENTITY among the ones on the drawing on
+   * screen. A count traced on another drawing of this sheet is not under
+   * the pencil: a dot added to it would be drawn nowhere.
+   */
   _addCountPoint(pt) {
     const page = this.getCurrentPage();
     const list = this.project.itemsOn(page);
+    const onScreen = list.filter(m => this._onScreen(m));
+    const here = m => !!m && onScreen.includes(m);
+    const typed = String(this.options.pendingName || '').trim();
+    const cat = typed || String(this.options.countCategory || '').trim();
+    const named = String(this.countNamed || '').trim();
 
-    // 1. an armed target on this page just gains a point — when it is on
-    //    the drawing on screen. A count traced on another drawing of this
-    //    sheet is not under the pencil: a dot added to it would be drawn
-    //    nowhere and counted from lines it was not placed on.
-    if (this.countTarget && list.includes(this.countTarget)
-        && this._onScreen(this.countTarget)) {
-      this.project.transact('Count', () => {
-        this.countTarget.points.push(pt.slice());
-        this.countTarget.value = this.countTarget.points.length;
-      });
-      this._countGrew(page, this.countTarget);
-      this.emit('changed');
-      return;
-    }
-
-    // 2. an armed spec materialises on the first click only.
-    if (this.countSpec) {
-      const made = this._file(page, this._base('count', {
-        points: [pt.slice()],
-        value: 1,
-        count_number: this.countSpec.count_number ?? nextCountNumber(this.project),
-        ...this.countSpec,
-        label: this.countSpec.name,
-      }), { label: 'Count' });
-      this.countTarget = made;
+    // 0. A new name in the box starts the next item (desktop 37248-37260).
+    //    The count armed from the form used to keep the tap, and it went
+    //    onto the item he had just named something else.
+    if (typed && named && typed !== named && (this.countTarget || this.countSpec)) {
+      this.countTarget = null;
       this.countSpec = null;
+      this.countAnswers = null;
+      this.countMustAsk = false;
+    }
+
+    // 0b. Back on a drawing where the tool held a count before its taps went
+    //     on to another one: the NEWEST held here, unless the box names
+    //     something else (desktop 37261-37287). The one counted here last
+    //     taken back or deleted since is not on the drawing, and the one
+    //     held before it takes the tap. The armed count is held where it is.
+    if (!here(this.countTarget)) {
+      const back = [...this.countLeft].reverse().find(m => here(m)
+        && (!cat || String(m.name || '').trim() === cat));
+      if (back) {
+        const held = this.countLeft.filter(m => m !== back);
+        if (this.countTarget && this._inStore(this.countTarget)) held.push(this.countTarget);
+        this.countLeft = held;
+        this.countTarget = back;
+        this.countSpec = null;
+        this.countAnswers = null;       // made again from the item itself
+        this.countMustAsk = false;
+        this.countNamed = String(back.name || '').trim();
+      }
+    }
+
+    // 1. the armed count, on the drawing on screen, gains a point.
+    if (here(this.countTarget)) {
+      const t = this.countTarget;
+      this.project.transact('Count', () => {
+        t.points.push(pt.slice());
+        t.value = t.points.length;
+      });
+      this._countGrew(page, t);
       this.emit('changed');
       return;
     }
 
-    // 3. an existing count on this page with the same name.
-    const cat = (this.options.pendingName || this.options.countCategory || '').trim();
-    if (cat) {
-      const existing = list.find(m => m.type === 'count' && m.name === cat
-        && this._onScreen(m));
-      if (existing) {
-        this.project.transact('Count', () => {
-          existing.points.push(pt.slice());
-          existing.value = existing.points.length;
-        });
-        this.countTarget = existing;
-        this.countNamed = cat;
-        this._countGrew(page, existing);
+    // 2. the armed answers -- from the form, or armed again by a step that
+    //    took the count off -- make the item on the first tap only. Not
+    //    under the name of a count the desktop framed on another drawing:
+    //    the desktop hands that framing over on this path too (its spec
+    //    branch ends in _inherit_count_framing), this app cannot, so the tap
+    //    asks and says why, as the name in the box does (3). The answers
+    //    stay armed: after a Cancel the next tap asks again, and on a
+    //    drawing nothing is handed over to, it makes them.
+    let why = '';
+    if (this.countSpec) {
+      why = this._framedNamesakeWords(countNameFrom(this.countSpec, cat), page);
+      if (!why) {
+        const made = this._file(page, this._countFrom(this.countSpec, pt, cat),
+          { label: 'Count' });
+        this.countTarget = made;
+        this.countSpec = null;
         this.emit('changed');
         return;
       }
-      // 4. a name was typed but nothing matches: create it silently.
-      const made = this._file(page, this._base('count', {
-        points: [pt.slice()],
-        name: cat, label: cat,
-        color: nextPaletteColor(),
-        value: 1,
-        count_number: nextCountNumber(this.project),
-      }), { label: 'Count' });
-      this.countTarget = made;
-      this.countNamed = cat;
-      this.emit('changed');
-      return;
     }
 
-    // 5. nothing to go on — ask.
+    // 3. by the name in the box: the first count of that name on this
+    //    drawing, or -- typed and nowhere here yet -- a new one, no form.
+    //    Not for a Posts/Hardware count a step took off: made by its name
+    //    it would come back with no lumber, and nothing would say so. Nor
+    //    a NEW one under the name of a count the desktop framed -- on
+    //    another drawing, or the armed one deleted since: the desktop hands
+    //    that framing over (_inherit_count_framing), this app cannot, so
+    //    the tap asks, and says why (the user's decision 2). Not reached
+    //    when the armed answers asked (2): they are a NEW item, never a
+    //    join onto a namesake here.
+    if (!why && cat && !this.countMustAsk) {
+      let existing = onScreen.find(m => m.type === 'count' && m.name === cat) || null;
+      if (existing) {
+        const it = existing;
+        this.project.transact('Count', () => {
+          it.points.push(pt.slice());
+          it.value = it.points.length;
+        });
+        this._countGrew(page, it);
+      } else if (typed) {
+        why = this._framedNamesakeWords(cat, page);
+        if (!why) {
+          existing = this._file(page, this._base('count', {
+            points: [pt.slice()],
+            name: cat, label: cat,
+            color: nextPaletteColor(),
+            value: 1,
+            count_number: nextCountNumber(this.project),
+          }), { label: 'Count' });
+        }
+      }
+      if (existing) {
+        this._holdAndTake(existing, cat);
+        this.emit('changed');
+        return;
+      }
+    }
+
+    // 4. nothing to go on -- ask. The answer makes (or joins) the item here
+    //    and now, rather than arming the tool and coming back in: going back
+    //    in through countSpec dropped the count held on the other drawing.
+    //    Asked because of a desktop-framed count, the form says why, and so
+    //    does the status line again: said at the step, it is long gone
+    //    (six seconds) by the time he taps. A NEW count the answer makes
+    //    under a name the desktop framed is made -- the form was the asking
+    //    -- and the status line says it carries none of that framing: the
+    //    form may have opened with no note (the box empty), and the desktop
+    //    would have handed the framing over here too (37497-37500).
+    if (!why && this.countMustAsk) {
+      why = framedAskWords(this.countTarget && this.countTarget.name, 'taken', 'this tap');
+    }
+    if (why) this.emit('status', { text: why });
     this._ask(this.host.askCountItem?.({
-      existing: list.filter(m => m.type === 'count' && this._onScreen(m)),
+      existing: onScreen.filter(m => m.type === 'count'),
+      ...(why ? { note: why } : {}),
     }))
       .then(choice => {
         if (!choice) return;
-        if (choice.continueItem) this.countTarget = choice.continueItem;
-        else this.countSpec = choice.spec;
-        this.countNamed = countChoiceName(choice);
-        this._addCountPoint(pt);
+        let existing = null;
+        let bare = false;
+        if (choice.continueItem) {
+          const it = this._inStore(choice.continueItem) ? choice.continueItem
+            : this._foundAgain(choice.continueItem);
+          if (!it) {
+            this.emit('status', { text: 'That count is no longer on the sheet — nothing was counted' });
+            return;
+          }
+          this.project.transact('Count', () => {
+            it.points.push(pt.slice());
+            it.value = it.points.length;
+          });
+          this._countGrew(page, it);
+          existing = it;
+        } else if (choice.spec) {
+          existing = this._file(page, this._countFrom(choice.spec, pt, cat), { label: 'Count' });
+          // Asked while the tool still holds what it held at the tap: the
+          // armed framed count deleted or taken off is one of the reasons.
+          bare = !!existing && !!this._framedNamesakeWords(existing.name, page);
+        }
+        if (!existing) return;
+        const name = String(existing.name || '').trim();
+        if (name) this._syncToolName(name);
+        this._holdAndTake(existing, name || cat);
+        if (bare) this.emit('status', { text: framedBareWords(name) });
+        this.emit('changed');
       });
+  }
+
+  /**
+   * A new count made from answers (desktop _add_count_point's spec branch):
+   * the form's, or the ones a step armed again. Never the desktop's
+   * 'framing': its lumber and hardware lines are worked out by a framing
+   * engine this app does not have, and a copied 'framing' without them
+   * would be a Posts count that prices nothing and says it does.
+   */
+  _countFrom(spec, pt, cat) {
+    const fields = {};
+    for (const [k, v] of Object.entries(spec || {})) {
+      if (k === 'framing' || k === 'catalog') continue;
+      fields[k] = v && typeof v === 'object' ? structuredClone(v) : v;
+    }
+    const name = countNameFrom(fields, cat);
+    return this._base('count', {
+      points: [pt.slice()],
+      value: 1,
+      count_number: fields.count_number ?? nextCountNumber(this.project),
+      ...fields,
+      color: fields.color || nextPaletteColor(),
+      name, label: name,
+    });
+  }
+
+  /**
+   * Would a NEW count called `name`, made on the drawing on screen of
+   * `page`, be handed Posts/Hardware framing by the desktop? Then made here
+   * with no form it would carry none of its lumber: the desktop hands the
+   * framing over on every path that makes a count -- the armed answers, the
+   * name in the box, the form at a click (_inherit_count_framing) -- and
+   * this app has no framing engine to do it with. The words the tap asks
+   * with, or '' for a name nothing is handed over to. Also the armed count
+   * deleted since, its name still in the box (the user's decision 2: a
+   * stricter rule than the desktop's, which would make it bare).
+   */
+  _framedNamesakeWords(name, page) {
+    const n = String(name || '').trim();
+    if (!n) return '';
+    const t = this.countTarget;
+    if (t && pyTruthy(t.framing) && String(t.name || '').trim() === n && !this._inStore(t)) {
+      return framedAskWords(n, 'gone', 'this tap');
+    }
+    return this._framedSource(n, page) ? framedAskWords(n, 'there', 'this tap') : '';
+  }
+
+  /**
+   * The count the desktop would hand its framing over from, to a new count
+   * called `name` made on the drawing on screen of `page`, or null (desktop
+   * _inherit_count_framing's candidates; diffed against its own lines in
+   * tests/count-undo.mjs): a count of exactly that name, framed, on a
+   * drawing the job is priced from -- takeoff on a drawing a sheet does not
+   * count buys nothing, so it decides nothing -- and not on this drawing: a
+   * namesake here is what Carry on with continues, not a source. Another
+   * drawing of this sheet (its revision) is one. Whether one exists is all
+   * the web asks; which the desktop would take is the desktop's.
+   */
+  _framedSource(name, page) {
+    const here = String((this.viewingVersion || {}).revId || '');
+    let model = null;
+    for (const [pg, m] of this.project.allItems()) {
+      if (!m || m.type !== 'count' || m.name !== name || !pyTruthy(m.framing)) continue;
+      if (pg === page && itemRevId(m) === here) continue;
+      model ||= new CountingModel({ metadata: this.project.metadata,
+        measurements: this.project.measurements, pageCount: this.project.pageCount });
+      if (model.itemCountsTowards(pg, m)) return m;
+    }
+    return null;
+  }
+
+  /**
+   * The tap went onto `existing` by its name or by the form: the clicks
+   * after it follow THIS item, and the count the tool held before is held
+   * where it is, so going back there goes back to it (desktop
+   * _add_count_point 37476-37493).
+   */
+  _holdAndTake(existing, cat) {
+    const held = this.countTarget;
+    if (held && held !== existing && this._inStore(held)) {
+      const kept = this.countLeft.filter(m => this._inStore(m) && m !== held && m !== existing);
+      kept.push(held);
+      this.countLeft = kept;
+    }
+    this.countTarget = existing;
+    this.countSpec = null;
+    this.countAnswers = null;         // made again from the item itself
+    this.countMustAsk = false;
+    this.countNamed = String(cat || '').trim();
   }
 
   _addOpeningPin(kind, pt) {
@@ -2051,8 +2372,23 @@ export class ToolController extends EventTarget {
     return created;
   }
 
-  /** A point added to a count already on the sheet: said like a new item. */
+  /**
+   * A point added to a count already on the sheet: said like a new item.
+   * And the Items list told: transact() says only 'history-changed', so its
+   * row read one mark short after every tap that joined a count -- "× 2"
+   * beside a count of 3 -- until something else redrew it.
+   */
   _countGrew(page, item) {
+    this.project.emit('items-changed', { pageKey: page });
+    // A Posts/Hardware count the desktop framed: its lumber and hardware
+    // lines are the desktop engine's, worked out for the marks it last saw.
+    // They are not this app's to touch (the user's decision 2), so the mark
+    // goes on and the lines stay as they were -- said on every such tap,
+    // never left to look right. The held count (rule 0b) can send a tap
+    // here that he did not aim at it, so this is where it is said.
+    if (pyTruthy(item && item.framing)) {
+      this.emit('status', { text: framedJoinWords(item) });
+    }
     this.emit('takeoff-filed', { page, item, booking: null, level: this.project.undoTop });
   }
 
@@ -2110,10 +2446,101 @@ function nextCountNumber(project) {
   return max + 1;
 }
 
-/** The name an answer from the count form arms the tool with. */
-function countChoiceName(choice) {
-  const it = choice && (choice.continueItem || choice.spec);
-  return String((it && it.name) || '').trim();
+// ── a count made again (desktop GLPageWidget._rearm_count) ───────────────
+
+/**
+ * Desktop GLPageWidget._COUNT_TEMPLATE, verbatim (tests/count-undo-python-
+ * truth.py lifts the desktop's own and compares): what a count carried on
+ * with "Carry on with" is made again from, when a step takes its every mark
+ * back -- it was not made from answers given this time.
+ */
+export const COUNT_TEMPLATE = Object.freeze(['name', 'notes', 'purpose', 'color',
+  'floor_level', 'category', 'sub_category', 'cost_type', 'unit_cost',
+  'catalog_code', 'catalog_unit', 'rate_unit']);
+
+/** Desktop GLPageWidget.CLASS_FIELDS: where an item is filed. */
+export const CLASS_FIELDS = Object.freeze(['floor_level', 'category', 'sub_category']);
+
+/**
+ * What the next tap makes a count again from, once a step took it off the
+ * sheet: the answers it was armed with (`answers`, updated in place, as the
+ * desktop's dict is), or -- carried on, not made from answers this time --
+ * its own fields (COUNT_TEMPLATE). Filed where the item was filed last,
+ * which is where a rename would have left it, and with its framing answers
+ * when it had them (the desktop makes those again; this app refuses to:
+ * ToolController._rearmCount). Pure; diffed against the desktop's own
+ * _rearm_count in tests/count-undo.mjs.
+ */
+export function countAnswersAgain(target, answers) {
+  const t = target || {};
+  let a = answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : null;
+  if (!a) {
+    a = {};
+    for (const f of COUNT_TEMPLATE) if (f in t) a[f] = structuredClone(t[f]);
+  }
+  for (const f of CLASS_FIELDS) a[f] = (f in t) ? t[f] : ((f in a) ? a[f] : '');
+  if (pyTruthy(t.framing)) a.framing = structuredClone(t.framing);
+  else delete a.framing;
+  return a;
+}
+
+/**
+ * Why a count tap asks the form instead of making a Posts/Hardware count
+ * the desktop framed (the user's decision 2). `how`: 'taken' -- a step took
+ * it off the sheet; 'gone' -- the armed one was deleted; 'there' -- the name
+ * is a framed count's elsewhere in the job. `when`: 'this tap' or 'the next
+ * tap'.
+ */
+function framedAskWords(name, how, when) {
+  const n = String(name || '').trim() || 'That count';
+  const what = how === 'taken' ? `“${n}” was taken off the sheet. It carries`
+    : how === 'gone' ? `“${n}” was deleted. It carried`
+      : `“${n}” is counted elsewhere in this job with`;
+  return `${what} Posts/Hardware framing made on the desktop, which this app cannot make `
+    + `for a new count, so ${when} asks what you are counting.`;
+}
+
+/**
+ * Said when the form's answer makes a count under a name the desktop
+ * framed: it is made (the form was the asking), with none of that framing.
+ */
+function framedBareWords(name) {
+  const n = String(name || '').trim() || 'This count';
+  return `“${n}” was made without Posts/Hardware framing: the desktop framed a “${n}” in this `
+    + 'job, and this app cannot make that framing for a new count, so this one prices no '
+    + 'lumber or hardware.';
+}
+
+/**
+ * The name a count made from answers gets (desktop _add_count_point's spec
+ * branch): the answers', else the name in the box, else "Count".
+ */
+function countNameFrom(spec, cat) {
+  return String((spec && spec.name) || '').trim() || cat || 'Count';
+}
+
+/** Said on a tap that adds a mark to a count the desktop framed. */
+function framedJoinWords(item) {
+  const n = String(item.name || '').trim() || 'This count';
+  const marks = (item.points || []).length;
+  return `“${n}” is at ${marks}. Its Posts/Hardware lumber and hardware were worked out on the `
+    + 'desktop, and this app cannot work them out again: on the desktop, a mark added to it or '
+    + 'taken off it brings them up to date.';
+}
+
+/** Python's truth for a JSON value: {} and [] and '' and 0 are false. */
+function pyTruthy(v) {
+  if (v == null || v === false || v === 0 || v === '') return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v).length > 0;
+  return true;
+}
+
+/** Did this store (pageKey -> item[]) hold this very object? */
+function storeHolds(store, m) {
+  if (!store || !m) return false;
+  for (const lst of Object.values(store)) if (Array.isArray(lst) && lst.includes(m)) return true;
+  return false;
 }
 
 export function pitchLabel(rise12) {

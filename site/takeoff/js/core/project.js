@@ -795,10 +795,17 @@ export class Project extends EventTarget {
   }
 
   restore(snap) {
+    const before = this.measurements;
     this.measurements = copySharingStrings(snap.measurements);
     this.annotations = copySharingStrings(snap.annotations);
     this.metadata = copySharingStrings(snap.metadata);
     this.pageCount = snap.pageCount;
+    // Every item object was just replaced by a copy -- an undo, a redo, a
+    // long press putting a trembled shape back. Anything holding an item
+    // finds it again in the store put back (by _uid), and `before` says
+    // which ones this restore took off (ToolController._rearmCount: the
+    // count being placed). Said before the callers' 'items-changed'.
+    this.emit('restored', { before });
   }
 
   /**
