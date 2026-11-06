@@ -1,5 +1,5 @@
 {
-  "commit": "f9fcb2bfc3d06d7fcc44b91427e36683974b70b6",
+  "commit": "4f524df1886ff0e574433558c5a2e975d7c4023a",
   "from": "takeoff-web",
   "inlineBootMoved": false,
   "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://netorgft10120038-my.sharepoint.com; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'",
@@ -36,7 +36,7 @@
     "js/core/units.js": "2039be5135dc725ca0cbeb5583eb91ac428e8be87f1f73d73e21fb7e0eb0a21f",
     "js/core/xlsx.js": "99440745a834733c3e5c944354041df0e08c3b5a0409d3704bbccb3e12f04fc0",
     "js/core/zlib.js": "e72e8596b0ce02a2875a00c8a1c571b2b5ccafe51e6c699bd1d48ada5ed549da",
-    "js/main.js": "1779215857d310d8a04f75acb1a7fed7e924007aeae9a492ff25c21acf3f705e",
+    "js/main.js": "216f8f2a745f59b8bb7904c83dfe53bd62231866305a016a3a7ee943112465b2",
     "js/render/callouts.js": "157b4392744254e3071dfc3456be8102ea50149791eb20f423773ed8f350da9a",
     "js/render/labels.js": "29b9c236d4906cc22c077304c511d13556ca641939ad81cbe94d169427b3e73c",
     "js/render/layout.js": "f08a142642ffba16318d14f976059db403fe4930f184e8ad073016a021329929",
