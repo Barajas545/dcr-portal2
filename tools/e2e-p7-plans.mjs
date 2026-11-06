@@ -57,7 +57,12 @@
      waiting on OneDrive's hash (its 503 why "checking") is said as a check - the frame's bar, the row, the app and the
      frame's Close question - never "not sent"; the office saves again meanwhile: "unproved" (the admin's line, nothing
      put back), never "nothing was overwritten", the app told "sent" (it listened through); and a copy's own plan word
-     in the "copy" news: the work done after the save comes back from the copy, never from the plan. (v) A person with prices but without
+     in the "copy" news: the work done after the save comes back from the copy, never from the plan. (xiii) contract
+     addendum 5 (DCR Desktop 2 48dc59e): twelve office saves on top of a crossing - "unproved" (the broker reads the whole
+     first page of the versions), never "nothing was overwritten"; a restore Microsoft keeps refusing - "being checked"
+     for its 30 minutes, then "not put back": a copy, the office asked to restore its save; two tabs of the tablet and
+     one save - one commit at a time, and after a lost answer neither tab asks the broker again before its longest run
+     is over (then once: the replace it was, verified). (v) A person with prices but without
      "Can upload to OneDrive" (the accountant): the app opens without canSave and its Save goes to the share sheet (a
      stand-in: headless Chrome has none, and the frame is given Safari's lack of file pickers), nothing handed to the
      portal or sent. (vi) A tablet without prices: 📐 says "Plans are for the people who see prices", and nothing is
@@ -411,7 +416,8 @@ async function main() {
         s1.dirty === false && s1.status.some((t) => /the portal sends it to OneDrive/.test(t)) && /^The portal sent .+ to OneDrive\.$/.test(s1.now), JSON.stringify({ status: s1.status, now: s1.now }));
       const r1 = (await records(T)).find((r) => r.itemId === fx.id);
       const ops1 = await T.eval("window.__ops");
-      const seen1 = await T.eval("window.__opsSeen.filter(x => /^plan_save_/.test(x.op))");
+      // (the check's own 503 while the demo's OneDrive hashes the bytes - settledOps - left out)
+      const seen1 = await T.eval("window.__opsSeen.filter(x => /^plan_save_/.test(x.op) && !(x.op === 'plan_save_commit' && x.status === 503 && x.data && x.data.why === 'checking'))");
       const sess1 = seen1.find((x) => x.op === "plan_save_session");
       const comm1 = seen1.find((x) => x.op === "plan_save_commit");
       const hash1 = await T.eval("(async () => " + QXOF + "(window.__saveFiles[window.__saveFiles.length - 1]))()");
@@ -429,7 +435,7 @@ async function main() {
         " const { openProject } = await import('/takeoff/js/core/takeoff-file.js'); const meta = (await openProject(f)).metadata;" +
         " return { size: a.length, appSaved: eq(a, s), inOneDrive: eq(a, o), client: meta.client_name, project: meta.project_name, L: typeof L.checkUpdates }; })()");
       check("tablet (iii): the record now holds the saved bytes - exactly what the app saved, exactly what OneDrive got, the edit in them; no save waiting, a new version",
-        !!r1 && !r1.local && r1.sent && r1.sent.mode === "replace" && r1.file !== saved[0].file && /^sm:/.test(r1.version) && r1.adopted && r1.adopted.file === r1.file &&
+        !!r1 && !r1.local && r1.sent && r1.sent.mode === "replace" && r1.file !== saved[0].file && r1.version === "qx:" + hash1 && r1.adopted && r1.adopted.file === r1.file &&
         same1.appSaved && same1.inOneDrive && same1.size === r1.size && same1.client === "Made-up client (e2e)", JSON.stringify({ r1, same1 }));
       check("tablet (iii): the frame's bar says it is in OneDrive", /in OneDrive/.test(await T.eval("document.getElementById('ptfSay').textContent")));
       if (SHOTS !== "none") {
@@ -577,6 +583,10 @@ async function main() {
     const planOps = (p) => p.eval("window.__opsSeen.filter(x => /^plan_save_/.test(x.op)).map(x => ({ op: x.op, item: x.body.item_id, name: x.body.name, bodyMode: x.body.mode," +
       " hash: x.body.hash || null, url: x.body.upload_url || null, status: x.status, mode: x.data && x.data.mode, commit: x.data && x.data.commit, upload: x.data && x.data.upload_url || null, id: x.data && x.data.id, answerName: x.data && x.data.name," +
       " landed: x.body.landed === true, verified: x.data ? x.data.verified : undefined, error: x.data && x.data.error, why: x.data && x.data.why }))");
+    /** the ops without the version check's own wait: DCR Desktop 2 48dc59e verifies a replace on OneDrive's hash only (contract
+        addendum 5 G1), and the demo's OneDrive hashes what lands a moment later - so a commit's check answers 503 why
+        "checking" first, and the uploader asks again (the app hears "checking", then "sent") */
+    const settledOps = (ops) => ops.filter((x) => !(x.op === "plan_save_commit" && x.status === 503 && x.why === "checking"));
     const COPY_BAR = /Someone saved this plan in the office after your iPad got it\. Your work was saved as '.+' next to it - nothing was overwritten\./;
     const COPY_APP = /^Someone saved this plan in the office after this iPad got it\. Your work was saved as “.+” next to it — nothing was overwritten\.$/;
     const plansNow = (p) => p.eval("(async () => { const od = await import('/js/repo/onedrive.js'); return ((await od.plansList([" + J.sandbox + "]))[" + JSON.stringify(String(J.sandbox)) + "] || { files: [] }).files; })()");
@@ -653,7 +663,7 @@ async function main() {
       const hashC = await T.eval("(async () => " + QXOF + "(window.__saveFiles[window.__saveFiles.length - 1]))()");
       check("tablet (ix-c): a byte-identical re-save is saved - a replace committed by the broker, its version OneDrive's hash of those same bytes; no not_saved, no second upload",
         !!pair && pair.r.states[pair.r.states.length - 1].state === "sent" && !pair.r.states.some((x) => x.state === "failed") &&
-        JSON.stringify(pair.ops.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
+        JSON.stringify(settledOps(pair.ops).map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
         !!copyNow && copyNow.version === "qx:" + hashC, JSON.stringify({ pair, copyNow, hashC }));
       await closeFrame(T);
 
@@ -930,8 +940,8 @@ async function main() {
         const opsB = await planOps(T);
         const logB = await T.eval(OD + ".logLines()");
         check("tablet (x-b, D2): the PUT commit refused - the broker's POST commits it: a replace, verified by the version history, the plan is the save",
-          sb.states[sb.states.length - 1].state === "sent" && JSON.stringify(opsB.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
-          opsB[1].verified === true && logB.indexOf("onedrive plan_save_commit: the PUT commit was refused (400): the POST commit") !== -1 && (await T.eval(bytesOf(fb.id))) === true,
+          sb.states[sb.states.length - 1].state === "sent" && JSON.stringify(settledOps(opsB).map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
+          settledOps(opsB)[1].verified === true && logB.indexOf("onedrive plan_save_commit: the PUT commit was refused (400): the POST commit") !== -1 && (await T.eval(bytesOf(fb.id))) === true,
           JSON.stringify({ states: sb.states, opsB, logB }));
         await closeFrame(T);
         // (x-c) both commit forms refused: plan_changed {why: "refused"} - a copy, told without blaming the office, and the
@@ -1033,8 +1043,8 @@ async function main() {
         const opsA2 = await planOps(T);
         const hashA = await T.eval("(async () => " + QXOF + "(window.__saveFiles[window.__saveFiles.length - 1]))()");
         check("tablet (xi-a): ...once it can, the save is hashed and goes - a replace session, the broker's commit with exactly that hash; the plan is the save",
-          !!outA && outA.sent === true && outA.mode === "replace" && JSON.stringify(opsA2.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
-          opsA2[1].hash === hashA && (await T.eval(bytesOf(fa.id))) === true, JSON.stringify({ outA, opsA2, hashA }));
+          !!outA && outA.sent === true && outA.mode === "replace" && JSON.stringify(settledOps(opsA2).map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) &&
+          settledOps(opsA2)[1].hash === hashA && (await T.eval(bytesOf(fa.id))) === true, JSON.stringify({ outA, opsA2, hashA }));
         await closeFrame(T);
         // (xi-b, E1 "unproved") OneDrive commits at the last chunk over an office save and gives no hash of it - the
         // broker's 30 minutes without one gone by: nothing is put back, the save goes again as a copy, and the person is
@@ -1077,7 +1087,7 @@ async function main() {
         const opsC = await planOps(T);
         const barC = await T.eval("document.getElementById('ptfSay').textContent");
         check("tablet (xi-c, E2): no version history - the broker's verified false: the save replaced the plan, and the portal says it could not be checked against office saves (never the plain words)",
-          JSON.stringify(opsC.map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) && opsC[1].verified === false &&
+          JSON.stringify(settledOps(opsC).map((x) => [x.op, x.mode])) === JSON.stringify([["plan_save_session", "replace"], ["plan_save_commit", "replace"]]) && settledOps(opsC)[1].verified === false &&
           barC === "Your save is in OneDrive: it replaced the plan there. It could not be checked against office saves this time - if someone saved this plan in the office while your iPad was sending, ask them to check the plan's version history in OneDrive." &&
           sc.states[sc.states.length - 1].state === "sent" && (await T.eval(bytesOf(fc.id))) === true, JSON.stringify({ opsC, barC, states: sc.states }));
         await shotOf(T, "plans_frame_unchecked_tablet.png");
@@ -1259,6 +1269,171 @@ async function main() {
         await T.eval(OD + ".graphModes({ reset: true }); true").catch(() => null);
       }
       check("tablet (xii): no dialog of the browser's own", !T.dialogs.length, JSON.stringify(T.dialogs));
+    }, T);
+
+    /* ── 4h (xiii). contract addendum 5 (DCR Desktop 2 48dc59e) with the REAL app on a tablet: ten and more office saves
+       on top of a crossing - "unproved", never "nothing was overwritten"; a restore Microsoft keeps refusing - "not put
+       back" once its 30 minutes are over, the office told to restore it; two tabs and one save - one commit at a time,
+       and after a lost answer neither tab asks again before the broker's longest run is over ── */
+    await attempt("a tablet, contract addendum 5 (xiii): twelve office saves on top of a crossing - unproved; a restore refused for good - not_put_back, the office asked to restore it; two tabs, one save - one commit at a time, and a lost answer waits the broker's longest run in both", async () => {
+      await closeFrame(T);
+      await T.call("Page.bringToFront").catch(() => null);
+      await openReal(T);
+      await hearSaves(T);
+      await watchOps(T);
+      const CHECKING = "Your save is being checked against office saves in OneDrive - keep the portal open; there is nothing to do. It stays on this iPad meanwhile.";
+      const LOST = "OneDrive's answer about this save has not reached this iPad yet - the portal asks again in a few minutes. Keep the portal open; there is nothing to do. It stays on this iPad meanwhile.";
+      const bar = () => T.eval("document.getElementById('ptfSay').textContent");
+      const appNow = () => T.eval("(() => { const w = " + APP + "; return { states: w.__states.map(x => x.state), status: w.document.getElementById('statusText').textContent }; })()");
+      const rowOf = (p, id) => p.eval("(async () => { const L = await import('/js/plan-library.js'); const M = await import('/js/map/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " +
+        JSON.stringify(id) + "); return r && r.save ? { st: r.save, text: M.saveText(r.save, 'iPad') } : null; })()");
+      const saveClick = async () => {
+        await T.eval("(() => { const w = " + APP + "; w.__states.length = 0; w.__status.length = 0; return true; })()");
+        await T.eval(APP + ".document.querySelector('button[data-act=\"save\"]').click(); true");
+      };
+      let T4 = null;
+      try {
+        // (xiii-a, F1/F2) OneDrive commits at the last chunk over an office save X and has no hash of it yet (the check
+        // waits); twelve office saves land on top meanwhile - the broker reads the WHOLE first page of the plan's
+        // versions: the iPad's version over X is in it - "unproved" with the admin's line, nothing put back; the work a
+        // copy, told so; the app hears "checking", then "sent" - never "copy", never "failed"
+        await T.eval(OD + ".graphModes({ reset: true, deferCommit: 'ignored', hashes: 'off' }); true");
+        const fa = await putFixture(T, "A267", "A267 Rev 2 - twelve office saves on top (e2e, made up)", "A267 Rev 2.takeoff");
+        await openPlanNoDraft(T, fa.id);
+        await editApp(T, "Made-up client (e2e, twelve office saves on top)");
+        await sleep(2500);
+        await T.eval(OD + ".duringUpload(" + JSON.stringify(fa.full) + ", 'office'); " + OD + ".logLines(true); window.__ops = []; window.__opsSeen = []; true");
+        await saveClick();
+        await T.until("document.getElementById('ptfSay').textContent === " + JSON.stringify(CHECKING), 30000);
+        await T.eval("(async () => { const ext = " + OD + "; ext.graphModes({ hashes: 'on' }); for (let i = 0; i < 12; i++) ext.officeSave(" + JSON.stringify(fa.full) + "); await ext.hashed(); return true; })()");
+        const versionsA = await T.eval(OD + ".versionsOf(" + JSON.stringify(fa.id) + ").length");
+        await T.until(APP + ".__states.some(s => s.state === 'sent' || s.state === 'copy')", 120000);
+        await sleep(800);
+        const opsA = await planOps(T);
+        const logA = await T.eval(OD + ".logLines()");
+        const barA = await bar();
+        const appA = await appNow();
+        const nowA = (await plansNow(T)).find((f) => f.id === fa.id);
+        const commitsA = opsA.filter((x) => x.op === "plan_save_commit");
+        const lastA = commitsA[commitsA.length - 1] || {};
+        check("tablet (xiii-a, F1/F2): twelve office saves on top of a crossing - the broker read the whole first page (" + versionsA + " versions), said unproved with its admin's line and put nothing back; the work went as a copy",
+          versionsA >= 14 && lastA.error === "plan_changed" && lastA.why === "unproved" && logA.indexOf("onedrive plan_save_commit: crossed: not put back (newer save): check the plan's version history by hand") !== -1 &&
+          !logA.some((l) => /was put back/.test(l)) && !!nowA && /^qx:demo-office-/.test(nowA.version) && opsA.some((x) => x.op === "plan_save_session" && x.bodyMode === "copy"),
+          JSON.stringify({ versionsA, opsA, logA }));
+        check("tablet (xiii-a): ...the portal says OneDrive could not show it went over nothing (never 'nothing was overwritten'); the app heard 'checking', then 'sent' - never 'copy', never 'failed'",
+          /^Your work was saved as 'A267 Rev 2 - iPad .+' next to the plan\. OneDrive could not show whether your iPad's version went over an office save/.test(barA) &&
+          !/nothing was overwritten/.test(barA + appA.status) && appA.states.indexOf("checking") !== -1 && appA.states.indexOf("copy") === -1 && appA.states.indexOf("failed") === -1 &&
+          appA.states[appA.states.length - 1] === "sent", JSON.stringify({ barA, appA }));
+        await shotOf(T, "plans_frame_unproved_twelve_tablet.png");
+        await closeFrame(T);
+        // (xiii-b, F3) a proved crossing whose restore Microsoft keeps refusing (403): "being checked" while its 30 minutes
+        // run (the broker's clock moved on past them here), then "not_put_back" - the work a copy, and the person told
+        // that the iPad's version went over an office save OneDrive would not put back: ask the office to restore it
+        await T.eval(OD + ".graphModes({ reset: true, deferCommit: 'ignored', restoreStatus: 403 }); true");
+        const fb = await putFixture(T, "A267", "A267 Bid - a restore refused for good (e2e, made up)", "A267 Bid.takeoff");
+        await openPlanNoDraft(T, fb.id);
+        await editApp(T, "Made-up client (e2e, not put back)");
+        await sleep(2500);
+        await T.eval(OD + ".duringUpload(" + JSON.stringify(fb.full) + ", 'office'); " + OD + ".logLines(true); window.__ops = []; window.__opsSeen = []; true");
+        await saveClick();
+        await T.until("window.__opsSeen.some(x => x.op === 'plan_save_commit' && x.data && x.data.error === 'onedrive_not_authorized' && x.data.why === 'checking')", 60000);
+        const barB0 = await bar();
+        const rowB0 = await rowOf(T, fb.id);
+        await T.eval(OD + ".passTime(31 * 60 * 1000); true");
+        await T.until(APP + ".__states.some(s => s.state === 'sent' || s.state === 'copy')", 120000);
+        await sleep(800);
+        const opsB = await planOps(T);
+        const logB = await T.eval(OD + ".logLines()");
+        const barB = await bar();
+        const appB = await appNow();
+        const commitsB = opsB.filter((x) => x.op === "plan_save_commit");
+        const lastB = commitsB[commitsB.length - 1] || {};
+        const copyB = opsB.find((x) => x.op === "plan_save_done") || {};
+        check("tablet (xiii-b, F3): a restore Microsoft keeps refusing - the save 'being checked' meanwhile (never 'not sent'), then the broker's not_put_back (its admin's line) and the work sent as a copy",
+          barB0 === CHECKING && !!rowB0 && rowB0.st.state === "checking" && lastB.error === "plan_changed" && lastB.why === "not_put_back" &&
+          logB.indexOf("onedrive plan_save_commit: crossed: the office save could not be put back: put it back by hand from the version history") !== -1 &&
+          opsB.some((x) => x.op === "plan_save_session" && x.bodyMode === "copy") && copyB.mode === "copy", JSON.stringify({ barB0, rowB0, opsB, logB }));
+        check("tablet (xiii-b, G3): ...the portal says the iPad's version went over an office save OneDrive would not put back - ask the office to restore it; the app heard 'sent', never 'copy' or 'failed'",
+          barB === "Your work was saved as '" + copyB.answerName + "' next to the plan. Your iPad's version went over an office save and OneDrive would not put the office save back - ask the office to restore it from the plan's version history in OneDrive." &&
+          appB.states.indexOf("copy") === -1 && appB.states.indexOf("failed") === -1 && appB.states[appB.states.length - 1] === "sent" && !/nothing was overwritten/.test(barB + appB.status),
+          JSON.stringify({ barB, appB, copyB }));
+        await shotOf(T, "plans_frame_not_put_back_tablet.png");
+        await closeFrame(T);
+        await T.until("/would not put it back/.test(document.querySelector('.pl-sheet .pl-list').innerText)", 5000).catch(() => null);
+        const rowB = (await T.eval("document.querySelector('.pl-sheet .pl-list').innerText")).split("\n").find((l) => l.indexOf("Saved as a separate file: " + copyB.answerName) === 0) || "";
+        check("tablet (xiii-b): the 📐 menu's row says so too (a separate file; the office save not put back), never 'nothing was overwritten'",
+          rowB === "Saved as a separate file: " + copyB.answerName + " — your iPad's version went over an office save and OneDrive would not put it back: ask the office to restore it from the plan's version history in OneDrive" &&
+          !/nothing was overwritten/.test(rowB), rowB);
+        await T.eval(OD + ".passTime(0); " + OD + ".graphModes({ reset: true }); true");
+        // (xiii-c, G2) two tabs of this tablet and one save: the first tab's commit is in flight - the second tab cannot
+        // send it (one send per save); its answer is lost (the broker committed it, the connection dropped) - in neither
+        // tab is the save asked of the broker again before the broker's longest run is over (the save's own mark, kept
+        // in the device's storage both tabs share); once it is over, asked once - the replace it was, verified
+        const fc = await putFixture(T, "A267", "L1 walls - two tabs, one save (e2e, made up)", "L1 walls.takeoff");
+        T4 = await newPage(cdp, "tablet-admin-4", OUT); pages.push(T4);
+        answerDialogs(T4);
+        await T4.call("Emulation.setUserAgentOverride", { userAgent: TABLET_UA, platform: "MacIntel" });
+        await T4.size(1024, 768, true);
+        await signIn(T4, "admin", "dashboard.html");
+        await T.call("Page.bringToFront").catch(() => null);
+        // every plan_save_commit / plan_save_done either tab asks of its broker, in the storage the two tabs share:
+        // asked, answered (or lost) - and the first tab's commit answers late, then not at all (its connection dropped)
+        const watchAsks = (p, tab) => p.eval("(async () => { const { db } = await import('/js/repo/_db.js'); const c = await db(); if (c.__asks) return true; c.__asks = true; const inv = c.functions.invoke.bind(c.functions);" +
+          " const note = (op, what) => { const a = JSON.parse(localStorage.getItem('e2e-asks') || '[]'); a.push({ tab: " + JSON.stringify(tab) + ", op, what, t: Date.now() }); localStorage.setItem('e2e-asks', JSON.stringify(a)); };" +
+          " c.functions.invoke = async (name, o) => { const op = o && o.body && o.body.op; const ask = op === 'plan_save_commit' || op === 'plan_save_done'; if (ask) note(op, 'asked');" +
+          " const r = await inv(name, o); if (ask && op === 'plan_save_commit' && window.__slowCommit) await new Promise((res) => setTimeout(res, window.__slowCommit));" +
+          " if (ask && op === 'plan_save_commit' && window.__loseCommit) { window.__loseCommit = false; note(op, 'lost'); return { data: null, error: { name: 'FunctionsFetchError', message: 'Failed to send', context: new TypeError('offline (e2e)') } }; }" +
+          " if (ask) note(op, 'answered'); return r; }; return true; })()");
+        await T.eval("localStorage.removeItem('e2e-asks'); true");
+        await watchAsks(T, "first");
+        await watchAsks(T4, "second");
+        await openPlanNoDraft(T, fc.id);
+        await editApp(T, "Made-up client (e2e, two tabs, one save)");
+        await T.eval("window.__slowCommit = 4000; window.__loseCommit = true; window.__ops = []; window.__opsSeen = []; true");
+        await saveClick();
+        await T.until("JSON.parse(localStorage.getItem('e2e-asks') || '[]').some(x => x.tab === 'first' && x.op === 'plan_save_commit' && x.what === 'asked')", 60000);
+        const sendL = (p) => p.eval("(async () => { const L = await import('/js/plan-library.js'); try { const r = await L.sendSaved(" + JSON.stringify(fc.id) + ", { manual: true }); return { ok: r }; } catch (e) { return { code: e.code, message: e.message }; } })()");
+        const whileFlying = await sendL(T4);
+        await T.until("JSON.parse(localStorage.getItem('e2e-asks') || '[]').some(x => x.tab === 'first' && x.what === 'lost')", 20000);
+        await T.until("(async () => { const L = await import('/js/plan-library.js'); const r = (await L.list()).find(x => x.itemId === " + JSON.stringify(fc.id) + "); return !!r && !!r.local && r.local.code === 'answer_lost'; })()", 15000);
+        const barC = await bar();
+        const appC = await appNow();
+        const afterLost = await sendL(T4);
+        await sleep(500);
+        const rowT = await rowOf(T, fc.id);
+        const rowT4 = await rowOf(T4, fc.id);
+        const recC = (await records(T)).find((r) => r.itemId === fc.id);
+        const asks1 = await T.eval("JSON.parse(localStorage.getItem('e2e-asks') || '[]')");
+        check("tablet (xiii-c, G2): two tabs, one save - while the first tab's commit is in flight the second cannot send it; once that answer is lost, neither asks again (the second tab is held off by the save's own mark): one commit, the save waiting in plain words in both",
+          whileFlying.code === "busy_here" && afterLost.code === "answer_lost" && afterLost.message === LOST &&
+          JSON.stringify(asks1.map((x) => [x.tab, x.op, x.what])) === JSON.stringify([["first", "plan_save_commit", "asked"], ["first", "plan_save_commit", "lost"]]) &&
+          !!recC && recC.local && recC.local.state === "checking" && recC.local.code === "answer_lost" && !!recC.local.sends.length && !!recC.local.sends[recC.local.sends.length - 1].lost &&
+          !!rowT && rowT.text === LOST && !!rowT4 && rowT4.text === LOST && barC === LOST && appC.states.indexOf("failed") === -1,
+          JSON.stringify({ whileFlying, afterLost, asks1, local: recC && recC.local, rowT, rowT4, barC, appC }));
+        await shotOf(T, "plans_frame_answer_lost_tablet.png");
+        // the broker's longest run over (the save's marks moved back by it, in the shared storage): the first tab asks
+        // once - the broker finds the replace it committed, verified; the app hears "sent"
+        await T4.eval("(async () => { const d = await new Promise((res, rej) => { const r = indexedDB.open('dcr2-plan-library'); r.onsuccess = () => res(r.result); r.onerror = rej; });" +
+          " const old = new Date(Date.now() - 421000).toISOString(); await new Promise((res) => { const tx = d.transaction('plans', 'readwrite'); const st = tx.objectStore('plans');" +
+          " st.getAll().onsuccess = (e) => { e.target.result.filter(r => r.itemId === " + JSON.stringify(fc.id) + " && r.local).forEach(r => { r.local.retryAt = old;" +
+          " r.local.sends = (r.local.sends || []).map(s => Object.assign({}, s, s.asking ? { asking: old } : {}, s.lost ? { lost: old } : {})); st.put(r); }); }; tx.oncomplete = res; }); d.close(); return true; })()");
+        await T.eval("window.__slowCommit = 0; true");
+        const later = await sendL(T);
+        await T.until(APP + ".__states.some(s => s.state === 'sent' || s.state === 'copy')", 30000).catch(() => null);
+        const asks2 = await T.eval("JSON.parse(localStorage.getItem('e2e-asks') || '[]')");
+        const appC2 = await appNow();
+        const opsC = await planOps(T);
+        const lastC = opsC.filter((x) => x.op === "plan_save_commit").pop() || {};
+        const overlap = (() => { let open = 0, most = 0; asks2.forEach((x) => { if (x.what === "asked") open++; else open--; most = Math.max(most, open); }); return most; })();
+        check("tablet (xiii-c): ...the wait over, the first tab asks once: the replace the lost answer was, verified - never two asks of one send at once, the second tab never asked; the app hears 'sent'",
+          !!later.ok && later.ok.sent === true && later.ok.mode === "replace" && lastC.verified === true && overlap === 1 &&
+          asks2.filter((x) => x.what === "asked").length === 2 && !asks2.some((x) => x.tab === "second") && appC2.states[appC2.states.length - 1] === "sent" && appC2.states.indexOf("failed") === -1,
+          JSON.stringify({ later, asks2, lastC, appC2 }));
+        await closeFrame(T);
+      } finally {
+        await T.eval("window.__slowCommit = 0; window.__loseCommit = false; " + OD + ".passTime(0); " + OD + ".graphModes({ reset: true }); true").catch(() => null);
+      }
+      check("tablet (xiii): no dialog of the browser's own", !T.dialogs.length && !(T4 && T4.dialogs.length), JSON.stringify([T.dialogs, T4 && T4.dialogs]));
     }, T);
 
     /* ── 4c. a person with prices but WITHOUT "Can upload to OneDrive" (Q2): the real app opens without canSave, and its
