@@ -831,7 +831,7 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   mark) is the broker's answer, so a 504 `{error: "Gateway Timeout"}` waits the broker's longest run like any other.
 - **Limits** (listed under the program's stopping rule, contract addendum 6 H5; DCR Desktop 2's `docs/ONEDRIVE.md` 18c
   lists the broker's):
-  - The takeoff app's own words (takeoff-web 257351b, `js/core/save-route.js` portalNewsWords) are a little stronger
+  - The takeoff app's own words (takeoff-web 0a16548, `js/core/save-route.js` portalNewsWords) are a little stronger
     or weaker than what the portal knows in three cases. "checking" says "Your save of <plan> is in OneDrive and is being
     checked against office saves" also while the broker waits for OneDrive's hash of a version that only has the save's
     size. "failed" says "the portal's Plans Library sends it again" also for a failure that waits for the person's
@@ -849,6 +849,15 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   - A deferred replace whose ticket no longer unseals (past 30 days, or the broker's client secret rotated) and whose
     bytes are not found by their hash is over, as before; the next send goes on in the plain words of whatever the
     broker answers it. Rotate the secret on a day nobody saves from an iPad (`docs/ONEDRIVE.md` section 12).
+  - A send's "checking" is sticky until the broker's next answer that is not a 503 - and that includes the broker's own
+    retryable 5xx (502 `onedrive_failed`, 500) and the gateway's 401. A deferred replace whose check said "checking",
+    then got one of those, then only 503s without `why` until the uploader's tries ran out (six or more in a row) ends
+    as "Not sent — tap to retry", although its bytes may be on the plan. Nothing is lost: the save stays on the iPad
+    with its ticket, and the Retry settles it first (`plan_save_done`), so the broker's check decides the words.
+  - After a gateway 401 kept an unsettled save ("Your sign-in to the portal has expired - sign in again. Your save is
+    kept on this iPad and waits ..."), a broker 503 `busy` without `why` after the person signed in leaves that
+    sentence on the row and the bar until the next answer. Only the sign-in clause is stale; nothing is lost and "not
+    sent" is never shown.
   - None of this has run on WebKit or a real iPad here (headless Chrome with a tablet's user agent): the go-live run on
     the owner's iPad covers it.
 - **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against
