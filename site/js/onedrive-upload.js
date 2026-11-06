@@ -50,8 +50,13 @@
    at once); one the broker answers with an error marked `restart` (plan_changed: it dropped the session) starts a new
    session at once, which the broker's session() makes a copy. A commit the broker answers with its version check's own
    503 (the body's why "checking": OneDrive has no hash of the plan yet, or the office's save is not put back yet - DCR
-   Desktop 2's repair round 3) marks the job `checking` while it is asked again, and a job that ends so is failed with
-   `checking` too (its session kept): the bytes are in OneDrive's hands and only the check is left - never "not sent".
+   Desktop 2's repair round 3; since its repair round 4 any 503 code it answers once the bytes may be on the plan)
+   marks the job `checking` while it is asked again, and a job that ends so is failed with `checking` too (its session
+   kept): the bytes are in OneDrive's hands and only the check is left - never "not sent". A broker error marked `hold`
+   (js/plan-library.js askBroker, contract addendum 5 G2: the answer to this send's commit or settle never came back, or
+   another window's request for it may still run) is never asked again in the job's own loop: the job ends failed with
+   its session (and its item) kept, the error's code and Retry-After - the Plans Library asks again once the broker's
+   longest run is over.
 
    xhrTransport() is the page's transport (XMLHttpRequest for upload progress, no credentials). */
 
@@ -234,6 +239,8 @@ export function createUploader(parts) {
         } catch (e) {
           if (stopped(j)) return null;
           const code = String((e && e.code) || "");
+          // the answer to this send's check never came back (a hold: never asked again in this loop) - Retry asks it
+          if (e && e.hold) return { fail: e.message, code, retryAfter: e.retryAfter };
           // someone else's file of that name and size (upload_done), or not this save's bytes (plan_save_done): look on
           if (code === "not_this_upload" || code === "not_saved") break;
           if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
@@ -312,6 +319,8 @@ export function createUploader(parts) {
       } catch (e) {
         if (stopped(j)) return;
         const code = String((e && e.code) || "");
+        // a hold (its answer never came back): the item kept, Retry asks again once the wait is over
+        if (e && e.hold) { setState(j, "failed", { error: e.message, itemId, code, retryAfter: e.retryAfter || null }); return; }
         if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
         if (stopped(j)) return;
         if (code === "not_saved") {
@@ -353,9 +362,14 @@ export function createUploader(parts) {
         if (checking !== !!j.checking) { j.checking = checking; emitNow({ type: "checking", job: pub(j) }); }
         if (e && e.restart) { j.session = null; return "restart"; }
         if (gone && code === "not_saved") { j.session = null; return "restart"; }
-        if (RETRYABLE.indexOf(code) !== -1 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
+        // a hold (the answer to this commit never came back, or another window's may still run - contract addendum 5
+        // G2): never asked again here - the job ends with its session kept, the Plans Library asks after the wait
+        if (e && e.hold) { setState(j, "failed", { error: e.message, code, retryAfter: e.retryAfter || null }); return null; }
+        // (the check's own 503, whatever its code: asked again like a busy one - G4)
+        const again2 = RETRYABLE.indexOf(code) !== -1 || checking;
+        if (again2 && (await again(j, e && e.retryAfter ? e.retryAfter * 1000 : 0))) continue;
         if (stopped(j)) return null;
-        if (RETRYABLE.indexOf(code) !== -1) {
+        if (again2) {
           // the bytes are in the session: Retry asks the broker to commit them again (never a second upload: the session
           // and its offset are kept, so the chunk loop finds every byte sent and goes straight to the commit). A
           // Retry-After the broker gave (its version check waiting on OneDrive) goes with it: the Plans Library asks
@@ -404,7 +418,7 @@ export function createUploader(parts) {
       // gone: the file may be there already (a lost last answer) - only then not, a new session from the start
       const hit = await lookForIt(j);
       if (stopped(j)) return;
-      if (hit && hit.fail) { setState(j, "failed", { error: hit.fail }); return; }      // Retry asks again (the session is kept)
+      if (hit && hit.fail) { setState(j, "failed", { error: hit.fail, code: hit.code || "", retryAfter: hit.retryAfter || null }); return; }      // Retry asks again (the session is kept)
       if (hit) { setState(j, "done", { result: hit.result, error: "", sent: j.size, itemId: hit.id }); return; }
       if (++restarts > 2) { setState(j, "failed", { error: "OneDrive kept closing the upload. Retry in a few minutes." }); return; }
       j.session = null;

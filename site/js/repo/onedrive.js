@@ -72,11 +72,14 @@
                                      crossed is put back) -> planSaveDone's answer (mode "replace" or "copy") plus
                                      `verified` on a replace (true: the history shows this save right over the base; false:
                                      the history could not say); 409 plan_changed {retry: "copy", why: "changed" |
-                                     "refused" | "unproved"}: the session is dropped - send the save again with mode "copy"
-                                     and the old base ("refused": OneDrive would not replace the plan, nobody saved
-                                     anything; "unproved": OneDrive gave no hash, so the broker could not prove whether
-                                     the plan holds this save over an office save - nothing was put back, contract
-                                     addendum 4 E1; an older broker says no why: "changed"). Without `hash`: 409
+                                     "refused" | "unproved" | "not_put_back"}: the session is dropped - send the save again
+                                     with mode "copy" and the old base ("refused": OneDrive would not replace the plan,
+                                     nobody saved anything; "unproved": nothing proves whether the plan holds this save
+                                     over an office save - nothing was put back, contract addendum 4 E1, addendum 5 G1;
+                                     "not_put_back": this save went over an office save and OneDrive would not put it
+                                     back, G3; no why, or one this page does not know: "unproved" - map/plan-library.js
+                                     copyWhyOf). A 503 the broker answers once the bytes may be on the plan carries
+                                     `why: "checking"` (G4), whatever its code. Without `hash`: 409
                                      not_saved {need: "hash"} (E1 - js/plan-library.js never asks so). `landed` true: the last chunk answered the file
                                      (OneDrive did not wait for the broker's commit) - the broker only checks it. The
                                      upload URL goes to the broker (its own sessions' only: it checks it against the
@@ -90,8 +93,9 @@
                                      not_saved when OneDrive did not get the whole file (send it again) - with
                                      `need: "hash"` in its info for a deferred replace's ticket without a hash (at any
                                      age since contract addendum 4 E1; js/plan-library.js never asks so), and `why:
-                                     "unproved"` when OneDrive gave no hash to prove what the plan holds (E1: the save
-                                     goes again as a copy).
+                                     "unproved"` when nothing proves what the plan holds (E1: the save goes again as a
+                                     copy), `why: "not_put_back"` when this save went over an office save OneDrive
+                                     would not put back (addendum 5 G3).
                                      `hash`: the save's quickXorHash (js/quickxor.js) - with OneDrive's own, the broker's
                                      proof (a byte-identical re-save is saved, an office save of the same size is not);
                                      the ticket settles for 30 days;
@@ -450,6 +454,8 @@ function savedOf(d) {
   }
   const out = { saved: true, mode: d.mode, id: f.id, name: f.name, size: f.size, modified: f.modified, version: f.version };
   if (d.mode === "replace" && typeof d.verified === "boolean") out.verified = d.verified;
+  // (a copy's own why, should a broker give one: the words follow it - contract addendum 5 G1)
+  if (d.mode === "copy" && typeof d.why === "string" && d.why && d.why.length <= 40) out.why = d.why;
   return out;
 }
 

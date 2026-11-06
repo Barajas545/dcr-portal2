@@ -560,3 +560,62 @@ test("uploader, a commit 'broker' session the broker's version check holds (its 
   const [j4] = await settle(up4);
   assert.deepEqual([j4.state, j4.checking, j4.code], ["failed", false, "not_saved"]);
 });
+
+test("uploader, a hold (contract addendum 5 G2: the answer to this send's commit or settle never came back, or another window's request may still run): never asked again in the job's own loop - the broker's commit, plan_save_done after a copy's last chunk, the look for a gone session's file - the job ends failed with its session (and its item) kept, the hold's code and Retry-After; Retry asks once, nothing sent again", async () => {
+  const hold = () => ({ code: "answer_lost", hold: true, retryAfter: 420, message: "OneDrive's answer about this save has not reached this iPad yet - the portal asks again in a few minutes." });
+  // the broker's commit (maxTries 8: a hold is never one of the job's own tries)
+  const g = deferredGraph(), b = deferredBroker(g);
+  b.cscript = [hold()];
+  const up = make(g, b);
+  const size = CHUNK_UNIT + 7;
+  up.add({ projectId: 7, file: file(size, "A.takeoff"), name: "A.takeoff", meta: {} });
+  const [j] = await settle(up);
+  assert.deepEqual([j.state, j.code, j.retryAfter, j.canRetry, j.checking, b.commits.length], ["failed", "answer_lost", 420, true, false, 1], "asked once, then it waits");
+  assert.ok(up.retry(j.id));
+  const [j1] = await settle(up);
+  assert.deepEqual([j1.state, b.sessions, b.commits.length, bytesSent(g)], ["done", 1, 2, size], "Retry: the same session committed, nothing sent again");
+  // plan_save_done after a copy's last chunk: its item kept - Retry asks done() again, nothing sent again
+  const g2 = graph(), b2 = planBroker(g2);
+  b2.script = [null, hold()];
+  const up2 = make(g2, b2);
+  up2.add({ projectId: 7, file: file(CHUNK_UNIT + 3, "B.takeoff"), name: "B.takeoff", meta: {} });
+  const [k] = await settle(up2);
+  assert.deepEqual([k.state, k.code, k.retryAfter, k.canRetry, b2.saved.length], ["failed", "answer_lost", 420, true, 0]);
+  const puts2 = g2.requests.filter((r) => r.method === "PUT").length;
+  assert.ok(up2.retry(k.id));
+  const [k1] = await settle(up2);
+  assert.deepEqual([k1.state, b2.sessions, b2.saved.length, g2.requests.filter((r) => r.method === "PUT").length], ["done", 1, 1, puts2]);
+  // the session gone after its last chunk (its answer lost): the look for its file asks done() - a hold there ends the
+  // job with the session kept (never a new session: that could make a second copy); Retry looks again
+  const g3 = graph(), b3 = planBroker(g3);
+  g3.script = [null, "lose-final"];
+  b3.script = [null, hold()];
+  const up3 = make(g3, b3);
+  up3.add({ projectId: 7, file: file(CHUNK_UNIT + 9, "C.takeoff"), name: "C.takeoff", meta: {} });
+  const [m] = await settle(up3);
+  assert.deepEqual([m.state, m.code, m.retryAfter, m.canRetry, b3.sessions, b3.finds], ["failed", "answer_lost", 420, true, 1, 1]);
+  assert.ok(up3.retry(m.id));
+  const [m1] = await settle(up3);
+  assert.deepEqual([m1.state, b3.sessions, b3.saved.length], ["done", 1, 1], m1.error);
+});
+
+test("uploader, a commit 'broker' session: the broker's version check's 503 with any code (contract addendum 5 G4: every 503 after the bytes may be on the plan says why \"checking\" - its takeoff folder's proof running out, say) is asked again as the check, its session kept - never dropped into a new upload", async () => {
+  const g = deferredGraph(), b = deferredBroker(g);
+  b.cscript = [{ code: "takeoff_root_missing", status: 503, retryAfter: 2, info: { error: "takeoff_root_missing", why: "checking" }, message: "x" }];
+  const up = make(g, b);
+  const size = CHUNK_UNIT + 11;
+  up.add({ projectId: 7, file: file(size, "A.takeoff"), name: "A.takeoff", meta: {} });
+  const [j] = await settle(up);
+  assert.deepEqual([j.state, j.checking, b.sessions, b.commits.length, bytesSent(g)], ["done", false, 1, 2, size], j.error);
+  // its tries spent: failed in the check, the session kept
+  const g2 = deferredGraph(), b2 = deferredBroker(g2);
+  const c = { code: "projects_root_missing", status: 503, retryAfter: 2, info: { error: "projects_root_missing", why: "checking" }, message: "x" };
+  b2.cscript = [c, Object.assign({}, c)];
+  const up2 = make(g2, b2, { maxTries: 2 });
+  up2.add({ projectId: 7, file: file(CHUNK_UNIT + 1, "B.takeoff"), name: "B.takeoff", meta: {} });
+  const [k] = await settle(up2);
+  assert.deepEqual([k.state, k.checking, k.canRetry, k.error], ["failed", true, true, "Your save is being checked against office saves in OneDrive."]);
+  assert.ok(up2.retry(k.id));
+  const [k1] = await settle(up2);
+  assert.deepEqual([k1.state, b2.sessions, b2.commits.length], ["done", 1, 3]);
+});

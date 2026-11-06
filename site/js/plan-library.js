@@ -58,6 +58,7 @@ import {
   hasLocal, baseOk, withSave, dueToSend, adoptSent, keptAs, saveStateOf, copyTold, MAX_SENDS, saveBase, recordOfLine, handedTime, hashedBase,
   purgeText, lostSave, onlineNote, hashOk, sendWaitMs, refusedTold, saveBackOffWords, uncheckedReplace, uncheckedWords,
   needHashWords, unprovedTold, uncheckedTold, checkAgainMs, checkWaitOf, checkingWords, LONG_WAIT_MS,
+  ANSWER_LOST_MS, CHECK_AGAIN_MIN_MS, answerLostOf, askWait, answerLostWords, copyWhyOf, notSavedWhyOf, strongerWhy, notPutBackTold,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord, planWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -71,6 +72,9 @@ const LOCK = "dcr2-plan-dl:";
 // a save being kept (spooled), and one being sent to OneDrive: one window at a time per plan
 const SPOOL_LOCK = "dcr2-plan-sp:";
 const SEND_LOCK = "dcr2-plan-up:";
+// one send's plan_save_commit / plan_save_done in flight, in any window (contract addendum 5 G2): "<a short hash of the
+// session's ticket>" - never the ticket itself
+const ASK_LOCK = "dcr2-plan-ask:";
 // a copy the takeoff app in a frame has open (it reads unviewed sheets from it for as long as it is open): held by the
 // window that shows the frame, "<file>|<a word of that opening>", until the frame closes - no window removes it meanwhile
 const READ_LOCK = "dcr2-plan-rd:";
@@ -1380,6 +1384,13 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
    again (the uploader's tries, then E7's timer; the page in front again: checkAgainNow). A copy's news to the app carries
    the copy's own plan word (map/plans.js planWord - the word its record is handed to the frame with), so the app keeps
    the work done after this save with the copy (takeoff-web d1cbf16).
+   Contract addendum 5: a send's plan_save_commit and plan_save_done go one at a time (askBroker: this page's queue, a
+   Web Lock per send, and the send's own `asking` mark in its record - in every window of this origin), and after one
+   whose answer never came back the next waits the broker's longest run (map/plan-library.js ANSWER_LOST_MS; the save
+   is "checking" meanwhile, in answerLostWords - never "not sent"); a deferred replace's plan_changed or not_saved whose
+   why this page does not know - or a plan_changed with none - is told as "unproved" (G1: copyTold and refusedTold only
+   on the broker's "changed" and "refused"); "not_put_back" (G3) is kept with the save and told once the copy lands
+   (notPutBackTold); every 503 the broker marks why "checking" is the check, whatever its code (G4).
 
    While a save is kept or sent the frame's Close asks first (plan-frame.js guard) and leaving the page asks too. */
 
@@ -1417,6 +1428,101 @@ function needHash() {
     Retry-After (`retryAfter`, seconds: E7's timer): never "not sent", never a failure. */
 function checking(retryAfter) {
   return err("checking", checkingWords(deviceWord(here())), Number(retryAfter) > 0 ? { status: 503, retryAfter: Number(retryAfter) } : { status: 503 });
+}
+
+/** A send whose next commit or settle must wait `ms` (contract addendum 5 G2: its last answer never came back, or another
+    window's request for it may still run): code "answer_lost", `hold` (js/onedrive-upload.js: never asked again in the
+    job's loop - its session kept), the wait as a Retry-After (E7's timer asks then). `cause`: the lost answer's error. */
+function held(ms, cause) {
+  return err("answer_lost", answerLostWords(deviceWord(here())), { hold: true, retryAfter: Math.max(1, Math.ceil(Number(ms) / 1000)), cause: cause || null });
+}
+
+/** The save waiting on record `key` keeps `why` ("unproved" or "not_put_back": map/plan-library.js strongerWhy - the
+    stronger of it and what it had): its later sends go as a copy, told in those words. Any save of the record (`file` is
+    the one whose answer said so; a later save of the same opening builds on the same version, so it is marked too). */
+async function markWhy(key, file, why) {
+  try {
+    await mutate("plans", key, (c) => (c && hasLocal(c) ? Object.assign({}, c, { local: Object.assign({}, c.local, { why: strongerWhy(c.local.why, why) }) }) : undefined));
+  } catch (e) { /* a note only: this send goes on as the copy */ }
+}
+
+/* One commit or settle at a time per send (contract addendum 5 G2). */
+const asks = {};            // ticket -> the last request of this page's queue for that send (settles when it is over)
+
+/** The index of the session `ticket` in record `c`'s sends, or -1. */
+function sendAt(c, ticket) {
+  return c && hasLocal(c) && Array.isArray(c.local.sends) ? c.local.sends.findIndex((s) => s && s.ticket === ticket) : -1;
+}
+/** The send `ticket`'s marks changed (`patch`: {asking?, lost?}) - only while its `asking` is still `at` (this page's
+    own ask: never another window's mark). */
+async function markAsk(key, ticket, at, patch) {
+  try {
+    await mutate("plans", key, function (c) {
+      const i = sendAt(c, ticket);
+      if (i === -1 || c.local.sends[i].asking !== at) return undefined;
+      const sends = c.local.sends.slice();
+      const s = Object.assign({}, sends[i], patch);
+      if (!s.asking) delete s.asking;
+      if (!s.lost) delete s.lost;
+      sends[i] = s;
+      return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
+    });
+  } catch (e) { /* the storage did not answer: the mark stays, and the next ask only waits longer */ }
+}
+/** fn() - the send's plan_save_commit or plan_save_done - asked now if no other ask of that send is in flight or may
+    still run in the broker; `elsewhere`: another window holds the send's lock (its request runs now). Its record's mark
+    `asking` is written before (read and written in one transaction: two windows never both find it free) and cleared by
+    the broker's answer; an answer that never came leaves `lost` - the next ask waits ANSWER_LOST_MS (askWait). */
+async function askNow(key, ticket, fn, elsewhere) {
+  let wait = 0, at = "";
+  try {
+    await mutate("plans", key, function (c) {
+      const i = sendAt(c, ticket);
+      if (i === -1) return undefined;
+      wait = askWait(c.local.sends[i], Date.now());
+      if (wait > 0 || elsewhere) return undefined;
+      at = nowIso();
+      const sends = c.local.sends.slice();
+      sends[i] = Object.assign({}, sends[i], { asking: at });
+      delete sends[i].lost;
+      return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
+    });
+  } catch (e) { /* the storage did not answer: this page's queue and the send's lock still hold */ }
+  if (elsewhere) throw held(Math.max(wait, CHECK_AGAIN_MIN_MS));
+  if (wait > 0) throw held(wait);
+  let out;
+  try {
+    out = await fn();
+  } catch (x) {
+    const lost = answerLostOf(x);
+    if (at) await markAsk(key, ticket, at, lost ? { lost: nowIso() } : { asking: null });
+    if (lost) throw held(ANSWER_LOST_MS, x);
+    throw x;
+  }
+  if (at) await markAsk(key, ticket, at, { asking: null });
+  return out;
+}
+/** The send `ticket` of plan `key` asked of the broker (fn: its plan_save_commit or plan_save_done) - never two at once:
+    this page's asks of it one after the other, a Web Lock per send across windows where the browser has them (one held
+    elsewhere: held), and in every browser the send's own mark in its record (askNow). */
+async function askBroker(key, ticket, fn) {
+  if (!ticket) return fn();
+  const before = asks[ticket] || null;
+  let over = null;
+  const mine = new Promise((r) => { over = r; });
+  asks[ticket] = mine;
+  try {
+    if (before) await before;
+    if (HAS && navigator.locks && navigator.locks.request) {
+      return await navigator.locks.request(ASK_LOCK + hashOf(ticket), { ifAvailable: true }, function (lock) {
+        return askNow(key, ticket, fn, !lock);
+      });
+    }
+    return await askNow(key, ticket, fn, false);
+  } finally {
+    over();
+    if (asks[ticket] === mine) delete asks[ticket];
+  }
 }
 
 /** A refusal of the broker's, in the words of a save (the broker's own for the rest). */
@@ -1479,13 +1585,15 @@ const planBroker = {
         if (!c || !hasLocal(c) || c.local.file !== m.file) return undefined;
         const sends = (Array.isArray(c.local.sends) ? c.local.sends : []).concat([Object.assign({ file: m.file, ticket: s.ticket, mode: s.mode, name: s.name,
           size: j.size, at: nowIso(), hash: hashOk(m.hash) ? m.hash : null }, s.commit === "broker" ? { commit: "broker" } : {},
-          s.mode === "copy" && (m.why === "refused" || m.why === "unproved") ? { why: m.why } : {})]).slice(-MAX_SENDS);
+          s.mode === "copy" && (m.why === "refused" || m.why === "unproved" || m.why === "not_put_back") ? { why: m.why } : {})]).slice(-MAX_SENDS);
         return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
       });
     } catch (e) { /* a note only: the send goes on */ }
     return s;
   },
-  done: function (j, itemId, ticket) { return onedrive.planSaveDone(j.projectId, itemId, ticket, (j.meta || {}).hash); },
+  // (one ask of a send at a time, and never again before the broker's longest run after one whose answer was lost:
+  // askBroker - contract addendum 5 G2)
+  done: function (j, itemId, ticket) { return askBroker((j.meta || {}).key, ticket, () => onedrive.planSaveDone(j.projectId, itemId, ticket, (j.meta || {}).hash)); },
   // every byte of a deferred replace is in OneDrive's session: the broker commits it onto the plan - or, the plan
   // changed (or left its folder) while it went up, as the copy beside it (contract addendum 2, C1b.2) - and checks it
   // by the plan's version history (addendum 3 D2). `landed`: the session's last chunk answered the file itself
@@ -1496,24 +1604,25 @@ const planBroker = {
     // (the session was started with the hash: a commit without one is never asked - contract addendum 4 E1)
     if (!hashOk(m.hash)) throw needHash();
     try {
-      return await onedrive.planSaveCommit({ projectId: j.projectId, itemId: m.itemId, ticket: j.session.ticket, uploadUrl: j.session.uploadUrl, hash: m.hash,
-        landed: j.chunkLanded === true });
+      const ticket = j.session.ticket;
+      return await askBroker(m.key, ticket, () => onedrive.planSaveCommit({ projectId: j.projectId, itemId: m.itemId, ticket, uploadUrl: j.session.uploadUrl, hash: m.hash,
+        landed: j.chunkLanded === true }));
     } catch (x) {
       if (x && x.code === "plan_changed") {
         // the broker dropped the session (the plan changed, or OneDrive would not replace it, or it could not prove
-        // whether the plan holds this save over an office save): sent again at once as a separate file, against the
-        // same base (the broker's {retry: "copy"}); its why picks the words (an older broker says none: "changed")
-        const why = x.info && x.info.why;
+        // whether the plan holds this save over an office save, or the office save under it could not be put back):
+        // sent again at once as a separate file, against the same base (the broker's {retry: "copy"}); its why picks
+        // the words - one this page does not know, or none (a broker that gave none), "unproved" (contract addendum 5
+        // G1: the plain copy words only on the broker's "changed" or "refused")
         m.mode = "copy";
-        m.why = why === "refused" || why === "unproved" ? why : "changed";
+        m.why = copyWhyOf(x.info && x.info.why);
         x.restart = true;
-        // ("unproved" is kept with the save: a later send of it goes as a copy too, in those words - E1)
-        if (m.why === "unproved") {
-          try {
-            await mutate("plans", m.key, (c) => (c && hasLocal(c) && c.local.file === m.file ? Object.assign({}, c, { local: Object.assign({}, c.local, { why: "unproved" }) }) : undefined));
-          } catch (e) { /* a note only: this send goes on as the copy */ }
-        }
+        // ("unproved" and "not_put_back" are kept with the save: a later send of it goes as a copy too, in those words -
+        // E1, G3)
+        if (m.why === "unproved" || m.why === "not_put_back") await markWhy(m.key, m.file, m.why);
       }
+      // a not_saved with a why (one only plan_save_done gives today): kept with the save the same way
+      if (x && x.code === "not_saved" && x.info && !x.info.need && notSavedWhyOf(x.info.why)) await markWhy(m.key, m.file, notSavedWhyOf(x.info.why));
       // the broker takes a deferred replace only with the hash (E1): waits, never final (the session is not kept)
       if (x && x.code === "not_saved" && x.info && x.info.need === "hash") throw needHash();
       throw x;
@@ -1895,6 +2004,22 @@ async function checkSend(key, file, x) {
   if (frameIsOpen()) frameSay(x.message);
 }
 
+/** A save whose commit or settle waits (`x`: held() - its answer never came back, or another window's request may still
+    run; contract addendum 5 G2): as checkSend - local.state "checking" with code "answer_lost" (answerLostWords: never
+    "not sent", nothing counted as a failure) - its wait to then, the row and the frame's bar told. The app hears
+    nothing new: its line ("the portal is sending...") stays true. */
+async function holdSend(key, file, x) {
+  try {
+    await mutate("plans", key, function (c) {
+      if (!c || !hasLocal(c) || c.local.file !== file) return undefined;
+      return Object.assign({}, c, { local: Object.assign({}, c.local, { state: "checking", error: String(x.message || ""), code: "answer_lost",
+        retryAt: new Date(Date.now() + checkAgainMs(x.retryAfter)).toISOString() }) });
+    });
+  } catch (e) { /* the words have reached the page */ }
+  changed(key);
+  if (frameIsOpen()) frameSay(x.message);
+}
+
 /**
  * OneDrive has save `file` of this plan (plan_save_done's answer `ans`; `size`: what was sent) - the records as
  * map/plan-library.js adoptSent makes them, the old files retired, the person told. `why`: "refused" when the copy
@@ -1914,9 +2039,13 @@ async function commitSent(key, file, ans, size, why) {
   // a download of this plan still running (one started before the save: none starts while a save waits) ends first,
   // as for a Remove - its own check against OneDrive then throws away what it fetched (the version moved)
   await downloadReleased(key, 15000);
+  // a copy's why (contract addendum 5 G1): the broker's "changed" - or none: its copy committed on its proof that the
+  // plan never held this save, or a copy session made because the plan had moved on - the copy words; "refused" its
+  // own; "not_put_back" (G3) and "unproved" theirs; any other "unproved" (here, on the row and in the news alike)
+  const cw = ans.mode !== "copy" ? why : !why || why === "changed" ? "changed" : copyWhyOf(why);
   let a = null;
   await mutate("plans", key, function (c) {
-    a = adoptSent(c, file, ans, nowIso(), why);
+    a = adoptSent(c, file, ans, nowIso(), cw);
     return a.rec || undefined;
   });
   if (!a) a = { rec: null, copy: null, old: [file] };
@@ -1933,8 +2062,9 @@ async function commitSent(key, file, ans, size, why) {
   for (const n of a.old) await retire(n);
   changed(key);
   if (a.rec && ans.mode === "copy" && a.copy) {
-    const noBlame = why === "refused" || why === "unproved";
-    const told = why === "unproved" ? unprovedTold(ans.name, deviceWord(here())) : why === "refused" ? refusedTold(ans.name) : copyTold(ans.name, deviceWord(here()));
+    const noBlame = cw !== "changed";
+    const d = deviceWord(here());
+    const told = cw === "not_put_back" ? notPutBackTold(ans.name, d) : cw === "unproved" ? unprovedTold(ans.name, d) : cw === "refused" ? refusedTold(ans.name) : copyTold(ans.name, d);
     // (the copy's own word - map/plans.js planWord of its record's number, folder and name, the word open() hands it to
     // the frame with from now on - so the app keeps the work done after this save with the copy: takeoff-web d1cbf16)
     if (noBlame) news(key, "sent");
@@ -1953,13 +2083,15 @@ async function commitSent(key, file, ans, size, why) {
 /** Did OneDrive get the save of an earlier session (`s`: one of local.sends)? -> plan_save_done's answer, or null.
     The save's hash goes with it: the broker's proof, and its way to the copy a deferred replace's commit made. */
 async function landedSave(r, s) {
+  // (one ask of a send at a time, never again before the broker's longest run after a lost answer: askBroker - G2)
+  const ask = (id) => askBroker(r.key, s.ticket, () => onedrive.planSaveDone(r.projectId, id, s.ticket, s.hash));
   if (s.mode === "copy") {
     for (const f of (await copiesNamed(r.projectId, s.name, s.size)).slice(0, 3)) {
-      try { return await onedrive.planSaveDone(r.projectId, f.id, s.ticket, s.hash); } catch (x) { if (!(x && x.code === "not_saved")) throw x; }
+      try { return await ask(f.id); } catch (x) { if (!(x && x.code === "not_saved")) throw x; }
     }
     return null;
   }
-  return onedrive.planSaveDone(r.projectId, r.itemId, s.ticket, s.hash);
+  return ask(r.itemId);
 }
 
 /** The save of an earlier session whose ticket the broker no longer takes (past its 30 days: review LW-7, TICKET-1),
@@ -2020,14 +2152,19 @@ async function settle(key, skip) {
         await failSend(key, r.local.file, y);
         throw y;
       }
-      // the broker could not prove whether the plan holds this save over an office save (E1): the session is over, and
-      // the save goes again as a copy, told so
-      if (code === "not_saved" && x.info && x.info.why === "unproved") {
-        await mutate("plans", key, (c) => (c && hasLocal(c) ? Object.assign({}, c, { local: Object.assign({}, c.local, { why: "unproved" }) }) : undefined));
+      // the broker could not prove whether the plan holds this save over an office save (E1), or this save went over one
+      // that OneDrive would not put back (contract addendum 5 G3) - or a why this page does not know (G1: "unproved"):
+      // the session is over, and the save goes again as a copy, told so
+      if (code === "not_saved" && x.info && !x.info.need && notSavedWhyOf(x.info.why)) await markWhy(key, s.file, notSavedWhyOf(x.info.why));
+      // the answer to this send's settle never came back, or another window's may still run (G2): the save waits - the
+      // whole send, so nothing goes before what the broker made of that session is known
+      if (x && x.hold) {
+        await holdSend(key, r.local.file, x);
+        throw x;
       }
-      // the broker's version check waits on OneDrive (its 503 why "checking": the current save's session) - the save is
+      // the broker's version check waits on OneDrive (its 503 why "checking", whatever its code - G4) - the save is
       // being checked, asked again at the Retry-After (E7), never "not sent"
-      if (own && checkWaitOf(x)) {
+      if (checkWaitOf(x)) {
         const y = checking(x.retryAfter);
         await checkSend(key, r.local.file, y);
         throw y;
@@ -2093,11 +2230,12 @@ async function sendNow(key) {
   const file = r.local.file;
   // a session resumed in this page carries the save's hash from now on (hashed again by hashKept)
   if (park && park.meta && !hashOk(park.meta.hash) && hashOk(r.local.hash)) park.meta.hash = r.local.hash;
-  // after a settle the broker could not prove (contract addendum 4 E1, "unproved"): sent again as a copy, told so
-  const unproved = r.local.why === "unproved";
+  // after a settle or commit the broker could not prove (contract addendum 4 E1, "unproved"), or one that went over an
+  // office save OneDrive would not put back (addendum 5 G3, "not_put_back"): sent again as a copy, told so
+  const marked = r.local.why === "unproved" || r.local.why === "not_put_back" ? r.local.why : "";
   // no replace is ever started or committed without the save's hash (E1): it waits on this device until one is
   // worked out (hashKept, at the next send) - a copy may go without
-  const asCopy = park && park.meta ? park.meta.mode === "copy" : unproved;
+  const asCopy = park && park.meta ? park.meta.mode === "copy" : !!marked;
   if (!asCopy && !hashOk(r.local.hash) && !(park && park.meta && hashOk(park.meta.hash))) {
     const x = needHash();
     await failSend(key, file, x);
@@ -2128,7 +2266,7 @@ async function sendNow(key) {
   else {
     if (park) up.remove(park.id);
     meta = Object.assign({ key, itemId: r.itemId, base: r.local.base, file, savedAt: r.local.savedAt, ticket: "", name: r.name, hash: hashOk(r.local.hash) ? r.local.hash : null },
-      unproved ? { mode: "copy", why: "unproved" } : {});
+      marked ? { mode: "copy", why: marked } : {});
     id = up.add({ projectId: r.projectId, file: f, name: r.name, label: r.number || "", meta }).id;
   }
   delete parked[key];
@@ -2140,7 +2278,8 @@ async function sendNow(key) {
   if (end.state === "done") {
     up.remove(id);
     try {
-      return await commitSent(key, file, end.result, f.size, meta && meta.why);
+      // (a copy's why: the one the broker's plan_changed gave - or, should a copy's own answer carry one, that one)
+      return await commitSent(key, file, end.result, f.size, (meta && meta.why) || (end.result && end.result.why));
     } catch (x) {
       await failSend(key, file, x);
       throw x;
@@ -2149,6 +2288,14 @@ async function sendNow(key) {
   if (end.state === "cancelled") { up.remove(id); changed(key); return { cancelled: true }; }
   // not sent: its session kept for a resume in this page when it lives (a connection that did not come back)
   if (end.canRetry && end.code !== "not_saved") parked[key] = { id, file, meta, checking: !!end.checking }; else up.remove(id);
+  // the answer to its commit or settle never came back, or another window's may still run (contract addendum 5 G2: the
+  // job ended on a hold, its session kept): the save waits the broker's longest run - its own state, asked again then
+  // (E7's timer at the Retry-After) - never "not sent"
+  if (end.code === "answer_lost") {
+    const y = held(Number(end.retryAfter) * 1000 || ANSWER_LOST_MS);
+    await holdSend(key, file, y);
+    throw y;
+  }
   // the broker's version check still waits on OneDrive (the job ended `checking`, its session kept): the save is being
   // checked - its own state, asked again at the Retry-After (E7) - never "not sent"
   if (end.checking) {

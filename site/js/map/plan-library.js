@@ -53,8 +53,13 @@
                                 replace adopted that nobody could check against office saves (E2);
    * checkAgainMs(retryAfter)   when a check the broker answered 503 with a Retry-After is asked again (E7);
    * checkWaitOf / checkingWords  a 503 of the broker's version check itself (its body's why "checking", DCR Desktop 2's
-                                repair round 3) - the save is being checked against office saves, never "not sent" -
-                                and its words.
+                                repair round 3; since its repair round 4 every 503 after the bytes may be on the plan) -
+                                the save is being checked against office saves, never "not sent" - and its words;
+   * copyWhyOf / notSavedWhyOf / strongerWhy  the why of a deferred replace's plan_changed or not_saved as the words
+                                follow it (contract addendum 5 G1: a why this page does not know, or none on
+                                plan_changed, is "unproved" - never the plain copy words); notPutBackTold its G3 words;
+   * BROKER_RUN_MAX_MS / ANSWER_LOST_MS / answerLostOf / askWait / answerLostWords  one commit or settle at a time per
+                                send, and the wait after one whose answer never came (G2).
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -385,16 +390,20 @@ export function projectBatches(records, n) {
                 "checking": the broker's version check waits on OneDrive - checkWaitOf - and asks again by itself);
       error, code, fails, retryAt   the last failed send and when it is tried again by itself;
       notSaved  how often OneDrive said it did not get this save whole (409 not_saved): past NOT_SAVED_MAX it waits;
-      sends     [{file, ticket, mode, name, size, at, hash, commit, why?}]: sessions this device opened whose end it never heard (the page
-                closed after the last byte, say) - settled with plan_save_done before anything is sent again, so a
-                save that landed is never sent twice (nor made into a copy of itself). The ticket is the broker's sealed
-                word for plan_save_done, never an upload address: those stay in the page's memory. `why` (a copy):
-                "refused" or "unproved" - the words it is told in;
-      why?      "unproved": a settle the broker could not prove (not_saved {why: "unproved"}, contract addendum 4 E1) -
-                the save goes again as a copy, told in those words (kept by a later save of the same opening).}
+      sends     [{file, ticket, mode, name, size, at, hash, commit, why?, asking?, lost?}]: sessions this device opened
+                whose end it never heard (the page closed after the last byte, say) - settled with plan_save_done before
+                anything is sent again, so a save that landed is never sent twice (nor made into a copy of itself). The
+                ticket is the broker's sealed word for plan_save_done, never an upload address: those stay in the
+                page's memory. `why` (a copy): "refused", "unproved" or "not_put_back" - the words it is told in.
+                `asking` (an ISO time): a plan_save_commit / plan_save_done for this session went to the broker then
+                and no answer came back yet (another window's request, or one whose page closed or slept); `lost`: one
+                whose answer this page saw lost - the next ask waits ANSWER_LOST_MS (askWait: contract addendum 5 G2);
+      why?      "unproved": a settle or commit the broker could not prove (contract addendum 4 E1, addendum 5 G1), or
+                "not_put_back": this save went over an office save that OneDrive would not put back (G3) - the save
+                goes again as a copy, told in those words (kept by a later save of the same opening).}
    and `sent` {mode: "replace" | "copy" | "lost", name, at, was?, why?} the last one's outcome, shown a while
    (SENT_NOTE_MS); `was` (lost only): the save as it was, until a later check confirms its file is gone (lostSave);
-   `why` "unproved" (a copy): the row never says "nothing was overwritten". */
+   `why` "unproved" or "not_put_back" (a copy): the row never says "nothing was overwritten". */
 
 /** How long "Sent" / "Saved as a separate file" stays on a row after the send. */
 export const SENT_NOTE_MS = 3 * 24 * 3600 * 1000;
@@ -427,11 +436,79 @@ export function checkAgainMs(retryAfter) {
 
 /** A refusal of the broker's version check itself (DCR Desktop 2's repair round 3): its 503 - busy, or not allowed in
     when Microsoft refused the restore - whose body says why "checking" (OneDrive has no hash of the plan yet, or the
-    office's save is not put back yet; Retry-After 30). The save is being checked against office saves: never "not sent",
-    never counted as a failure - asked again (E7's timer). Any other 503 (OneDrive busy before anything was committed)
-    carries no such why. */
+    office's save is not put back yet; Retry-After 30). Since the broker's repair round 4 (contract addendum 5 G4) EVERY
+    503 it answers once the bytes may be on the plan says so, whatever its code (the check's walk, its listing, OneDrive
+    out of reach there; Retry-After Graph's, else 30 - E7's 30 s floor applies). The save is being checked against office
+    saves: never "not sent", never counted as a failure - asked again (E7's timer). Any other 503 (OneDrive busy before
+    anything was committed) carries no such why and stays as it was. */
 export function checkWaitOf(x) {
   return !!(x && Number(x.status) === 503 && x.info && x.info.why === "checking");
+}
+
+/* ── one commit or settle at a time per send (contract addendum 5 G2) ──────────────────────────────────────────────
+   A plan_save_commit or plan_save_done whose answer never came back (no connection, a timeout, the page hidden or
+   closed mid-request) may still be running in the broker: a second one for the same send would race it (the final
+   check's overlapping commits). The next ask for that send waits until the broker's longest run is over. */
+/** The longest an Edge Function request can still be running: Supabase's Edge Functions limits page
+    (https://supabase.com/docs/guides/functions/limits, read 2026-11-05) - "Maximum Duration (Wall clock limit)": Free
+    plan 150 s, Paid plans 400 s ("the duration an Edge Function worker will stay active"; its "Request idle timeout",
+    150 s, is the 504 a caller gets while the worker may run on). The largest of any plan. */
+export const BROKER_RUN_MAX_MS = 400 * 1000;
+/** How long the next ask for a send waits after one whose answer never came: BROKER_RUN_MAX_MS and 20 s for the
+    request's way there. */
+export const ANSWER_LOST_MS = BROKER_RUN_MAX_MS + 20 * 1000;
+
+/** A broker call's failure (js/repo/onedrive.js call()'s error) that is NOT the broker's own answer, so the request may
+    still be running there: no answer at all ("offline": no connection, a timeout, a page that slept), or a 5xx whose body
+    carries none of the broker's codes (the gateway's: its 504 at the idle timeout while the function runs on, a 502, a
+    5xx that could not be read). The broker's own 503 busy or 502 onedrive_failed is an answer. */
+export function answerLostOf(x) {
+  if (!x) return false;
+  if (x.code === "offline") return true;
+  return Number(x.status) >= 500 && !(x.info && typeof x.info.error === "string" && x.info.error !== "");
+}
+
+/** How long (ms) the next plan_save_commit / plan_save_done of send `s` (one of local.sends) still waits: until
+    ANSWER_LOST_MS after its last ask that no answer cleared (`asking`) or whose answer was lost (`lost`); 0 - it may go.
+    A mark further ahead than a minute (a clock that was wrong when it was written) holds nothing. */
+export function askWait(s, now) {
+  const times = [s && s.asking, s && s.lost].map((x) => Date.parse(x || "")).filter((t) => Number.isFinite(t));
+  if (!times.length) return 0;
+  const t = Math.max.apply(null, times);
+  if (t > now + 60 * 1000) return 0;
+  return Math.max(0, t + ANSWER_LOST_MS - now);
+}
+
+/** The words of a save whose commit or settle waits on askWait (the row's, the frame bar's): neither "not sent" nor
+    "in OneDrive" - the answer is not known yet. */
+export function answerLostWords(device) {
+  const d = device || "device";
+  return "OneDrive's answer about this save has not reached this " + d + " yet - the portal asks again in a few minutes. " +
+    "Keep the portal open; there is nothing to do. It stays on this " + d + " meanwhile.";
+}
+
+/* ── the why of a deferred replace's end, as the words follow it (contract addendum 5 G1, G3) ── */
+/** The whys this page has words for. */
+export const COPY_WHYS = Object.freeze(["changed", "refused", "unproved", "not_put_back"]);
+/** plan_changed's `why` (the save goes again as a copy): "changed" and "refused" (the broker proved the plan never held
+    this save: copyTold / refusedTold), "unproved", "not_put_back" - anything else, or none (a broker that gave none),
+    "unproved": never the plain copy words on a why nobody proved. */
+export function copyWhyOf(why) {
+  return COPY_WHYS.indexOf(why) !== -1 ? why : "unproved";
+}
+/** not_saved's `why` on a deferred replace's ticket (its `need` is another matter: need_hash): none - the broker's
+    plain not_saved, given only on its proof that the plan never held this save or after it put the office save back
+    (DCR Desktop 2's repair round 4, neverHeld) - ""; "not_put_back"; any other why (its "unproved", or one this page
+    does not know) "unproved". */
+export function notSavedWhyOf(why) {
+  if (why === undefined || why === null || why === "") return "";
+  return why === "not_put_back" ? "not_put_back" : "unproved";
+}
+/** The mark a save keeps (local.why) of two: "not_put_back" (this save went over an office save, said until the copy
+    lands) over "unproved" over none. */
+export function strongerWhy(a, b) {
+  if (a === "not_put_back" || b === "not_put_back") return "not_put_back";
+  return a === "unproved" || b === "unproved" ? "unproved" : "";
 }
 
 /** The words of a save in the broker's version check (checkWaitOf): the row's, the frame bar's. They never say the save
@@ -490,9 +567,11 @@ export function baseOk(v) {
 export function withSave(rec, file, size, nowIso, base, hash) {
   const prev = hasLocal(rec) ? rec.local : null;
   const sends = prev && Array.isArray(prev.sends) ? prev.sends.slice(-MAX_SENDS) : [];
+  // (and "not_put_back": the earlier save went over an office save OneDrive would not put back - contract addendum 5 G3)
+  const why = prev ? strongerWhy(prev.why, "") : "";
   return {
     rec: Object.assign({}, rec, { sent: null, local: Object.assign({ file, base: prev ? prev.base : base || rec.version, savedAt: nowIso, size: Number(size) || 0,
-      hash: hashOk(hash) ? hash : null, state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends }, prev && prev.why === "unproved" ? { why: "unproved" } : {}) }),
+      hash: hashOk(hash) ? hash : null, state: "waiting", error: "", code: "", fails: 0, retryAt: null, sends }, why ? { why } : {}) }),
     old: prev && prev.file !== file ? prev.file : "",
   };
 }
@@ -576,7 +655,8 @@ export function keptAs(rec, f) {
  *     the copy (`copy`: it opens on this device with no download), and `sent` says so;
  *   no record (removed meanwhile): nothing kept, the sent copy goes.
  * `why` "unproved" (a copy sent because the broker could not prove whether the plan holds an earlier send of it over an
- * office save - contract addendum 4 E1): `sent` keeps it, so the row never says "nothing was overwritten".
+ * office save - contract addendum 4 E1) or "not_put_back" (an earlier send went over an office save that OneDrive would
+ * not put back - addendum 5 G3): `sent` keeps it, so the row never says "nothing was overwritten".
  */
 export function adoptSent(rec, file, ans, nowIso, why) {
   if (!rec) return { rec: null, copy: null, old: [file] };
@@ -601,7 +681,7 @@ export function adoptSent(rec, file, ans, nowIso, why) {
       copy: null, old,
     };
   }
-  const sent = Object.assign({ mode: "copy", name: String(ans.name || ""), id: String(ans.id || ""), at: nowIso }, why === "unproved" ? { why: "unproved" } : {});
+  const sent = Object.assign({ mode: "copy", name: String(ans.name || ""), id: String(ans.id || ""), at: nowIso }, why === "unproved" || why === "not_put_back" ? { why } : {});
   const local = mine ? null : hasLocal(rec) ? Object.assign({}, rec.local, { sends: rest(rec.local) }) : rec.local || null;
   const copy = mine ? { key: rec.owner + "|" + ans.id, owner: rec.owner, itemId: ans.id, projectId: rec.projectId, number: rec.number,
     projectTitle: rec.projectTitle, name: ver.name, folder: rec.folder, file, size: ver.size, modified: ver.modified, version: ver.version,
@@ -643,6 +723,15 @@ export function unprovedTold(name, device) {
     " was sending, ask them to check the plan's version history in OneDrive.";
 }
 
+/** What the person is told when the save became a separate file because an earlier send of it went over an office save
+    and OneDrive would not put the office save back (plan_changed / not_saved `why: "not_put_back"`, contract addendum 5
+    G3): said once the copy lands - the office save is still under this device's bytes in the plan's history. */
+export function notPutBackTold(name, device) {
+  const d = device || "device";
+  return "Your work was saved as '" + String(name || "") + "' next to the plan. Your " + d + "'s version went over an office save and OneDrive " +
+    "would not put the office save back - ask the office to restore it from the plan's version history in OneDrive.";
+}
+
 /** What the person is told when a replace is adopted that nobody could check against office saves (contract addendum 4
     E2): the broker answered `verified: false` (no version history to read), or the save was found in OneDrive by its
     hash alone (its ticket no longer unseals: a rotated secret, or past the broker's 30 days). It did replace the plan -
@@ -662,7 +751,8 @@ function pctOf(sent, size) {
  *   kept     saved on this device, not in OneDrive yet (waiting; or a send that a closed page left half way);
  *   sending  being sent here (`live`: {sent, size}) or in another window (`elsewhere`: pct null);
  *   checking the broker's version check waits on OneDrive (`live.checking` while it is asked here; local.state
- *            "checking" between the asks): never "not sent";
+ *            "checking" between the asks): never "not sent"; `code` "answer_lost": the broker's answer to its commit or
+ *            settle has not come back, and the next ask waits (contract addendum 5 G2: answerLostWords);
  *   failed   not sent: `why`; `final` when it waits for the person;
  *   sent / copy / lost   the last one's outcome, for SENT_NOTE_MS.
  */
@@ -672,14 +762,14 @@ export function saveStateOf(rec, live, now, elsewhere) {
     const l = rec.local;
     if (live) return live.checking ? { state: "checking" } : { state: "sending", pct: pctOf(live.sent, live.size) };
     if (elsewhere) return { state: "sending", pct: null };
-    if (l.state === "checking") return { state: "checking" };
+    if (l.state === "checking") return Object.assign({ state: "checking" }, l.code === "answer_lost" ? { code: "answer_lost" } : {});
     if (l.state === "failed") return { state: "failed", why: String(l.error || ""), final: sendFinal(l), code: String(l.code || "") };
     return { state: "kept" };
   }
   const s = rec.sent;
   const t = Date.parse((s && s.at) || "");
   if (!s || !isFinite(t) || now - t >= SENT_NOTE_MS || t > now + 60 * 1000) return null;
-  if (s.mode === "copy") return Object.assign({ state: "copy", name: String(s.name || "") }, s.why === "unproved" ? { why: "unproved" } : {});
+  if (s.mode === "copy") return Object.assign({ state: "copy", name: String(s.name || "") }, s.why === "unproved" || s.why === "not_put_back" ? { why: s.why } : {});
   if (s.mode === "lost") return { state: "lost" };
   return { state: "sent" };
 }
@@ -690,8 +780,9 @@ export function saveText(st, device) {
   if (!st) return "";
   if (st.state === "kept") return "Saved on this " + d + " — not in OneDrive yet: it is sent while the portal is open and online";
   if (st.state === "sending") return typeof st.pct === "number" ? "Sending " + st.pct + "% — keep this screen open" : "Sending to OneDrive…";
-  // the broker's version check waits on OneDrive (checkWaitOf): nothing to do - never "Not sent"
-  if (st.state === "checking") return checkingWords(d);
+  // the broker's version check waits on OneDrive (checkWaitOf): nothing to do - never "Not sent"; its answer not back yet
+  // (contract addendum 5 G2): the wait before it is asked again
+  if (st.state === "checking") return st.code === "answer_lost" ? answerLostWords(d) : checkingWords(d);
   // the broker's switch is off for this project (contract addendum 3 D1): nothing to retry - it waits, and goes once it
   // is turned on
   if (st.state === "failed" && st.code === "save_back_off") return saveBackOffWords(d);
@@ -705,6 +796,11 @@ export function saveText(st, device) {
   if (st.state === "copy" && st.why === "unproved") {
     return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — OneDrive could not show whether your " + d +
       "'s version went over an office save: check the plan's version history in OneDrive";
+  }
+  // this device's earlier send went over an office save OneDrive would not put back (contract addendum 5 G3)
+  if (st.state === "copy" && st.why === "not_put_back") {
+    return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — your " + d +
+      "'s version went over an office save and OneDrive would not put it back: ask the office to restore it from the plan's version history in OneDrive";
   }
   if (st.state === "copy") return "Saved as a separate file" + (st.name ? ": " + st.name : "") + " — nothing was overwritten";
   if (st.state === "lost") return "The save kept on this " + d + " was lost: the browser cleared this site's storage";
