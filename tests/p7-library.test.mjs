@@ -4462,6 +4462,21 @@ test("demo broker as DCR Desktop 2 e1fd4c4 (repair round 5, contract addendum 6 
         assert.ok(has(op, "crossed: the office save could not be put back: put it back by hand from the version history"), name);
       }
     }
+    // at the bound, a restore gone through whose answer was lost and that the history read after it cannot show (the
+    // version put back stamped more than the clock skew before the restore was sent: here the broker's clock ahead of
+    // OneDrive's, passTime) - "unproved" with its admin's line, never not_put_back: the office save IS the plan again
+    {
+      const c = await crossed({ restoreLost: 504 });
+      ext.passTime(31 * 60 * 1000);
+      ext.logLines(true);
+      const e = await c.ask("plan_save_commit");
+      ext.passTime(0);
+      assert.deepEqual([e.code, e.info && e.info.why], ["plan_changed", "unproved"], JSON.stringify(ext.logLines()));
+      assert.ok(has("plan_save_commit", "crossed: not proved (the version history read after the restore does not show whether it went through): check the plan's version history by hand"),
+        JSON.stringify(ext.logLines()));
+      assert.ok(!ext.logLines().some((l) => /could not be put back/.test(l)), "never not_put_back");
+      assert.match((await files()).find((x) => x.id === c.pl.id).version, /^qx:demo-office-/, "the office save is the plan again");
+    }
     // a plain refusal (423) before the bound: as before - the refusal's own line, asked again
     {
       const c = await crossed({ restoreStatus: 423 });
