@@ -4002,6 +4002,16 @@ test("one commit or settle at a time per save (contract addendum 5 G2): a settle
       const e4b = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
       assert.deepEqual([e4b && e4b.code, c.w.calls.length], ["answer_lost", 2], "the person's Retry waits too");
     } finally { DEV.nav.locks = locks; }
+    // (5) plan_save_done after a session's last chunk (a send its last chunk commits): its answer lost - the same wait,
+    // never asked again at once
+    await devicePlan();
+    const d = saveWorld({ realHash: true });
+    d.doneQueue.push(lostAnswer());
+    await (await LIB.keepSave(F1.id, saveOf(savedProject(1 * MiB + 45, "PDFCACHE1", 80)))).sent;
+    await settleDown();
+    assert.deepEqual([d.calls, ROW().local.code, ROW().local.state], [["plan_save_session", "plan_save_done"], "answer_lost", "checking"], "asked once, then it waits");
+    const e5 = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+    assert.deepEqual([e5 && e5.code, d.calls.length], ["answer_lost", 2], "the Retry waits too");
   } finally { LIB.useAgainClock(null); }
 });
 
@@ -4046,8 +4056,13 @@ test("a restore that never goes through (contract addendum 5 G3): plan_changed /
     w.commitQueue.push(http(409, { error: "plan_changed", retry: "copy", why: "not_put_back", message: NPB }));
     const news = [];
     const p = savedProject(1 * MiB + 51, "PDFCACHE1", 86);
+    // (while the copy goes up: the save keeps the mark - a later send of it goes as such a copy too - and the copy's own
+    // session carries that why, for a later page's settle)
+    let during = null;
+    w.during = function look(sx) { if (sx.mode === "copy") during = { why: ROW().local.why, sends: ROW().local.sends.map((x) => [x.mode, x.why]) }; else w.during = look; };
     const sent = await (await LIB.keepSave(F1.id, saveOf(p), (state, extra) => news.push([state, extra]))).sent;
     assert.deepEqual([sent && sent.mode, w.calls], ["copy", ["plan_save_session", "plan_save_commit", "plan_save_session", "plan_save_done"]]);
+    assert.deepEqual(during, { why: "not_put_back", sends: [["replace", undefined], ["copy", "not_put_back"]] });
     assert.deepEqual([w.bodies[2].mode, w.bodies[2].version], ["copy", "qx:AAA"], "sent again as a copy against the old base");
     assert.deepEqual(toasts, [lib.notPutBackTold(sent.name, "iPad")]);
     assert.ok(!news.some((n) => n[0] === "copy") && news[news.length - 1][0] === "sent", JSON.stringify(news));
