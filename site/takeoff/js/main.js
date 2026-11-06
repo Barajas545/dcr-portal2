@@ -41,6 +41,7 @@ import {
 import {
   CountingModel, applyBooking, takeoffMoveWords, takeoffQuantityWords, isTakeoffItem,
 } from './core/counting.js';
+import { deleteItemQuestion } from './core/counting.js';
 import { importPdf, canvasToPng } from './core/pdf-import.js';
 import {
   SCALE_PRESETS, EXTENDED_SCALES, computePixelsPerFoot, scaleLabelFor,
@@ -146,7 +147,8 @@ const controller = new ToolController({
     }),
     alert: D.alertDialog,
     openProperties: item => openProperties(item),
-    showItemMenu: (item, ev) => showItemMenu(item, ev),
+    // From the drawing: its Delete takes the one shape that was pressed.
+    showItemMenu: (item, ev) => showItemMenu(item, ev, { from: 'canvas' }),
   },
 });
 
@@ -175,7 +177,8 @@ const itemsPanel = new ItemsPanel({
     },
     openProperties: item => openProperties(item),
     openMaterials: item => openMaterials(item),
-    showItemMenu: (item, ev) => showItemMenu(item, ev),
+    // From the Items list: its Delete takes the whole item, and asks first.
+    showItemMenu: (item, ev) => showItemMenu(item, ev, { from: 'list' }),
   },
 });
 
@@ -457,6 +460,8 @@ controller.addEventListener('mode-changed', ev => {
   syncToolOptions(ev.detail.mode);
   syncMarkupWidth();
 });
+// The tool changed what its Item box holds (a job switch emptied it).
+controller.addEventListener('tool-name', () => syncToolOptions(controller.mode));
 
 app.project.addEventListener('items-changed', () => {
   itemsPanel.refresh();
@@ -535,6 +540,11 @@ async function goToPage(index, { version } = {}) {
   clearVersion({ draw: false });
   if (movedSheet) clearOverlay({ draw: false });
   controller.cancel();
+  // ...and so did the selection (desktop set_page). Left behind, a shape
+  // picked on the sheet just left still answered to Delete: it went with
+  // nothing on screen moving, and only the Items list's total said so. A
+  // jump from the list selects its item again after this.
+  if (movedSheet && controller.selected.size) controller.select([]);
   thumbs.setCurrent(index);
   syncPageOf();
   syncScaleSelect();
@@ -3850,7 +3860,7 @@ async function openMaterials(item) {
   if (lines) app.project.updateItem(item._uid, { associated_items: lines }, { label: 'Materials' });
 }
 
-function showItemMenu(item, ev) {
+function showItemMenu(item, ev, { from = 'canvas' } = {}) {
   // Delete / Hide / Properties on an item, from a drawing that item was not
   // traced on. The controller's hit test cannot produce this while a version
   // is up, but the right-button branch reaches it from a LEFTOVER selection —
@@ -3891,9 +3901,16 @@ function showItemMenu(item, ev) {
     }
   });
   menu.appendChild(document.createElement('hr'));
+  // Delete takes exactly what was asked, as on the desktop. From the Items
+  // list it is the whole item -- every shape on every sheet -- and it asks
+  // first (_on_item_delete). From the drawing it is the one shape pressed
+  // (delete_selected_measurement): a run going re-adds its item, a main
+  // shape going hands the item on. Neither asked anything before, and the
+  // list's took a multi-sheet item off one sheet only.
   add('Delete', () => {
-    app.project.removeItems([item._uid]);
-    controller.selected.delete(item._uid);
+    if (from === 'list') { void deleteWholeItem(item); return; }
+    app.project.dropShapes([item._uid]);
+    forgetDeletedSelection();
     requestDraw();
   });
 
@@ -3901,8 +3918,46 @@ function showItemMenu(item, ev) {
   const w = menu.offsetWidth, h = menu.offsetHeight;
   menu.style.left = `${Math.min(ev.clientX, window.innerWidth - w - 8)}px`;
   menu.style.top = `${Math.min(ev.clientY, window.innerHeight - h - 8)}px`;
-  const dismiss = () => { menu.hidden = true; document.removeEventListener('mousedown', dismiss); };
-  setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
+  // Only a press OUTSIDE the menu closes it. A press on one of its own
+  // buttons used to close it as well -- before that button's click: the
+  // release then landed on whatever lay under the menu, the click went to
+  // neither, and no row of it ever ran (the list's Delete and its question,
+  // the drawing's Delete, Hide, Isolate, Zoom...). pointerdown, in the
+  // capture phase, so a finger closes it too, and a press the canvas keeps
+  // for itself cannot leave it open.
+  const dismiss = e => {
+    if (e && e.target instanceof Node && menu.contains(e.target)) return;
+    menu.hidden = true;
+    document.removeEventListener('pointerdown', dismiss, true);
+  };
+  setTimeout(() => document.addEventListener('pointerdown', dismiss, true), 0);
+}
+
+/**
+ * The Items list's Delete: the desktop's question, word for word, with No
+ * the default; on Yes every shape of the item goes, on every sheet, in one
+ * undo level, and the line says so (_on_item_delete -> delete_item).
+ */
+async function deleteWholeItem(item) {
+  const q = deleteItemQuestion(item);
+  const yes = await D.yesNoDialog(q.title, q.text, { defaultButton: q.defaultButton, danger: true });
+  if (!yes) return;
+  // The question was a pause: delete only what is still there to delete.
+  if (controller.readOnly) { setStatus(controller.readOnlyReason); return; }
+  if (!app.project.findItem(item._uid)) return;
+  app.project.removeItems([item._uid]);
+  forgetDeletedSelection();
+  setStatus(q.done);
+  requestDraw();
+}
+
+/** Whatever a delete took away is no longer selected. */
+function forgetDeletedSelection() {
+  let gone = false;
+  for (const id of [...controller.selected]) {
+    if (!app.project.findItem(id)) { controller.selected.delete(id); gone = true; }
+  }
+  if (gone) itemsPanel.setSelection([...controller.selected]);
 }
 
 // ── menus ─────────────────────────────────────────────────────────────────
@@ -4107,7 +4162,7 @@ async function runAction(act) {
     case 'redo': app.project.redo(); itemsPanel.refresh(); requestDraw(); break;
     case 'delete':
       if (controller.selected.size) {
-        app.project.removeItems([...controller.selected]);
+        controller.deleteSelected();
         controller.selected.clear();
         requestDraw();
       }

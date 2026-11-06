@@ -774,6 +774,27 @@ export function confirmDialog(title, message, { okLabel = 'OK', danger = false }
   });
 }
 
+/**
+ * The desktop's QMessageBox.question: Yes and No, in that order. The default
+ * button has the focus, so Enter answers it, as on the desktop; Escape and a
+ * click outside answer No. Resolves true only for Yes.
+ */
+export function yesNoDialog(title, message, { defaultButton = 'No', danger = false } = {}) {
+  return showDialog(close => {
+    const body = el('div');
+    body.style.cssText = 'font-size:12.5px;line-height:1.6;white-space:pre-line';
+    body.textContent = message;
+    const yesNo = defaultButton === 'Yes';
+    return dlg({
+      title, body,
+      buttons: [
+        button('Yes', yesNo ? 'primary' : (danger ? 'danger' : ''), () => close(true)),
+        button('No', yesNo ? '' : 'primary', () => close(false)),
+      ],
+    });
+  }).then(v => v === true);
+}
+
 export function promptDialog(title, label, value = '', hint = '') {
   return showDialog(close => {
     const form = el('div', 'form');

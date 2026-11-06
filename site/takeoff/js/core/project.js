@@ -14,9 +14,11 @@
 // floor_level, category, sub_category — ordered by sort_order. There is no
 // separate tree structure to keep in sync, and adding one would be a bug.
 //
-// UNDO is a snapshot of the two stores plus the page order. Items are small
-// and plain, structuredClone is fast, and a snapshot cannot go stale the way
-// an inverse-operation log does when two features touch the same item.
+// UNDO is a snapshot of the two stores plus the page order. A snapshot cannot
+// go stale the way an inverse-operation log does when two features touch the
+// same item. It is a deep copy that SHARES STRINGS (copySharingStrings): the
+// stores carry the desktop's CAD pictures as base64, and copying those on
+// every edit is what ran out of memory.
 
 import {
   STANDALONE_PAGE, shiftPageKey, comparePageKeys, intKeyed,
@@ -27,7 +29,7 @@ import { shapeOwn } from './measure.js';
 import {
   remapPageIndices, insertMapper, deleteMapper, isTakeoffType, itemRevId,
 } from './revisions.js';
-import { CountingModel } from './counting.js';
+import { CountingModel, pySum } from './counting.js';
 
 export { STANDALONE_PAGE };
 
@@ -165,6 +167,12 @@ export class Project extends EventTarget {
     this.filePath = '';           // display name of the opened file
     this.fileHandle = null;       // FileSystemFileHandle, when we have one
     this._isolation = null;       // transient "show only these" — never saved
+    // Every new set of sheets comes through here -- an open and a draft
+    // restore (loadFrom), and close, New and a PDF import (newProject) -- so
+    // this is where whatever was held for the LAST job is put down (the
+    // count being placed: ToolController._dropPerProject). The store is
+    // still empty when it fires inside loadFrom: a listener must not read it.
+    this.emit('reset');
   }
 
   // ── loading ──────────────────────────────────────────────────────────
@@ -474,27 +482,101 @@ export class Project extends EventTarget {
     return found.item;
   }
 
+  /**
+   * Delete WHOLE ITEMS: every shape of each one, on every sheet (desktop
+   * GLPageWidget.delete_item). The Items list's Delete. One undo level.
+   *
+   * Every sheet, not the sheet the item was found on. This used to gather
+   * the items' group_ids page by page, so deleting a multi-sheet item from
+   * the list left its runs on the other sheets: drawn, listed nowhere,
+   * counted nowhere -- and saved. The desktop's open-time heal
+   * (one_main_shape) then gave that group its first run as its main shape,
+   * and the item he deleted was back in the bid.
+   *
+   * A Group container going away takes its membership off the items filed
+   * under it, as the desktop does, so no item points at a group that is gone.
+   * Here that happens inside the undo level; the desktop does it before its
+   * snapshot, so its Undo brings the container back with nothing in it.
+   */
   removeItems(ids, { label = 'Delete' } = {}) {
     const set = new Set(ids);
     if (!set.size) return 0;
-    let n = 0;
+    const gids = new Set();
+    const containers = new Set();
+    let found = 0;
+    for (const [, it] of this.allItems()) {
+      if (!set.has(it._uid)) continue;
+      found += 1;
+      if (it.group_id) gids.add(it.group_id);
+      if (it.type === 'group' && it.group_item_id) containers.add(String(it.group_item_id));
+    }
+    // Nothing of it is here any more: no undo level for a delete of nothing.
+    if (!found) return 0;
+    const doomed = it => set.has(it._uid) || (!!it.group_id && gids.has(it.group_id));
+    const gone = [];
     this.transact(label, () => {
       for (const key of Object.keys(this.measurements)) {
-        const before = this.measurements[key].length;
-        // A group's children go with it — they exist only to draw its shape.
-        // A group's children go with its master: they exist only to draw it.
-        const masters = new Set(
-          this.measurements[key].filter(it => set.has(it._uid) && it.group_id)
-            .map(it => it.group_id)
-        );
-        this.measurements[key] = this.measurements[key].filter(
-          it => !set.has(it._uid) && !(it.group_child && masters.has(it.group_id))
-        );
-        n += before - this.measurements[key].length;
+        const list = this.measurements[key];
+        if (containers.size) {
+          for (const it of list) {
+            if (containers.has(String(it.in_group || ''))) delete it.in_group;
+          }
+        }
+        for (const it of list) if (doomed(it)) gone.push(it._uid);
+        this.measurements[key] = list.filter(it => !doomed(it));
       }
     });
+    this._isolationLoses(gone);
     this.emit('items-changed', {});
-    return n;
+    return gone.length;
+  }
+
+  /**
+   * Delete these SHAPES and keep each item whole (desktop delete_shapes ->
+   * _drop_shape). The canvas's Delete: the Delete key, Edit > Delete
+   * Selected, and Delete in the menu a long-press opens on the drawing. One
+   * undo level, whatever the count.
+   *
+   * A run going re-adds its item from the shapes that are left. The main
+   * shape going hands the item -- its name, materials and classification --
+   * to the first run that remains, which re-adds the rest. Runs go first, so
+   * when the main shape goes too the item passes ONCE. Returns how many went.
+   */
+  dropShapes(ids, { label = 'Delete' } = {}) {
+    const set = new Set(ids);
+    const doomed = [];
+    for (const [pg, it] of this.allItems()) if (set.has(it._uid)) doomed.push([pg, it]);
+    if (!doomed.length) return 0;
+    // sort is stable: the runs in their page order, then the main shapes
+    doomed.sort((a, b) => (!a[1].group_child) - (!b[1].group_child));
+    const heirs = new Map();
+    this.transact(label, () => {
+      for (const [pg, it] of doomed) {
+        const heir = dropShape(this, pg, it);
+        if (heir) heirs.set(it._uid, heir._uid);
+      }
+    });
+    this._isolationLoses(doomed.map(([, it]) => it._uid), heirs);
+    this.emit('items-changed', {});
+    return doomed.length;
+  }
+
+  /**
+   * Isolation is a set of ids, so deleted shapes leave it; a main shape's
+   * heir takes its place there. Emptied, it ends -- the desktop leaves
+   * isolation when the item being looked at is deleted.
+   */
+  _isolationLoses(uids, heirs = new Map()) {
+    if (!this._isolation) return;
+    let changed = false;
+    for (const u of uids) {
+      if (!this._isolation.delete(u)) continue;
+      changed = true;
+      if (heirs.has(u)) this._isolation.add(heirs.get(u));
+    }
+    if (!changed) return;
+    if (!this._isolation.size) this._isolation = null;
+    this.emit('visibility-changed', {});
   }
 
   _nextSortOrder() {
@@ -519,6 +601,18 @@ export class Project extends EventTarget {
   clearIsolation() {
     this._isolation = null;
     this.emit('visibility-changed', {});
+  }
+
+  /**
+   * Every Undo and Redo ends isolation, as the desktop's _restore_state does
+   * ("isolation is a view, so it simply ends here"). The set names shapes,
+   * and the step just restored can give those ids other roles: Undo of the
+   * drawing's Delete of an isolated main shape brought the main shape back
+   * while the set held its heir -- by then a run again -- so the item came
+   * back with its main shape hidden and one run showing on its own.
+   */
+  _endIsolation() {
+    if (this._isolation) this.clearIsolation();
   }
 
   get isolating() { return !!this._isolation; }
@@ -687,19 +781,23 @@ export class Project extends EventTarget {
 
   // ── undo / redo ─────────────────────────────────────────────────────
 
+  // Both directions copy, so neither the live job nor the snapshot can ever
+  // hold an object or an array the other one holds: an edit after a snapshot
+  // never reaches into it, and an undo never hands back an object the redo
+  // stack still keeps. Only the strings are shared -- see copySharingStrings.
   snapshot() {
     return {
-      measurements: structuredClone(this.measurements),
-      annotations: structuredClone(this.annotations),
-      metadata: structuredClone(this.metadata),
+      measurements: copySharingStrings(this.measurements),
+      annotations: copySharingStrings(this.annotations),
+      metadata: copySharingStrings(this.metadata),
       pageCount: this.pageCount,
     };
   }
 
   restore(snap) {
-    this.measurements = structuredClone(snap.measurements);
-    this.annotations = structuredClone(snap.annotations);
-    this.metadata = structuredClone(snap.metadata);
+    this.measurements = copySharingStrings(snap.measurements);
+    this.annotations = copySharingStrings(snap.annotations);
+    this.metadata = copySharingStrings(snap.metadata);
     this.pageCount = snap.pageCount;
   }
 
@@ -754,6 +852,7 @@ export class Project extends EventTarget {
     if (!step) return false;
     this._redo.push({ label: step.label, state: this.snapshot(), booking: step.booking });
     this._restoreKeepingBook(step, 'undo');
+    this._endIsolation();
     this.markDirty();
     this.emit('history-changed', {});
     this.emit('items-changed', {});
@@ -766,6 +865,7 @@ export class Project extends EventTarget {
     if (!step) return false;
     this._undo.push({ label: step.label, state: this.snapshot(), booking: step.booking });
     this._restoreKeepingBook(step, 'redo');
+    this._endIsolation();
     this.markDirty();
     this.emit('history-changed', {});
     this.emit('items-changed', {});
@@ -909,6 +1009,54 @@ function defaultLayers() {
   ];
 }
 
+/**
+ * A deep copy of the JSON-shaped stores that SHARES ITS STRINGS, and only
+ * its strings.
+ *
+ * Undo kept each level as a structuredClone, and structuredClone copies
+ * strings too. The annotations carry the desktop's CAD pictures as base64 --
+ * since 3.06 an overlay picture is kept at up to 6000 px, tens of MB in ONE
+ * string -- so every edit copied every picture in the job again: 10 levels of
+ * one 24 MB picture added 264 MB of heap, and UNDO_DEPTH is 60. On an iPad
+ * that is a tab that runs out of memory and takes the unsaved work with it.
+ *
+ * A string cannot be changed in place, so one copy of it can sit in any
+ * number of snapshots and in the live job at once and none of them can tell.
+ * Everything else is copied: every object and every array is new, so nothing
+ * mutable is ever shared between a snapshot and the live state. Numbers,
+ * booleans, null and undefined have no identity to share.
+ *
+ * The stores are JSON in all but name -- every save writes them with
+ * JSON.stringify -- so there are no cycles. Anything that is not a plain
+ * object or array (a Map, a typed array) goes to structuredClone, as all of it
+ * used to, and a function throws there exactly as it always did.
+ */
+export function copySharingStrings(v) {
+  if (v === null) return v;
+  const t = typeof v;
+  if (t === 'function' || t === 'symbol') return structuredClone(v);
+  if (t !== 'object') return v;                 // string, number, boolean, ...
+  if (Array.isArray(v)) {
+    const out = new Array(v.length);
+    for (let i = 0; i < v.length; i++) out[i] = copySharingStrings(v[i]);
+    return out;
+  }
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return structuredClone(v);
+  const out = {};
+  for (const k of Object.keys(v)) {
+    const c = copySharingStrings(v[k]);
+    // A file may name a key "__proto__"; assigning it would set the
+    // prototype instead of keeping the key.
+    if (k === '__proto__') {
+      Object.defineProperty(out, k, { value: c, enumerable: true, writable: true, configurable: true });
+    } else {
+      out[k] = c;
+    }
+  }
+  return out;
+}
+
 function normaliseStore(store) {
   const out = {};
   for (const [k, v] of Object.entries(intKeyed(store))) {
@@ -1050,6 +1198,10 @@ function sortedObj(o) {
 
 // ── multi-shape items across a page delete (desktop GLPageWidget) ────────
 
+// The desktop's _PROMOTE_KEYS, exactly. `in_group` (the Group container an
+// item is filed under) is NOT among them there, so a main shape's heir drops
+// out of its Group on the desktop too; it is left out here on purpose, so
+// the two programs write the same store. Add it in both, or in neither.
 const PROMOTE_KEYS = ['name', 'label', 'notes', 'floor_level', 'category', 'layer',
   'sub_category', 'cost_type', 'sort_order', 'associated_items', 'color', 'visible',
   'pitch', 'purpose', 'catalog_code', 'catalog_unit', 'framing', 'framing_suppressed'];
@@ -1058,7 +1210,8 @@ const PROMOTE_KEYS = ['name', 'label', 'notes', 'floor_level', 'category', 'laye
 function promoteChild(doomed, heir) {
   for (const k of PROMOTE_KEYS) if (k in doomed) heir[k] = doomed[k];
   delete heir.group_child;
-  heir.own_value = heir.value ?? 0;
+  // new_master.get("value", 0): a value that is there is taken as it is
+  heir.own_value = 'value' in heir ? heir.value : 0;
   if ('perimeter' in heir) heir.own_perimeter = heir.perimeter;
   if ('flat_area' in heir) heir.own_flat = heir.flat_area;
   if ('total_ft' in heir) heir.own_total_ft = heir.total_ft;
@@ -1107,13 +1260,7 @@ export function resyncGroups(project, { layout = false } = {}) {
       }
     }
   }
-  // Which runs are ADDED UP is the counting rule's (desktop _shape_counts ->
-  // run_counts_towards): a run on a drawing its sheet does not count from is
-  // drawn and numbered, and is in no total.
-  const model = new CountingModel({ metadata: project.metadata,
-    measurements: meas, pageCount: project.pageCount });
-  const counts = (p, x) => model.runCountsTowards(p, x);
-  const get = (o, k, dflt) => (k in o ? o[k] : dflt);
+  const counts = runCounter(project);
   for (const [pg, m] of all) {
     if (m.group_child) continue;
     if (!m.group_id && !('own_value' in m)) continue;
@@ -1126,23 +1273,96 @@ export function resyncGroups(project, { layout = false } = {}) {
       m.group_count = 1;
       continue;
     }
-    const shapes = all.filter(([, x]) => x.group_id === m.group_id)
-      .sort((a, b) => (!!a[1].group_child - !!b[1].group_child) || (a[0] - b[0]));
-    const children = shapes.filter(([, x]) => x.group_child);
-    const adding = children.filter(([p, x]) => counts(p, x)).map(([, x]) => x);
-    const mine = counts(pg, m);
-    const sum = (key, ownKey) => {
-      const own = mine ? (Number(get(m, ownKey, get(m, key, 0)) || 0) || 0) : 0;
-      return own + adding.reduce((s, c) => s + (Number(get(c, key, 0) || 0) || 0), 0);
-    };
-    m.value = sum('value', 'own_value');
-    m.group_count = 1 + children.length;
-    m.shape_no = 1;
-    children.forEach(([, c], i) => { c.shape_no = i + 2; c.group_count = m.group_count; });
-    if (m.type === 'area' || m.type === 'slope_area') m.perimeter = sum('perimeter', 'own_perimeter');
-    if (m.type === 'slope_area') m.flat_area = sum('flat_area', 'own_flat');
-    if (m.type === 'linear_count') m.total_ft = sum('total_ft', 'own_total_ft');
+    syncMaster(all, counts, pg, m);
   }
+}
+
+/**
+ * Which runs are ADDED UP is the counting rule's (desktop _shape_counts ->
+ * run_counts_towards): a run on a drawing its sheet does not count from is
+ * drawn and numbered, and is in no total.
+ */
+function runCounter(project) {
+  const model = new CountingModel({ metadata: project.metadata,
+    measurements: project.measurements, pageCount: project.pageCount });
+  return (p, x) => model.runCountsTowards(p, x);
+}
+
+/** desktop _sync_group: the master `m` on page `pg` re-adds its shapes. */
+function syncMaster(all, counts, pg, m) {
+  const get = (o, k, dflt) => (k in o ? o[k] : dflt);
+  const shapes = all.filter(([, x]) => x.group_id === m.group_id)
+    .sort((a, b) => (!!a[1].group_child - !!b[1].group_child) || (a[0] - b[0]));
+  const children = shapes.filter(([, x]) => x.group_child);
+  const adding = children.filter(([p, x]) => counts(p, x)).map(([, x]) => x);
+  const mine = counts(pg, m);
+  // own + sum(c.get(key, 0) or 0 for c in adding): Python's sum(), which
+  // carries the bits a running `+` drops (pySum)
+  const sum = (key, ownKey) => {
+    const own = mine ? (Number(get(m, ownKey, get(m, key, 0)) || 0) || 0) : 0;
+    return own + pySum(adding.map(c => Number(get(c, key, 0) || 0) || 0));
+  };
+  m.value = sum('value', 'own_value');
+  m.group_count = 1 + children.length;
+  m.shape_no = 1;
+  children.forEach(([, c], i) => { c.shape_no = i + 2; c.group_count = m.group_count; });
+  if (m.type === 'area' || m.type === 'slope_area') m.perimeter = sum('perimeter', 'own_perimeter');
+  if (m.type === 'slope_area') m.flat_area = sum('flat_area', 'own_flat');
+  if (m.type === 'linear_count') m.total_ft = sum('total_ft', 'own_total_ft');
+}
+
+/** Every [page, item] in the store, pages ascending, each page in its order. */
+function storeOrder(meas) {
+  const all = [];
+  for (const pg of pageKeysSorted(meas)) for (const m of meas[pg] || []) all.push([pg, m]);
+  return all;
+}
+
+/** desktop _sync_group for ONE master: only its item is added up again. */
+function syncGroup(project, master) {
+  if (!master || !master.group_id) return;
+  const all = storeOrder(project.measurements);
+  const at = all.find(([, x]) => x === master);
+  if (!at) return;
+  syncMaster(all, runCounter(project), at[0], master);
+}
+
+/** desktop _group_master: the shape of group `gid` that is not a run. */
+function groupMaster(meas, gid) {
+  for (const [, m] of storeOrder(meas)) {
+    if (m.group_id === gid && !m.group_child) return m;
+  }
+  return null;
+}
+
+/**
+ * desktop _drop_shape: take ONE shape off `page` and keep its item whole.
+ * A run going re-adds its main shape from what is left; a main shape going
+ * hands the item to the first run that remains (master first, then by page:
+ * _measurement_group), which then re-adds the rest. No undo level and no
+ * event -- the caller (Project.dropShapes) owns both. Returns the heir.
+ *
+ * Only that one item is added up again, as on the desktop: an unrelated
+ * item's total is never rewritten by a delete it had no part in.
+ */
+function dropShape(project, page, doomed) {
+  const list = project.measurements[page] || [];
+  const i = list.indexOf(doomed);
+  if (i >= 0) list.splice(i, 1);
+  const gid = doomed.group_id;
+  if (!gid) return null;
+  if (doomed.group_child) {
+    syncGroup(project, groupMaster(project.measurements, gid));
+    return null;
+  }
+  const model = new CountingModel({ metadata: project.metadata,
+    measurements: project.measurements, pageCount: project.pageCount });
+  const runs = model.measurementGroup(gid).filter(([, s]) => s.group_child);
+  if (!runs.length) return null;
+  const heir = runs[0][1];
+  promoteChild(doomed, heir);
+  syncGroup(project, heir);
+  return heir;
 }
 
 /** Anything keyed by page index, normalised to a dict of string keys. */

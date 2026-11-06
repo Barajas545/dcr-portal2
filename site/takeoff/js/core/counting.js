@@ -123,6 +123,58 @@ export function pyRound(x, nd) {
   return Number(pyFixed(x, nd).replace(/,/g, ''));
 }
 
+/**
+ * Python's sum() of these numbers, read the way the desktop will read them
+ * from the file THIS app writes.
+ *
+ * Since 3.12 CPython's sum() is not a running `+`. A leading run of ints is
+ * added exactly, as ints; the first float is added to that with one plain
+ * `+`; and only from there on are the bits each addition loses carried
+ * (Neumaier's compensated sum, cs_add / cs_to_double) and added back at the
+ * end. The desktop is built on 3.14, so a multi-shape item's total re-added
+ * here with a plain `+` came out one bit off the desktop's -- 893.137374777004
+ * against 893.1373747770041.
+ *
+ * Which numbers are ints is a fact of the TEXT, and the text is this app's:
+ * JSON.stringify writes every whole number below 1e21 with no point -- a run
+ * the desktop held as 180.0 is saved as 180 -- and Python reads that back as
+ * an int. The desktop re-adds every multi-shape item from its runs whenever
+ * it opens a job (_resync_group_totals), so this is the sum it re-adds from
+ * a web save, and a total re-added here is the one it finds there, to the
+ * bit. Compensating from the first number, as this did, missed by a bit
+ * whenever a whole number came first, and the desktop then said on opening
+ * that the item had been "re-added from its runs".
+ *
+ * What it cannot reach is a total the desktop added up itself and this app
+ * saved untouched: added from 180.0 as a float, then re-added on opening from
+ * 180 as an int, it can move one bit and be announced. That is the desktop's
+ * to fix (compare totals past the last bit), not something a save may do.
+ */
+export function pySum(values) {
+  const n = values.length;
+  let i = 0;
+  let hi = 0;
+  // the leading whole numbers: ints in Python, added exactly
+  while (i < n && isPyInt(values[i])) hi += values[i++];
+  if (i === n) return hi;
+  // the first float: one plain addition, nothing carried from it
+  hi += values[i++];
+  let lo = 0;
+  for (; i < n; i++) {
+    const x = values[i];
+    const t = hi + x;
+    if (Math.abs(hi) >= Math.abs(x)) lo += (hi - t) + x;
+    else lo += (x - t) + hi;
+    hi = t;
+  }
+  return lo && Number.isFinite(lo) ? hi + lo : hi;
+}
+
+/** A number this app writes as a JSON int, so Python reads an int. */
+function isPyInt(x) {
+  return Number.isInteger(x) && Math.abs(x) < 1e21;
+}
+
 /** Python format(x, 'g'). */
 export function pyG(x) {
   if (Number.isNaN(x)) return 'nan';
@@ -1518,6 +1570,27 @@ export function applyBooking(md, change) {
       rev.booked_over[String(revPage)] = was;
     }
   }
+}
+
+/**
+ * The question the Items list's Delete asks, and the line said after a Yes
+ * (desktop PDFCacheViewer._on_item_delete with the list not on one sheet --
+ * this app has no SHEET chip yet, so that is always the case here). Asked of
+ * every item, one shape or many; the second paragraph only when the item is
+ * more than one shape. Yes / No, and No is the default.
+ */
+export function deleteItemQuestion(m) {
+  const it = m || {};
+  const name = String(truthy(it.name) ? it.name : truthy(it.label) ? it.label : 'this item').trim();
+  const n = truthy(it.group_count) ? it.group_count : 1;
+  const extra = Number(n) > 1 ? `\n\nThis removes all ${n} shapes that make up the item.` : '';
+  return {
+    title: 'Delete Item',
+    text: `Delete “${name}”?${extra}`,
+    buttons: ['Yes', 'No'],
+    defaultButton: 'No',
+    done: `Deleted “${name}”.`,
+  };
 }
 
 /** Python's `"%s" % x` for the quantity cell of a report's closing table. */

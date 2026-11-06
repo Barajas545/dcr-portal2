@@ -299,6 +299,20 @@ export class ToolController extends EventTarget {
     // click after that just adds a point to the same item.
     this.countTarget = null;
     this.countSpec = null;
+    // The name the clicks are being counted under: the armed count's, or the
+    // Item box's once a click was counted under it (desktop _count_named).
+    // A job switch empties the box only while it still shows this name.
+    this.countNamed = '';
+    // Which job this is: one more every time another comes in. A form asked
+    // about one job and answered in the next is no answer (_ask).
+    this._job = 0;
+    // Another job: the count held for the last one is put down.
+    this.project.addEventListener('reset', () => this._dropPerProject());
+    // Anything that moves the history while a press on a shape is held -- a
+    // Ctrl+Z, a Ctrl+Y -- ends that press: its release must not then keep,
+    // or put back, a picture of the job from before that edit (the
+    // desktop's _restore_state ends a drag the same way).
+    this.project.addEventListener('history-changed', () => this._dropPress());
 
     this._panning = false;
     this._panLast = null;
@@ -351,7 +365,7 @@ export class ToolController extends EventTarget {
     const page = this.getCurrentPage();
     const existing = (this.project.measurements[page] || [])
       .filter(m => m.type === 'count');
-    const choice = await (this.host.askCountItem?.({ existing }) ?? null);
+    const choice = await this._ask(this.host.askCountItem?.({ existing }));
     if (!choice) return false;
     if (choice.continueItem) {
       this.countTarget = choice.continueItem;
@@ -366,7 +380,98 @@ export class ToolController extends EventTarget {
         text: `Counting "${choice.spec.name}" — every click adds one`,
       });
     }
+    this.countNamed = countChoiceName(choice);
     return true;
+  }
+
+  /**
+   * Nothing armed for the next count click: no item to add to, no answers to
+   * start one from, no name kept from the last one (desktop
+   * forget_armed_count). The Item box belongs to the app and is not touched.
+   */
+  forgetArmedCount() {
+    this.countTarget = null;
+    this.countSpec = null;
+    this.countNamed = '';
+    this.options.countCategory = '';
+  }
+
+  /**
+   * Another job is coming in (Project 'reset': an open, a draft restore,
+   * close, New, a PDF import). What the count tool held is the LAST job's:
+   * left armed, the first tap on the next job's sheet made the last job's
+   * item there, with its name, floor, trade and price, and no form. So the
+   * count is put down, and with it the Item box while it still shows that
+   * count's name -- a different name typed since is his, and stays. The
+   * floor, sub-category and cost type the last job's answers left go too:
+   * a typed name, and every window and door pin, was filed under them with
+   * no form. The next job starts blank, as the first job of a session does
+   * (desktop PDFCacheViewer._drop_per_project_reads). Reads no store: inside
+   * loadFrom the new job's items are not in yet.
+   *
+   * A form still up from the last job answers nothing now (_ask), and a
+   * press on one of its shapes still held is over: its release would have
+   * put the last job's picture back over this one.
+   */
+  _dropPerProject() {
+    this._job += 1;
+    this._dropPress();
+    const shown = String(this.options.pendingName || '').trim();
+    if (this.mode === 'count' && shown && shown === String(this.countNamed || '').trim()) {
+      this.options.pendingName = '';
+      this.emit('tool-name', { name: '' });
+    }
+    this.forgetArmedCount();
+    this._lastFloor = '';
+    this._lastSub = '';
+    this._lastCostType = 'material';
+  }
+
+  /**
+   * The answer to a form, or null -- cancelled -- when another job came in
+   * while it was up (a .takeoff dropped on the window, the portal handing
+   * one over: neither waits for a form). Answered anyway, the count form
+   * armed the NEXT job with the last one's item and filed a dot there, on
+   * whatever sheet that job showed, at the point tapped on the other; an
+   * area's form filed the last job's outline the same way. Every form a
+   * tool asks before it writes goes through here.
+   */
+  async _ask(question) {
+    const job = this._job;
+    const answer = await question;
+    if (job === this._job) return answer;
+    if (answer != null) {
+      this.emit('status', { text: 'Another job was opened while that form was up, '
+        + 'so nothing was filed from it' });
+    }
+    return null;
+  }
+
+  /**
+   * End a press on a shape that is still held -- the release, or anything
+   * that must not happen in the middle of one (a page turn, a second
+   * finger, the Delete key). What it moved is kept as ITS OWN undo level,
+   * so the edit that follows has its own and one Ctrl+Z never takes both.
+   * A press that moved nothing changed nothing, and leaves no trace.
+   */
+  _settlePress() {
+    const press = this.dragVertex || this._moveDrag;
+    const pre = this._preDrag;
+    const moved = this._dragMoved;
+    this._dropPress();
+    if (!press || !pre || !moved) return;
+    this.project.pushUndo('Reshape', pre);
+    // Deferred while the pointer was down, so the counts settle once.
+    const found = this.project.findItem(press.id);
+    if (found) recompute(found.item);
+  }
+
+  /** Forget a held press on a shape, and the picture taken when it began. */
+  _dropPress() {
+    this.dragVertex = null;
+    this._moveDrag = null;
+    this._preDrag = null;
+    this._dragMoved = false;
   }
 
   /**
@@ -384,14 +489,18 @@ export class ToolController extends EventTarget {
     return true;
   }
 
-  /** Abandon whatever is in progress. Never touches saved work. */
+  /**
+   * Abandon whatever is in progress. Never touches saved work -- and a drag
+   * cut short (a page turn with the button still down) keeps what it moved
+   * as an undo level, as its release would have, instead of leaving an edit
+   * that no Ctrl+Z can take back.
+   */
   cancel() {
     this.markup.clear();
     this.current = [];
     this.constrainedPt = null;
     this.snapToFirst = false;
-    this.dragVertex = null;
-    this._moveDrag = null;
+    this._settlePress();
     this.emit('changed');
   }
 
@@ -399,7 +508,10 @@ export class ToolController extends EventTarget {
    * Say which version of the current sheet is on screen.
    *
    * The SELECTION is cleared on every real flip. Changing sheets clears it
-   * already, but raising another version of the SAME sheet does not — and a
+   * already (main.js goToPage, as the desktop's set_page does -- it did not,
+   * and Delete then took a shape off the sheet just left; deleteSelected
+   * refuses one anyway), but raising another version of the SAME sheet does
+   * not — and a
    * selection left over from the sheet's own drawing would then be a set of
    * items the user can no longer see, still answering to Delete.
    */
@@ -668,8 +780,9 @@ export class ToolController extends EventTarget {
       this.markup.clear();
       this.emit('status', { text: 'Stroke discarded — two fingers zoom.' });
     }
-    this.dragVertex = null;
-    this._moveDrag = null;
+    // A drag the first finger had begun ends here, with an undo level for
+    // whatever it had moved.
+    this._settlePress();
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     this._pinch = {
       startDist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
@@ -717,6 +830,21 @@ export class ToolController extends EventTarget {
         this._panLast = null;
         this.canvas.style.cursor = CURSORS[this.mode] || 'default';
       }
+      // A finger held still is not a drag. One never lands still: on a
+      // corner or a selected shape, a tremble under the slop had already
+      // reshaped or moved it -- with no undo level, so Delete then Undo
+      // brought back the shape as the tremble left it, and closing the menu
+      // kept the change. What it moved is taken back before the menu opens
+      // (which finds the shape again, where it was).
+      if (this._preDrag && this._dragMoved) {
+        this.project.restore(this._preDrag);
+        // Not an undo level (the store is the pre-press store again), but
+        // still a change: a save composed while the tremble stood holds the
+        // trembled shape, and only a moved change count tells it so.
+        this.project.markDirty();
+        this.project.emit('items-changed', {});
+      }
+      this._dropPress();
       this._onRightClick(at);
     }, LONG_PRESS_MS);
   }
@@ -917,21 +1045,13 @@ export class ToolController extends EventTarget {
     }
 
     if (this.dragVertex || this._moveDrag) {
-      const id = (this.dragVertex || this._moveDrag).id;
-      const found = this.project.findItem(id);
       // Only a drag that actually moved something is an edit. A plain click
       // to select used to push an identical snapshot and wipe the redo stack.
-      if (this._dragMoved && this._preDrag) {
-        this.project.pushUndo('Reshape', this._preDrag);
-        // Deferred while the pointer was down, so the counts settle once.
-        if (found) recompute(found.item);
-      } else if (this._preDrag) {
-        this.project.restore(this._preDrag);   // nothing moved; leave no trace
-      }
-      this._preDrag = null;
-      this._dragMoved = false;
-      this.dragVertex = null;
-      this._moveDrag = null;
+      // One that moved nothing is left as it is: it used to put the press's
+      // picture back "to leave no trace", and a Delete pressed while the
+      // button was held was undone by that, with its undo level left behind
+      // doing nothing.
+      this._settlePress();
       this.canvas.style.cursor = CURSORS[this.mode] || 'default';
       this.project.emit('items-changed', {});
       this.emit('changed');
@@ -1079,10 +1199,7 @@ export class ToolController extends EventTarget {
       }
     }
     if ((k === 'Delete' || k === 'Backspace') && this.selected.size) {
-      this.project.removeItems([...this.selected]);
-      this.selected.clear();
-      this.emit('selection-changed', { ids: [] });
-      this.emit('changed');
+      this.deleteSelected();
       return true;
     }
     // Nudge only when the arrow keys are not the user's page-turn keys, or
@@ -1094,8 +1211,13 @@ export class ToolController extends EventTarget {
       const d = { ArrowLeft: [-nudge, 0], ArrowRight: [nudge, 0],
                   ArrowUp: [0, -nudge], ArrowDown: [0, nudge] }[k];
       if (d) {
+        // A drag still held is its own edit, and ends first. Only what is
+        // on the drawing on screen moves (_selectionHere).
+        this._settlePress();
+        const { here } = this._selectionHere();
+        if (!here.length) return true;
         this.project.transact('Nudge', () => {
-          for (const id of this.selected) {
+          for (const id of here) {
             const f = this.project.findItem(id);
             if (f) {
               translateItem(f.item, d[0], d[1]);
@@ -1108,6 +1230,54 @@ export class ToolController extends EventTarget {
       }
     }
     return false;
+  }
+
+  /**
+   * Delete the selected SHAPES, not their whole items -- the Delete key and
+   * Edit > Delete Selected (desktop delete_selected_measurement): a run
+   * going re-adds its item, a main shape going hands it to the next run.
+   * The whole item is the Items list's Delete, which asks first. One undo
+   * level. A drag still held ends first, as its own level.
+   *
+   * Only what is on the drawing on screen. A selection left over from
+   * another sheet used to go too: a run on the sheet just turned away from
+   * was deleted with nothing on screen moving, and only the Items list's
+   * total said so. The desktop's page turn clears the selection, and so does
+   * this app's now; this is the backstop, and it says what it left.
+   * Returns how many shapes went.
+   */
+  deleteSelected() {
+    if (!this.selected.size) return 0;
+    this._settlePress();
+    const { here, elsewhere } = this._selectionHere();
+    const n = here.length ? this.project.dropShapes(here) : 0;
+    this.selected.clear();
+    this.emit('selection-changed', { ids: [] });
+    if (elsewhere) {
+      this.emit('status', { text: elsewhere === 1
+        ? 'Left 1 selected shape as it was — it is not on the drawing on screen'
+        : `Left ${elsewhere} selected shapes as they were — they are not on the drawing on screen` });
+    }
+    this.emit('changed');
+    return n;
+  }
+
+  /**
+   * The selected ids that are on the drawing on screen: on this sheet and
+   * painted over the version up (_onScreen), or on no sheet at all (an item
+   * kept only in the list). `elsewhere` counts the rest.
+   */
+  _selectionHere() {
+    const page = this.getCurrentPage();
+    const here = [];
+    let elsewhere = 0;
+    for (const id of this.selected) {
+      const f = this.project.findItem(id);
+      if (!f) continue;
+      if (f.pageKey < 0 || (f.pageKey === page && this._onScreen(f.item))) here.push(id);
+      else elsewhere += 1;
+    }
+    return { here, elsewhere };
   }
 
   // ── markup ──────────────────────────────────────────────────────────
@@ -1267,9 +1437,9 @@ export class ToolController extends EventTarget {
   }
 
   async _placeNote(tip, at) {
-    const spec = await this.host.askNote?.({
+    const spec = await this._ask(this.host.askNote?.({
       fontSize: this.markupStyle.noteFontSize,
-    });
+    }));
     if (!spec || !String(spec.text || '').trim()) { this.emit('changed'); return; }
     const made = this._file(this.getCurrentPage(), makeTextNote({
       tip, notePos: at, text: spec.text, color: spec.color,
@@ -1286,7 +1456,7 @@ export class ToolController extends EventTarget {
   }
 
   async _placeCallout(at) {
-    const spec = await this.host.askCallout?.({});
+    const spec = await this._ask(this.host.askCallout?.({}));
     if (!spec) { this.emit('changed'); return; }
     const made = this._file(this.getCurrentPage(), makeCallout({
       at, detail: spec.detail, sheet: spec.sheet, refPage: spec.refPage,
@@ -1502,11 +1672,11 @@ export class ToolController extends EventTarget {
     }
 
     if (mode === 'area') {
-      const spec = await this.host.askItem?.({
+      const spec = await this._ask(this.host.askItem?.({
         type: 'area',
         suggestedName: this.options.pendingName || `Area ${areaFt2.toFixed(0)} sq ft`,
         color: peekPaletteColor(),
-      });
+      }));
       if (!spec) { this.emit('changed'); return; }
       nextPaletteColor();
       this._remember(spec);
@@ -1520,11 +1690,11 @@ export class ToolController extends EventTarget {
     }
 
     if (mode === 'slope_area') {
-      const spec = await this.host.askSlopeRoof?.({
+      const spec = await this._ask(this.host.askSlopeRoof?.({
         flatArea: areaFt2,
         suggestedName: this.options.pendingName || '',
         color: peekPaletteColor(),
-      });
+      }));
       if (!spec) { this.emit('changed'); return; }
       nextPaletteColor();
       this._remember(spec);
@@ -1561,13 +1731,13 @@ export class ToolController extends EventTarget {
     const cols = Math.max(1, Math.ceil(wPx / (cwFt * ppf)));
     const rows = Math.max(1, Math.ceil(hPx / (chFt * ppf)));
 
-    const spec = await this.host.askItem?.({
+    const spec = await this._ask(this.host.askItem?.({
       type: 'grid',
       suggestedName: this.options.pendingName
         || `Grid ${cols}×${rows}  (${trimNum(cwFt, 2)}×${trimNum(chFt, 2)} ft)`,
       color: peekPaletteColor(),
       gridCells: [cwFt, chFt],
-    });
+    }));
     if (!spec) { this.emit('changed'); return; }
     nextPaletteColor();
     this._remember(spec);
@@ -1592,14 +1762,14 @@ export class ToolController extends EventTarget {
     const bb = boundingBox(pts);
     if (bb.w < 5 || bb.h < 5) { this.emit('changed'); return; }
     const o = this.options;
-    const spec = await this.host.askTile?.({
+    const spec = await this._ask(this.host.askTile?.({
       tileWIn: o.tileWIn, tileHIn: o.tileHIn, groutIn: o.groutIn,
       pattern: o.tilePattern, wastePct: tilePatternWaste(o.tilePattern),
       tilesPerBox: 0,
       areaFt2,
       suggestedName: this.options.pendingName,
       color: peekPaletteColor(),
-    });
+    }));
     if (!spec) { this.emit('changed'); return; }
     nextPaletteColor();
     this._remember(spec);
@@ -1625,11 +1795,11 @@ export class ToolController extends EventTarget {
   async _finalizePolyline(pts) {
     const ppf = this.ppf;
     const ft = pathLength(pts) / ppf;
-    const spec = await this.host.askItem?.({
+    const spec = await this._ask(this.host.askItem?.({
       type: 'polyline',
       suggestedName: this.options.pendingName || `Run ${ft.toFixed(1)} ft`,
       color: peekPaletteColor(),
-    });
+    }));
     if (!spec) { this.emit('changed'); return; }
     nextPaletteColor();
     this._remember(spec);
@@ -1646,12 +1816,12 @@ export class ToolController extends EventTarget {
     const spacingIn = Number(this.options.spacingIn) || 12;
     const spacingPx = (spacingIn / 12) * ppf;
     const count = countAlong(pts, spacingPx);
-    const spec = await this.host.askItem?.({
+    const spec = await this._ask(this.host.askItem?.({
       type: 'linear_count',
       suggestedName: this.options.pendingName || `${count} items @ ${trimNum(spacingIn)}"`,
       color: peekPaletteColor(),
       spacingIn,
-    });
+    }));
     if (!spec) { this.emit('changed'); return; }
     nextPaletteColor();
     this._remember(spec);
@@ -1714,6 +1884,7 @@ export class ToolController extends EventTarget {
           existing.value = existing.points.length;
         });
         this.countTarget = existing;
+        this.countNamed = cat;
         this._countGrew(page, existing);
         this.emit('changed');
         return;
@@ -1727,18 +1898,20 @@ export class ToolController extends EventTarget {
         count_number: nextCountNumber(this.project),
       }), { label: 'Count' });
       this.countTarget = made;
+      this.countNamed = cat;
       this.emit('changed');
       return;
     }
 
     // 5. nothing to go on — ask.
-    this.host.askCountItem?.({
+    this._ask(this.host.askCountItem?.({
       existing: list.filter(m => m.type === 'count' && this._onScreen(m)),
-    })
+    }))
       .then(choice => {
         if (!choice) return;
         if (choice.continueItem) this.countTarget = choice.continueItem;
         else this.countSpec = choice.spec;
+        this.countNamed = countChoiceName(choice);
         this._addCountPoint(pt);
       });
   }
@@ -1773,7 +1946,7 @@ export class ToolController extends EventTarget {
 
   async _finishCalibration(pts) {
     const distPx = pxDist(pts[0], pts[1]);
-    const text = await this.host.askCalibration?.({ distPx });
+    const text = await this._ask(this.host.askCalibration?.({ distPx }));
     if (text == null) { this.emit('changed'); return; }
     let ppf;
     try {
@@ -1935,6 +2108,12 @@ function nextCountNumber(project) {
     if (m.type === 'count') max = Math.max(max, Number(m.count_number) || 0);
   }
   return max + 1;
+}
+
+/** The name an answer from the count form arms the tool with. */
+function countChoiceName(choice) {
+  const it = choice && (choice.continueItem || choice.spec);
+  return String((it && it.name) || '').trim();
 }
 
 export function pitchLabel(rise12) {

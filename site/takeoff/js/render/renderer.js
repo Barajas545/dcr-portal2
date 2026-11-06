@@ -1060,7 +1060,10 @@ export class Renderer {
    */
   _drawAnnotation(ctx, a) {
     if (a.visible === false) return;      // the user hid it; keep it hidden
-    if (a.subtype === 'cad') return;      // the CAD pass is not built yet
+    // The CAD pass is not built yet. When it is: a picture flagged
+    // `as_overlay` (3.06's picture overlay) is never painted, hit, snapped to
+    // or printed -- the sheet's page_overlays record shows it instead.
+    if (a.subtype === 'cad') return;
     const z = this.viewport.zoom;
     const pts = a.points || [];
     // The alpha IS the colour's fourth channel. Overriding it to 1 painted
