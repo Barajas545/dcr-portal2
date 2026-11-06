@@ -11,10 +11,15 @@
 // zoom_floor, at_zoom_floor, shows_fit, land_on_fit, floor_takes_notch,
 // _note_past_fit, below_fit_by_choice, _zoom_chosen, _is_turn_raise,
 // _zoom_about, _canvas_resized, zoom_to_measurement, the pan a version flip
-// keeps (set_page_preview), and
+// keeps (set_page_preview), what set_page does to the view, and
 // PDFCacheViewer.zoom_in / zoom_out / _turn_zoom_settle / update_zoom_label
 // -- held to them by tests/zoom-floor.mjs, which runs the desktop's own
 // code (lifted by tests/zoom-floor-python-truth.py) through the same steps.
+//
+// A PAGE TURN (desktop 3.06) brings the sheet up at the zoom he last set
+// himself, centred: Fit if that was Fit, on any paper; a sheet that zoom
+// would show smaller than the screen at its own Fit, and the next big sheet
+// back at his zoom (turned, turnSettle). main.js's goToPage only wires it.
 //
 // THE ONE ANSWER TO "WHAT IS FIT". The F key, the Fit buttons, the floor, a
 // jump to an item and a resize all ask fitView() here, of the drawing ON
@@ -37,7 +42,9 @@
 // Settings box off the picture windows zoom OUT without limit, as they did;
 // and, box or no box, they zoom IN until a drawing pixel is 32 screen pixels
 // (the sheet's own most), where the desktop stops at ten times the whole
-// picture.
+// picture. A job that opens at Fit Width keeps the top of the sheet in view,
+// as the web's always has (the desktop's is centred); its zoom is the same
+// number, and from the first turn on both are centred.
 //
 // Pure: no DOM, no settings object. The host says which drawing is up and
 // how big it is, whether the Settings box is ticked, which sheet this is,
@@ -583,7 +590,10 @@ export class ZoomFloor {
     return true;
   }
 
-  /** A job (or, until page turns keep the zoom, a sheet) comes up at its default zoom. */
+  /**
+   * A job comes up at its default zoom (_apply_default_zoom): a zoom past
+   * Fit Shift took in the last one is not a choice made here.
+   */
   opening() { this.pastFit = false; this.pastFitZoom = null; this.raise = null; }
 
   /**
@@ -685,10 +695,31 @@ export class ZoomFloor {
   }
 
   /**
-   * A page turn has landed (_turn_zoom_settle). `chose` is belowFitByChoice()
-   * asked of the sheet being LEFT; the caller has already centred the new
-   * drawing at the zoom it had (what the desktop's set_page does). Not wired
-   * yet: page turns keeping his zoom is the next round of the port.
+   * A page turn has landed on another sheet (set_page, then
+   * _turn_zoom_settle): the drawing centred at the zoom it had, the last
+   * turn's raise forgotten -- what the desktop's set_page does to the view --
+   * then settled. `chose` is belowFitByChoice() asked of the sheet being
+   * LEFT. False while there is no drawing or no canvas to settle in: the
+   * caller parks it for the first frame that has one.
+   */
+  turned(chose) {
+    const s = this._size();
+    if (!s || !this.vp.measured) return false;
+    this.vp.centerOn(s.w / 2, s.h / 2);
+    this.turnSettle(chose);          // which forgets the last turn's raise first
+    return true;
+  }
+
+  /**
+   * A page turn has landed (_turn_zoom_settle): back to the zoom he last set
+   * himself -- Fit if that was Fit, on any paper -- and a drawing that comes
+   * up smaller than the screen at it raised to its own Fit, the raise
+   * recorded so a notch in and out there gives his zoom back. Not when the
+   * zoom he chose is one Shift took past Fit (`chose`, asked of the sheet
+   * being left): that zoom is kept, on bigger paper too. With the box off
+   * nothing moves: a turn keeps the zoom, centred (3.05). Idempotent from
+   * the base, so a landing may settle again once the drawing it asked for
+   * (a revision on other paper) is up.
    */
   turnSettle(chose) {
     this.raise = null;
@@ -697,8 +728,11 @@ export class ZoomFloor {
     const s = this._size();
     if (!chose && this.baseFit) { this.landOnFit(f); return; }
     if (!chose && this.base !== null) {
+      // His zoom back, and nothing else: the desktop's pan -- the page
+      // centre off the canvas centre, which a turn put at nought -- stays.
+      const [px, py] = this._pan(s);
       this.vp.zoom = this.base;
-      this.vp.centerOn(s.w / 2, s.h / 2);
+      this.vp.centerOn(s.w / 2 - px / this.base, s.h / 2 - py / this.base);
     }
     const z = this.vp.zoom;
     if (Math.abs(z - f) <= f * FIT_EPS) this.landOnFit(f);

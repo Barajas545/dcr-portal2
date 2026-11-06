@@ -831,7 +831,7 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   mark) is the broker's answer, so a 504 `{error: "Gateway Timeout"}` waits the broker's longest run like any other.
 - **Limits** (listed under the program's stopping rule, contract addendum 6 H5; DCR Desktop 2's `docs/ONEDRIVE.md` 18c
   lists the broker's):
-  - The takeoff app's own words (takeoff-web 7596e06, `js/core/save-route.js` portalNewsWords) are a little stronger
+  - The takeoff app's own words (takeoff-web f9fcb2b, `js/core/save-route.js` portalNewsWords) are a little stronger
     or weaker than what the portal knows in three cases. "checking" says "Your save of <plan> is in OneDrive and is being
     checked against office saves" also while the broker waits for OneDrive's hash of a version that only has the save's
     size. "failed" says "the portal's Plans Library sends it again" also for a failure that waits for the person's

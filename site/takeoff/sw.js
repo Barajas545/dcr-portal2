@@ -20,7 +20,7 @@
  * fails when one main.js can reach is missing, and when an entry names a
  * file that does not exist — that would fail every install.
  */
-const CACHE = 'ptt-web-v21';
+const CACHE = 'ptt-web-v22';
 
 /**
  * The program, precached on install: the page, the stylesheet, and every

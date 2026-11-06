@@ -150,6 +150,10 @@ const controller = new ToolController({
     openProperties: item => openProperties(item),
     // From the drawing: its Delete takes the one shape that was pressed.
     showItemMenu: (item, ev) => showItemMenu(item, ev, { from: 'canvas' }),
+    // While the sheet turned to decodes, the drawing up is the last one's
+    // (goToPage): nothing may be put on it or picked off it as this one's.
+    sheetOpening: () => (pageImage && shownPage !== app.currentPage
+      ? `${pageFinalLabel(app.currentPage)} is still opening — draw on it once it is on screen` : ''),
   },
 });
 
@@ -162,7 +166,9 @@ const controller = new ToolController({
 const zoomFloor = new ZoomFloor(viewport, {
   size: () => shownDrawingSize(),
   enabled: () => zoomStopsAtFit(),
-  page: () => app.currentPage,
+  // The sheet whose drawing is up: a notch in and out made on a raised sheet
+  // while the next one decodes is on the raised sheet (isTurnRaise).
+  page: () => shownPage,
   drawingKey: () => String(versionView.revId || ''),
   refused: via => sayZoomFloorOnce(via),
   margin: 16,
@@ -183,6 +189,12 @@ const itemsPanel = new ItemsPanel({
     // The panel asks before it offers a control that writes.
     readOnly: () => controller.readOnly,
     selectItem: (m, pageIdx, ev) => {
+      // On another sheet: turned to, and zoomed on (jumpToItem). Another than
+      // the one he is on with its drawing up (onSheetUp): a second click
+      // while the first one's sheet decodes is the same jump again, and a
+      // row on the sheet he is leaving, clicked while the next one decodes,
+      // a jump back to it -- not a click on this sheet.
+      if (pageIdx !== STANDALONE_PAGE && !onSheetUp(pageIdx)) { void jumpToItem(m, pageIdx); return; }
       // A jump whose whole purpose is to put a piece of the user's own work
       // in front of them must land on the drawing that work was traced on.
       // Landing on the newest revision would hide the very item they clicked,
@@ -205,7 +217,9 @@ const thumbs = new Thumbnails({
   panelEl: $('thumbsPanel'),
   project: app.project,
   pages: app.pages,
-  onPick: idx => goToPage(idx),
+  // A turn even onto the sheet on screen: the desktop's go_to_page centres
+  // it and settles it again (set_page, _turn_zoom_settle).
+  onPick: idx => goToPage(idx, { view: 'turn' }),
   // How many versions each sheet has beyond its own drawing, for the pips on
   // the cards. Recomputed only when the revision model changes — not per row.
   revisionCounts: () => revCountsBySheet,
@@ -342,10 +356,23 @@ function syncOldBadge() {
 
 let drawQueued = false;
 let pageImage = null;
+// Whose drawing pageImage is: the sheet that last LANDED (goToPage). Not
+// app.currentPage, which moves the moment a turn is asked for: while the
+// next sheet decodes, the drawing up is still the last one's, and a zoom, a
+// tap or a mark made there is made on it.
+let shownPage = -1;
+// ...and the job it landed in: the page store and the file it reads.
+// newProject replaces the store and an open re-points it at another file,
+// so the first sheet up after either is the job's opening; a sheet deleted,
+// added, or that would not decode is the same job.
+let landedJob = null;
 // A fit that could not run because the canvas had no size yet. Retried on the
 // first frame that has one, so a project opened in a background tab still
 // lands framed rather than at 2%.
 let pendingFit = false;
+// ...and a page turn's settle, for the same reason: { chose }. Dropped by the
+// next goToPage that is not a 'keep' of the same sheet.
+let pendingTurn = null;
 
 function requestDraw() {
   if (drawQueued) return;
@@ -359,7 +386,10 @@ function requestDraw() {
 function drawFrame() {
   viewport.resize();
   if (pendingFit && pageImage && viewport.measured) {
-    if (applyDefaultZoom()) pendingFit = false;
+    if (landOpen()) pendingFit = false;
+  }
+  if (pendingTurn && pageImage && viewport.measured) {
+    if (zoomFloor.turned(pendingTurn.chose)) pendingTurn = null;
   }
   renderer.markerScale = app.settings.get('marker_scale');
   renderer.uiScale = uiMode() === 'touch' ? 1.6 : 1.0;
@@ -433,7 +463,7 @@ const calloutPreview = new CalloutPreview({
   // previous job's sheets, which is exactly what its comment feared.
   get pages() { return app.pages; },
   sheetLabel: i => pageFinalLabel(i),
-  goToSheet: i => { void goToPage(i); },
+  goToSheet: i => { void goToPage(i, { view: 'turn' }); },
   sizeName: () => app.settings.get('preview_popup_size') || 'medium',
   // His own wheel preference, the same two it means on the sheet.
   wheelMode: () => app.settings.get('wheel_mode') || 'zoom',
@@ -535,7 +565,34 @@ app.project.addEventListener('pages-changed', ev => {
   syncPageOf();
 });
 
-new ResizeObserver(() => requestDraw()).observe($('stage'));
+// The foot bar of a phone or tablet is drawn over the bottom of the stage.
+// The canvas is cut short by exactly the part it covers (css: #canvas), so
+// the canvas IS the part of the sheet he can see: Fit, the zoom floor, the
+// centring, 'is the whole sheet on screen' and Zoom to item all measure
+// that, with nothing of their own to know about a bar. The bar showing or
+// going (the layout switched, a width crossing 1024) or changing height (the
+// home-indicator inset) changes the canvas size, which drawFrame's
+// viewport.resize() hears like an iPad turned: a view at Fit goes to the
+// new Fit, any other view keeps its centre.
+function fitCanvasAboveFootBar() {
+  const stage = $('stage');
+  const bar = $('mobileBar');
+  let cover = 0;
+  if (!bar.hidden) {
+    const s = stage.getBoundingClientRect();
+    const b = bar.getBoundingClientRect();
+    if (b.height > 0 && b.left < s.right && b.right > s.left) {
+      cover = Math.max(0, Math.min(s.height, Math.round(s.bottom - b.top)));
+    }
+  }
+  const want = `${cover}px`;
+  if (stage.style.getPropertyValue('--mbar-h') !== want) stage.style.setProperty('--mbar-h', want);
+}
+{
+  const ro = new ResizeObserver(() => { fitCanvasAboveFootBar(); requestDraw(); });
+  ro.observe($('stage'));
+  ro.observe($('mobileBar'));
+}
 
 // ── pages ─────────────────────────────────────────────────────────────────
 
@@ -543,6 +600,77 @@ new ResizeObserver(() => requestDraw()).observe($('stage'));
 // has moved on must not paint its sheet under another sheet's takeoff — on a
 // 25 MB sheet that window is seconds wide.
 let pageTicket = 0;
+
+/** The sheet whose drawing is on screen, or -1 while none is (shownPage). */
+function sheetUp() {
+  return pageImage ? shownPage : -1;
+}
+
+/**
+ * Whether he is on sheet `index` with its drawing up: app.currentPage and
+ * the drawing on screen agree. Neither while a turn ONTO it decodes (the
+ * drawing up is the last sheet's) nor while a turn AWAY from it does (he
+ * has left it; the drawing up is only what is still on screen) -- so a
+ * card tapped twice is a turn both times, and Page Down then Page Up, made
+ * before the next sheet is up, a turn back, as the desktop's are.
+ */
+function onSheetUp(index) {
+  return sheetUp() === index && app.currentPage === index;
+}
+
+/**
+ * The job a sheet comes up in now (landedJob): its page store and the file
+ * it reads, by a number each -- held weakly, so the last job's file (bytes,
+ * for one handed over by the portal) is not kept alive by the question.
+ */
+const jobIds = new WeakMap();
+let jobIdCount = 0;
+function jobNow() {
+  const id = o => {
+    if (!o || typeof o !== 'object') return 0;
+    if (!jobIds.has(o)) jobIds.set(o, ++jobIdCount);
+    return jobIds.get(o);
+  };
+  return `${id(app.pages)}:${id(app.pages.file)}`;
+}
+
+/** Whether a sheet has landed in the job open now. */
+function inLandedJob() {
+  return landedJob === jobNow();
+}
+
+/**
+ * How goToPage brings sheet `index` up. Asked of the drawing on screen AND
+ * of app.currentPage (onSheetUp), never of either alone: a turn still
+ * decoding has moved app.currentPage but not the drawing. A card tapped
+ * twice while it decodes is a turn onto it both times, not a 'keep' that
+ * cancels the first; Page Down then Page Up before the next sheet is up is
+ * a turn back, centred, not a 'keep' of the sheet still on screen.
+ *
+ * `view` as the caller asked: 'keep' and 'open' as they are, 'turn' a turn
+ * -- but in a job no sheet has landed in yet, a turn (or no view at all) is
+ * its opening. Unasked, in a job that has a sheet up: 'keep' onto the sheet
+ * he is on with its drawing up, 'turn' onto any other -- and with nothing
+ * up (a deleted sheet's neighbour still decoding, a sheet that would not
+ * decode) a turn: that is a sheet he turned to, not a job opening, and his
+ * zoom stays his.
+ */
+function viewOf(index, view) {
+  if (view === 'keep' || view === 'open') return view;
+  if (!inLandedJob()) return 'open';
+  return view === 'turn' || !onSheetUp(index) ? 'turn' : 'keep';
+}
+
+/**
+ * below_fit_by_choice, asked of the drawing up. With none up -- a deleted
+ * sheet's neighbour still decoding, a sheet that would not decode -- the
+ * answer the last one gave stands: there is no floor to be past there, and
+ * belowFitByChoice would forget a choice he never took back.
+ */
+function leftByChoice() {
+  return shownDrawingSize() && viewport.measured
+    ? zoomFloor.belowFitByChoice() : zoomStopsAtFit() && zoomFloor.pastFit;
+}
 
 /**
  * Go to a sheet.
@@ -553,11 +681,27 @@ let pageTicket = 0;
  * front of them passes '' — landing on a revision there would hide the very
  * item that was asked for, since work is only painted over the drawing it was
  * traced on.
+ *
+ * `view` says how the sheet comes up (desktop 3.06). 'open': a job's first
+ * sheet -- the default zoom, then settled for the drawing that goes up.
+ * 'turn': the zoom he last set himself, centred, Fit remembered as Fit and a
+ * small sheet raised to its own (ZoomFloor.turned) -- onto this sheet too,
+ * as the desktop's go_to_page re-centres a card clicked again. 'keep':
+ * nothing moves. See viewOf for what is asked and what it is when omitted.
+ * A caller that took the drawing down first passes `chose`, asked of the
+ * sheet being left before it went (below_fit_by_choice).
  */
-async function goToPage(index, { version } = {}) {
+async function goToPage(index, { version, view, chose: leftChose } = {}) {
   if (index < 0 || index >= app.pages.pageCount) return;
   const ticket = ++pageTicket;
-  const first = app.currentPage !== index || !pageImage;
+  const how = viewOf(index, view);
+  // A re-read keeps its job: a turn made while it decodes is a turn.
+  if (how === 'keep') landedJob = jobNow();
+  // Kept with its drawing taken down first: the view is carried from the
+  // drawing that was up to the one that comes back, as a flip carries it.
+  const keptFrom = how === 'keep' && !pageImage ? shownDrawingSize() : null;
+  // A settle parked for want of a canvas belonged to the sheet being left.
+  if (how !== 'keep') pendingTurn = null;
   const movedSheet = app.currentPage !== index;
   app.currentPage = index;
   app.project.metadata.last_viewed_page = index;
@@ -583,6 +727,7 @@ async function goToPage(index, { version } = {}) {
   } catch (err) {
     if (ticket === pageTicket) {
       pageImage = null;
+      shownPage = -1;
       setStatus(`Could not open sheet ${index + 1} — ${err.message}`);
       // Without this the version bar goes on claiming a revision is up on a
       // sheet that has no drawing at all, and readOnly stays stuck true with
@@ -594,8 +739,28 @@ async function goToPage(index, { version } = {}) {
   }
   if (ticket !== pageTicket) return;   // the user has moved on; drop this one
 
+  // Asked of the sheet being LEFT (the desktop's go_to_page asks before it
+  // goes), which is the drawing still up: so a Shift or a fresh pinch past
+  // Fit he made on it while this one decoded is his choice too, as it
+  // would have been a moment sooner. A caller that took the drawing down
+  // first asked before it went.
+  const chose = how === 'turn' && (leftChose ?? leftByChoice());
   pageImage = decoded;
-  if (first && pageImage) pendingFit = !applyDefaultZoom();
+  shownPage = index;
+  landedJob = jobNow();
+  // The view, under this ticket: a decode he has since turned past never
+  // gets here. What he zoomed or dragged while it decoded was on the sheet
+  // being left -- his zoom is the turn's base, the drag is the old sheet's.
+  let landed = false;
+  if (how === 'open') {
+    pendingFit = !landOpen();
+    landed = !pendingFit;
+  } else if (how === 'turn') {
+    landed = zoomFloor.turned(chose);
+    if (!landed) pendingTurn = { chose };
+  } else if (keptFrom) {
+    zoomFloor.keepPan(keptFrom);
+  }
 
   // Which drawing of this sheet to show. Resolved AFTER the sheet's own image
   // is in hand, so the scale check has something to compare against and a
@@ -615,15 +780,16 @@ async function goToPage(index, { version } = {}) {
 
   syncVersionUi();
   if (want) {
-    // The default zoom above framed the sheet's OWN drawing, all there was.
-    // When the drawing that goes up is on other paper, the landing ends
-    // framed on THAT one -- as the desktop's held turn settles on the
-    // revision's Fit -- unless he zoomed or moved the sheet while it was
-    // being decoded (ZoomFloor.unmoved: the flip itself is no move).
-    const framed = first && !pendingFit ? zoomFloor.mark() : null;
+    // The view above was settled on the sheet's OWN drawing, all there was.
+    // The landing settles again for the drawing that goes up -- as the
+    // desktop's held turn settles once its revision is on screen: a reissue
+    // on smaller paper raised to its Fit, Fit as Fit -- unless he zoomed or
+    // moved the sheet while it was being decoded (ZoomFloor.unmoved: the
+    // flip itself is no move). The settle is idempotent from his base.
+    const framed = landed ? zoomFloor.mark() : null;
     const up = await showSheetVersion(index, want, { announce: false, flip: false });
-    if (up && framed && ticket === pageTicket && browsingOtherVersion() && zoomFloor.unmoved(framed)) {
-      pendingFit = !applyDefaultZoom();
+    if (up && framed && ticket === pageTicket && zoomFloor.unmoved(framed)) {
+      zoomFloor.turnSettle(how === 'turn' && chose);
       requestDraw();
     }
   }
@@ -1352,6 +1518,27 @@ function goToPageOwnVersion(index) {
 }
 
 /**
+ * Put an item on another sheet in front of him, zoomed on it: the desktop's
+ * _on_item_activated. The turn first, to the drawing the item was traced on
+ * (go_to_item), settled like any turn -- THEN Zoom to item
+ * (zoom_to_measurement), so the zoom on the item is the one he chose, a
+ * number even where it lands on Fit, and the next sheet comes up at it.
+ * Onto another drawing of the sheet up it is a flip, the zoom kept, then
+ * the zoom on the item. Nothing when he has gone on somewhere else while
+ * the sheet decoded.
+ */
+async function jumpToItem(m, pageIdx) {
+  const turned = goToPage(pageIdx, { version: m.rev_id || '' });
+  const ticket = pageTicket;           // taken by goToPage before its first await
+  await turned;
+  if (ticket !== pageTicket || app.currentPage !== pageIdx) return;
+  controller.select([m._uid]);
+  // A settle parked for want of a canvas must not come after it.
+  if (zoomFloor.zoomToItem(m.points || [], m.type)) pendingTurn = null;
+  requestDraw();
+}
+
+/**
  * The previous or next SHEET, staying on the same version where that sheet
  * has one.
  *
@@ -1978,10 +2165,23 @@ function zoomStopsAtFit() {
 /** Frame the current sheet. Returns false if the canvas has no size yet. */
 function applyDefaultZoom() {
   const mode = app.settings.get('default_zoom_mode');
-  // A sheet comes up at its own zoom: a zoom past Fit taken on the last one
+  // A job comes up at its own zoom: a zoom past Fit taken in the last one
   // is not a choice made here (the desktop's _apply_default_zoom).
   zoomFloor.opening();
   return applyDefaultZoomTo(mode === '100' || mode === 'width' ? mode : 'fit');
+}
+
+/**
+ * A job (or a sheet with nothing up before it) comes up: the default zoom,
+ * then settled as a page turn is (the desktop's load: _apply_default_zoom,
+ * then _turn_zoom_settle(False)) -- so a default zoom that would show this
+ * drawing smaller than the screen raises it to its Fit. False while the
+ * canvas has no size yet.
+ */
+function landOpen() {
+  if (!applyDefaultZoom()) return false;
+  zoomFloor.turnSettle(false);
+  return true;
 }
 
 function applyDefaultZoomTo(mode) {
@@ -1995,10 +2195,12 @@ function applyDefaultZoomTo(mode) {
   if (mode === '100') {
     viewport.zoom = 1;
     viewport.centerOn(s.w / 2, s.h / 2);
-  } else if (!viewport.fitWidth({ x: 0, y: 0, w: s.w, h: s.h })) {
+  } else if (!viewport.fitWidth({ x: 0, y: 0, w: s.w, h: s.h }, zoomFloor.margin)) {
     return false;
   }
-  zoomFloor.chosen();               // a zoom he set: a number, not Fit
+  // A zoom he set: a number, not Fit -- Fit Width too, as the desktop's
+  // width zoom is, so the next sheet comes up at this zoom, centred.
+  zoomFloor.chosen();
   return true;
 }
 
@@ -3221,8 +3423,10 @@ async function reacquireAfterSave(handle) {
       // NEWEST — so saving while working on a sheet's own drawing swapped the
       // drawing underneath the estimator and hid every item they had just
       // taken off. Re-pointing the blob slices at the re-written file is
-      // bookkeeping; it must not move anybody.
-      await goToPage(app.currentPage, { version: versionView.revId });
+      // bookkeeping; it must not move anybody - and that includes the view:
+      // setFromProject re-points app.pages, so without view 'keep' goToPage
+      // takes the re-read for a new job and opens it at the default zoom.
+      await goToPage(app.currentPage, { version: versionView.revId, view: 'keep' });
       thumbs.refresh(app.currentPage);
     }
   } catch (err) {
@@ -3936,8 +4140,12 @@ async function importPdfFile(file, { intoOpen = false, saveStartIn = null } = {}
     hideEmptyState();
     buildScaleSelect();
     thumbs.refresh(startAt);
+    // Sheets added to an open job are turned to, as a turn onto the first
+    // of them is (his zoom, centred); a new job opens at the default zoom.
+    const view = intoOpen && startAt > 0 ? 'turn' : 'open';
+    const chose = view === 'turn' && leftByChoice();
     pageImage = null;
-    await goToPage(startAt);
+    await goToPage(startAt, { view, chose });
     syncTitle();
 
     // Importing a PDF is the start of a takeoff, not a read — so this one
@@ -4101,7 +4309,19 @@ function showItemMenu(item, ev, { from = 'canvas' } = {}) {
     // The desktop's zoom_to_measurement: a box 1.8 times the item but never
     // under 12% of the sheet -- so a single count or a straight run has one
     // too -- at most 8x, and never out past the whole sheet: a count spread
-    // across the sheet lands on Fit.
+    // across the sheet lands on Fit. A row's item on another sheet is turned
+    // to first (jumpToItem): its points are not this sheet's -- another than
+    // the one he is on with its drawing up (onSheetUp), so an item on the
+    // sheet he is leaving, while the next one decodes, is a jump back to it,
+    // not a zoom on the drawing still up that the next sheet then comes up
+    // at. So is a row's item traced on another drawing of this one -- put up
+    // first, as a click on the row puts it up (go_to_item), or it is zoomed
+    // to where it is not painted. (From the drawing, what was pressed is on
+    // the drawing up.)
+    const at = app.project.findItem(item._uid)?.pageKey;
+    const elsewhere = !onSheetUp(at)
+      || (from === 'list' && String(item.rev_id || '') !== String(versionView.revId || ''));
+    if (Number.isInteger(at) && at >= 0 && elsewhere) { void jumpToItem(item, at); return; }
     if (zoomFloor.zoomToItem(item.points || [], item.type)) requestDraw();
   });
   menu.appendChild(document.createElement('hr'));
@@ -4649,6 +4869,9 @@ async function addBlankSheet() {
   if (spec.label) app.project.setPageLabel(at, spec.label);
   if (spec.name) app.project.setPageName(at, spec.name);
   c.width = c.height = 0;
+  // Added from the start screen, the sheet is the job now: the start card
+  // comes down, as it does for a PDF, or it sits over the new sheet.
+  hideEmptyState();
   thumbs.refresh(at);
   await goToPage(at);
   setStatus(`Added a blank ${spec.size[0]} sheet`);
@@ -4679,6 +4902,10 @@ async function deleteCurrentPage() {
     return;
   }
   const idx = app.currentPage;
+  // Asked as a page turn asks, before the sheet goes: the sheet after it
+  // comes up as a turn onto it would (_apply_page_layout) -- his zoom back,
+  // a smaller sheet raised -- not at the default zoom.
+  const chose = leftByChoice();
   const before = countingModel().countedQuantities();
   app.pages.removePage(idx);
   app.project.notePageRemoved(idx);
@@ -4688,7 +4915,7 @@ async function deleteCurrentPage() {
   calloutPreview.clearCache();        // its crops are keyed by page index
   thumbs.refresh(Math.min(idx, app.pages.pageCount - 1));
   pageImage = null;
-  await goToPage(Math.min(idx, app.pages.pageCount - 1));
+  await goToPage(Math.min(idx, app.pages.pageCount - 1), { view: 'turn', chose });
 }
 
 async function reviewSheetLabels() {

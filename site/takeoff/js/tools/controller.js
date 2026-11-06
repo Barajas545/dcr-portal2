@@ -352,6 +352,9 @@ export class ToolController extends EventTarget {
     // release whether it was a read or a drag.
     this._calloutPress = null;
     this._pendingTap = null;
+    // A finger refused while the sheet turned to is still opening, { id,
+    // why }: told why when it lifts, unless a second finger made it a pinch.
+    this._openingPress = null;
     this._lpTimer = null;
     this._lpFired = false;
     this._rmbCandidate = null;
@@ -777,6 +780,18 @@ export class ToolController extends EventTarget {
       return;
     }
 
+    // The sheet turned to is still opening (_refuseWhileOpening): a drag
+    // pans the drawing up, and nothing else is pressed on it. A finger is
+    // told why on its lift, not here: every pinch starts with one finger
+    // down, and a pinch is looking -- it zooms, and says nothing.
+    const opening = this.host.sheetOpening?.();
+    if (opening) {
+      if (this.mode === 'pan') this._startPan(ev);
+      else if (ev.pointerType === 'touch') this._openingPress = { id: ev.pointerId, why: opening };
+      else this._refuseWhileOpening();
+      return;
+    }
+
     if (ev.pointerType === 'touch' && this.mode === 'pan') {
       this._armLongPress(ev);
     }
@@ -909,6 +924,7 @@ export class ToolController extends EventTarget {
     if (!a || !b) return;
     this._clearLongPress();
     this._pendingTap = null;
+    this._openingPress = null;        // a pinch is looking: nothing to refuse
     if (this._panning) {
       this._panning = false;
       this._panLast = null;
@@ -1173,6 +1189,15 @@ export class ToolController extends EventTarget {
     }
     this._clearLongPress();
 
+    // A finger refused while the sheet turned to was opening, and never made
+    // a pinch: told why now, in the words of the moment it was pressed. The
+    // browser taking the gesture back (pointercancel) pressed nothing.
+    const refused = this._openingPress;
+    if (refused && refused.id === ev.pointerId) {
+      this._openingPress = null;
+      if (ev.type === 'pointerup') this.emit('status', { text: refused.why });
+    }
+
     // A tap earns its point here, once no second finger has arrived.
     const tap = this._pendingTap;
     this._pendingTap = null;
@@ -1243,7 +1268,23 @@ export class ToolController extends EventTarget {
     }
   }
 
+  /**
+   * While the sheet he turned to is still being read (the app's
+   * host.sheetOpening says so, in words), the drawing on screen is the last
+   * sheet's, and whatever is pressed on it would be filed under -- or picked
+   * from -- the new one: a stroke at the old drawing's place, on the wrong
+   * sheet in the file. Said, and true, while that lasts. Looking is never
+   * refused: the wheel, a pinch and a drag in Pan go on.
+   */
+  _refuseWhileOpening() {
+    const why = this.host.sheetOpening?.();
+    if (!why) return false;
+    this.emit('status', { text: why });
+    return true;
+  }
+
   _onDoubleClick(ev) {
+    if (this._refuseWhileOpening()) return;
     const pt = this.viewport.eventToPage(ev);
     if (this.mode === 'pan') {
       // The browser delivers a double-click as its OWN event, so the press
@@ -1268,6 +1309,7 @@ export class ToolController extends EventTarget {
 
   /** `ev` may be a real event or a plain {clientX, clientY} from a long press. */
   _onRightClick(ev) {
+    if (this._refuseWhileOpening()) return;
     const pt = this.viewport.eventToPage(ev);
     if (CHAIN_TOOLS.has(this.mode)) {
       this.current.pop();
