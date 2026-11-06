@@ -814,6 +814,41 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   (`ANSWER_LOST_MS`). Meanwhile the row and the bar say "OneDrive's answer about this save has not reached this iPad
   yet - the portal asks again in a few minutes. Keep the portal open; there is nothing to do. It stays on this iPad
   meanwhile." - never "not sent"; the timer asks then.
+- **A send that may have landed is settled first** (contract addendum 6, the last repair; DCR Desktop 2 e1fd4c4). Once
+  every byte of a deferred replace went up, its session may hold bytes that landed on the plan (an earlier commit whose
+  answer was lost, OneDrive committing at the last chunk, the broker's check begun). So a commit the broker refuses -
+  401 (an expired sign-in, the gateway's "Invalid JWT" too), 403, 400, 404 or any other final code - keeps that session.
+  The next send settles it with `plan_save_done` and the save's hash before any new session, and the person is told
+  "Your sign-in to the portal has expired - sign in again. Your save is kept on this iPad and waits: it may already be in
+  OneDrive, and the portal checks it there before anything is sent again." (for a 403 or 404: "This account cannot send
+  this plan to OneDrive just now - ask the office." in front of the same sentence). While the broker still cannot settle
+  it, it waits in those words; it is never final, and the takeoff app hears nothing new. A save is never adopted while
+  another session of it that no broker answer settled is still open, so the office's "nothing was overwritten" words
+  only come from the broker's proof. Once a send got the broker's check (its 503 `why: "checking"`), its later 503s are
+  the check too, marked or not, until the broker answers anything else: the uploader's job stays in the check, and a
+  later page reads the send's own mark (`checking` in its record). And a gateway's 5xx is a lost answer whatever its
+  body says: only a body that names one of the broker's own codes (`repo/onedrive.js` CONTRACT, the error's `broker`
+  mark) is the broker's answer, so a 504 `{error: "Gateway Timeout"}` waits the broker's longest run like any other.
+- **Limits** (listed under the program's stopping rule, contract addendum 6 H5; DCR Desktop 2's `docs/ONEDRIVE.md` 18c
+  lists the broker's):
+  - The takeoff app's own words (takeoff-web 257351b, `js/core/save-route.js` portalNewsWords) are a little stronger
+    or weaker than what the portal knows in three cases. "checking" says "Your save of <plan> is in OneDrive and is being
+    checked against office saves" also while the broker waits for OneDrive's hash of a version that only has the save's
+    size. "failed" says "the portal's Plans Library sends it again" also for a failure that waits for the person's
+    Retry (not found, too large, the kept copy lost, the base not matched, refused, not saved twice). "sent" after an
+    unproved, not put back or refused copy says "The portal sent <plan> to OneDrive.", naming the plan, not the copy. In
+    every case the portal's own bar over the app and its row carry the exact words.
+  - A request that never answers and never errors (no answer, no timeout) keeps that send waiting in that page until
+    the browser ends it. Nothing is asked twice meanwhile: another tab waits too (the send's Web Lock while the request
+    holds it; without Web Locks, the send's mark for the broker's longest run). The row keeps its last words.
+  - A device clock set back by more than a minute ends the wait after a lost answer early (a mark further ahead than a
+    minute holds nothing), so a commit may overlap one still running in the broker. The broker's checks cover overlapping
+    commits (verified, or "unproved" with its admin line), so the words stay honest.
+  - A deferred replace whose ticket no longer unseals (past 30 days, or the broker's client secret rotated) and whose
+    bytes are not found by their hash is over, as before; the next send goes on in the plain words of whatever the
+    broker answers it. Rotate the secret on a day nobody saves from an iPad (`docs/ONEDRIVE.md` section 12).
+  - None of this has run on WebKit or a real iPad here (headless Chrome with a tablet's user agent): the go-live run on
+    the owner's iPad covers it.
 - **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against
   the version the app's work was done on (`map/plan-library.js` `saveBase`) - so a newer version the portal downloaded
   while the app was open never turns older work into a replace (it becomes a copy), the next Save after a copy goes on
@@ -864,7 +899,10 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   `why: "checking"` read as the check, a newer office save on top answering "unproved" from the retry and a later
   page, and two commits of one save overlapping answered replace; since its repair round 4 ten and twelve office saves
   on top of a crossing "unproved", a restore refused for good ending `not_put_back`, the listing's 503 after a commit
-  marked "checking" while one before any commit is not, and the device's own double commit verified);
+  marked "checking" while one before any commit is not, and the device's own double commit verified; since its repair
+  round 5 a crossing's restore that went through but answered a gateway's 504 or nothing - one POST, read from the
+  history again: the plain "changed", and past the 30 minutes the plain `not_saved`, never `not_put_back` - and one
+  that did not go through answering 503: the check, then `not_put_back` at the bound);
   `tools/e2e-p7-plans.mjs` 4b drives the REAL vendored takeoff app in the frame (a made-up but real .takeoff as the
   demo plan): its own Save is kept, marks the project saved, is sent (the broker's commit) and adopted with no
   download, and after an office save the next one becomes a copy, said in both; 4d: an office save during the upload
@@ -881,9 +919,12 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   bar, the row, the app and Close's question, a newer office save meanwhile ending "unproved", and a copy's own plan
   word - the work after the save offered on the copy, never on the plan; 4h: twelve office saves on top of a crossing
   ("unproved"), a restore refused for good ("not put back", the office asked to restore it), and two tabs with one save
-  (one commit at a time; after a lost answer neither tab asks again before the broker's longest run is over); 4c: prices
+  (one commit at a time; after a lost answer neither tab asks again before the broker's longest run is over); 4i: a lost
+  commit answer, then a 401 on the retry - kept and waits in those words, and signed in again the settle runs first and
+  the words follow the broker's proof (the replace it was, verified); 4c: prices
   without the upload switch saves to the share sheet only. The demo broker (`tools/fake/p7-onedrive.js`) answers as the real one (deferred commit, the switch and
-  `save_back`, the two commit forms, the version check and restore as DCR Desktop 2 48dc59e has them - `plan_save_done`
+  `save_back`, the two commit forms, the version check and restore as DCR Desktop 2 e1fd4c4 has them (one restore POST, a
+  lost answer read from the history again) - `plan_save_done`
   checking a deferred replace too, a restore only on the hash's proof and only onto a version proved not this save,
   its 503s (every one after the bytes may be on the plan with `why: "checking"`), `need: "hash"` at any age, the plain
   ends only on the proof that the plan never held this save (the whole first page of the versions, reaching back to the
@@ -892,7 +933,8 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   identical re-save found landed -, `landed`, `why`, the real hash of what it is sent, the name, 30-day tickets) and has the hooks `desktopSave`, `duringUpload` (an office save, one of the save's own size, or a desktop save),
   `refuseCopyCommits`, `hashed`, `setPlanSave` (or localStorage `dcr2-demo-plan-save` in a browser; the demo's
   default is `all`), `graphModes` (`deferCommit`, `putCommit`, `putIfMatch`, `postIfMatch`, `postStatus`, `versions`,
-  `versionsStatus`, `versionsPage`, `restoreStatus`, `hashes`, `afterCommit`), `betweenWalkAndCommit` (an office save, or `"self"`: this
+  `versionsStatus`, `versionsPage`, `restoreStatus`, `restoreLost` - a restore that goes through and answers 504 / 503 /
+  nothing -, `hashes`, `afterCommit`), `betweenWalkAndCommit` (an office save, or `"self"`: this
   very session committed by the device's other request just then), `passTime` (the broker's clock
   ahead: OneDrive's 30 minutes without a hash), `addPlanFile` (a plan copied into another lot's folder), `versionsOf` and
   `logLines`; `DCR2Demo.setUploadDelay(ms)` makes the demo's uploads slow.
