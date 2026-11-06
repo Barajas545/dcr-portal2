@@ -99,8 +99,10 @@
                                      `hash`: the save's quickXorHash (js/quickxor.js) - with OneDrive's own, the broker's
                                      proof (a byte-identical re-save is saved, an office save of the same size is not);
                                      the ticket settles for 30 days;
-   * call(body)                    any op; errors are {code, status, message, field, info, retryAfter}: the
-                                     broker's own codes (its messages are a fixed map), "not_deployed" (the gateway's
+   * call(body)                    any op; errors are {code, status, message, field, info, retryAfter, broker}: the
+                                     broker's own codes (its messages are a fixed map; `broker` true when the body
+                                     names one of them - CONTRACT - so it is the broker's answer, never a gateway's
+                                     5xx: contract addendum 6 H3), "not_deployed" (the gateway's
                                      own 404: no such function - or the broker's 400 invalid for the field "op": a
                                      broker older than this page, which does not have the op yet; addendum 3 D6), the
                                      503s by name, "offline" (no answer).
@@ -185,6 +187,10 @@ export async function call(body) {
     try { info = await (ctx.clone ? ctx.clone() : ctx).json(); } catch (e) { info = null; }
   }
   const code = info && typeof info.error === "string" && CONTRACT.indexOf(info.error) !== -1 ? info.error : "";
+  // `broker`: the answer is the broker's own - its body names one of the broker's codes (CONTRACT). A gateway's 5xx
+  // never does, whatever its body says (its 504 at the idle timeout while the function runs on, a 502): map/plan-
+  // library.js answerLostOf counts a 5xx as an answer only with it (contract addendum 6 H3)
+  const own = code !== "";
   // the broker exposes Retry-After to this site (Access-Control-Expose-Headers); a gateway answer without it: null
   let retryAfter = null;
   try {
@@ -195,13 +201,13 @@ export async function call(body) {
   if (status === 404 && !code) throw failure("The OneDrive connection is not set up yet.", "not_deployed", 404);
   if (status === 503) {
     const u = UNAVAILABLE[code];
-    throw u ? failure(u[1], u[0], 503, info, { retryAfter }) : failure("The OneDrive connection is not answering just now.", "unavailable", 503, info, { retryAfter });
+    throw u ? failure(u[1], u[0], 503, info, { retryAfter, broker: own }) : failure("The OneDrive connection is not answering just now.", "unavailable", 503, info, { retryAfter, broker: own });
   }
   if (status === 401) throw failure("Your sign-in has expired. Please sign in again.", "auth", 401);
   if (status >= 500 && !code) throw failure("OneDrive could not do that just now. Try again in a few minutes.", "failed", status, info);
   const field = info && typeof info.field === "string" ? info.field : null;
   if (status === 400 && code === "invalid" && field === "op") throw failure(NOT_THERE, "not_deployed", 400, info, { field, retryAfter });
-  throw failure(brokerText(info, status), code || (status === 403 ? "forbidden" : "failed"), status, info, { field, retryAfter });
+  throw failure(brokerText(info, status), code || (status === 403 ? "forbidden" : "failed"), status, info, { field, retryAfter, broker: own });
 }
 
 function pidOf(projectId) {

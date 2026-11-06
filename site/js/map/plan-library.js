@@ -461,11 +461,13 @@ export const ANSWER_LOST_MS = BROKER_RUN_MAX_MS + 20 * 1000;
 /** A broker call's failure (js/repo/onedrive.js call()'s error) that is NOT the broker's own answer, so the request may
     still be running there: no answer at all ("offline": no connection, a timeout, a page that slept), or a 5xx whose body
     carries none of the broker's codes (the gateway's: its 504 at the idle timeout while the function runs on, a 502, a
-    5xx that could not be read). The broker's own 503 busy or 502 onedrive_failed is an answer. */
+    5xx that could not be read - and one whose JSON has an `error` word that is not one of the broker's codes, such as
+    {error: "Gateway Timeout"}: contract addendum 6 H3). Only call()'s `broker` mark says the body named one of the
+    broker's codes (js/repo/onedrive.js CONTRACT): the broker's own 503 busy or 502 onedrive_failed is an answer. */
 export function answerLostOf(x) {
   if (!x) return false;
   if (x.code === "offline") return true;
-  return Number(x.status) >= 500 && !(x.info && typeof x.info.error === "string" && x.info.error !== "");
+  return Number(x.status) >= 500 && x.broker !== true;
 }
 
 /** How long (ms) the next plan_save_commit / plan_save_done of send `s` (one of local.sends) still waits: until

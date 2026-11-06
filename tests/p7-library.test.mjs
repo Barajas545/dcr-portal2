@@ -3892,11 +3892,15 @@ test("contract addendum 5's rules: the broker's longest run (Supabase's document
   assert.deepEqual([lib.BROKER_RUN_MAX_MS, lib.ANSWER_LOST_MS], [400000, 420000], "400 s (paid plans; free 150 s) and 20 s for the way there");
   const src = read("js/map/plan-library.js");
   assert.match(src, /https:\/\/supabase\.com\/docs\/guides\/functions\/limits, read 2026-11-05\) - "Maximum Duration \(Wall clock limit\)": Free\s+plan 150 s, Paid plans 400 s/, "the page is cited where the number is");
-  // a lost answer: no answer at all, or a 5xx without the broker's own code (the gateway's 504 at its idle timeout)
+  // a lost answer: no answer at all, or a 5xx without the broker's own code (the gateway's 504 at its idle timeout) - its
+  // own code as js/repo/onedrive.js call() marks it (`broker`: the body names one of CONTRACT's codes; contract addendum 6
+  // H3: an `error` word that is not one of them is the gateway's)
   assert.deepEqual([{ code: "offline", status: 0 }, { code: "failed", status: 504, info: { code: "GATEWAY", message: "x" } }, { code: "failed", status: 502, info: null },
-    { code: "unavailable", status: 503, info: {} }, { code: "busy", status: 503, info: { error: "busy" } }, { code: "failed", status: 502, info: { error: "onedrive_failed" } },
-    { code: "plan_changed", status: 409, info: { error: "plan_changed" } }, { code: "auth", status: 401 }, null].map(lib.answerLostOf),
-  [true, true, true, true, false, false, false, false, false]);
+    { code: "unavailable", status: 503, info: {} }, { code: "busy", status: 503, info: { error: "busy" }, broker: true }, { code: "onedrive_failed", status: 502, info: { error: "onedrive_failed" }, broker: true },
+    { code: "plan_changed", status: 409, info: { error: "plan_changed" }, broker: true }, { code: "auth", status: 401 }, null,
+    { code: "failed", status: 504, info: { error: "Gateway Timeout" }, broker: false }, { code: "failed", status: 502, info: { error: "upstream_error" }, broker: false },
+    { code: "unavailable", status: 503, info: { error: "not-a-broker-code" }, broker: false }].map(lib.answerLostOf),
+  [true, true, true, true, false, false, false, false, false, true, true, true]);
   // the wait: from the later of the send's marks, ANSWER_LOST_MS; none without a mark; a mark in the future past a minute holds nothing
   const now = Date.parse("2026-11-05T12:00:00.000Z");
   const iso = (ms) => new Date(now + ms).toISOString();
@@ -4159,5 +4163,45 @@ test("every 503 the broker marks \"checking\" is the check, whatever its code (c
     await (await LIB.keepSave(F1.id, saveOf(savedProject(1 * MiB + 63, "PDFCACHE1", 91)))).sent;
     await settleDown();
     assert.deepEqual([ROW().local.state, ROW().local.code], ["failed", "busy"]);
+  } finally { LIB.useAgainClock(null); }
+});
+
+/* ── contract addendum 6 (the last repair): H2 a send that may have landed is settled before it is dropped; R4 the check
+   sticky per send; H3 a gateway's body is not the broker's answer ─────────────────────────────────────────────────── */
+
+test("a gateway's 5xx is not the broker's answer, whatever its body's `error` says (contract addendum 6 H3, the re-verifier's zz-g2): call() marks only a body naming one of the broker's codes (CONTRACT); a commit answered 504 {error: 'Gateway Timeout'} or 502 {error: 'upstream_error'} is a lost answer - asked once, the save waits ANSWER_LOST_MS in the lost answer's words, the person's Retry waits too; the broker's own 503 busy, 502 onedrive_failed and 500 server_error are answers", async () => {
+  await device();
+  for (const [status, body, own] of [[504, { error: "Gateway Timeout", message: "made up" }, false], [502, { error: "upstream_error" }, false], [503, { error: "not-a-broker-code" }, false],
+    [504, { code: "IDLE_TIMEOUT", message: "made up" }, false], [503, { error: "busy", message: "OneDrive is busy just now. Try again in a minute." }, true], [502, { error: "onedrive_failed" }, true],
+    [500, { error: "server_error" }, true]]) {
+    stub(() => http(status, body));
+    const e = await refusal(onedrive.planSaveDone("7", F1.id, "tk1", undefined));
+    assert.deepEqual([e.status, e.broker === true, lib.answerLostOf(e)], [status, own, !own], status + " " + JSON.stringify(body));
+  }
+  const timers = new Map();
+  let tn = 0;
+  LIB.useAgainClock({ set: (fn, ms) => { const id = ++tn; timers.set(id, { fn, ms }); return id; }, clear: (id) => { timers.delete(id); } });
+  const settleDown = async () => { for (let i = 0; i < 60; i++) await new Promise((r) => setTimeout(r, 5)); };
+  try {
+    for (const [status, body] of [[504, { error: "Gateway Timeout", message: "made up" }], [502, { error: "upstream_error", message: "made up" }], [504, { code: "IDLE_TIMEOUT", message: "made up" }]]) {
+      const tag = status + " " + JSON.stringify(body);
+      timers.clear();
+      await devicePlan();
+      const w = saveWorld({ deferred: true, realHash: true });
+      w.commitQueue.push(http(status, body));
+      const news = [];
+      const first = await (await LIB.keepSave(F1.id, saveOf(savedProject(2 * MiB + 3, "PDFCACHE1", 7)), (state) => news.push(state))).sent;
+      await settleDown();
+      const l = ROW().local;
+      assert.equal(first, null, tag + ": not sent yet");
+      assert.deepEqual([w.calls.filter((c) => c === "plan_save_commit").length, l.state, l.code, l.error, Number(l.fails) || 0],
+        [1, "checking", "answer_lost", lib.answerLostWords("iPad"), 0], tag + ": asked once, then it waits - never asked again at once");
+      assert.ok(Date.parse(l.sends[0].lost) > 0, tag + ": the send's answer marked lost");
+      assert.deepEqual(Array.from(timers.values()).map((t) => t.ms), [lib.ANSWER_LOST_MS], tag + ": E7's timer after the broker's longest run");
+      assert.ok(!news.includes("failed"), tag + ": " + JSON.stringify(news));
+      const e = await LIB.sendSaved(F1.id, { manual: true }).then(() => null, (x) => x);
+      assert.deepEqual([e && e.code, w.calls.filter((c) => c === "plan_save_commit").length], ["answer_lost", 1], tag + ": the Retry waits too");
+      await settleDown();
+    }
   } finally { LIB.useAgainClock(null); }
 });
