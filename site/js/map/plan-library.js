@@ -59,7 +59,9 @@
                                 follow it (contract addendum 5 G1: a why this page does not know, or none on
                                 plan_changed, is "unproved" - never the plain copy words); notPutBackTold its G3 words;
    * BROKER_RUN_MAX_MS / ANSWER_LOST_MS / answerLostOf / askWait / answerLostWords  one commit or settle at a time per
-                                send, and the wait after one whose answer never came (G2).
+                                send, and the wait after one whose answer never came (G2);
+   * unsettledWords             the words of a save whose send may have landed and that the broker could not settle now
+                                (contract addendum 6 H2: kept on this device, it waits - never "not sent").
    Pure module (node tests import it). */
 
 /** How often the portal asks OneDrive for new versions of the saved plans while one of its pages is open. */
@@ -390,14 +392,19 @@ export function projectBatches(records, n) {
                 "checking": the broker's version check waits on OneDrive - checkWaitOf - and asks again by itself);
       error, code, fails, retryAt   the last failed send and when it is tried again by itself;
       notSaved  how often OneDrive said it did not get this save whole (409 not_saved): past NOT_SAVED_MAX it waits;
-      sends     [{file, ticket, mode, name, size, at, hash, commit, why?, asking?, lost?}]: sessions this device opened
-                whose end it never heard (the page closed after the last byte, say) - settled with plan_save_done before
-                anything is sent again, so a save that landed is never sent twice (nor made into a copy of itself). The
+      sends     [{file, ticket, mode, name, size, at, hash, commit, why?, asking?, lost?, settled?, checking?}]: sessions
+                this device opened whose end it never heard (the page closed after the last byte, say) - settled with
+                plan_save_done before anything is sent again, so a save that landed is never sent twice (nor made into
+                a copy of itself). The
                 ticket is the broker's sealed word for plan_save_done, never an upload address: those stay in the
                 page's memory. `why` (a copy): "refused", "unproved" or "not_put_back" - the words it is told in.
                 `asking` (an ISO time): a plan_save_commit / plan_save_done for this session went to the broker then
                 and no answer came back yet (another window's request, or one whose page closed or slept); `lost`: one
-                whose answer this page saw lost - the next ask waits ANSWER_LOST_MS (askWait: contract addendum 5 G2);
+                whose answer this page saw lost - the next ask waits ANSWER_LOST_MS (askWait: contract addendum 5 G2).
+                `settled`: the broker answered this deferred replace's commit plan_changed or not_saved (its session
+                is over: a copy that lands after it lets it go - adoptSent; contract addendum 6 H2); `checking`: one
+                of its asks got the broker's 503 why "checking" - its later 503s are the check too, marked or not, until
+                another answer (R4);
       why?      "unproved": a settle or commit the broker could not prove (contract addendum 4 E1, addendum 5 G1), or
                 "not_put_back": this save went over an office save that OneDrive would not put back (G3) - the save
                 goes again as a copy, told in those words (kept by a later save of the same opening).}
@@ -647,7 +654,7 @@ export function keptAs(rec, f) {
 
 /**
  * The records once OneDrive has a save (`file`: the spooled copy that was sent; `ans`: plan_save_done's answer
- * {mode, id, name, size, modified, version}) -> {rec, copy, old}:
+ * {mode, id, name, size, modified, version}; `ticket`: the session that answer settles) -> {rec, copy, old}:
  *   replace, this record's waiting save: its bytes ARE the plan's current version - the record's copy from now on
  *     (nothing downloaded), the old copy retired (`old`: kept a week when it was handed to the takeoff app lately);
  *   replace, a save replaced since (a later Save came while this one was on its way): OneDrive's version moved to the
@@ -659,14 +666,20 @@ export function keptAs(rec, f) {
  * `why` "unproved" (a copy sent because the broker could not prove whether the plan holds an earlier send of it over an
  * office save - contract addendum 4 E1) or "not_put_back" (an earlier send went over an office save that OneDrive would
  * not put back - addendum 5 G3): `sent` keeps it, so the row never says "nothing was overwritten".
+ * A deferred replace's session of this file that no broker answer settled (its bytes may be on the plan: contract
+ * addendum 6 H2) is never let go: it stays in `sends`, and while the save itself would go with it (this record's own
+ * save adopted) nothing is adopted -> {rec: null, copy: null, old: [], open: true} (the save waits: settled first).
  */
-export function adoptSent(rec, file, ans, nowIso, why) {
+export function adoptSent(rec, file, ans, nowIso, why, ticket) {
   if (!rec) return { rec: null, copy: null, old: [file] };
   const mine = hasLocal(rec) && rec.local.file === file;
   const replace = ans.mode === "replace" && ans.id === rec.itemId;
   const ver = { version: ans.version, size: Number(ans.size), modified: ans.modified || null, name: ans.name || rec.name, folder: rec.folder };
-  // the sessions of this file are settled; another one's (an earlier save it replaced) stay to be
-  const rest = (l) => (Array.isArray(l.sends) ? l.sends.filter((s) => s && s.file !== file) : []);
+  // a deferred replace's session of this file that this answer does not settle and no broker answer did before (H2)
+  const open = (s) => !!s && s.file === file && s.commit === "broker" && s.mode !== "copy" && s.settled !== true && s.ticket !== ticket;
+  if (mine && Array.isArray(rec.local.sends) && rec.local.sends.some(open)) return { rec: null, copy: null, old: [], open: true };
+  // the sessions of this file are settled (but an open one, above); another one's (an earlier save it replaced) stay to be
+  const rest = (l) => (Array.isArray(l.sends) ? l.sends.filter((s) => s && (s.file !== file || open(s))) : []);
   if (replace) {
     if (!mine) {
       const local = hasLocal(rec) ? Object.assign({}, rec.local, { base: ans.version, sends: rest(rec.local) }) : rec.local || null;
@@ -743,6 +756,20 @@ export function uncheckedTold(device) {
     "in the office while your " + (device || "device") + " was sending, ask them to check the plan's version history in OneDrive.";
 }
 
+/** The words of a save whose send may have landed (a deferred replace whose last byte went up, its commit asked, or the
+    broker's check started) and that the broker could not settle now - its commit or settle answered 401 (`code`
+    "auth": the sign-in expired), 403 / 404 ("forbidden", "not_found": this account may not send this plan, or see its
+    project, now) or another refusal (contract addendum 6 H2): the row's and the frame bar's. The save is kept on this
+    device and waits - the portal settles that send before anything is sent again; never "not sent", never "nothing was
+    overwritten", never "in OneDrive" (it may be there, nobody knows yet). */
+export function unsettledWords(device, code) {
+  const d = device || "device";
+  const why = code === "auth" ? "Your sign-in to the portal has expired - sign in again. "
+    : code === "forbidden" || code === "not_found" ? "This account cannot send this plan to OneDrive just now - ask the office. "
+    : "The portal's OneDrive connection did not take this save's last step. ";
+  return why + "Your save is kept on this " + d + " and waits: it may already be in OneDrive, and the portal checks it there before anything is sent again.";
+}
+
 /** A send in progress: 0-99 (100 only once OneDrive said it has it). */
 function pctOf(sent, size) {
   return Number(size) > 0 ? Math.max(0, Math.min(99, Math.floor((Number(sent) / Number(size)) * 100))) : 0;
@@ -792,6 +819,9 @@ export function saveText(st, device) {
   if (st.state === "failed" && st.code === "unchecked") return uncheckedWords(d);
   // a save waiting for its hash (contract addendum 4 E1): nothing to retry - it goes once this device has worked it out
   if (st.state === "failed" && st.code === "need_hash") return needHashWords(d);
+  // a send that may have landed and that the broker could not settle now (contract addendum 6 H2): it waits, kept here -
+  // never "Not sent"
+  if (st.state === "failed" && st.code === "unsettled") return st.why || unsettledWords(d);
   if (st.state === "failed") return "Not sent — tap to retry" + (st.why ? " (" + String(st.why).replace(/[.\s]+$/, "") + ")" : "");
   if (st.state === "sent") return "Sent to OneDrive";
   // a copy the broker could not prove went over nothing (E1's "unproved"): never "nothing was overwritten"

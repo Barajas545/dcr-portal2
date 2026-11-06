@@ -397,7 +397,7 @@ test("the Plans Library offers a save only in the frame, to a person who may sav
   // its one use: a deferred replace's commit, handed from the uploader's job (memory) to the broker (plan_save_commit) -
   // never written anywhere (local.sends keeps the ticket, never the address)
   assert.equal(lib.replace(/\(j\.session && j\.session\.name\)/g, "").split("\n").filter((l) => /uploadUrl/.test(l)).length, 1, "the library touches an upload address on one line only");
-  assert.match(lib, /const ticket = j\.session\.ticket;\s*return await askBroker\(m\.key, ticket, \(\) => onedrive\.planSaveCommit\(\{ projectId: j\.projectId, itemId: m\.itemId, ticket, uploadUrl: j\.session\.uploadUrl, hash: m\.hash,\s*landed: j\.chunkLanded === true \}\)\);/,
+  assert.match(lib, /const ticket = j\.session\.ticket;\s*try \{\s*return await askBroker\(m\.key, ticket, \(\) => onedrive\.planSaveCommit\(\{ projectId: j\.projectId, itemId: m\.itemId, ticket, uploadUrl: j\.session\.uploadUrl, hash: m\.hash,\s*landed: j\.chunkLanded === true \}\)\);/,
     "the commit's, from the job's session to the broker (and whether its last chunk answered the file: addendum 3 D3) - one ask of the send at a time (contract addendum 5 G2)");
   // the pages: the person is offered save back through openOnDevice (me), and Send now / Retry
   assert.match(code(read("js/pages/plan-buttons.js")), /L\.sendSaved\(id, \{ manual: true \}\)/);

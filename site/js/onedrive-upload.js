@@ -56,7 +56,14 @@
    (js/plan-library.js askBroker, contract addendum 5 G2: the answer to this send's commit or settle never came back, or
    another window's request for it may still run) is never asked again in the job's own loop: the job ends failed with
    its session (and its item) kept, the error's code and Retry-After - the Plans Library asks again once the broker's
-   longest run is over.
+   longest run is over. Once a commit of the job's session got the check's 503, every later 503 of it is the check too,
+   marked or not, until the broker answers anything else (contract addendum 6 H2, R4: the broker reads "checking" per
+   request). A commit the broker refuses otherwise - 401 (the sign-in expired), 403, 400 (a ticket or an address it does
+   not take), 404, any other final code - keeps the session too: every byte of it went up, so it may hold landed bytes
+   (an earlier commit of it whose answer was lost, OneDrive committing at the last chunk, the check begun), and only the
+   broker's settle of it says what OneDrive holds. The job ends failed with `settle` (H2): the Plans Library settles that
+   session (plan_save_done) before anything is sent again, and never commits it again by itself. Only the broker's
+   not_saved (OneDrive does not hold it) or plan_changed (it dropped the session) ends a session here.
 
    xhrTransport() is the page's transport (XMLHttpRequest for upload progress, no credentials). */
 
@@ -132,6 +139,9 @@ export function createUploader(parts) {
       sent: j.sent, pct: j.size ? Math.min(100, Math.round((j.sent / j.size) * 100)) : 0, state: j.state, error: j.error,
       tries: j.tries, result: j.result, landed: !!j.landed, code: j.code || "", retryAfter: j.retryAfter || null, checking: !!j.checking,
       canRetry: (j.state === "failed" || j.state === "cancelled") && !j.landed,
+      // (the job still holds its session - a resume goes on with it; `settle`: one the broker would not commit that may
+      // hold landed bytes - settled first, never committed again by itself: contract addendum 6 H2)
+      session: !!j.session, settle: !!j.settle,
     };
   }
   function list() { return jobs.map(pub); }
@@ -352,13 +362,16 @@ export function createUploader(parts) {
     for (;;) {
       try {
         const r = await d.broker.commit(j);
-        setState(j, "done", { result: r, error: "", checking: false });
+        setState(j, "done", { result: r, error: "", checking: false, settle: false });
         return null;
       } catch (e) {
         if (stopped(j)) return null;
         const code = String((e && e.code) || "");
-        // the broker's version check waits on OneDrive (its 503's why "checking"): the job says so while it asks again
-        const checking = !!(e && Number(e.status) === 503 && e.info && e.info.why === "checking");
+        // the broker's version check waits on OneDrive (its 503's why "checking"): the job says so while it asks again -
+        // and from then on every 503 of this send is the check, marked or not, until the broker answers anything else
+        // (contract addendum 6 H2, R4); a hold or no answer at all is no answer: nothing changes
+        const answered = !(e && (e.hold || code === "offline"));
+        const checking = answered ? !!(e && Number(e.status) === 503 && ((e.info && e.info.why === "checking") || j.checking)) : !!j.checking;
         if (checking !== !!j.checking) { j.checking = checking; emitNow({ type: "checking", job: pub(j) }); }
         if (e && e.restart) { j.session = null; return "restart"; }
         if (gone && code === "not_saved") { j.session = null; return "restart"; }
@@ -379,10 +392,18 @@ export function createUploader(parts) {
             retryAfter: e && Number(e.retryAfter) > 0 ? Number(e.retryAfter) : null });
           return null;
         }
-        // not_saved, or a refusal (a ticket or an address the broker does not take): nothing of this session counts -
+        // not_saved (the broker's answer: OneDrive does not hold this session's bytes): nothing of this session counts -
         // Retry sends it again from a new session
-        j.session = null;
-        setState(j, "failed", { error: (e && e.message) || "OneDrive did not get the whole file - send it again.", code });
+        if (code === "not_saved") {
+          j.session = null;
+          setState(j, "failed", { error: (e && e.message) || "OneDrive did not get the whole file - send it again.", code });
+          return null;
+        }
+        // any other refusal (401 auth or "Invalid JWT", 403, 400 invalid, 404 not_found, a final code): the session may
+        // hold landed bytes - it is KEPT, and the job ends `settle`: the Plans Library settles it with plan_save_done
+        // before anything is sent again (contract addendum 6 H2)
+        j.settle = true;
+        setState(j, "failed", { error: (e && e.message) || "OneDrive did not take the save's last step.", code });
         return null;
       }
     }

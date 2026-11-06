@@ -59,6 +59,7 @@ import {
   purgeText, lostSave, onlineNote, hashOk, sendWaitMs, refusedTold, saveBackOffWords, uncheckedReplace, uncheckedWords,
   needHashWords, unprovedTold, uncheckedTold, checkAgainMs, checkWaitOf, checkingWords, LONG_WAIT_MS,
   ANSWER_LOST_MS, CHECK_AGAIN_MIN_MS, answerLostOf, askWait, answerLostWords, copyWhyOf, notSavedWhyOf, strongerWhy, notPutBackTold,
+  unsettledWords,
 } from "./map/plan-library.js";
 import { planFilesFor, PLAN_SAVE_BACK, saveBackFor, deviceWord, whoWord, planWord } from "./map/plans.js";
 import { openInTakeoff, iosHomeRefused, usesFrame, READY_KEY, IOS_HOME } from "./plan-handoff.js";
@@ -1391,6 +1392,12 @@ async function openOnDeviceNow(o, itemId, key, onDone, onStep) {
    why this page does not know - or a plan_changed with none - is told as "unproved" (G1: copyTold and refusedTold only
    on the broker's "changed" and "refused"); "not_put_back" (G3) is kept with the save and told once the copy lands
    (notPutBackTold); every 503 the broker marks why "checking" is the check, whatever its code (G4).
+   Contract addendum 6 (H2): a deferred replace's session the broker would not commit or settle (401, 403, 400, 404, a
+   final code) may hold landed bytes - it is kept and settled with plan_save_done before any new session (sendNow:
+   settle skips a parked job's ticket only while a resume commits it), the save waits meanwhile in unsettledWords
+   ("unsettled", never "not sent", never final), and adoptSent never lets go a session no broker answer settled
+   (`settled`); once a send was in the check, its later 503s are the check too (R4: the uploader's sticky `checking`,
+   the send's `checking` mark for a later page's settle).
 
    While a save is kept or sent the frame's Close asks first (plan-frame.js guard) and leaving the page asks too. */
 
@@ -1437,6 +1444,13 @@ function held(ms, cause) {
   return err("answer_lost", answerLostWords(deviceWord(here())), { hold: true, retryAfter: Math.max(1, Math.ceil(Number(ms) / 1000)), cause: cause || null });
 }
 
+/** A send that may have landed and that the broker could not settle now (contract addendum 6 H2: `x` its refusal - 401
+    "auth", 403, 404, 400 but a ticket that no longer unseals, ...): code "unsettled" - the save waits on this device in
+    unsettledWords, its session kept in sends and settled before anything is sent again; never "not sent", never final. */
+function unsettled(x) {
+  return err("unsettled", unsettledWords(deviceWord(here()), x && x.code), { cause: (x && x.code) || "" });
+}
+
 /** The save waiting on record `key` keeps `why` ("unproved" or "not_put_back": map/plan-library.js strongerWhy - the
     stronger of it and what it had): its later sends go as a copy, told in those words. Any save of the record (`file` is
     the one whose answer said so; a later save of the same opening builds on the same version, so it is marked too). */
@@ -1454,8 +1468,10 @@ function sendAt(c, ticket) {
   return c && hasLocal(c) && Array.isArray(c.local.sends) ? c.local.sends.findIndex((s) => s && s.ticket === ticket) : -1;
 }
 /** The send `ticket`'s marks changed (`patch`: {asking?, lost?}) - only while its `asking` is still `at` (this page's
-    own ask: never another window's mark). */
-async function markAsk(key, ticket, at, patch) {
+    own ask: never another window's mark). `answer` (the broker's: null for a 2xx, else its error; undefined - none came):
+    a 503 why "checking" marks the send `checking`, a 503 without it keeps the mark, any other answer clears it (contract
+    addendum 6 H2, R4: once in the check, a send's later 503s are the check too - settle reads the mark). */
+async function markAsk(key, ticket, at, patch, answer) {
   try {
     await mutate("plans", key, function (c) {
       const i = sendAt(c, ticket);
@@ -1464,6 +1480,10 @@ async function markAsk(key, ticket, at, patch) {
       const s = Object.assign({}, sends[i], patch);
       if (!s.asking) delete s.asking;
       if (!s.lost) delete s.lost;
+      if (answer !== undefined) {
+        if (answer && Number(answer.status) === 503) { if (checkWaitOf(answer)) s.checking = true; }
+        else delete s.checking;
+      }
       sends[i] = s;
       return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
     });
@@ -1495,12 +1515,25 @@ async function askNow(key, ticket, fn, elsewhere) {
     out = await fn();
   } catch (x) {
     const lost = answerLostOf(x);
-    if (at) await markAsk(key, ticket, at, lost ? { lost: nowIso() } : { asking: null });
+    if (at) await markAsk(key, ticket, at, lost ? { lost: nowIso() } : { asking: null }, lost ? undefined : x);
     if (lost) throw held(ANSWER_LOST_MS, x);
     throw x;
   }
-  if (at) await markAsk(key, ticket, at, { asking: null });
+  if (at) await markAsk(key, ticket, at, { asking: null }, null);
   return out;
+}
+/** The send `ticket` of record `key` the broker settled (contract addendum 6 H2: its commit answered plan_changed or
+    not_saved - the session is over): marked `settled`, so a copy that lands after it lets it go (adoptSent). */
+async function markSettled(key, ticket) {
+  try {
+    await mutate("plans", key, function (c) {
+      const i = sendAt(c, ticket);
+      if (i === -1 || c.local.sends[i].settled === true) return undefined;
+      const sends = c.local.sends.slice();
+      sends[i] = Object.assign({}, sends[i], { settled: true });
+      return Object.assign({}, c, { local: Object.assign({}, c.local, { sends }) });
+    });
+  } catch (e) { /* the storage did not answer: the next settle asks the broker of it again (and lets it go then) */ }
 }
 /** The send `ticket` of plan `key` asked of the broker (fn: its plan_save_commit or plan_save_done) - never two at once:
     this page's asks of it one after the other, a Web Lock per send across windows where the browser has them (one held
@@ -1603,11 +1636,14 @@ const planBroker = {
     const m = j.meta || {};
     // (the session was started with the hash: a commit without one is never asked - contract addendum 4 E1)
     if (!hashOk(m.hash)) throw needHash();
+    const ticket = j.session.ticket;
     try {
-      const ticket = j.session.ticket;
       return await askBroker(m.key, ticket, () => onedrive.planSaveCommit({ projectId: j.projectId, itemId: m.itemId, ticket, uploadUrl: j.session.uploadUrl, hash: m.hash,
         landed: j.chunkLanded === true }));
     } catch (x) {
+      // the broker settled this session (it dropped it, or OneDrive does not hold it): a copy that lands after it may let
+      // it go - any other answer leaves it open (contract addendum 6 H2)
+      if (x && (x.code === "plan_changed" || (x.code === "not_saved" && !(x.info && x.info.need)))) await markSettled(m.key, ticket);
       if (x && x.code === "plan_changed") {
         // the broker dropped the session (the plan changed, or OneDrive would not replace it, or it could not prove
         // whether the plan holds this save over an office save, or the office save under it could not be put back):
@@ -1982,9 +2018,11 @@ async function failSend(key, file, x) {
     });
   } catch (e) { /* the message has reached the page */ }
   changed(key);
-  news(key, "failed", { why: x && x.message });
+  // (a send that may have landed and waits to be settled - contract addendum 6 H2: the app hears nothing new, never
+  // "failed"; its last line stays, the bar says the exact words)
+  if (!(x && x.code === "unsettled")) news(key, "failed", { why: x && x.message });
   if (!frameIsOpen()) return;
-  if (x && (x.code === "save_back_off" || x.code === "unchecked" || x.code === "need_hash")) frameSay(x.message, "warn");
+  if (x && (x.code === "save_back_off" || x.code === "unchecked" || x.code === "need_hash" || x.code === "unsettled")) frameSay(x.message, "warn");
   else frameSay("Your save is kept on this " + deviceWord(here()) + " but was not sent to OneDrive: " + String((x && x.message) || "").replace(/[.\s]+$/, "") + ".", "warn");
 }
 
@@ -2030,9 +2068,11 @@ async function holdSend(key, file, x) {
  * earlier send of this save over an office save): the copy told in words that never say "nothing was overwritten"
  * (unprovedTold), the app told "sent" likewise. A replace nobody could check against office saves (E2: `why`
  * "unchecked" - found by its hash alone -, or the broker's `verified: false`): told so (uncheckedTold), never the plain
- * "it replaced the plan". -> {sent, mode, name}.
+ * "it replaced the plan". `ticket`: the session this answer settles - a deferred replace's other session of this save
+ * that no broker answer settled is never let go (adoptSent: the save is not adopted then - "unsettled", it waits and is
+ * settled first; contract addendum 6 H2). -> {sent, mode, name}.
  */
-async function commitSent(key, file, ans, size, why) {
+async function commitSent(key, file, ans, size, why, ticket) {
   if (!ans || ans.saved !== true || Number(ans.size) !== Number(size)) {
     throw err("not_saved", "OneDrive did not get the whole file - it is sent again.");
   }
@@ -2045,9 +2085,10 @@ async function commitSent(key, file, ans, size, why) {
   const cw = ans.mode !== "copy" ? why : !why || why === "changed" ? "changed" : copyWhyOf(why);
   let a = null;
   await mutate("plans", key, function (c) {
-    a = adoptSent(c, file, ans, nowIso(), cw);
+    a = adoptSent(c, file, ans, nowIso(), cw, ticket);
     return a.rec || undefined;
   });
+  if (a && a.open) throw unsettled(null);
   if (!a) a = { rec: null, copy: null, old: [file] };
   if (a.copy) {
     const copy = a.copy;
@@ -2130,6 +2171,7 @@ async function landedByHash(r, s) {
 async function settle(key, skip) {
   const r = await get("plans", key);
   if (!r || !hasLocal(r)) return null;
+  let waits = null;
   for (const s of (Array.isArray(r.local.sends) ? r.local.sends : []).slice()) {
     if (!s || !s.ticket || s.ticket === skip) continue;
     const own = s.file === r.local.file;
@@ -2163,10 +2205,21 @@ async function settle(key, skip) {
         throw x;
       }
       // the broker's version check waits on OneDrive (its 503 why "checking", whatever its code - G4) - the save is
-      // being checked, asked again at the Retry-After (E7), never "not sent"
-      if (checkWaitOf(x)) {
+      // being checked, asked again at the Retry-After (E7), never "not sent"; and once this send was in the check, its
+      // later 503s are the check too, marked or not, until another answer (contract addendum 6 H2, R4)
+      if (checkWaitOf(x) || (x && Number(x.status) === 503 && s.checking === true)) {
         const y = checking(x.retryAfter);
         await checkSend(key, r.local.file, y);
+        throw y;
+      }
+      // a deferred replace's session the broker would not settle now (contract addendum 6 H2: its bytes may be on the
+      // plan) - the sign-in expired (401), this account may not send the plan or see its project now (403, 404: the
+      // broker's gate), a request it does not take (400 but a ticket that no longer unseals): it stays in sends and the
+      // save waits on this device, told so - never dropped, never a new session beside it
+      const dc = s.commit === "broker" && s.mode !== "copy";
+      if (dc && (code === "auth" || code === "forbidden" || code === "not_found" || (code === "invalid" && x.field !== "ticket"))) {
+        const y = unsettled(x);
+        await failSend(key, r.local.file, y);
         throw y;
       }
       // a ticket that no longer unseals (past the broker's 30 days; its secret rotated): looked for by the save's hash
@@ -2184,7 +2237,15 @@ async function settle(key, skip) {
         await failSend(key, r.local.file, y);
         throw y;
       }
-      const out = await commitSent(key, s.file, ans, s.size, byHash && ans.mode === "replace" ? "unchecked" : s.why);
+      let out;
+      try {
+        out = await commitSent(key, s.file, ans, s.size, byHash && ans.mode === "replace" ? "unchecked" : s.why, s.ticket);
+      } catch (x) {
+        // (another deferred replace of this save that no broker answer settled - contract addendum 6 H2: this one stays
+        // in sends, the others are settled now, and nothing new is sent before it is adopted)
+        if (x && x.code === "unsettled") { waits = x; continue; }
+        throw x;
+      }
       if (s.file === r.local.file) return out;
       continue;
     }
@@ -2192,6 +2253,10 @@ async function settle(key, skip) {
       if (!c || !hasLocal(c) || !Array.isArray(c.local.sends)) return undefined;
       return Object.assign({}, c, { local: Object.assign({}, c.local, { sends: c.local.sends.filter((x) => x && x.ticket !== s.ticket) }) });
     });
+  }
+  if (waits) {
+    await failSend(key, r.local.file, waits);
+    throw waits;
   }
   return null;
 }
@@ -2221,9 +2286,19 @@ async function sendNow(key) {
   let r = await get("plans", key);
   if (!r || !hasLocal(r)) return { none: true };
   await hashKept(key);
-  const park = parked[key] && parked[key].file === r.local.file ? parked[key] : null;
-  const done = await settle(key, park && park.meta ? park.meta.ticket : null);
-  if (done && done.sent) return done;
+  let park = parked[key] && parked[key].file === r.local.file ? parked[key] : null;
+  // a parked job's session is left to its resume (settle skips its ticket) only while the job holds a session that the
+  // resume commits; one the broker would not commit that may hold landed bytes (park.settle), or a job with no session,
+  // is settled like any send whose end this page never heard - with plan_save_done and its hash, before any new session
+  // (contract addendum 6 H2)
+  const resumes = !!(park && park.meta && park.session && !park.settle);
+  const done = await settle(key, resumes ? park.meta.ticket : null);
+  // (settled now: that session is never committed again - a new job goes on from what the broker said)
+  if (park && park.settle) { uploader().remove(park.id); delete parked[key]; park = null; }
+  if (done && done.sent) {
+    if (park) { uploader().remove(park.id); delete parked[key]; }
+    return done;
+  }
   if (!park) await hashBase(key);
   r = await get("plans", key);
   if (!r || !hasLocal(r)) return { none: true };
@@ -2279,7 +2354,7 @@ async function sendNow(key) {
     up.remove(id);
     try {
       // (a copy's why: the one the broker's plan_changed gave - or, should a copy's own answer carry one, that one)
-      return await commitSent(key, file, end.result, f.size, (meta && meta.why) || (end.result && end.result.why));
+      return await commitSent(key, file, end.result, f.size, (meta && meta.why) || (end.result && end.result.why), meta && meta.ticket);
     } catch (x) {
       await failSend(key, file, x);
       throw x;
@@ -2287,7 +2362,7 @@ async function sendNow(key) {
   }
   if (end.state === "cancelled") { up.remove(id); changed(key); return { cancelled: true }; }
   // not sent: its session kept for a resume in this page when it lives (a connection that did not come back)
-  if (end.canRetry && end.code !== "not_saved") parked[key] = { id, file, meta, checking: !!end.checking }; else up.remove(id);
+  if (end.canRetry && end.code !== "not_saved") parked[key] = { id, file, meta, checking: !!end.checking, session: !!end.session, settle: !!end.settle }; else up.remove(id);
   // the answer to its commit or settle never came back, or another window's may still run (contract addendum 5 G2: the
   // job ended on a hold, its session kept): the save waits the broker's longest run - its own state, asked again then
   // (E7's timer at the Retry-After) - never "not sent"
@@ -2301,6 +2376,13 @@ async function sendNow(key) {
   if (end.checking) {
     const y = checking(end.retryAfter);
     await checkSend(key, file, y);
+    throw y;
+  }
+  // the broker would not commit a session that may hold landed bytes (401, 403, a ticket or plan it does not take -
+  // contract addendum 6 H2): kept, it waits - the next send settles it first (a hash it wants first: need_hash's words)
+  if (end.settle && end.code !== "need_hash") {
+    const y = unsettled({ code: end.code });
+    await failSend(key, file, y);
     throw y;
   }
   // (a commit the broker answered 503 with a Retry-After carries it: asked again on a timer - contract addendum 4 E7)

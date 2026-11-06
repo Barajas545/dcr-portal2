@@ -619,3 +619,64 @@ test("uploader, a commit 'broker' session: the broker's version check's 503 with
   const [k1] = await settle(up2);
   assert.deepEqual([k1.state, b2.sessions, b2.commits.length], ["done", 1, 3]);
 });
+
+test("uploader, a commit 'broker' session the broker refuses otherwise (contract addendum 6 H2): 401 auth ('Invalid JWT'), 403 forbidden, 400 invalid ticket, 404 not_found, a final code - every byte of it went up, so it may hold landed bytes: the session is KEPT and the job ends `settle` (asked once, never a new session); only the broker's not_saved drops it, and plan_changed starts the copy as before", async () => {
+  for (const step of [{ code: "auth", status: 401, message: "Your sign-in has expired. Please sign in again." }, { code: "forbidden", status: 403, message: "x" },
+    { code: "invalid", status: 400, field: "ticket", message: "x" }, { code: "not_found", status: 404, message: "x" }, { code: "bad_link", status: 502, message: "x" },
+    { code: "need_hash", message: "This save is getting ready to send - it waits on this iPad." }]) {
+    const g = deferredGraph(), b = deferredBroker(g);
+    b.cscript = [step];
+    const up = make(g, b);
+    const size = CHUNK_UNIT + 5;
+    up.add({ projectId: 7, file: file(size, "A.takeoff"), name: "A.takeoff", meta: {} });
+    const [j] = await settle(up);
+    assert.deepEqual([j.state, j.code, j.session, j.settle, j.canRetry, b.sessions, b.commits.length, bytesSent(g)], ["failed", step.code, true, true, true, 1, 1, size], step.code);
+  }
+  // not_saved: OneDrive does not hold this session's bytes (the broker's answer) - the session goes, Retry starts anew
+  const g2 = deferredGraph(), b2 = deferredBroker(g2);
+  b2.cscript = [{ code: "not_saved", status: 409, message: "OneDrive did not get the whole file - send it again." }];
+  const up2 = make(g2, b2);
+  up2.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "B.takeoff"), name: "B.takeoff", meta: {} });
+  const [k] = await settle(up2);
+  assert.deepEqual([k.state, k.code, k.session, k.settle], ["failed", "not_saved", false, false]);
+  // done: neither
+  const g3 = deferredGraph(), b3 = deferredBroker(g3);
+  const up3 = make(g3, b3);
+  up3.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "C.takeoff"), name: "C.takeoff", meta: {} });
+  const [m] = await settle(up3);
+  assert.deepEqual([m.state, m.settle], ["done", false]);
+});
+
+test("uploader, R4 (contract addendum 6 H2): once a commit got the broker's check (its 503 why \"checking\"), the session's later 503s are the check too, marked or not - the job stays `checking` and ends failed IN the check (never \"OneDrive's last step did not get through\"); a hold or no answer changes nothing; any other answer of the broker ends it", async () => {
+  const check = { code: "busy", status: 503, retryAfter: 30, info: { error: "busy", why: "checking" }, message: "OneDrive is busy just now: try again in a minute." };
+  const busy = () => ({ code: "busy", status: 503, retryAfter: 30, info: { error: "busy" }, message: "x" });
+  const offline = () => ({ code: "offline", status: 0, message: "No connection to DCR just now." });
+  const run = async (cscript, extra) => {
+    const g = deferredGraph(), b = deferredBroker(g);
+    b.cscript = cscript;
+    const seen = [];
+    const up = make(g, b, extra);
+    up.onChange((items, evt) => { if (evt && evt.type === "checking") seen.push(evt.job.checking); });
+    up.add({ projectId: 7, file: file(CHUNK_UNIT + 5, "A.takeoff"), name: "A.takeoff", meta: {} });
+    const [j] = await settle(up);
+    return { j, seen, b };
+  };
+  // the check, then two 503s the broker did not mark (it reads G4 per request): the tries spent in the check
+  const a = await run([check, busy(), busy()], { maxTries: 3 });
+  assert.deepEqual([a.j.state, a.j.checking, a.j.session, a.j.error, a.seen, a.b.commits.length], ["failed", true, true, "Your save is being checked against office saves in OneDrive.", [true], 3]);
+  // no answer in between (offline): nothing changes - still the check
+  const c = await run([check, offline(), busy()], { maxTries: 3 });
+  assert.deepEqual([c.j.state, c.j.checking, c.seen], ["failed", true, [true]]);
+  // the check, an unmarked 503, then the commit answers: done, the check over
+  const d = await run([check, busy()]);
+  assert.deepEqual([d.j.state, d.j.checking, d.seen], ["done", false, [true]]);
+  // the check, then the broker refuses (401): over - the job waits to be settled (H2), not in the check
+  const e = await run([check, { code: "auth", status: 401, message: "Your sign-in has expired. Please sign in again." }]);
+  assert.deepEqual([e.j.state, e.j.checking, e.j.settle, e.seen], ["failed", false, true, [true, false]]);
+  // the check, then plan_changed (the broker dropped the session): over - the copy goes, not in the check
+  const f = await run([check, { code: "plan_changed", status: 409, message: "x", info: { retry: "copy" } }]);
+  assert.deepEqual([f.j.state, f.j.checking, f.seen], ["done", false, [true, false]]);
+  // never in the check: an unmarked 503 is OneDrive busy, as before
+  const h = await run([busy(), busy()], { maxTries: 2 });
+  assert.deepEqual([h.j.state, h.j.checking, h.j.error, h.seen], ["failed", false, "Your save is sent; OneDrive's last step did not get through. Retry.", []]);
+});
