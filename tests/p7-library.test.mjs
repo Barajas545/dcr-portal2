@@ -4505,3 +4505,16 @@ test("a save is never adopted while another deferred replace of it is open (cont
     assert.deepEqual(toasts, [lib.copyTold(COPY1, "iPad")], "told on the broker's proof (tk99's plain not_saved)");
   } finally { delete globalThis.DCR2; }
 });
+
+test("a kept session the broker settles is never committed again (contract addendum 6 H2): the commit refused at once (403: the person's gate), the save waits; once the broker settles that session (its plain not_saved: the plan never held it), the save goes on in a NEW session - the kept one is let go, never resumed", async () => {
+  await devicePlan();
+  const w = saveWorld({ deferred: true, realHash: true });
+  w.commitQueue.push(http(403, { error: "forbidden", message: "made up" }));
+  const p = savedProject(1 * MiB + 67, "PDFCACHE1", 93);
+  await (await LIB.keepSave(F1.id, saveOf(p))).sent;
+  assert.deepEqual([w.calls, ROW().local.code, ROW().local.sends.map((s) => s.ticket)], [["plan_save_session", "plan_save_commit"], "unsettled", ["tk1"]]);
+  const out = await LIB.sendSaved(F1.id, { manual: true });
+  assert.deepEqual([w.calls, w.bodies.map((b) => b.ticket || "")], [["plan_save_session", "plan_save_commit", "plan_save_done", "plan_save_session", "plan_save_commit"], ["", "tk1", "tk1", "", "tk2"]],
+    "tk1 settled, then a new session (tk2) committed - tk1's never asked again");
+  assert.deepEqual([out.sent, out.mode, ROW().local, ROW().sent.mode], [true, "replace", null, "replace"]);
+});
