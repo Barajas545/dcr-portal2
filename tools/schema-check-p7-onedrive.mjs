@@ -42,12 +42,18 @@
      "unproved" from plan_save_commit (plan_changed) and plan_save_done (not_saved), nothing put back - a retried commit
      after the check's 503 with Microsoft keeping the committed session usable (checked as a commit and put back, never
      the same upload as a copy: E3) and an identical re-save found landed without its commit (verified, nothing put back);
-     and, once the broker has the final checker's round 3b (handler.ts shownUnder), the check's own 503 with why
-     "checking" - read by repo/onedrive.js, map/plan-library.js checkWaitOf and the uploader's job (checking, never "not
-     sent") -, a newer office save on top of an iPad save that went over one (the retry after OneDrive's late hash; a
-     later page's plan_save_done) answering "unproved" with the admin's line, nothing put back - the iPad's bytes right on
-     the base the plain plan_changed -, and two commits of one save overlapping (Microsoft's 412 to the second: read
-     afresh, checked, a replace - never the same bytes as a copy);
+     and, once the broker has the final checker's round 3b (handler.ts shownUnder; listed since its repair round 4), the
+     check's own 503 with why "checking" - read by repo/onedrive.js, map/plan-library.js checkWaitOf and the uploader's job
+     (checking, never "not sent") -, a newer office save on top of an iPad save that went over one (the retry after
+     OneDrive's late hash; a later page's plan_save_done) answering "unproved" with the admin's line, nothing put back -
+     the iPad's bytes right on the base the plain plan_changed before the repair round 4, "unproved" since -, and two
+     commits of one save overlapping (Microsoft's 412 to the second: read afresh, checked, a replace - never the same bytes
+     as a copy); and, once the broker has its repair round 4 (contract addendum 5: PLAN_NOT_PUT_BACK), ten or more office
+     saves on top of a crossing (a later page's plan_save_done: unproved, the whole first page read), a restore Microsoft
+     keeps refusing (503 checking for HASH_WAIT_MS, then plan_changed / not_saved why "not_put_back" - Portal 2's copyWhyOf
+     and notSavedWhyOf, its words), the listing's 503 after a 2xx commit (why "checking": the uploader's job in the check)
+     while a 503 before any commit stays unmarked, and two commits of one save overlapping with the If-Match ignored and
+     the session usable (the device's own double commit: verified, nothing put back);
    * every role lists (no folder yet: folder_exists false); can_upload and can_make_folder as the database answers them
      (the switch: an admin always; a lead, a field person and a manager with prices when it is ticked; never a manager
      without it, a viewer, the agents account or a turned-off person); a deleted project 404; signed out 401;
@@ -124,7 +130,11 @@ export async function run(h) {
   const HAS_R3 = HAS_R2 && typeof fn.PLAN_UNPROVED === "string" && typeof fn.NEED_HASH === "string";
   // and the final checker's round 3b (DCR Desktop 2 9969d61: a newer office save on top is "unproved", the check's own
   // 503 says why "checking", a commit's 412 is decided on a fresh walk) - no new export: its listing rule is the mark
-  const HAS_R3B = HAS_R3 && /function shownUnder\(/.test(readFileSync(path.join(FN, "handler.ts"), "utf8"));
+  // (shownUnder; since the broker's repair round 4, listed)
+  const HAS_R3B = HAS_R3 && /function (shownUnder|listed)\(/.test(readFileSync(path.join(FN, "handler.ts"), "utf8"));
+  // and its repair round 4 (contract addendum 5: plain words only on proof, not_put_back, every 503 after the bytes may be
+  // on the plan says "checking", the device's own double commit verified)
+  const HAS_R4 = HAS_R3B && typeof fn.PLAN_NOT_PUT_BACK === "string";
   let onFetch = null;                  // a check's: run before a request reaches the fake Graph (an office save just then)
   let takeoffSet = true;               // false: the settings without ONEDRIVE_TAKEOFF_ITEM_ID (the takeoff folder not set up)
   let planSave;                        // ONEDRIVE_PLAN_SAVE for a check (undefined: test_world.ts's own)
@@ -837,9 +847,9 @@ export async function run(h) {
         });
       }
       if (!HAS_R3B) {
-        results.push({ section, name: "the save back's final check round 3b: the broker has no listing rule (shownUnder) yet - its check waits for it", ok: true });
+        results.push({ section, name: "the save back's final check round 3b: the broker has no listing rule (shownUnder, listed) yet - its check waits for it", ok: true });
       } else {
-        await check("the save back's final check round 3b through Portal 2's parts over the REAL broker: the version check's own 503 says why \"checking\" (Retry-After 30) and Portal 2 reads it as the check (checkWaitOf; the uploader's job checking - never 'not sent'); a newer office save on top of an iPad save that went over one - the retry after OneDrive's late hash and a later page's plan_save_done - unproved with the admin's line, nothing put back (the iPad's bytes right on the base: the plain changed); two commits of one save overlapping - the second one's 412 read afresh: checked, a replace, never the same bytes as a copy", async () => {
+        await check("the save back's final check round 3b through Portal 2's parts over the REAL broker: the version check's own 503 says why \"checking\" (Retry-After 30) and Portal 2 reads it as the check (checkWaitOf; the uploader's job checking - never 'not sent'); a newer office save on top of an iPad save that went over one - the retry after OneDrive's late hash and a later page's plan_save_done - unproved with the admin's line, nothing put back (the iPad's bytes right on the base: the plain changed before the broker's repair round 4, unproved since); two commits of one save overlapping - the second one's 412 read afresh: checked, a replace, never the same bytes as a copy", async () => {
           client.as(id("admin"));
           const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)]; };
           const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
@@ -914,7 +924,9 @@ export async function run(h) {
             same([e4.status, e4.info && e4.info.why], [409, "unproved"], "N4: unproved");
             ok(logs.includes("onedrive plan_save_done: " + BY_HAND), "N4: " + JSON.stringify(logs));
             same([restores() - r4, (await planOf()).size], [0, 89], "N4: nothing put back");
-            // the control: the iPad's bytes right on the base, then Y - the plain "changed" is true (no admin's line)
+            // the iPad's bytes right on the base, then Y: the plain "changed" before the broker's repair round 4; since, this
+            // save WAS the plan and nothing proves Y's writer had its work - "unproved" with the admin's line (contract
+            // addendum 5 G1)
             reset();
             Object.assign(g.script, { deferCommit: "ignored" });
             clock.t += 5000;
@@ -925,8 +937,13 @@ export async function run(h) {
             g.write(it.id, 90);
             logs.length = 0;
             const e5 = await refused(() => od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u5.s.ticket, uploadUrl: u5.s.uploadUrl, hash: QX.quickXorHash(b5), landed: true }), "plan_changed", "the control");
-            same(e5.info && e5.info.why, "changed", "the control: the plain changed");
-            ok(!logs.some((l) => /by hand/.test(l)), "the control: no admin's line " + JSON.stringify(logs));
+            if (HAS_R4) {
+              same([e5.info && e5.info.why, PL.copyWhyOf(e5.info && e5.info.why)], ["unproved", "unproved"], "on the base, a newer save on top: unproved (repair round 4)");
+              ok(logs.includes("onedrive plan_save_commit: committed: not proved (a newer save is on top of this save): check the plan's version history by hand"), "its admin's line " + JSON.stringify(logs));
+            } else {
+              same(e5.info && e5.info.why, "changed", "the control: the plain changed");
+              ok(!logs.some((l) => /by hand/.test(l)), "the control: no admin's line " + JSON.stringify(logs));
+            }
             // (N6) two commits of one save overlap: request 1's PUT lands just before request 2's - Microsoft's 412 (the
             // session usable) or 404 (gone) to the second: read afresh, the plan holds this save - checked, a replace
             for (const afterCommit of ["usable", "gone"]) {
@@ -953,6 +970,147 @@ export async function run(h) {
               ok(!logs.some((l) => /committed as a copy/.test(l)), afterCommit + ": never the same bytes as a copy " + JSON.stringify(logs));
               same([(await files()).files.length, (await planOf()).size], [count, b6.length], afterCommit + ": no copy; the plan is the save");
             }
+          } finally {
+            reset();
+            atLast = null;
+            onFetch = null;
+          }
+          client.as(null);
+        });
+      }
+      if (!HAS_R4) {
+        results.push({ section, name: "the save back's repair round 4 (contract addendum 5): the broker has no PLAN_NOT_PUT_BACK yet - its check waits for it", ok: true });
+      } else {
+        await check("the save back's repair round 4 (contract addendum 5) through Portal 2's parts over the REAL broker: ten and twelve office saves on top of a crossing - a later page's plan_save_done unproved (the whole first page read; paged, it does not reach back), never the plain not_saved; a restore Microsoft keeps refusing - 503 checking for HASH_WAIT_MS, then not_put_back from plan_save_commit and plan_save_done, read by Portal 2 as not_put_back (its words); the listing's 503 after a 2xx commit says checking (the uploader's job in the check), one before any commit does not; two commits of one save overlapping with the If-Match ignored and the session usable - verified, nothing put back", async () => {
+          client.as(id("admin"));
+          const files = async () => { clock.t += 3 * 60 * 1000; return (await od.plansList([pid]))[String(pid)]; };
+          const tf = g.child(g.takeoff.id, made.number + " - 1 Made Up Way - Testville");
+          ok(!!tf, "the made-up project's takeoff folder");
+          const it = g.file(tf.id, made.number + " Roof.takeoff", 10);
+          const planOf = async () => (await files()).files.find((x) => x.id === it.id);
+          const reset = () => Object.assign(g.script, { deferCommit: "honoured", putCommit: "accepted", putIfMatch: "honoured", postIfMatch: "honoured", postStatus: 0,
+            versions: "on", versionsStatus: 403, versionsPage: 0, restoreStatus: 0, hashLater: false, afterCommit: "gone" });
+          const bytesN = (n, v) => new Uint8Array(n).fill(v);
+          const upOnly = async (bytes) => {
+            const plan = await planOf();
+            const s = await od.planSaveSession({ projectId: pid, itemId: it.id, version: plan.version, size: bytes.length, name: plan.name });
+            same([s.mode, s.commit], ["replace", "broker"], "a deferred replace");
+            const put = (a, z) => transport({ method: "PUT", url: s.uploadUrl, headers: { "Content-Range": "bytes " + a + "-" + z + "/" + bytes.length }, body: new Blob([bytes.subarray(a, z + 1)]) });
+            same((await put(0, OD.CHUNK_UNIT - 1)).status, 202, "a chunk");
+            return { s, last: await put(OD.CHUNK_UNIT, bytes.length - 1) };
+          };
+          const restores = () => g.calls.filter((c) => c.method === "POST" && /\/restoreVersion$/.test(new URL(c.url).pathname)).length;
+          const BY_HAND = ": check the plan's version history by hand";
+          try {
+            // (F1) the page closed before the check of a crossing (OneDrive committed at the last chunk over X); ten or
+            // twelve office saves land on top: the later page's plan_save_done is unproved with the admin's line - the
+            // whole first page read; a first page that ends at ten (a nextLink) does not reach back: unproved too
+            for (const [n, page] of [[10, 0], [12, 0], [12, 10]]) {
+              reset();
+              Object.assign(g.script, { deferCommit: "ignored", versionsPage: page });
+              clock.t += 5000;
+              const b = bytesN(OD.CHUNK_UNIT + 40 + n + page, 71);
+              atLast = () => { clock.t += 5000; g.write(it.id, 70); };
+              const u = await upOnly(b);
+              same(u.last.status, 200, n + ": committed at the last chunk over X");
+              for (let i = 0; i < n; i++) { clock.t += 60 * 1000; g.write(it.id, 100 + i); }
+              logs.length = 0;
+              const r0 = restores();
+              const e = await refused(() => od.planSaveDone(pid, it.id, u.s.ticket, QX.quickXorHash(b)), "not_saved", n + " on top");
+              same([e.info && e.info.why, PL.notSavedWhyOf(e.info && e.info.why), restores() - r0], ["unproved", "unproved", 0], n + " on top" + (page ? ", paged" : "") + ": unproved, nothing put back");
+              ok(logs.includes("onedrive plan_save_done: " + (page ? "not proved (the version history does not reach back to this save)" : "crossed: not put back (newer save)") + BY_HAND),
+                n + ": the admin's line " + JSON.stringify(logs));
+            }
+            ok(!/nothing was overwritten/.test(PL.unprovedTold("x.takeoff", "iPad")), "Portal 2's words for it never say nothing was overwritten");
+            // (F3) a proved crossing whose restore Microsoft keeps refusing (403): the check's 503 (not allowed in, why
+            // checking) until HASH_WAIT_MS after this save's version was made - then not_put_back, from the commit and from a
+            // later page alike; Portal 2 keeps that why and its words
+            for (const op of ["plan_save_commit", "plan_save_done"]) {
+              reset();
+              Object.assign(g.script, { deferCommit: "ignored", restoreStatus: 403 });
+              clock.t += 5000;
+              const b = bytesN(OD.CHUNK_UNIT + 60 + (op === "plan_save_done" ? 1 : 0), 72);
+              atLast = () => { clock.t += 5000; g.write(it.id, 77); };
+              const u = await upOnly(b);
+              same(u.last.status, 200, op + ": committed at the last chunk over X");
+              const ask = () => (op === "plan_save_commit"
+                ? od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u.s.ticket, uploadUrl: u.s.uploadUrl, hash: QX.quickXorHash(b), landed: true })
+                : od.planSaveDone(pid, it.id, u.s.ticket, QX.quickXorHash(b)));
+              const w1 = await refused(ask, "not_authorized", op + ": the restore refused");
+              same([w1.status, w1.info && w1.info.why, PL.checkWaitOf(w1), PL.answerLostOf(w1)], [503, "checking", true, false], op + ": the check's own 503 (an answer: never a lost one)");
+              clock.t += fn.HASH_WAIT_MS + 60 * 1000;
+              logs.length = 0;
+              const e = await refused(ask, op === "plan_save_commit" ? "plan_changed" : "not_saved", op + ": past HASH_WAIT_MS");
+              same([e.status, e.info && e.info.why, e.message], [409, "not_put_back", fn.PLAN_NOT_PUT_BACK], op + ": not_put_back");
+              same(op === "plan_save_commit" ? [PL.copyWhyOf(e.info.why), e.info.retry] : [PL.notSavedWhyOf(e.info.why), "copy"], ["not_put_back", "copy"], op + ": Portal 2 keeps that why");
+              ok(logs.includes("onedrive " + op + ": crossed: the office save could not be put back: put it back by hand from the version history"), op + ": " + JSON.stringify(logs));
+              ok(/would not put the office save back - ask the office to restore it/.test(PL.notPutBackTold("x.takeoff", "iPad")), "Portal 2's words");
+            }
+            // (F5, G4) the versions listing in trouble after Microsoft's 2xx commit: 503 why checking - Portal 2's uploader
+            // job is in the check (never "not sent"); a 503 before any commit attempt stays unmarked
+            reset();
+            g.script.versions = "failing";
+            g.script.versionsStatus = 503;
+            clock.t += 5000;
+            const b5 = bytesN(OD.CHUNK_UNIT + 70, 73);
+            const u5 = await upOnly(b5);
+            same(u5.last.status, 202, "F5: the last chunk commits nothing");
+            const w5 = await refused(() => od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u5.s.ticket, uploadUrl: u5.s.uploadUrl, hash: QX.quickXorHash(b5) }), "busy", "F5: the listing after the 2xx");
+            same([w5.status, w5.info && w5.info.why, PL.checkWaitOf(w5)], [503, "checking", true], "F5: the check's 503");
+            const up = createUploader({ send: async () => ({ status: 202, header: () => null, text: () => JSON.stringify({ nextExpectedRanges: [] }) }),
+              broker: { session: async () => ({ uploadUrl: u5.s.uploadUrl, ticket: u5.s.ticket, name: it.name, commit: "broker", chunkBytes: OD.CHUNK_UNIT, maxChunkBytes: OD.MAX_CHUNK }),
+                commit: async () => { throw w5; }, done: async () => { throw new Error("never done()"); }, find: async () => [] },
+              maxTries: 2, setTimeout: (fn2) => setTimeout(fn2, 0), wait: () => 1 });
+            up.add({ projectId: pid, file: new File([new Uint8Array(5)], it.name), name: it.name, meta: {} });
+            const [job] = await settle(up);
+            same([job.state, job.checking, job.canRetry], ["failed", true, true], "F5: the uploader's job in the check, its session kept");
+            reset();
+            clock.t += 5000;
+            const b6 = bytesN(OD.CHUNK_UNIT + 72, 74);
+            const u6 = await upOnly(b6);
+            // OneDrive busy at the commit's own first walk (every read of Graph's answers 503): before any commit attempt -
+            // its 503 carries no why
+            const pre = await (async () => {
+              const saved = deps.fetch;
+              deps.fetch = async (url, init) => {
+                const m = String((init && init.method) || "GET").toUpperCase();
+                if (m === "GET" && new URL(url).hostname === "graph.microsoft.com" && !/\/versions/.test(new URL(url).pathname)) {
+                  return new Response(JSON.stringify({ error: { code: "serviceNotAvailable" } }), { status: 503, headers: { "Content-Type": "application/json", "Retry-After": "1" } });
+                }
+                return saved(url, init);
+              };
+              try { return await refused(() => od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u6.s.ticket, uploadUrl: u6.s.uploadUrl, hash: QX.quickXorHash(b6) }), "busy", "OneDrive busy before any commit"); }
+              finally { deps.fetch = saved; }
+            })();
+            same([pre.status, pre.info && pre.info.why, PL.checkWaitOf(pre)], [503, undefined, false], "a 503 before any commit attempt: unmarked");
+            // (F6) two commits of one save overlap: request 1's PUT lands just before request 2's; the If-Match ignored and
+            // the committed session still usable, request 2 commits the same bytes again - [this save, this save, base],
+            // both this app's: the device's own double commit, verified, nothing restored
+            reset();
+            Object.assign(g.script, { putIfMatch: "ignored", afterCommit: "usable" });
+            clock.t += 5000;
+            const b7 = bytesN(OD.CHUNK_UNIT + 74, 75);
+            const u7 = await upOnly(b7);
+            same(u7.last.status, 202, "F6: the last chunk commits nothing");
+            let first = 0;
+            onFetch = async (url, init) => {
+              if (!first && String(init.method || "").toUpperCase() === "PUT" && new RegExp("/items/" + encodeURIComponent(it.id) + "$").test(new URL(url).pathname)) {
+                first = (await g.fetch(url, init)).status;
+                clock.t += 1000;
+              }
+            };
+            logs.length = 0;
+            const r7 = restores();
+            let c7;
+            try {
+              c7 = await od.planSaveCommit({ projectId: pid, itemId: it.id, ticket: u7.s.ticket, uploadUrl: u7.s.uploadUrl, hash: QX.quickXorHash(b7) });
+            } finally { onFetch = null; }
+            same([first, c7.mode, c7.verified, restores() - r7], [200, "replace", true, 0], "F6: request 1's commit landed, request 2's again - verified, nothing put back " + JSON.stringify(logs));
+            ok(logs.includes("onedrive plan_save_commit: committed twice (an overlapping request): verified"), "F6: its log line " + JSON.stringify(logs));
+            // (G2) Portal 2's rule for an answer that never came back: no answer, or a gateway's 5xx without the broker's
+            // code - the broker's own answers above (busy, not_authorized, plan_changed, not_saved) never count
+            same([PL.answerLostOf({ code: "offline", status: 0 }), PL.answerLostOf({ code: "failed", status: 504, info: { message: "x" } }), PL.answerLostOf(w5), PL.answerLostOf(pre)],
+              [true, true, false, false], "a lost answer is not the broker's");
           } finally {
             reset();
             atLast = null;
