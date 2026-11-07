@@ -12,6 +12,7 @@
 // shown only when costs are switched on.
 
 import { notesWithPurpose } from '../core/measure.js';
+import { pyMoney, pyQty } from '../core/pyformat.js';
 
 const CT_ORDER = { labor: 0, material: 1 };
 
@@ -69,20 +70,15 @@ export function costClass(ct) {
   return ct === 'labor' ? 'labor' : 'material';
 }
 
+/** The desktop report's money: f"${x:,.2f}" -- half to even, as Python rounds ($0.125 is $0.12). */
 export function money(v) {
-  return Number(v).toLocaleString('en-US', {
-    style: 'currency', currency: 'USD',
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  });
+  return pyMoney(v);
 }
 
 /** 1234.5 → "1,234.5"; trailing zeros dropped; 0 → "0". */
 export function fmtQty(q) {
-  if (!q) return '0';
-  const s = Number(q).toLocaleString('en-US', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  });
-  return s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+  // the desktop's ReportCenterDialog._fmt_qty, its rounding too
+  return pyQty(q);
 }
 
 /**
@@ -272,7 +268,7 @@ export function rollupHtml(items, options) {
   for (const r of rows) {
     // The key is cost type, lower-cased name and unit — a material and a
     // measured item of the same name and unit merge, which is the point.
-    const key = `${r.costType} ${String(r.name).toLowerCase()} ${r.unit}`;
+    const key = `${r.costType}\x00${String(r.name).toLowerCase()}\x00${r.unit}`;
     const b = buckets.get(key) || {
       costType: r.costType, name: r.name, unit: r.unit, qty: 0, cost: 0, n: 0,
     };
@@ -345,7 +341,7 @@ export function matListHtml(md, items, options) {
   const groups = [];
   const index = new Map();
   for (const l of lines) {
-    const key = `${l.floor || ''} ${l.sub || l.category || ''}`;
+    const key = `${l.floor || ''}\x00${l.sub || l.category || ''}`;
     if (!index.has(key)) {
       index.set(key, groups.length);
       groups.push({ floor: l.floor || '', room: l.sub || l.category || '', lines: [] });

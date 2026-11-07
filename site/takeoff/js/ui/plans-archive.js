@@ -31,6 +31,7 @@ import {
 } from '../core/plans-link.js';
 import { HANDHELD_SAVE, REPLACE_WARNING } from '../core/save-route.js';
 import { EMBEDDED_PLANS, EMBEDDED_NO_ARCHIVE } from '../core/embedded.js';
+import { pyFixed, pyRoundInt } from '../core/pyformat.js';
 
 // What a browser that does not open the folder is told: a computer, where to
 // get one that does; a phone or a tablet — which never opens it — every way
@@ -833,9 +834,9 @@ async function viewPdf(handle) {
 function fmtSize(bytes) {
   const n = Number(bytes);
   if (!(n > 0)) return '';
-  if (n >= 1073741824) return `${(n / 1073741824).toFixed(1)} GB`;
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(n / 1024))} KB`;
+  if (n >= 1073741824) return `${pyFixed(n / 1073741824, 1)} GB`;
+  if (n >= 1048576) return `${pyFixed(n / 1048576, 1)} MB`;
+  return `${Math.max(1, pyRoundInt(n / 1024))} KB`;
 }
 
 function fmtWhen(ms) {

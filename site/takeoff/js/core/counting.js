@@ -30,16 +30,18 @@ import {
   newestVersionOf, workingVersionOf, revPageOf, itemOnDrawing, itemRevId,
   revNameOf, revisionNumber, revisionNamesOf, originMapOf, originPairsOf,
   originDateOf, pyInt, pyStr, isTakeoffType, KEPT_MARK_TYPES,
-  resolveLatestSheets,
+  resolveLatestSheets, onThisVersion,
 } from './revisions.js';
+import { pyFixed, pyRound, pyG, pyIntStr } from './pyformat.js';
 
 export { isTakeoffType as isTakeoffItem, KEPT_MARK_TYPES };
+export { pyFixed, pyRound, pyG };
 
 /** The bucket for takeoff that belongs to the job rather than a sheet. */
 export const STANDALONE = -1000;
 
 /** desktop PIN_TYPES: one click on the plan that stands for one thing. */
-const PIN_TYPES = new Set(['window', 'door', 'partition', 'header']);
+export const PIN_TYPES = new Set(['window', 'door', 'partition', 'header']);
 
 /** desktop REPORT_UNIT_BY_TYPE. */
 const REPORT_UNIT_BY_TYPE = {
@@ -53,7 +55,8 @@ const REPORT_UNIT_BY_TYPE = {
 // The sentences are compared with the desktop's character for character, so
 // "1,318.6 sq ft" has to round the way Python does: half to EVEN on the exact
 // binary value. Number.prototype.toFixed rounds an exact tie UP (1.25 -> 1.3
-// where Python says 1.2), so the digits are taken exactly and rounded here.
+// where Python says 1.2), so the digits are taken exactly and rounded in
+// pyformat.js, which every number the app shows goes through.
 
 /** {ok, n} — Python's float() of a JSON value. */
 export function pyFloat(v) {
@@ -81,47 +84,9 @@ function orZero(v) {
   return truthy(v) ? v : 0;
 }
 
-/** The exact decimal digits of |x| as [intDigits, fracDigits]. */
-function exactDigits(x) {
-  const s = Math.abs(x).toFixed(100);       // exact for every value a bid holds
-  const [i, f = ''] = s.split('.');
-  return [i, f];
-}
-
-/** Python format(x, '.Nf') with an optional ',' — round half to even. */
-export function pyFixed(x, nd, commas = false) {
-  if (Number.isNaN(x)) return 'nan';
-  if (!Number.isFinite(x)) return x < 0 ? '-inf' : 'inf';
-  const neg = x < 0 || Object.is(x, -0);
-  let [ip, fp] = exactDigits(x);
-  const keep = fp.slice(0, nd);
-  const rest = fp.slice(nd);
-  let digits = (ip + keep).split('').map(Number);
-  const first = rest.length ? Number(rest[0]) : 0;
-  const tail = rest.slice(1).replace(/0+$/, '');
-  let up = false;
-  if (first > 5 || (first === 5 && tail.length)) up = true;
-  else if (first === 5 && !tail.length) up = digits.length ? digits[digits.length - 1] % 2 === 1 : false;
-  if (up) {
-    let k = digits.length - 1;
-    while (k >= 0) {
-      if (digits[k] === 9) { digits[k] = 0; k -= 1; } else { digits[k] += 1; break; }
-    }
-    if (k < 0) digits.unshift(1);
-  }
-  const all = digits.join('');
-  let intPart = all.slice(0, all.length - nd) || '0';
-  intPart = intPart.replace(/^0+(?=\d)/, '');
-  const frac = nd ? all.slice(all.length - nd) : '';
-  if (commas) intPart = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return (neg ? '-' : '') + intPart + (nd ? `.${frac}` : '');
-}
-
-/** Python round(x, nd) — the nearest double to the half-even decimal. */
-export function pyRound(x, nd) {
-  if (!Number.isFinite(x)) return x;
-  return Number(pyFixed(x, nd).replace(/,/g, ''));
-}
+// pyFixed, pyRound and pyG are pyformat.js's (every number the app shows
+// goes through that one file), re-exported here for the modules that
+// have always imported them from counting.js.
 
 /**
  * Python's sum() of these numbers, read the way the desktop will read them
@@ -173,25 +138,6 @@ export function pySum(values) {
 /** A number this app writes as a JSON int, so Python reads an int. */
 function isPyInt(x) {
   return Number.isInteger(x) && Math.abs(x) < 1e21;
-}
-
-/** Python format(x, 'g'). */
-export function pyG(x) {
-  if (Number.isNaN(x)) return 'nan';
-  if (!Number.isFinite(x)) return x < 0 ? '-inf' : 'inf';
-  if (x === 0) return Object.is(x, -0) ? '-0' : '0';
-  const p = 6;
-  // the exponent AFTER rounding to p significant digits
-  const e = Number(x.toExponential(p - 1).split('e')[1]);
-  if (e < -4 || e >= p) {
-    let [m, ex] = x.toExponential(p - 1).split('e');
-    if (m.includes('.')) m = m.replace(/0+$/, '').replace(/\.$/, '');
-    const n = Number(ex);
-    return `${m}e${n < 0 ? '-' : '+'}${String(Math.abs(n)).padStart(2, '0')}`;
-  }
-  let s = pyFixed(x, Math.max(0, p - 1 - e));
-  if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
-  return s;
 }
 
 // ── a piece of takeoff, by quantity ──────────────────────────────────────
@@ -1574,14 +1520,15 @@ export function applyBooking(md, change) {
 
 /**
  * The question the Items list's Delete asks, and the line said after a Yes
- * (desktop PDFCacheViewer._on_item_delete with the list not on one sheet --
- * this app has no SHEET chip yet, so that is always the case here). Asked of
+ * (desktop PDFCacheViewer._on_item_delete with the list not on one sheet, or
+ * with every shape of the item on the drawing on screen -- otherwise the
+ * SHEET chip's three-way question is asked: deleteHereChoice). Asked of
  * every item, one shape or many; the second paragraph only when the item is
  * more than one shape. Yes / No, and No is the default.
  */
 export function deleteItemQuestion(m) {
   const it = m || {};
-  const name = String(truthy(it.name) ? it.name : truthy(it.label) ? it.label : 'this item').trim();
+  const name = deleteName(it);
   const n = truthy(it.group_count) ? it.group_count : 1;
   const extra = Number(n) > 1 ? `\n\nThis removes all ${n} shapes that make up the item.` : '';
   return {
@@ -1611,4 +1558,486 @@ export function valueLine(m) {
     return `${pyG(f.ok ? f.n : 0)} ${m.unit || 'each'}`;
   }
   return '1 EA';
+}
+
+// ── one sheet: the Items list's SHEET chip (desktop TakeoffItemsPanel) ──
+//
+// The list shows the items with a shape PAINTED on the drawing on screen --
+// the sheet's own, or the revision of it that is up -- because work on any
+// other drawing is not painted there (onThisVersion), and an item listed
+// under a sheet it cannot be seen on is one he hunts for. A row is still one
+// item: it says what is drawn HERE, and the item's whole total beside it
+// when that differs. Items on no sheet wait in a section at the bottom. The
+// floor and group filters stay the job's.
+//
+// Each function below is the desktop method of the same name, line for
+// line; tests/revision-counting.mjs holds them to the desktop's own methods,
+// lifted by text, word for word. `view` is the drawing on screen:
+// {page, revId, revPage} -- revId '' and revPage null for the sheet's own.
+
+/** What the list has never shown as a row: readings, notes, callouts
+ *  (desktop TakeoffItemsPanel._NOT_ROWS). */
+export const NOT_ROWS = new Set(['distance', 'textnote', 'page_ref', 'pitch', 'ref_distance']);
+
+function isGroupItem(m) {
+  return !!m && typeof m === 'object' && m.type === 'group';
+}
+
+function isStandaloneItem(m) {
+  return !!m && typeof m === 'object' && m.type === 'standalone';
+}
+
+/** Python's str(x or ""). */
+function strOr(v) {
+  return truthy(v) ? pyStr(v) : '';
+}
+
+/**
+ * What the list shows on one sheet, out of the rows the other filters left
+ * (`all`, [[page, item]]) -- desktop _sheet_rows:
+ *
+ *   rows   -- the items with a shape painted here: a main shape on this
+ *             sheet, or the main shape of a run on it, wherever that lives;
+ *             and each Group one of them is in (the web lists no Group, so
+ *             `all` never holds one -- kept for the desktop's arithmetic);
+ *   solo   -- the items on no sheet;
+ *   here   -- Map {item: [its shapes painted here]};
+ *   pages, shapes -- Map {group_id: Set of its sheets}, {group_id: its shapes};
+ *   hidden -- what the chip leaves out, BY ITEM: on another drawing of this
+ *             sheet only, waiting on no drawing, or on other sheets;
+ *   filtered -- how many items painted here the cost, floor and group
+ *             filters took out, BY ITEM.
+ *
+ * One pass over the job for the main shapes -- never a measurementGroup per
+ * row, which walks the whole job each time.
+ */
+export function sheetRows(model, all, view) {
+  const cur = view.page;
+  const masters = new Map();
+  const pages = new Map();
+  const shapes = new Map();
+  for (const key of Object.keys(model.meas)) {
+    const pg = Number(key);
+    for (const m of model.meas[key] || []) {
+      const gid = m.group_id;
+      if (!truthy(gid)) continue;
+      shapes.set(gid, (shapes.get(gid) || 0) + 1);
+      if (pg !== STANDALONE) {
+        if (!pages.has(gid)) pages.set(gid, new Set());
+        pages.get(gid).add(pg);
+      }
+      if (!truthy(m.group_child) && !masters.has(gid)) masters.set(gid, m);
+    }
+  }
+  const here = new Map();
+  const other = new Set();
+  const waits = new Set();
+  const markOf = s => model.markVersion(cur, s);
+  for (const m of model.items(cur)) {
+    if (NOT_ROWS.has(m.type)) continue;
+    let item = m;
+    if (truthy(m.group_child)) {
+      item = masters.get(m.group_id);
+      if (item === undefined) continue;
+    }
+    if (onThisVersion(m, view.revId, view.revPage, markOf)) {
+      if (!here.has(item)) here.set(item, []);
+      here.get(item).push(m);
+    } else if (model.waitingReason(cur, m)) {
+      waits.add(item);
+    } else {
+      other.add(item);
+    }
+  }
+  const rows = all.filter(([, m]) => here.has(m));
+  const boxes = new Set(rows.map(([, m]) => strOr(m.in_group)).filter(Boolean));
+  for (const r of all) {
+    if (isGroupItem(r[1]) && boxes.has(strOr(r[1].group_item_id))) rows.push(r);
+  }
+  const solo = all.filter(([pg, m]) => pg === STANDALONE && !isGroupItem(m));
+  const hidden = { drawings: 0, waiting: 0, sheets: 0 };
+  for (const [pg, m] of all) {
+    if (here.has(m) || pg === STANDALONE || isGroupItem(m)) continue;
+    if (other.has(m)) hidden.drawings += 1;
+    else if (waits.has(m)) hidden.waiting += 1;
+    else hidden.sheets += 1;
+  }
+  // Painted here, but taken out by the other filters: an empty list must
+  // not read as an empty drawing.
+  const listed = new Set(all.map(([, m]) => m));
+  let filtered = 0;
+  for (const k of here.keys()) if (!listed.has(k)) filtered += 1;
+  return { rows, solo, here, pages, shapes, hidden, filtered };
+}
+
+/** '3 on other drawings of this sheet', '240 on other sheets', '2 waiting
+ *  on no drawing': what the chip leaves out, by item (desktop _hidden_words). */
+export function hiddenWords(hidden) {
+  const d = (hidden && hidden.drawings) || 0;
+  const s = (hidden && hidden.sheets) || 0;
+  const w = (hidden && hidden.waiting) || 0;
+  const out = [];
+  if (d) out.push(`${d} on ${d === 1 ? 'another drawing' : 'other drawings'} of this sheet`);
+  if (s) out.push(`${s} on ${s === 1 ? 'another sheet' : 'other sheets'}`);
+  if (w) out.push(`${w} waiting on no drawing`);
+  return out;
+}
+
+/** desktop TakeoffItemsPanel._n: '1 item', '2 items'. */
+export function nWords(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/** The list's title (desktop _title_for): a long sheet name is cut at 12,
+ *  and said whole in sheetTip. */
+export function sheetTitle(sheet) {
+  if (!sheet) return 'PROJECT ITEMS';
+  const cps = [...String(sheet)];
+  const short = cps.length <= 12 ? String(sheet) : `${cps.slice(0, 11).join('')}…`;
+  return `ITEMS ON ${short.toUpperCase()}`;
+}
+
+/** The title's tooltip -- and, for a finger, what a tap on it says. */
+export function sheetTip(sheet) {
+  return sheet ? `Only the items drawn on ${sheet} — the SHEET chip shows them all again` : '';
+}
+
+/**
+ * What the SHEET chip leaves out, said, never just missing (desktop refresh):
+ * {top, footer}. `top` (the list's only line) when nothing listed is drawn
+ * here; otherwise `footer`, 'Not shown: ...', under this sheet's rows --
+ * above NOT ON A SHEET when that section is listed, else at the end.
+ */
+export function sheetNotes(sheet, label) {
+  const words = hiddenWords(sheet.hidden);
+  if (!sheet.rows.length) {
+    const nHid = sheet.filtered;
+    if (nHid) {
+      // Takeoff IS drawn here: the filters are hiding it. What they let
+      // through elsewhere is still said after it.
+      return { top: `Nothing on ${label} (this drawing) matches the filters — `
+        + `${nWords(nHid, 'item')} here ${nHid === 1 ? 'is' : 'are'} hidden by them`
+        + (words.length ? `; ${words.join(', ')}` : ''), footer: null };
+    }
+    return { top: `Nothing on ${label} (this drawing)`
+      + (words.length ? ` — ${words.join(', ')}` : ''), footer: null };
+  }
+  return { top: null, footer: words.length ? `Not shown: ${words.join(', ')}` : null };
+}
+
+/** Python's "%d" % int(round(q)): round half to even, then the digits. */
+function intRound(q) {
+  return pyIntStr(pyRound(Number(q) || 0, 0));
+}
+
+/** Python's "%d" % int(q). */
+function intTrunc(q) {
+  return pyIntStr(Number(q) || 0);
+}
+
+/** A quantity in the words a row of this kind already uses (desktop
+ *  _qty_words): Python's rounding, a .x5 tie to even. */
+export function qtyWords(m, q) {
+  const t = (m && m.type) || '';
+  if (t === 'count') return `× ${intRound(q)}`;
+  if (t === 'distance' || t === 'polyline') return `${pyFixed(q, 2)} ft`;
+  if (t === 'linear_count') return `${intTrunc(q)} items`;
+  if (t === 'area' || t === 'slope_area' || t === 'grid' || t === 'tile') return `${pyFixed(q, 1)} sq ft`;
+  return takeoffQtyText(q, takeoffQty(m)[1]);
+}
+
+/** desktop TILE_PATTERNS / _tile_pattern_label: an unknown key is itself. */
+const TILE_LABELS = {
+  grid: 'Straight Grid', half: 'Running Bond ½', third: 'Stair-Step ⅓',
+  herringbone: 'Herringbone', chevron: 'Chevron', diagonal: 'Diagonal 45°',
+};
+function tileLabel(pattern) {
+  return Object.prototype.hasOwnProperty.call(TILE_LABELS, pattern) ? TILE_LABELS[pattern] : pattern;
+}
+
+/** desktop PIN_KINDS / pin_prefix. */
+const PIN_PREFIX = { window: 'win_', door: 'door_', partition: 'part_', header: 'hdr_' };
+
+/** Python's m.get(k, d). */
+function getOr(m, k, d) {
+  return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : d;
+}
+
+/**
+ * A row's quantity line in the desktop's own words (TakeoffItemsPanel.
+ * _value_str), with its rounding: what a row the SHEET chip finds wholly on
+ * the drawing on screen, and counted, reads -- exactly as the desktop's full
+ * list reads it.
+ */
+export function valueStr(m) {
+  const t = m.type || '';
+  if (t === 'standalone') {
+    const q = orZero(m.qty);
+    const u = String(truthy(m.unit) ? m.unit : 'each').trim();
+    return truthy(q) ? `${pyG(Number(q))} ${u}` : 'no quantity yet — double-click to set';
+  }
+  const parts = [];
+  const nShapes = getOr(m, 'group_count', 1);
+  if (nShapes > 1) parts.push(`total of ${pyStr(nShapes)} shapes`);
+  const sc = strOr(m.scale).trim();
+  if (sc) parts.push(`${sc} scale`);
+  const suffix = parts.length ? `   ·  ${parts.join('  ·  ')}` : '';
+  const v = orZero(m.value);
+  if (t === 'area' || t === 'grid') return truthy(v) ? `${pyFixed(Number(v), 1)} sq ft${suffix}` : '';
+  if (t === 'slope_area') {
+    return truthy(v) ? `${pyFixed(Number(v), 1)} sq ft (${pyG(Number(getOr(m, 'pitch', 0)))}:12)${suffix}` : '';
+  }
+  if (t === 'tile') {
+    const needed = Math.trunc(Number(getOr(m, 'tiles_needed', 0)) || 0);
+    const pat = tileLabel(getOr(m, 'pattern', 'grid'));
+    let out = `${pyFixed(Number(v), 1)} sq ft · ${pyIntStr(needed, true)} tiles (${pat})`;
+    if (truthy(m.boxes)) out += ` · ${pyStr(m.boxes)} boxes`;
+    return truthy(v) ? out + suffix : '';
+  }
+  if (t === 'distance' || t === 'polyline') return truthy(v) ? `${pyFixed(Number(v), 2)} ft${suffix}` : '';
+  if (Object.prototype.hasOwnProperty.call(PIN_PREFIX, t)) {
+    const p = PIN_PREFIX[t];
+    const tag = getOr(m, `${p}number`, '');
+    if (t === 'partition') return truthy(tag) ? pyStr(tag) : 'partition into a wall';
+    if (t === 'header') {
+      const sz = strOr(getOr(m, 'hdr_size', ''));
+      const spn = strOr(getOr(m, 'hdr_width', ''));
+      const bits = [tag, sz && sz !== 'auto' ? sz : '', spn ? `span ${spn}` : ''].filter(truthy);
+      return bits.length ? bits.map(pyStr).join('  ') : 'sized from the wall — double-click to edit';
+    }
+    const w = getOr(m, `${p}width`, '');
+    const h = getOr(m, `${p}height`, '');
+    if (truthy(w) || truthy(h)) return `${truthy(tag) ? `${tag}  ` : ''}${pyStr(w)} × ${pyStr(h)}`.trim();
+    return truthy(tag) ? pyStr(tag) : 'no size yet — double-click to edit';
+  }
+  if (t === 'linear_count') {
+    const n = intTrunc(orZero(m.value));
+    return `${n} items @ ${pyG(Number(getOr(m, 'spacing_in', 12)))}"${suffix}`;
+  }
+  if (t === 'count') {
+    const cnt = (m.points || []).length;
+    return cnt ? `× ${cnt}` : '';
+  }
+  return '';
+}
+
+/** Whether the takeoff painted here is in the totals: its runs, on the
+ *  drawing on screen (desktop _counts_here). */
+export function countsHere(model, page, here) {
+  return (here || []).some(s => model.runCountsTowards(page, s));
+}
+
+/**
+ * A row while the list shows one sheet (desktop _sheet_value_str): the
+ * takeoff painted HERE, run by run the way the totals add it up (a count is
+ * its points), and '   ·  48.0 sq ft in all' when the item's total is
+ * something else, or when what is here is not what counts. An item that is
+ * all here, and counts, reads exactly as the full list reads it (valueStr).
+ * `shapesOf` is sheetRows' `shapes`.
+ */
+export function sheetValueStr(model, pageIdx, m, here, counted, shapesOf) {
+  let q = 0.0;
+  for (const s of here) q += takeoffShapeQty(s)[0];
+  const gid = m.group_id;
+  const whole = here.length >= (truthy(gid) ? (shapesOf.get(gid) || 1) : 1);
+  // desktop _total_of: the item's total, None when it is in none
+  const tot = model.itemCountsTowards(pageIdx, m) ? model.countedQty(pageIdx, m) : null;
+  const differs = tot !== null && (Math.abs(tot[0] - q) > 1e-6 || !counted);
+  if (whole && !differs) return valueStr(m);
+  let txt = qtyWords(m, q);
+  if (differs) {
+    const allTxt = m.type === 'count' ? intRound(tot[0]) : qtyWords(m, tot[0]);
+    txt += `   ·  ${allTxt} in all`;
+  }
+  return txt;
+}
+
+/** The other sheets an item has shapes on, besides its own page (desktop
+ *  _also_on), in page order. `pagesOf` is sheetRows' `pages`. */
+export function alsoOn(pagesOf, pageIdx, m) {
+  const gid = m.group_id;
+  if (!truthy(gid)) return [];
+  return [...(pagesOf.get(gid) || [])].filter(p => p !== pageIdx).sort((a, b) => a - b);
+}
+
+/**
+ * The sheet label of a row the list shows on one sheet, and its tooltip --
+ * desktop _item_row's page_hint, for a row with shapes painted here:
+ * {text: 'X1.0 +2', tip, also: [pages], counts, chip}. `chip` is the
+ * desktop's red '⊘ REV 2' / '⊘ own' word (the web shows its NOT COUNTED tag
+ * instead); '' when the takeoff here counts.
+ */
+export function sheetPageWords(model, pageIdx, m, here, countedHere, pagesOf) {
+  let text = model.pageLabel(pageIdx);
+  const also = here ? alsoOn(pagesOf, pageIdx, m) : [];
+  let alsoTip = '';
+  if (also.length) {
+    text += ` +${also.length}`;
+    alsoTip = ` — also on ${also.map(p => model.pageLabel(p)).join(', ')}`;
+  }
+  let tip = `Page ${pageIdx + 1}${alsoTip}`;
+  const s = here && here.length ? here[0] : m;
+  const rid = strOr(s && s.rev_id);
+  let revTxt = rid ? (model.revisionLabel(rid) || 'revision') : '';
+  const counts = here && here.length ? !!countedHere : model.itemCountsTowards(pageIdx, m);
+  if (here && here.length && counts) revTxt = '';
+  let chip = '';
+  if (revTxt || !counts) {
+    chip = revTxt || 'own';
+    if (!counts) chip = `⊘ ${chip}`;
+    const why = counts ? '' : model.waitingReason(pageIdx, m);
+    tip = `Page ${pageIdx + 1}${alsoTip} — taken off on ${revTxt || 'the sheet’s own drawing'}`
+      + (counts ? '' : (why ? `.\n⊘ NOT COUNTED — ${why}.`
+        : '.\n⊘ NOT COUNTED — this sheet counts from another of its versions, so this item '
+          + 'is not in the totals. The version bar at the top of the Pages panel is where that changes.'));
+  }
+  return { text, tip, also, counts, chip, revTxt };
+}
+
+/**
+ * Why the takeoff painted here is not counted, in the web's words (the
+ * web's NOT COUNTED tag, which stands for the desktop's red chip). Unlike the
+ * desktop's tooltip it never says an item counted from its shapes on other
+ * sheets is out of the totals.
+ */
+export function notCountedHereWhy(model, page, pageIdx, m, here) {
+  const s = here[0];
+  const waiting = model.waitingReason(page, s);
+  const reason = waiting || `taken off on ${model.versionName(itemRevId(s))}; `
+    + `${model.pageLabel(page)} counts from ${model.versionName(model.workingVersionOf(page))}`;
+  return `NOT COUNTED from this drawing — ${reason}. `
+    + (model.itemCountsTowards(pageIdx, m)
+      ? 'The item is in your totals from its shapes on other drawings.'
+      : 'It is kept, and it is not in your totals or any report.');
+}
+
+/** How many items there are on no sheet (desktop _open_solo_on_add's
+ *  count): one more than at the last build opens NOT ON A SHEET. */
+export function soloCount(measurements) {
+  return ((measurements && (measurements[STANDALONE] || measurements[String(STANDALONE)])) || [])
+    .filter(isStandaloneItem).length;
+}
+
+/** The shapes of one item painted on the drawing on screen (desktop
+ *  _shapes_on_screen), master first, then by sheet. */
+export function shapesOnScreen(model, view, pageIdx, m) {
+  const cur = view.page;
+  const gid = m.group_id;
+  const shapes = truthy(gid) ? model.measurementGroup(gid) : [[pageIdx, m]];
+  const markOf = s => model.markVersion(cur, s);
+  return shapes.filter(([pg, s]) => pg === cur && onThisVersion(s, view.revId, view.revPage, markOf))
+    .map(([, s]) => s);
+}
+
+/** The name an item's Delete speaks of (desktop _on_item_delete). */
+export function deleteName(m) {
+  const it = m || {};
+  return String(truthy(it.name) ? it.name : truthy(it.label) ? it.label : 'this item').trim();
+}
+
+/**
+ * Delete from the Items list while it shows one sheet (desktop
+ * _ask_delete_here). null when it does not, when the item is one shape, or
+ * when every shape of it is on the drawing on screen: deleteItemQuestion
+ * asks then. Otherwise the question, with both answers named in full --
+ * {title, text, info, buttons: [here, whole, 'Cancel'], defaultButton:
+ * 'Cancel', local: [the shapes painted here], where: this sheet's name,
+ * rest: where the rest of the item is}.
+ */
+export function deleteHereChoice(model, view, pageIdx, m, name, sheetOnly = true) {
+  const gid = m.group_id;
+  if (!truthy(gid) || !sheetOnly) return null;
+  const cur = view.page;
+  const shapes = model.measurementGroup(gid);
+  const local = shapesOnScreen(model, view, pageIdx, m);
+  if (!local.length || local.length >= shapes.length) return null;
+  const mine = new Set(local);
+  const pages = [...new Set(shapes.map(([pg]) => pg).filter(pg => Number.isInteger(pg) && pg >= 0))]
+    .sort((a, b) => a - b);
+  const names = pgs => {
+    const lbls = pgs.map(p => model.pageLabel(p));
+    return lbls.length > 4 ? `${lbls.slice(0, 4).join(', ')} and ${lbls.length - 4} more` : lbls.join(', ');
+  };
+  let here = model.pageLabel(cur);
+  if (shapes.some(([pg, s]) => pg === cur && !mine.has(s))) here += ' (this drawing)';
+  const others = pages.filter(p => p !== cur);
+  const rest = others.length ? names(others) : 'another drawing of this sheet';
+  return {
+    title: 'Delete Item',
+    text: `“${name}” has ${shapes.length} shapes, on ${names(pages)}.`,
+    info: `The list is showing ${here}. Delete only what is drawn there, or the whole item?`,
+    buttons: [
+      `Delete the ${local.length === 1 ? 'shape' : `${local.length} shapes`} on ${here}`,
+      `Delete the whole item (${shapes.length} shapes on ${names(pages)})`,
+      'Cancel',
+    ],
+    defaultButton: 'Cancel',
+    local, where: here, rest,
+  };
+}
+
+/** What the status line says after 'this sheet' (desktop _on_item_delete). */
+export function deletedHereWords(n, name, where, rest) {
+  return `Deleted ${n === 1 ? 'the shape' : `${n} shapes`} of “${name}” on ${where} — it is still on ${rest}`;
+}
+
+/**
+ * A tap on a row while the list shows one sheet (desktop
+ * _activate_on_this_sheet, which a double-click runs there): walk the item's
+ * shapes on the drawing on screen, and only those -- turning the page would
+ * swap the whole list out from under the row. null when nothing of the item
+ * is painted here (the ordinary jump runs then). `cycle` is the window's
+ * {key, idx} (desktop _shape_cycle_gid / _shape_cycle_idx), kept by the
+ * caller; another drawing starts again at shape 1. `verb` is the gesture
+ * the status line names ('double-click' on the desktop).
+ */
+export function activateOnThisSheet(model, view, pageIdx, m, cycle, verb = 'double-click') {
+  const local = shapesOnScreen(model, view, pageIdx, m);
+  if (!local.length) return null;
+  let idx = 0;
+  let said = '';
+  let next = cycle || null;
+  if (local.length > 1) {
+    const key = JSON.stringify(['sheet', m.group_id === undefined ? null : m.group_id, view.page,
+      view.revId ? [String(view.revId), view.revPage === undefined ? null : view.revPage] : null]);
+    if (cycle && cycle.key === key) idx = (cycle.idx + 1) % local.length;
+    next = { key, idx };
+    said = `Shape ${idx + 1} of ${local.length} on ${model.pageLabel(view.page)} — ${verb} the item `
+      + 'again for the next shape';
+  }
+  return { target: local[idx], idx, n: local.length, cycle: next, said };
+}
+
+/**
+ * A tap on a row with the list not on one sheet, or nothing of the item
+ * here (desktop _on_item_activated): a multi-shape item cycles through its
+ * shapes ACROSS sheets, master first, one per tap. {target: [page, shape],
+ * cycle, said}.
+ */
+export function activateAcrossSheets(model, pageIdx, m, cycle, verb = 'double-click') {
+  let target = [pageIdx, m];
+  let said = '';
+  let next = cycle || null;
+  const gid = m.group_id;
+  if (truthy(gid)) {
+    const shapes = model.measurementGroup(gid);
+    if (shapes.length > 1) {
+      const key = JSON.stringify(['item', gid]);
+      const idx = cycle && cycle.key === key ? (cycle.idx + 1) % shapes.length : 0;
+      next = { key, idx };
+      target = shapes[idx];
+      said = `Shape ${idx + 1} of ${shapes.length} — ${verb} the item again for the next shape`;
+    }
+  }
+  return { target, cycle: next, said };
+}
+
+/** Properties… on a row while the list shows one sheet (desktop
+ *  _properties_on_this_sheet): the shape to select before the form opens --
+ *  the main shape when it is painted here, else the first shape here -- or
+ *  null when nothing of the item is here (the ordinary path runs then). */
+export function propertiesOnThisSheet(model, view, pageIdx, m) {
+  const local = shapesOnScreen(model, view, pageIdx, m);
+  if (!local.length) return null;
+  return local.includes(m) ? m : local[0];
 }

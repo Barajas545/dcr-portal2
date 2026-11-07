@@ -40,6 +40,7 @@
 
 import { cropGeometry } from '../core/page-store.js';
 import { wheelInOut } from '../render/zoom-floor.js';
+import { pyRoundInt, pyIntStr } from '../core/pyformat.js';
 
 /**
  * The size budgets, in CSS pixels. Width and height are a budget for the
@@ -898,8 +899,9 @@ export class CalloutPreview {
 
   _updateZoomUi() {
     if (!this.pctEl || !this.view || !this.initW) return;
-    const pct = Math.round((this.initW / this.view.w) * 100);
-    this.pctEl.textContent = `${pct}%`;
+    // (web-only words: Python's rounding, as every number the app shows)
+    const pct = pyRoundInt((this.initW / this.view.w) * 100);
+    this.pctEl.textContent = `${pyIntStr(pct)}%`;
     const reset = this.el.querySelector('[data-cpv="reset"]');
     if (reset) reset.disabled = this._atHome();
   }

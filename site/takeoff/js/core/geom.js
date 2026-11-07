@@ -5,6 +5,8 @@
 // and zoom, and the two are never mixed — a value that crosses between them
 // goes through the viewport's toPage/toScreen, never through this file.
 
+import { pyFixed, pyRoundInt } from './pyformat.js';
+
 export const DEG = Math.PI / 180;
 
 export function pxDist(p1, p2) {
@@ -200,8 +202,8 @@ export function pitchFromPoints(p1, p2) {
 export function formatPitch(riseOver12, precision = 0) {
   if (!Number.isFinite(riseOver12)) return 'vertical';
   const r = precision > 0
-    ? riseOver12.toFixed(precision)
-    : String(Math.round(riseOver12 * 4) / 4);
+    ? pyFixed(riseOver12, precision)
+    : String(pyRoundInt(riseOver12 * 4) / 4);
   return `${r}:12`;
 }
 

@@ -53,6 +53,11 @@ export const DEFAULT_SETTINGS = {
   page_nav_keys: 'pageupdown',
   thumb_width: 190,
   items_width: 300,
+  // The Items list's SHEET chip: only what is drawn on the drawing on
+  // screen. How he likes to look at the list, not a property of a job -- the
+  // desktop's own key and default. A NEW key: an install whose stored
+  // settings have no such key reads it off.
+  items_panel_sheet_only: false,
   thumb_compact: false,
   // The toolbars slide away by default and come back when reached for: five
   // bars across the top of a drawing is a lot of furniture to read a plan

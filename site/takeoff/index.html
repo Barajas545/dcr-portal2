@@ -356,6 +356,22 @@
         <span class="old-word">OLD</span>
         <span class="old-sub" id="oldBadgeSub"></span>
       </div>
+      <!--
+        The overlay the desktop saved for this sheet, while it is on screen:
+        what it is, its tint and fade, Flash and Hide. Read-only -- nothing on
+        it writes to the project. Its buttons are not menu actions (no
+        data-act): main.js wires them. At the foot of the sheet, above the
+        phone and tablet bar, clear of the OLD badge and the tool's options.
+      -->
+      <div class="sov-bar" id="savedOvBar" hidden role="status">
+        <span class="sov-swatch" id="sovSwatch"></span>
+        <span class="sov-what" id="sovWhat"></span>
+        <span class="sov-fade" id="sovFade"></span>
+        <button class="tb-btn sov-btn" id="sovFlash" type="button" aria-pressed="false"
+                title="Blink the overlay on and off — changes jump out">Flash</button>
+        <button class="tb-btn sov-btn" id="sovHide" type="button"
+                title="Take the overlay off this sheet until you next turn to it. Nothing in the file changes.">Hide</button>
+      </div>
       <div class="drop-veil" id="dropVeil" hidden><span>Drop to open</span></div>
     </main>
 
@@ -397,7 +413,7 @@
 
     <aside class="items" id="itemsPanel">
       <div class="panel-head">
-        <span class="panel-title">PROJECT ITEMS</span>
+        <span class="panel-title" id="itemsTitle">PROJECT ITEMS</span>
         <div class="cost-toggle" id="costToggle">
           <button data-cost="all" class="on" title="Show labor and material items">ALL</button>
           <button data-cost="labor" title="Labor estimate — labor items only">LAB</button>
@@ -409,6 +425,8 @@
       <div class="filter-bar">
         <select id="floorFilter" class="tb-select sm"><option value="">All Floors</option></select>
         <select id="groupFilter" class="tb-select sm"><option value="">All Groups</option></select>
+        <button id="sheetChip" class="sheet-chip" type="button" aria-pressed="false"
+                title="Show only the items on the sheet you are looking at">SHEET</button>
       </div>
       <div class="item-list" id="itemList"></div>
       <div class="items-foot" id="itemsFoot"></div>

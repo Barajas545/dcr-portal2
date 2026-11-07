@@ -36,6 +36,8 @@
 // which runs them through tests/revisions-python-truth.py rather than against
 // a transcription of them.
 
+import { pyIntStr } from './pyformat.js';
+
 /** How many pages a revision set has, without holding one of them. */
 export function revPageCount(rev) {
   if (!rev) return 0;
@@ -601,10 +603,11 @@ export function sizesMatch(sheetSize, revSize) {
 
 /** Why nothing may be traced here, in the estimator's own terms. */
 export function sizeRefusal(sheetSize, revSize) {
-  const sw = Math.round((revSize && revSize.width) || 0);
-  const sh = Math.round((revSize && revSize.height) || 0);
-  const pw = Math.round((sheetSize && sheetSize.width) || 0);
-  const ph = Math.round((sheetSize && sheetSize.height) || 0);
+  // the desktop's _size_refusal words: int() of each side, as there
+  const sw = pyIntStr((revSize && revSize.width) || 0);
+  const sh = pyIntStr((revSize && revSize.height) || 0);
+  const pw = pyIntStr((sheetSize && sheetSize.width) || 0);
+  const ph = pyIntStr((sheetSize && sheetSize.height) || 0);
   return 'This revision was reissued at a different sheet size '
     + `(${sw}×${sh} against ${pw}×${ph} pixels at this job's dpi). `
     + 'The scale is the sheet’s, measured on the sheet’s own drawing, '
@@ -979,11 +982,19 @@ export function remapPageIndices(md, measurements, mapper, { reordered = false }
       const nk = mapper(i.n);
       if (nk === null || nk === undefined) continue;
       let st = st0;
+      // The sheet it compares against moves only when it names one: a whole
+      // number. A record whose overlay_page is true, '3', 2.5 or null names
+      // nothing (js/core/overlay-look.js overlaySourceOf), and stays as it
+      // was -- the desktop's int() made true sheet 1, '3' sheet 3 and 2.5
+      // sheet 2, so a delete turned a record that showed nothing into one
+      // that drew a real sheet (reported for 3.08). The desktop also drops a
+      // record whose overlay_page is null or not a number; the web keeps it
+      // (it names nothing on either, and the web does not prune what the
+      // desktop wrote).
       if (st && typeof st === 'object'
           && (st.rev_id === undefined || st.rev_id === null)
-          && Object.prototype.hasOwnProperty.call(st, 'overlay_page')) {
-        const op0 = pyInt(st.overlay_page);
-        const op = op0.ok ? mapper(op0.n) : null;
+          && Number.isInteger(st.overlay_page)) {
+        const op = mapper(st.overlay_page);
         if (op === null || op === undefined) continue;   // compared sheet gone
         st = { ...st, overlay_page: op };
       }

@@ -17,6 +17,8 @@ import { comparePageKeys, STANDALONE_PAGE } from '../core/takeoff-file.js';
 import { writeWorkbook, cell } from '../core/xlsx.js';
 import { CountingModel, valueLine } from '../core/counting.js';
 import * as H from './report-html.js';
+import { pyG, pyIntStr, pyRound, pyStrFloat } from '../core/pyformat.js';
+import { itemCost } from '../core/measure.js';
 
 export const REPORTS = [
   ['estimate', 'Estimate Summary',
@@ -47,7 +49,12 @@ const TYPE_LABEL = {
   distance: 'Lineal', polyline: 'Lineal', area: 'Area', slope_area: 'Slope Area',
   grid: 'Grid', tile: 'Tile', count: 'Item', linear_count: 'Item',
   standalone: 'Item', window: 'Window', door: 'Door',
+  // every pin by its own name (desktop _collect_items: mtype.capitalize())
+  partition: 'Partition', header: 'Header',
 };
+
+/** desktop pin_prefix: where each kind of pin keeps its own fields. */
+const PIN_PREFIX = { window: 'win_', door: 'door_', partition: 'part_', header: 'hdr_' };
 
 /** Types that produce no export row of their own. Their materials still do. */
 const NO_ROW_TYPES = new Set(['textnote', 'page_ref', 'pitch', 'ref_distance']);
@@ -109,8 +116,10 @@ function sheetDisp(model, pageLabel, pageIdx, m) {
 
 // ── the flat row model ────────────────────────────────────────────────────
 
-function g(v) { return String(parseFloat((Number(v) || 0).toPrecision(6))); }
-function commas(n) { return Math.trunc(Number(n) || 0).toLocaleString('en-US'); }
+// The desktop's own formats in these descriptions (_collect_items, _collect):
+// f"{x:g}" and f"{int(n):,}" -- Python's, so a .x5 tie rounds to even.
+function g(v) { return pyG(Number(v) || 0); }
+function commas(n) { return pyIntStr(Number(n) || 0, true); }
 
 function tileBlurb(m) {
   let t = `${commas(m.tiles_needed || 0)} tiles ` +
@@ -121,10 +130,20 @@ function tileBlurb(m) {
 }
 
 function openingDims(m, kind) {
-  const p = kind === 'window' ? 'win_' : 'door_';
+  const p = PIN_PREFIX[kind] || 'door_';
   const w = m[p + 'width'] || '', h = m[p + 'height'] || '';
   if (!w && !h) return '';
   return `${w} × ${h}`.replace(/^\s*×\s*|\s*×\s*$/g, '').trim();
+}
+
+/**
+ * A header pin in the export (desktop _collect_items): the size the schedule
+ * called and its span, not a width by a height.
+ */
+function headerDims(m) {
+  const w = m.hdr_width || '';
+  const sz = String(m.hdr_size || '').trim();
+  return [sz && sz !== 'auto' ? sz : '', w ? `span ${w}` : ''].filter(Boolean).join(' ');
 }
 
 function joinDesc(...parts) {
@@ -137,7 +156,8 @@ function typePrefix(m) {
     case 'tile': return tileBlurb(m);
     case 'slope_area': return `pitch ${g(m.pitch ?? 4)}:12`;
     case 'linear_count': return `@ ${g(m.spacing_in ?? 12)}″ spacing`;
-    case 'window': case 'door': return openingDims(m, m.type);
+    // every pin's width × height (desktop _collect: the same words for all four)
+    case 'window': case 'door': case 'partition': case 'header': return openingDims(m, m.type);
     case 'grid': return `${Number(m.cols) || 1}×${Number(m.rows) || 1} cells`;
     default: return '';
   }
@@ -189,6 +209,12 @@ export function collectRows(project, pageLabel, filters = {}) {
           ItemArea: null, ItemDistance: null, ItemCount: null,
           _rate: Number(m.unit_cost) || 0,
         };
+        // Which numbers are Python floats in the desktop's export: every count
+        // here (float(len(points)), float(qty), float(int(value)), 1.0); an
+        // area or a distance is round(value, 4), the JSON's own int or float.
+        const floats = new Set(['ItemCount']);
+        if (pyFloatJson(m.value)) { floats.add('ItemArea'); floats.add('ItemDistance'); }
+        PY_FLOATS.set(row, floats);
         switch (m.type) {
           case 'distance': case 'polyline':
             row.ItemDistance = round4(m.value); break;
@@ -206,9 +232,11 @@ export function collectRows(project, pageLabel, filters = {}) {
             row.ItemCount = Math.trunc(Number(m.value) || 0);
             row.ItemDescription = joinDesc(`@ ${g(m.spacing_in ?? 12)}″ spacing`, notes);
             break;
-          case 'window': case 'door':
+          case 'window': case 'door': case 'partition': case 'header':
+            // every pin is one (desktop _collect_items: 1.0), a header by its
+            // size and span
             row.ItemCount = 1;
-            row.ItemDescription = joinDesc(openingDims(m, m.type), notes);
+            row.ItemDescription = joinDesc(m.type === 'header' ? headerDims(m) : openingDims(m, m.type), notes);
             break;
           default: break;
         }
@@ -218,7 +246,7 @@ export function collectRows(project, pageLabel, filters = {}) {
       // Associated materials are emitted for EVERY measurement, outside the
       // type dispatch — a material hung off a text note still has to be bought.
       for (const ai of m.associated_items || []) {
-        rows.push({
+        const row = {
           ItemName: ai.name || '',
           ItemDescription: notesWithPurpose(ai),
           ItemFloorLevel: floor,
@@ -231,7 +259,9 @@ export function collectRows(project, pageLabel, filters = {}) {
           ItemCount: round4(assemblyTotal(ai, parentVal)),
           ParentItemName: name,
           _rate: Number(ai.unit_cost) || 0,
-        });
+        };
+        PY_FLOATS.set(row, new Set(materialCountIsFloat(ai, m.value) ? ['ItemCount'] : []));
+        rows.push(row);
       }
     }
   }
@@ -244,14 +274,71 @@ export function collectRows(project, pageLabel, filters = {}) {
     const rate = r._rate || 0;
     delete r._rate;
     r.ItemUnitCost = rate ? round4(rate) : null;
-    r.ItemTotalCost = (rate && qty) ? Math.round(qty * rate * 100) / 100 : null;
+    // desktop: round(qty * rate, 2) -- Python's round, a cent tie to even
+    r.ItemTotalCost = (rate && qty) ? pyRound(qty * rate, 2) : null;
   }
   return rows;
 }
 
+/** desktop round(v, 4): the nearest double to the half-even 4-place decimal. */
 function round4(v) {
-  const n = Number(v) || 0;
-  return Math.round(n * 10000) / 10000;
+  const n = Number(v);
+  return pyRound(Number.isNaN(n) ? 0 : n, 4);
+}
+
+/** f"{x:g}" as a number: six significant digits, half to even. */
+function gNumber(x) {
+  return Number(pyG(Number(x) || 0));
+}
+
+/**
+ * The workbook's Takeoff-sheet quantity, rounded before it is written the
+ * way the desktop's Takeoff sheet writes the same quantity (its 'Qty / Value'
+ * column, _export_excel value_and_unit): an area or a length f"{v:.2f}", an
+ * item on no sheet f"{qty:g}", a count, an array and a pin a whole number.
+ * Under '0.00' and General, Excel then shows the desktop's own digits.
+ */
+function takeoffQtyCell(it) {
+  switch (it.type) {
+    case 'area': case 'slope_area': case 'grid': case 'tile':
+    case 'distance': case 'polyline':
+      return cell(pyRound(it.qty, 2), 'fixed2');
+    case 'standalone':
+      return cell(gNumber(it.qty), 'general');
+    default:
+      return cell(it.qty, 'general');
+  }
+}
+
+// ── Python's int and float, for the CSV's text ────────────────────────────
+//
+// The desktop's csv.writer writes str() of each value, and a Python float
+// reads '20.0' where String(20) reads '20'. Which columns of a row are
+// floats there is kept beside the row (it is not a column): the money ones
+// always are (round(rate, 4), round(qty * rate, 2)), and buildCsv asks
+// PY_FLOATS for the rest.
+const PY_FLOATS = new WeakMap();
+
+/**
+ * A JSON number as the desktop reads it: an int when it is whole -- which
+ * is how this app writes a whole number -- else a float; missing is the
+ * desktop's default 0.0, a float.
+ */
+function pyFloatJson(v) {
+  return v === undefined || !Number.isInteger(v);
+}
+
+/**
+ * Is a material's count a float in the desktop's export: round(_ai_total(ai,
+ * m.get("value") or 0), 4), where _ai_total is the line's qty (ai.get("qty",
+ * ai.get("qty_per", 0.0))) or qty times the parent's value -- an int only
+ * when every number in it is.
+ */
+function materialCountIsFloat(ai, parentValue) {
+  const qty = 'qty' in ai ? ai.qty : 'qty_per' in ai ? ai.qty_per : undefined;
+  const mode = ai.qty_mode ?? (('qty_per' in ai && !('qty_mode' in ai)) ? 'per_unit' : 'total');
+  if (mode === 'total') return pyFloatJson(qty);
+  return pyFloatJson(qty) || pyFloatJson(parentValue || 0);
 }
 
 /**
@@ -320,7 +407,11 @@ export function collectItems(project, pageLabel, filters = {}) {
         qty: q.qty,
         unit: q.unit,
         rate: Number(m.unit_cost) || 0,
-        cost: (Number(m.value) || 0) * (Number(m.unit_cost) || 0),
+        // its report quantity × rate (desktop _collect: qty * rate): a count
+        // by its points, an array by its whole dots, a pin as one, a
+        // standalone item by its typed quantity -- measure.js itemCost, which
+        // the Items list's footer adds too
+        cost: itemCost(m),
         sheet,
         detail: parts.join('  ·  '),
         // A crossed outline is flagged in the report rather than silently
@@ -329,8 +420,6 @@ export function collectItems(project, pageLabel, filters = {}) {
         src: m0,
         materials: [],
       };
-      if (m.type === 'standalone') entry.cost = q.qty * entry.rate;
-      if (m.type === 'count') entry.cost = q.qty * entry.rate;
 
       for (const line of expandAssembly(m)) {
         entry.materials.push({
@@ -364,18 +453,27 @@ const CSV_COLUMNS = [
   'ItemCount', 'ItemUnitCost', 'ItemTotalCost',
 ];
 
-function csvField(v) {
+function csvField(v, float = false) {
   if (v === null || v === undefined) return '';
-  const s = String(v);
+  // A number as the desktop's csv.writer writes it: str() of its int or
+  // float ('20' / '20.0', '1e-05'), so the two exports diff cleanly.
+  const s = typeof v === 'number' && float ? pyStrFloat(v) : String(v);
   // Quote only when the field would otherwise break the row — matching
-  // Python's csv.QUOTE_MINIMAL, so the two exports diff cleanly.
+  // Python's csv.QUOTE_MINIMAL.
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Is this column of this row a Python float in the desktop's export? */
+function csvFloat(r, k) {
+  if (k === 'ItemUnitCost' || k === 'ItemTotalCost') return true;
+  const f = PY_FLOATS.get(r);
+  return f ? f.has(k) : false;
 }
 
 export function buildCsv(rows) {
   const lines = [CSV_COLUMNS.join(',')];
   for (const r of rows) {
-    lines.push(CSV_COLUMNS.map(k => csvField(r[k])).join(','));
+    lines.push(CSV_COLUMNS.map(k => csvField(r[k], csvFloat(r, k))).join(','));
   }
   // \r\n line endings and a UTF-8 BOM, so Excel opens it without a wizard.
   return `﻿${lines.join('\r\n')}\r\n`;
@@ -415,11 +513,19 @@ export async function exportWorkbook(project, pageLabel, filters = {}) {
     cell('Unit Cost', 'header'), cell('Total', 'header'), cell('Notes', 'header'),
   ]);
 
+  // A quantity is rounded before it is written, as the desktop's own Takeoff
+  // sheet rounds the same quantity (takeoffQtyCell; a material's total
+  // f"{x:g}"), so Excel shows the desktop's digits: a 3.125 ft run reads
+  // 3.12 and 243.51724 sq ft reads 243.52, never Excel's own rounding of a
+  // tie. A rate, a line's cost and the totals are written as they are (the
+  // user's rule: a number written as a number stays a raw number), and the
+  // GRAND TOTAL is the sum of the very cells above it, so =SUM of the column
+  // equals it.
   let grand = 0;
   for (const it of items) {
     s1.push([
       it.name, it.typeLabel, it.floor, it.category, it.sheet,
-      cell(round4(it.qty), 'num'), it.unit,
+      takeoffQtyCell(it), it.unit,
       cell(it.rate || null, 'money'), cell(it.cost || null, 'money'), it.notes,
     ]);
     grand += it.cost;
@@ -427,7 +533,7 @@ export async function exportWorkbook(project, pageLabel, filters = {}) {
       s1.push([
         cell(`    ${mat.name}`, 'indent'), cell('Material', 'indent'),
         cell(mat.floor, 'indent'), cell(mat.category, 'indent'), cell(mat.sheet, 'indent'),
-        cell(round4(mat.qty), 'num'), mat.unit,
+        cell(gNumber(mat.qty), 'general'), mat.unit,
         cell(mat.rate || null, 'money'), cell(mat.cost || null, 'money'),
         cell(mat.notes, 'indent'),
       ]);
@@ -453,7 +559,8 @@ export async function exportWorkbook(project, pageLabel, filters = {}) {
     for (const mat of it.materials) {
       s2.push([
         mat.parent, mat.name, mat.floor, mat.category, mat.sub,
-        cell(round4(mat.qty), 'num'), mat.unit,
+        // the desktop's Materials sheet: f"{rec['total']:g}"
+        cell(gNumber(mat.qty), 'general'), mat.unit,
         cell(mat.rate || null, 'money'), cell(mat.cost || null, 'money'), mat.notes,
       ]);
       matTotal += mat.cost;
@@ -469,13 +576,18 @@ export async function exportWorkbook(project, pageLabel, filters = {}) {
   }
 
   // Sheet 3 — All Items: the flat model, for anyone doing their own analysis.
+  // Its numbers are already the export's -- the desktop's own All Items
+  // numbers (round(v, 4), round(rate, 4), round(qty * rate, 2)) -- and a
+  // quantity is under General, as the desktop's is: '20' bare, '3.125' to its
+  // places. The money shows its own places too (round(rate, 4) as $0.125).
   const s3 = [CSV_COLUMNS.map(c => cell(c, 'header'))];
   for (const r of rows) {
     s3.push(CSV_COLUMNS.map(k => {
       const v = r[k];
       if (v === null || v === undefined) return '';
-      if (k === 'ItemUnitCost' || k === 'ItemTotalCost') return cell(v, 'money');
-      if (typeof v === 'number') return cell(v, 'num');
+      if (k === 'ItemTotalCost') return cell(v, 'money');
+      if (k === 'ItemUnitCost') return cell(v, 'money4');
+      if (typeof v === 'number') return cell(v, 'general');
       return v;
     }));
   }

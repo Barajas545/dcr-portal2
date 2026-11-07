@@ -9,8 +9,36 @@ import { TAKEOFF_PALETTE, rgba, hex, fromHex } from '../render/theme.js';
 import { FLOOR_LEVEL_PRESETS, CATEGORY_PRESETS } from './items-panel.js';
 import { UNIT_CODES, UNITS, parseFeet, formatFtIn, DISTANCE_PRECISIONS } from '../core/units.js';
 import { TILE_PATTERNS, TILE_SIZE_PRESETS, tilePatternWaste } from '../tools/controller.js';
+import { classChoicesFrom, classClean, classNameProblem } from '../core/classify.js';
+import { pyFixed, pyIntStr } from '../core/pyformat.js';
 
 const host = () => document.getElementById('modal');
+
+// ── this job's names first ────────────────────────────────────────────────
+//
+// Every Floor and Trade box offers THIS job's own floor levels and trades
+// first -- each once, Level 2 before Level 10 -- and then the stock list
+// without the look-alikes of names the job already has (desktop
+// _fill_class_combo). A name he renamed to is what he picks next time, and
+// the old stock spelling does not sit one tap away making a near-twin
+// heading. The store is the open project's, handed in once at start-up
+// (main.js) and read each time a form opens.
+let classSource = () => ({});
+
+/** Where the forms find the open job's items: fn() -> the measurement store. */
+export function setClassSource(fn) {
+  classSource = typeof fn === 'function' ? fn : () => ({});
+}
+
+/** A Floor ('floor_level') or Trade ('category') box's suggestions. */
+export function classChoices(field) {
+  let store = {};
+  // A form that cannot see its job offers the stock list, as the desktop's
+  // does when it finds no job (_project_values_near).
+  try { store = classSource() || {}; } catch { store = {}; }
+  return classChoicesFrom(store, field,
+    field === 'floor_level' ? FLOOR_LEVEL_PRESETS : CATEGORY_PRESETS);
+}
 
 /** The dialogs currently on screen, oldest first. */
 const stack = [];
@@ -229,9 +257,9 @@ export function askItem(opts = {}) {
     const purpose = field(form, 'Purpose', input(ex.purpose || ''),
       'What it is for. Shown before the notes everywhere.');
     const floor = field(form, 'Floor / Level',
-      combo(ex.floor_level || '', FLOOR_LEVEL_PRESETS, 'floorPresets'));
+      combo(ex.floor_level || '', classChoices('floor_level'), 'floorPresets'));
     const cat = field(form, 'Group / Trade',
-      combo(ex.category || '', CATEGORY_PRESETS, 'catPresets'));
+      combo(ex.category || '', classChoices('category'), 'catPresets'));
     const sub = field(form, 'Sub-group', input(ex.sub_category || ''));
 
     let spacing = null;
@@ -328,16 +356,16 @@ export function askSlopeRoof({ flatArea, suggestedName = '', color, existing = n
       const factor = Math.sqrt(1 + (p / 12) ** 2);
       const ang = (Math.atan2(p, 12) * 180) / Math.PI;
       readout.textContent =
-        `Flat ${flatArea.toFixed(1)} sq ft  ×  ${factor.toFixed(4)}  =  ` +
-        `${(flatArea * factor).toFixed(1)} sq ft sloped   (${ang.toFixed(1)}°)`;
+        `Flat ${pyFixed(flatArea, 1)} sq ft  ×  ${pyFixed(factor, 4)}  =  ` +
+        `${pyFixed(flatArea * factor, 1)} sq ft sloped   (${pyFixed(ang, 1)}°)`;
     };
     pitch.addEventListener('input', update);
     update();
 
     const floor = field(form, 'Floor / Level',
-      combo(ex.floor_level || 'Roof', FLOOR_LEVEL_PRESETS, 'floorPresets2'));
+      combo(ex.floor_level || 'Roof', classChoices('floor_level'), 'floorPresets2'));
     const cat = field(form, 'Group / Trade',
-      combo(ex.category || 'Roofing', CATEGORY_PRESETS, 'catPresets2'));
+      combo(ex.category || 'Roofing', classChoices('category'), 'catPresets2'));
     const sub = field(form, 'Sub-group', input(ex.sub_category || ''));
     const costType = field(form, 'Type', costRadios(ex.cost_type || 'material'));
     const unitCost = field(form, 'Unit cost',
@@ -375,9 +403,19 @@ export function askTile(setup) {
     const form = el('div', 'form');
     const name = field(form, 'Name', input(ex.name || setup.suggestedName || ''));
 
+    // The desktop's presets, rows of [label, w_in, h_in] (TILE_SIZE_PRESETS),
+    // each keyed by its own size. The row showing is found by NUMBER -- within
+    // 0.01, either way round -- as _sync_tile_preset_combo finds it, and is
+    // 'Custom…' when no row is the size in the boxes.
+    const presetKey = (w, h) => {
+      const row = TILE_SIZE_PRESETS.find(([, pw, ph]) =>
+        (Math.abs(pw - w) < 0.01 && Math.abs(ph - h) < 0.01)
+        || (Math.abs(ph - w) < 0.01 && Math.abs(pw - h) < 0.01));
+      return row ? `${row[1]}x${row[2]}` : 'custom';
+    };
     const sizeSel = select(
-      [...TILE_SIZE_PRESETS.map(([w, h]) => [`${w}x${h}`, `${w}″ × ${h}″`]), ['custom', 'Custom…']],
-      `${setup.tileWIn}x${setup.tileHIn}`
+      [...TILE_SIZE_PRESETS.map(([label, w, h]) => [`${w}x${h}`, label]), ['custom', 'Custom…']],
+      presetKey(Number(setup.tileWIn), Number(setup.tileHIn))
     );
     field(form, 'Tile size', sizeSel);
 
@@ -393,6 +431,11 @@ export function askTile(setup) {
       tw.value = w; th.value = h;
     };
     sizeSel.addEventListener('change', () => { syncCustom(); update(); });
+    // A size typed by hand points the list at its row, or at Custom… (the
+    // desktop's _tile_size_edited).
+    for (const n of [tw, th]) {
+      n.addEventListener('input', () => { sizeSel.value = presetKey(Number(tw.value), Number(th.value)); });
+    }
 
     const pattern = field(form, 'Pattern',
       select(TILE_PATTERNS.map(([id, label]) => [id, label]), setup.pattern));
@@ -414,10 +457,12 @@ export function askTile(setup) {
       const approx = tileArea > 0 ? Math.ceil(setup.areaFt2 / tileArea) : 0;
       const needed = Math.ceil(approx * (1 + (Number(waste.value) || 0) / 100));
       const pb = Number(perBox.value) || 0;
+      // The desktop's numbers here (ItemPropertiesDialog._tile_refresh):
+      // f"{area_ft2:,.1f}", f"{needed:,}", f"{int(math.ceil(needed / per_box)):,}".
       readout.textContent =
-        `${setup.areaFt2.toFixed(1)} sq ft  ≈  ${approx.toLocaleString('en-US')} tiles  →  ` +
-        `${needed.toLocaleString('en-US')} with waste` +
-        (pb > 0 ? `  ·  ${Math.ceil(needed / pb)} boxes` : '');
+        `${pyFixed(setup.areaFt2, 1, true)} sq ft  ≈  ${pyIntStr(approx, true)} tiles  →  ` +
+        `${pyIntStr(needed, true)} with waste` +
+        (pb > 0 ? `  ·  ${pyIntStr(Math.ceil(needed / pb), true)} boxes` : '');
     };
     pattern.addEventListener('change', () => {
       waste.value = String(tilePatternWaste(pattern.value));
@@ -427,9 +472,9 @@ export function askTile(setup) {
     update();
 
     const floor = field(form, 'Floor / Level',
-      combo(ex.floor_level || '', FLOOR_LEVEL_PRESETS, 'floorPresets3'));
+      combo(ex.floor_level || '', classChoices('floor_level'), 'floorPresets3'));
     const cat = field(form, 'Group / Trade',
-      combo(ex.category || 'Flooring', CATEGORY_PRESETS, 'catPresets3'));
+      combo(ex.category || 'Flooring', classChoices('category'), 'catPresets3'));
     const costType = field(form, 'Type', costRadios(ex.cost_type || 'material'));
     const unitCost = field(form, 'Unit cost',
       input(String(ex.unit_cost ?? 0), 'number', { step: '0.01', min: '0' }));
@@ -495,8 +540,8 @@ export function askCountItem({ existing = [], note = '' }) {
 
     const form = el('div', 'form');
     const name = field(form, 'New count', input(''), 'What are you counting?');
-    const cat = field(form, 'Group / Trade', combo('', CATEGORY_PRESETS, 'catPresets4'));
-    const floor = field(form, 'Floor / Level', combo('', FLOOR_LEVEL_PRESETS, 'floorPresets4'));
+    const cat = field(form, 'Group / Trade', combo('', classChoices('category'), 'catPresets4'));
+    const floor = field(form, 'Floor / Level', combo('', classChoices('floor_level'), 'floorPresets4'));
     const costType = field(form, 'Type', costRadios('material'));
     const unitCost = field(form, 'Unit cost', input('0', 'number', { step: '0.01', min: '0' }));
     const colorPick = field(form, 'Colour', swatches(null));
@@ -577,9 +622,9 @@ export function askStandalone(existing = null) {
     const unit = field(form, 'Unit',
       combo(ex.unit || 'each', ['each', ...UNIT_CODES.map(c => c.toLowerCase())], 'unitPresets'));
     const floor = field(form, 'Floor / Level',
-      combo(ex.floor_level || '', FLOOR_LEVEL_PRESETS, 'floorPresets5'));
+      combo(ex.floor_level || '', classChoices('floor_level'), 'floorPresets5'));
     const cat = field(form, 'Group / Trade',
-      combo(ex.category || '', CATEGORY_PRESETS, 'catPresets5'));
+      combo(ex.category || '', classChoices('category'), 'catPresets5'));
     const sub = field(form, 'Sub-group', input(ex.sub_category || ''));
     const costType = field(form, 'Type', costRadios(ex.cost_type || 'material'));
     const unitCost = field(form, 'Unit cost',
@@ -624,7 +669,7 @@ export function askCalibration({ distPx }) {
     const form = el('div', 'form');
     const info = el('div', 'full');
     info.style.cssText = 'font-size:12.5px;color:#bdbdbd;margin-bottom:6px';
-    info.textContent = `Line drawn: ${distPx.toFixed(1)} pixels`;
+    info.textContent = `Line drawn: ${pyFixed(distPx, 1)} pixels`;
     form.appendChild(info);
     const len = field(form, 'True length', input('10'),
       'Feet, or feet and inches: 10, 10.5, 10\'-6"');
@@ -757,6 +802,87 @@ export function askCallout({ existing = null, sheets = [] } = {}) {
   });
 }
 
+// ── rename a heading / set the blank ones ─────────────────────────────────
+
+/**
+ * The small form behind an Items-list heading's Rename and Set (desktop
+ * ClassificationDialog): a name -- this job's own names first (`own`), then
+ * the stock list (`rest`) -- a sentence that says exactly what will change,
+ * worked out by `describe(option)` before OK and again whenever the choice
+ * moves, and where there is a choice of how far it reaches (`options`,
+ * [[text, value]], the first one picked), that choice. Amber `notes` under
+ * it. It changes nothing itself: it resolves {name, option} for the list
+ * to act on, or null.
+ *
+ * OK refuses a blank name ('Type a name.'), the lists' own words ('All
+ * Floors', 'Uncategorized', ... -- 'is what the lists call themselves'),
+ * and, renaming (`old`), the name it already has -- said in red, and the
+ * form stays up.
+ */
+export function askClassification({
+  title, label, current = '', own = [], rest = [], describe = () => '',
+  options = null, notes = [], old = null,
+} = {}) {
+  return showDialog(close => {
+    const form = el('div', 'form cls-form');
+    form.appendChild(el('div', 'full cls-label', label));
+    const name = combo(current || '', [...own, ...rest], 'classNamePresets');
+    name.classList.add('full', 'cls-name');
+    form.appendChild(name);
+    const what = el('div', 'full cls-what');
+    const picks = [];
+    const chosen = () => {
+      for (const [r, v] of picks) if (r.checked) return v;
+      return null;
+    };
+    const update = () => {
+      let txt = '';
+      try { txt = describe(chosen()) || ''; } catch { txt = ''; }
+      what.textContent = txt;
+    };
+    if (options && options.length) {
+      const box = el('div', 'full cls-opts');
+      options.forEach(([text, value], i) => {
+        const l = el('label');
+        const r = input('', 'radio');
+        r.name = 'classScope';
+        r.value = String(i);
+        r.checked = i === 0;
+        r.addEventListener('change', update);
+        l.appendChild(r);
+        l.appendChild(el('span', null, text));
+        box.appendChild(l);
+        picks.push([r, value]);
+      });
+      form.appendChild(box);
+    }
+    form.appendChild(what);
+    for (const n of notes || []) form.appendChild(el('div', 'full cls-note', n));
+    const err = el('div', 'full cls-err');
+    err.hidden = true;
+    form.appendChild(err);
+    update();
+    const accept = () => {
+      const nm = classClean(name.value_());
+      let why = classNameProblem(nm);
+      if (!why && old !== null && old !== undefined && nm === old) why = 'That is already its name.';
+      if (why) {
+        err.textContent = why;
+        err.hidden = false;
+        return;
+      }
+      close({ name: nm, option: chosen() });
+    };
+    form.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') { ev.preventDefault(); accept(); }
+    });
+    return dlg({
+      title, body: form,
+      buttons: [button('Cancel', '', () => close(null)), button('OK', 'primary', accept)],
+    });
+  });
+}
+
 // ── plain message and confirm ─────────────────────────────────────────────
 
 export function alertDialog(title, message) {
@@ -802,6 +928,31 @@ export function yesNoDialog(title, message, { defaultButton = 'No', danger = fal
       ],
     });
   }).then(v => v === true);
+}
+
+/**
+ * A question whose answers are named in full, one button each, in the order
+ * given (the desktop's QMessageBox with buttons of its own: text, the
+ * informative text under it). `choices` are {key, label, danger}; the one
+ * whose key is `defaultKey` has the focus, so Enter answers it, and Escape
+ * and a click outside answer null -- as the desktop's Cancel. The answers
+ * stack one per line: they are sentences. Resolves to the key pressed, or
+ * null.
+ */
+export function choiceDialog(title, text, info, choices, { defaultKey = null } = {}) {
+  return showDialog(close => {
+    const body = el('div');
+    body.style.cssText = 'font-size:12.5px;line-height:1.6;white-space:pre-line';
+    body.appendChild(el('div', 'choice-text', text));
+    if (info) body.appendChild(el('div', 'choice-info', info));
+    const d = dlg({
+      title, body,
+      buttons: choices.map(c => button(c.label,
+        c.key === defaultKey ? 'primary' : (c.danger ? 'danger' : ''), () => close(c.key))),
+    });
+    d.querySelector('.dlg-foot')?.classList.add('stack');
+    return d;
+  }).then(v => (v === undefined ? null : v));
 }
 
 export function promptDialog(title, label, value = '', hint = '') {

@@ -16,6 +16,7 @@
 // price list overrides the generic figures without editing the shipped file.
 
 import * as D from './dialogs.js';
+import { pyRound, pyMoney, pyIntStr, pyFixed } from '../core/pyformat.js';
 
 const CATALOG_URL = new URL('../../data/materials_catalog.json', import.meta.url);
 const USER_KEY = 'ptt.catalog.user.v1';
@@ -146,15 +147,18 @@ export function search(index, query, limit = CATALOG_MAX_RESULTS) {
 
 // ── coercion ──────────────────────────────────────────────────────────────
 
-/** A price from anywhere — a number, "5.25", "$1,200.00", or junk. */
+/**
+ * A price from anywhere — a number, "5.25", "$1,200.00", or junk. The
+ * desktop's _catalog_price: round(f, 2), Python's (a half cent to even).
+ */
 export function catalogPrice(v) {
   if (typeof v === 'number') {
-    return Number.isFinite(v) ? Math.round(v * 100) / 100 : 0;
+    return Number.isFinite(v) ? pyRound(v, 2) : 0;
   }
   const s = String(v ?? '').replace(/[$,\s]/g, '');
   if (!s) return 0;
   const f = parseFloat(s);
-  return Number.isFinite(f) ? Math.round(f * 100) / 100 : 0;
+  return Number.isFinite(f) ? pyRound(f, 2) : 0;
 }
 
 /** Match confidence: Low, Medium or High — anything else is blank. */
@@ -293,7 +297,7 @@ export function attachSearch(inputEl, onPick, { limit = 12 } = {}) {
       b.textContent = `${it.name}`;
       const tag = document.createElement('span');
       tag.style.cssText = 'float:right;color:#7d7d7d;font-size:11px;margin-left:12px';
-      tag.textContent = [it.code, it.unit, it.price ? `$${catalogPrice(it.price).toFixed(2)}` : '']
+      tag.textContent = [it.code, it.unit, it.price ? pyMoney(catalogPrice(it.price)) : '']
         .filter(Boolean).join('  ·  ');
       b.appendChild(tag);
       if (i === active) b.style.background = 'var(--accent)';
@@ -395,7 +399,9 @@ export async function openCatalog() {
         const tr = D.el('tr');
         for (const [key] of COLUMNS) {
           let v = it[key];
-          if (key === 'price') v = catalogPrice(v) ? `$${catalogPrice(v).toFixed(2)}` : '—';
+          // The desktop's catalog table (MaterialsCatalogDialog._fill_row):
+          // f"{price:.2f}" -- half to even, no thousands commas -- after the web's '$'.
+          if (key === 'price') v = catalogPrice(v) ? `$${pyFixed(catalogPrice(v), 2)}` : '—';
           const td = D.el('td', key === 'price' ? 'num' : null, String(v ?? ''));
           if (it._user) td.style.color = '#c8d98f';
           tr.appendChild(td);
@@ -406,7 +412,7 @@ export async function openCatalog() {
       }
       count.textContent = q.value.trim()
         ? `${list.length} match${list.length === 1 ? '' : 'es'}`
-        : `${(_items || []).length.toLocaleString('en-US')} items`;
+        : `${pyIntStr((_items || []).length, true)} items`;
     };
     q.addEventListener('input', draw);
     draw();

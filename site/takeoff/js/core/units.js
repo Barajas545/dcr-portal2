@@ -16,6 +16,8 @@
 //   otherwise silently re-value measurements the estimator was not even
 //   looking at, and a 320 LF wall would quietly become 160 LF inside a bid.
 
+import { pyFixed, pyRoundInt, pyQty, pyMoney } from './pyformat.js';
+
 export const DEFAULT_DPI = 150;
 
 /** pixels_per_foot = dpi × inches_per_unit / feet_per_unit */
@@ -99,7 +101,7 @@ export function scaleLabelFor(ppf, dpi = DEFAULT_DPI) {
       return feet === 1.0 ? label.split(' = ')[0].trim() : label;
     }
   }
-  return `${ppf.toFixed(1)} px/ft`;
+  return `${pyFixed(ppf, 1)} px/ft`;     // desktop scale_label_for: f"{ppf:.1f} px/ft"
 }
 
 /**
@@ -230,7 +232,7 @@ export function ppfFromCalibration(pixels, feet) {
   }
   const ppf = pixels / feet;
   if (ppf < CALIBRATE_MIN_PPF || ppf > CALIBRATE_MAX_PPF) {
-    throw new Error(`That works out to ${ppf.toFixed(2)} pixels per foot, which is not a usable drawing scale. Check the length you entered.`);
+    throw new Error(`That works out to ${pyFixed(ppf, 2)} pixels per foot, which is not a usable drawing scale. Check the length you entered.`);
   }
   return ppf;
 }
@@ -290,9 +292,12 @@ export function parseFeet(text) {
 
 function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
 
-/** 12.5 → 12'-6". The plain form, matching the desktop app's format_ft. */
+/**
+ * 12.5 → 12'-6". The plain form, matching the desktop app's format_ft --
+ * whose round() is Python's: 22.5 inches is 1'-10", not 1'-11".
+ */
 export function formatFt(ft) {
-  const totalIn = Math.round(ft * 12);
+  const totalIn = pyRoundInt(ft * 12);
   const feet = Math.floor(totalIn / 12);
   const inches = totalIn - feet * 12;
   return `${feet}'-${inches}"`;
@@ -305,7 +310,7 @@ export function formatFt(ft) {
 export function formatFtIn(ft) {
   if (ft == null || !Number.isFinite(ft)) return '';
   const neg = ft < 0;
-  const total16 = Math.round(Math.abs(ft) * 12 * 16);
+  const total16 = pyRoundInt(Math.abs(ft) * 12 * 16);
   const feet = Math.floor(total16 / (12 * 16));
   const rem = total16 - feet * 12 * 16;
   const wholeIn = Math.floor(rem / 16);
@@ -329,12 +334,16 @@ export const DISTANCE_PRECISIONS = [
   'Nearest Inch', 'Inches Only', '1/2', '1/8', '1/16',
 ];
 
-/** Format decimal feet using the user-chosen precision, matching the desktop app. */
+/**
+ * Format decimal feet using the user-chosen precision, matching the desktop
+ * app's format_distance_precision -- a tie at the step goes to the even one,
+ * as Python's round() does.
+ */
 export function formatDistancePrecision(ft, precision) {
   const totalIn = ft * 12;
 
   if (precision === 'Nearest Inch') {
-    const wholeIn = Math.round(totalIn);
+    const wholeIn = pyRoundInt(totalIn);
     const feet = Math.floor(wholeIn / 12);
     const inches = wholeIn - feet * 12;
     if (feet > 0) return inches ? `${feet}'-${inches}"` : `${feet}'`;
@@ -343,7 +352,7 @@ export function formatDistancePrecision(ft, precision) {
 
   if (precision === 'Inches Only') {
     const denom = 16;
-    const scaled = Math.round(totalIn * denom);
+    const scaled = pyRoundInt(totalIn * denom);
     const whole = Math.floor(scaled / denom);
     const rem = scaled - whole * denom;
     if (rem === 0) return `${whole}"`;
@@ -352,7 +361,7 @@ export function formatDistancePrecision(ft, precision) {
   }
 
   const denom = { '1/2': 2, '1/8': 8, '1/16': 16 }[precision] ?? 8;
-  const scaled = Math.round(totalIn * denom);
+  const scaled = pyRoundInt(totalIn * denom);
   const wholeIn = Math.floor(scaled / denom);
   const rem = scaled - wholeIn * denom;
   const feet = Math.floor(wholeIn / 12);
@@ -372,28 +381,22 @@ export function formatDistancePrecision(ft, precision) {
 
 // ── quantities ────────────────────────────────────────────────────────────
 
-/** 1234.5 → "1,234.5"; trailing zeros dropped; 0 → "0". */
+/**
+ * 1234.5 → "1,234.5"; trailing zeros dropped; 0 → "0" -- the desktop's
+ * report quantity (ReportCenterDialog._fmt_qty), its rounding too.
+ */
 export function formatQty(q) {
-  if (!q) return '0';
-  const s = Number(q).toLocaleString('en-US', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  });
-  return s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+  return pyQty(q);
 }
 
 export function formatNumber(v, dp = 2) {
   if (v == null || !Number.isFinite(Number(v))) return '';
-  return Number(v).toLocaleString('en-US', {
-    minimumFractionDigits: dp, maximumFractionDigits: dp,
-  });
+  return pyFixed(Number(v), dp, true);
 }
 
+/** The desktop's money: f"${x:,.2f}". */
 export function formatMoney(v) {
-  const n = Number(v) || 0;
-  return n.toLocaleString('en-US', {
-    style: 'currency', currency: 'USD',
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  });
+  return pyMoney(v);
 }
 
 export function formatArea(sf, { dp = 2 } = {}) {

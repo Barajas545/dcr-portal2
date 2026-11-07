@@ -33,6 +33,8 @@
  * with made-up handles and no browser. Nothing here touches the network.
  */
 
+import { pyFixed, pyRoundInt } from './pyformat.js';
+
 export const PORTAL_INDEX_KEY = 'dcr.plansLibrary.v1';
 export const PORTAL_DIR = 'plans-library';
 export const PORTAL_DB = 'dcr-plans-library';
@@ -484,7 +486,7 @@ export async function removePortalCopy({ root, store, entry, locks = null, dropR
 export function sizeText(bytes) {
   const n = Number(bytes);
   if (!(n > 0)) return '';
-  if (n >= 1073741824) return `${(n / 1073741824).toFixed(1)} GB`;
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(n / 1024))} KB`;
+  if (n >= 1073741824) return `${pyFixed(n / 1073741824, 1)} GB`;
+  if (n >= 1048576) return `${pyFixed(n / 1048576, 1)} MB`;
+  return `${Math.max(1, pyRoundInt(n / 1024))} KB`;
 }

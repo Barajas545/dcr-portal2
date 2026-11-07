@@ -831,7 +831,7 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   mark) is the broker's answer, so a 504 `{error: "Gateway Timeout"}` waits the broker's longest run like any other.
 - **Limits** (listed under the program's stopping rule, contract addendum 6 H5; DCR Desktop 2's `docs/ONEDRIVE.md` 18c
   lists the broker's):
-  - The takeoff app's own words (takeoff-web 4f524df, `js/core/save-route.js` portalNewsWords) are a little stronger
+  - The takeoff app's own words (takeoff-web 9011eff, `js/core/save-route.js` portalNewsWords) are a little stronger
     or weaker than what the portal knows in three cases. "checking" says "Your save of <plan> is in OneDrive and is being
     checked against office saves" also while the broker waits for OneDrive's hash of a version that only has the save's
     size. "failed" says "the portal's Plans Library sends it again" also for a failure that waits for the person's
@@ -859,8 +859,10 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
     sentence on the row and the bar until the next answer. Only the sign-in clause is stale; nothing is lost and "not
     sent" is never shown.
   - On a phone held sideways (844x390) the takeoff app's start card (309 px) is taller than the room above its foot bar
-    (264 px): the last line of "Plans come from the portal ..." runs under the bar, and the card does not scroll. Both
-    buttons stay above it, so nothing is lost; upright, and on every iPad size, the card fits.
+    (264 px). Since takeoff-web c58dc44 it stops at the bar and scrolls, so the last lines of "Plans come from the portal
+    ..." are cut off at the bar's edge until the person scrolls; both buttons stay in sight. Upright, and on every iPad
+    size, the card fits. (Seen scrolling by finger in headless Chrome only: its scroller has pointer-events: none and
+    only the card takes the drag; not yet tried on WebKit.)
   - Work started in the takeoff frame while a plan is on its way (a blank sheet, a PDF) is asked about when the plan
     arrives ("The plan from the portal is here"; Cancel keeps the work). The portal does not hear that answer: after a
     Cancel the bar over the frame (an online open's note) and, once the frame closes, the 📐 menu's line still say how
@@ -868,6 +870,16 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   - A dialog of the takeoff app still open when the plan arrives (Add Blank Sheet, say, before its Add) is not asked
     about: the plan opens under it, and its Add then puts the blank sheet into the plan (seen as a third sheet; Undo
     does not take a sheet out, so delete it). Older than the question; it needs the dialog open at that very moment.
+  - A Save in the takeoff frame with nothing changed is still handed to the portal and sent: the takeoff app writes the
+    file afresh (its `project_modified` stamp is the save's time; no measurement's label text is rewritten unless that
+    item is edited), so OneDrive gets a new version of the plan that differs only in that stamp - or, when the office
+    saved the plan meanwhile, a `<stem> - iPad YYYY-MM-DD HHMM.takeoff` copy with no work of the person's in it.
+    Nothing is ever written over the office's save.
+  - The first time a device that ran the portal's previous copy of the takeoff app opens a plan after a new copy is
+    published, the app's status line says "A new version of Professional Takeoff Tools is ready - it loads when you
+    close this project or reload the page." in place of the portal's "Opened ..." line, although the new version is
+    already the one running (the page comes from the network first; the new service worker's claim is what the app
+    hears). Nothing is lost and nothing reloads; it happens once per device per published copy. Phones hide the line.
   - None of this has run on WebKit or a real iPad here (headless Chrome with a tablet's user agent): the go-live run on
     the owner's iPad covers it.
 - **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against

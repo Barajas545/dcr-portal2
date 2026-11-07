@@ -74,6 +74,13 @@ import {
   sizesMatch, sizeRefusal, itemRevId,
 } from './core/revisions.js';
 import { ZoomFloor, PinchHold, fitPlace, pinchPlace, wheelInOut, pictureZoom, pictureRect, zoomFloorLine, zoomOutTip, wheelHelp, pinchHelp, PICTURE_STEP } from './render/zoom-floor.js';
+import { menuPlace } from './ui/hold.js';
+import { activateOnThisSheet, activateAcrossSheets, propertiesOnThisSheet, deleteHereChoice, deletedHereWords, deleteName, shapesOnScreen } from './core/counting.js';
+import { followTool as followToolMoves } from './core/classify.js';
+import { SavedOverlay, HIDDEN_NOTE, COMPARE_NOTE, overlayWords } from './core/saved-overlay.js';
+import { overlayRgba, pictureBytes, pngInfo, pngHeadInfo, pngPlain, pngRgba, pngAutoCutoff } from './core/overlay-look.js';
+import { decodeSheet, decodeReduces } from './core/page-store.js';
+import { pyFixed, pyRoundInt, pyIntStr } from './core/pyformat.js';
 
 const $ = id => document.getElementById(id);
 
@@ -130,6 +137,30 @@ const canvas = $('canvas');
 const viewport = new Viewport(canvas);
 const renderer = new Renderer(canvas, viewport);
 
+// The overlay the desktop saved for the sheet he is on (desktop 3.06
+// _restore_overlay_for_page): put up on arrival, taken down on every turn,
+// LOOKING ONLY -- nothing here writes a record or marks the project. The
+// rules are js/core/saved-overlay.js; the wiring is near the comparing code.
+const savedOv = new SavedOverlay({
+  record: page => (app.project.metadata.page_overlays || {})[String(page)],
+  context: page => ({
+    pageCount: app.pages.pageCount,
+    revisions: allRevisions(),
+    pictures: app.project.annotations[page] || [],
+  }),
+  metadata: () => app.project.metadata,
+  sheetUp: page => onSheetUp(page) && inLandedJob(),
+  onVersion: () => browsingOtherVersion(),
+  comparing: () => overlayActive(),
+  pixels: src => overlayPixels(src),
+  surface: (px, look, free) => overlaySurface(px, look, free),
+  revisionName: src => savedRevisionName(src),
+  strip: state => syncSavedOverlayStrip(state),
+  draw: () => requestDraw(),
+  say: (text, how, still) => sayOnArrival(text, how, still),
+  retire: () => retireOverlayWords(),
+});
+
 const controller = new ToolController({
   canvas, viewport,
   project: app.project,
@@ -183,32 +214,91 @@ const itemsPanel = new ItemsPanel({
   groupFilterEl: $('groupFilter'),
   costToggleEl: $('costToggle'),
   footEl: $('itemsFoot'),
+  // The SHEET chip and the title it words ('ITEMS ON X1.1').
+  sheetChipEl: $('sheetChip'),
+  titleEl: $('itemsTitle'),
   project: app.project,
   host: {
     pageLabel: idx => pageFinalLabel(idx),
     // The panel asks before it offers a control that writes.
     readOnly: () => controller.readOnly,
-    selectItem: (m, pageIdx, ev) => {
+    // The drawing on screen, for a list on one sheet; null with no sheet.
+    view: () => sheetView(),
+    // Where the chip is remembered: this browser's settings, never the file.
+    settings: app.settings,
+    // What a tap on the title, on '+N' or on a ⊘ tag says -- seen where
+    // the status line is not drawn, too (sayToFinger).
+    say: text => sayToFinger(text),
+    selectItem: (item, row, ev) => {
+      // The second click of a double-click (a double-tap) is Properties'
+      // (the row's dblclick): it does not step on to the next shape first.
+      if (ev && ev.detail >= 2) return;
+      // The list on one sheet: the item's shapes here, one per tap, and no
+      // page turn (stepOnThisSheet). Otherwise the shape this tap is for --
+      // the next of a multi-shape item, across sheets -- and the jump to it.
+      if (stepOnThisSheet(item, row)) return;
+      const [pageIdx, m] = stepAcrossSheets(item, row);
       // On another sheet: turned to, and zoomed on (jumpToItem). Another than
       // the one he is on with its drawing up (onSheetUp): a second click
       // while the first one's sheet decodes is the same jump again, and a
       // row on the sheet he is leaving, clicked while the next one decodes,
       // a jump back to it -- not a click on this sheet.
       if (pageIdx !== STANDALONE_PAGE && !onSheetUp(pageIdx)) { void jumpToItem(m, pageIdx); return; }
+      const show = () => {
+        controller.select([m._uid]);
+        const bb = boundingBox(m.points || []);
+        if (bb.w || bb.h) viewport.ensureVisible(bb);
+        requestDraw();
+      };
+      // A shape on a revision of this sheet -- another drawing of it, which
+      // the landing flips up, or the one up, which it takes down and puts
+      // back -- is selected once that drawing has landed: a flip drops a
+      // selection made before it (setVersionView), as the desktop's
+      // go_to_item lands before it selects. The walk across sheets reaches
+      // such a shape whenever two in a row are on two drawings of one sheet.
+      const flips = pageIdx !== STANDALONE_PAGE && !!(String(m.rev_id || '') || String(versionView.revId || ''));
       // A jump whose whole purpose is to put a piece of the user's own work
       // in front of them must land on the drawing that work was traced on.
       // Landing on the newest revision would hide the very item they clicked,
       // because an item is only painted over its own version of the sheet.
-      if (pageIdx !== STANDALONE_PAGE) goToPage(pageIdx, { version: m.rev_id || '' });
-      controller.select([m._uid]);
-      const bb = boundingBox(m.points || []);
-      if (bb.w || bb.h) viewport.ensureVisible(bb);
-      requestDraw();
+      const landing = pageIdx !== STANDALONE_PAGE ? goToPage(pageIdx, { version: m.rev_id || '' }) : null;
+      if (flips) {
+        const ticket = pageTicket;           // taken by goToPage before its first await
+        void landing.then(() => {
+          // ...unless he has gone on, or that drawing did not come up
+          if (ticket === pageTicket && onSheetUp(pageIdx)
+            && String(versionView.revId || '') === String(m.rev_id || '')) show();
+        });
+        return;
+      }
+      show();
     },
-    openProperties: item => openProperties(item),
+    // Properties… from the list: on one sheet, the shape painted here is
+    // selected and the form stays (desktop _properties_on_this_sheet).
+    openProperties: item => openPropertiesFromList(item),
     openMaterials: item => openMaterials(item),
     // From the Items list: its Delete takes the whole item, and asks first.
     showItemMenu: (item, ev) => showItemMenu(item, ev, { from: 'list' }),
+    // A heading's menu (Collapse all / Expand all), held or right-clicked.
+    showMenu: (entries, at) => showMenu(entries, at),
+    // The one switch for Rename… / Set … for these N items… on a heading
+    // (desktop 3.07): on while he is editing and the list may write -- not
+    // in View Only, not on an older drawing of a sheet. The heading's
+    // tooltip follows the same switch, so it promises what the menu has.
+    canClassifyFromHeadings: () => app.editing && !controller.readOnly,
+    // ...the entry chosen: the list's own Rename / Set form, and its write.
+    classifyFromHeading: (act, meta, rows) => classifyFromHeading(act, meta, rows),
+    askClassification: opts => D.askClassification(opts),
+    askYesNo: (title, text) => D.yesNoDialog(title, text, { defaultButton: 'No' }),
+    // ...and what it did, said until the history moves past it.
+    sayStep: text => sayStep(text),
+    // What a rename moves in the TOOL: the next item's floor and
+    // sub-category, an armed count's answers (they ride the undo level).
+    followTool: (field, old, nu, scope) => followToolMoves(controller, field, old, nu, scope),
+    // The tooltips' words, and the one-time hold hint.
+    touchLayout: () => document.documentElement.dataset.ui === 'touch',
+    listShown: () => itemsListShown(),
+    hint: (text, when) => sayWhenQuiet(text, when),
   },
 });
 
@@ -326,6 +416,12 @@ function syncVersionUi({ rebuild = false } = {}) {
   // A version on screen is a look, not a place to draw — say so on the canvas
   // rather than only in the status line, which scrolls away.
   canvas.classList.toggle('on-version', on);
+  // The sheet's saved overlay follows the drawing on screen: up on its own
+  // drawing, off the screen while another version is (the desktop's paint
+  // gate).
+  settleSavedOverlay();
+  // A list on one sheet follows the drawing on screen (once it has landed).
+  itemsPanel.onSheetShown();
 }
 
 /**
@@ -373,6 +469,42 @@ let pendingFit = false;
 // ...and a page turn's settle, for the same reason: { chose }. Dropped by the
 // next goToPage that is not a 'keep' of the same sheet.
 let pendingTurn = null;
+// What the landing in force is still bringing up: the sheet and the drawing
+// of it a goToPage was asked for, then the drawing a flip of it is decoding
+// (vticket) and how the landing settles once that is up. A save's re-read
+// takes the drawing down and lands in that one's place, asking for the same
+// (reacquireAfterSave). { page, version, ticket, vticket, settle }
+let comingUp = null;
+// The goToPage whose drawing is not decided yet -- the sheet's own still
+// decoding, or the newest drawing of it after that -- by its pageTicket; 0
+// when none is. While it is, the Items list on one sheet does not list the
+// rows of a drawing that may not be the one that comes up (sheetView).
+let landingTicket = 0;
+// The sheet whose drawing would not decode, in the job it would not in
+// ({page, job}): nothing is coming for it, and the list lists its takeoff.
+let sheetFailed = null;
+
+/**
+ * The drawing on screen, for the Items list on one sheet (the SHEET chip):
+ * {page, revId, revPage, coming} -- `coming` while a drawing of it is still
+ * on its way: a turn's (landingTicket), a flip's decode (comingUp with the
+ * version ticket in force), or a sheet he is on whose drawing is not up in
+ * this job yet (onSheetUp, inLandedJob -- an open, before its first turn).
+ * null with no sheet open.
+ */
+function sheetView() {
+  if (!app.pages.pageCount) return null;
+  const rid = String(versionView.revId || '');
+  const flipping = !!comingUp && comingUp.vticket !== -1 && comingUp.vticket === versionTicket;
+  const up = (onSheetUp(app.currentPage) && inLandedJob())
+    || (!!sheetFailed && sheetFailed.page === app.currentPage && sheetFailed.job === jobNow());
+  return {
+    page: app.currentPage,
+    revId: rid,
+    revPage: rid ? versionView.revPage : null,
+    coming: (landingTicket !== 0 && landingTicket === pageTicket) || flipping || !up,
+  };
+}
 
 function requestDraw() {
   if (drawQueued) return;
@@ -429,6 +561,11 @@ function drawFrame() {
     items: temp.length ? [...real, ...temp] : real,
     annotations: onRev ? [] : (app.project.annotations[app.currentPage] || []),
     overlay: overlayFrame(),
+    // The sheet's saved overlay: null while another version is up or Compare
+    // is, and off its own sheet (js/core/saved-overlay.js frame()). While it
+    // blinks, its off frames keep the renderer's tint canvas for the next on.
+    savedOverlay: savedOv.frame(),
+    savedOverlayFlashing: savedOv.flashing(),
     // Isolation is a way of looking at the TAKEOFF — "show only these items".
     // A temporary dimension is not one of them, and letting isolation swallow
     // it meant measuring in View Only reported a length, bumped the counter,
@@ -495,7 +632,13 @@ document.addEventListener('pointerdown', ev => {
   calloutPreview.hide();
 }, true);
 controller.addEventListener('selection-changed', ev => {
-  itemsPanel.setSelection(ev.detail.ids);
+  // Selected on the drawing: its row is lit. Where the desktop's canvas
+  // tells its list (selection_changed: a press on another shape, a
+  // selection made for it) the row is also found -- its folded sections
+  // opened (highlight_measurement). A right-click, a finger's hold, does
+  // not tell it: a floor he folded stays folded (reveal false).
+  if (ev.detail.reveal) itemsPanel.revealSelection(ev.detail.ids);
+  else itemsPanel.setSelection(ev.detail.ids);
 });
 controller.addEventListener('status', ev => setStatus(ev.detail.text));
 // Every finished item passes through controller._file, which says so here.
@@ -574,6 +717,12 @@ app.project.addEventListener('pages-changed', ev => {
 // home-indicator inset) changes the canvas size, which drawFrame's
 // viewport.resize() hears like an iPad turned: a view at Fit goes to the
 // new Fit, any other view keeps its centre.
+// The cut is written on the body, the stage's parent, whose bottom is the
+// stage's: the start card inside the stage stops at the bar too, and so do
+// the Sheets and Items drawers and the Revisions panel, which the phone and
+// tablet layout lays over the stage beside it (css: .thumbs, .items,
+// .revpanel, .empty-state) -- under the bar their last card or row, and the
+// list's count and totals, were out of reach.
 function fitCanvasAboveFootBar() {
   const stage = $('stage');
   const bar = $('mobileBar');
@@ -585,8 +734,9 @@ function fitCanvasAboveFootBar() {
       cover = Math.max(0, Math.min(s.height, Math.round(s.bottom - b.top)));
     }
   }
+  const body = stage.parentElement;
   const want = `${cover}px`;
-  if (stage.style.getPropertyValue('--mbar-h') !== want) stage.style.setProperty('--mbar-h', want);
+  if (body.style.getPropertyValue('--mbar-h') !== want) body.style.setProperty('--mbar-h', want);
 }
 {
   const ro = new ResizeObserver(() => { fitCanvasAboveFootBar(); requestDraw(); });
@@ -689,17 +839,32 @@ function leftByChoice() {
  * as the desktop's go_to_page re-centres a card clicked again. 'keep':
  * nothing moves. See viewOf for what is asked and what it is when omitted.
  * A caller that took the drawing down first passes `chose`, asked of the
- * sheet being left before it went (below_fit_by_choice).
+ * sheet being left before it went (below_fit_by_choice), and for a 'keep'
+ * `from`, the size of the drawing that was up, and `settle`, how a landing
+ * it replaced would have settled once its drawing was up (comingUp).
  */
-async function goToPage(index, { version, view, chose: leftChose } = {}) {
+async function goToPage(index, { version, view, chose: leftChose, from, settle: carried } = {}) {
   if (index < 0 || index >= app.pages.pageCount) return;
   const ticket = ++pageTicket;
+  comingUp = { page: index, version, ticket, vticket: -1, settle: null };
+  // Until the drawing it lands on is up (the end of this call), the Items
+  // list on one sheet waits for it: 'Opening X1.2…' on another sheet, the
+  // rows it had on this one (sheetView's `coming`).
+  landingTicket = ticket;
   const how = viewOf(index, view);
+  // The last sheet's saved overlay comes down HERE, before anything below can
+  // wait or return: a record on the next sheet that names nothing must leave
+  // nothing up (the desktop's revision branch returns first and leaves the
+  // last sheet's comparison over this one -- reported for 3.08). A 'keep' of
+  // the sheet he is on (a save's re-read) is the same visit and keeps it.
+  savedOv.turn(index, how);
   // A re-read keeps its job: a turn made while it decodes is a turn.
   if (how === 'keep') landedJob = jobNow();
   // Kept with its drawing taken down first: the view is carried from the
-  // drawing that was up to the one that comes back, as a flip carries it.
-  const keptFrom = how === 'keep' && !pageImage ? shownDrawingSize() : null;
+  // drawing that was up to the one that comes back, as a flip carries it --
+  // from the size the caller took before it went (`from`): the page store
+  // closes the bitmaps it drops, and a closed one has no size to read.
+  const keptFrom = how === 'keep' && !pageImage ? from || shownDrawingSize() : null;
   // A settle parked for want of a canvas belonged to the sheet being left.
   if (how !== 'keep') pendingTurn = null;
   const movedSheet = app.currentPage !== index;
@@ -728,6 +893,9 @@ async function goToPage(index, { version, view, chose: leftChose } = {}) {
     if (ticket === pageTicket) {
       pageImage = null;
       shownPage = -1;
+      // Nothing more is coming: the list lists the sheet as it stands.
+      landingTicket = 0;
+      sheetFailed = { page: index, job: jobNow() };
       setStatus(`Could not open sheet ${index + 1} — ${err.message}`);
       // Without this the version bar goes on claiming a revision is up on a
       // sheet that has no drawing at all, and readOnly stays stuck true with
@@ -785,13 +953,26 @@ async function goToPage(index, { version, view, chose: leftChose } = {}) {
     // desktop's held turn settles once its revision is on screen: a reissue
     // on smaller paper raised to its Fit, Fit as Fit -- unless he zoomed or
     // moved the sheet while it was being decoded (ZoomFloor.unmoved: the
-    // flip itself is no move). The settle is idempotent from his base.
+    // flip itself is no move). The settle is idempotent from his base. A
+    // 'keep' that replaced a landing whose drawing was still coming settles
+    // as that landing would have (`settle`).
     const framed = landed ? zoomFloor.mark() : null;
-    const up = await showSheetVersion(index, want, { announce: false, flip: false });
-    if (up && framed && ticket === pageTicket && zoomFloor.unmoved(framed)) {
-      zoomFloor.turnSettle(how === 'turn' && chose);
+    const settle = framed ? { framed, chose: how === 'turn' && chose } : (how === 'keep' && carried) || null;
+    const up = await showSheetVersion(index, want, { announce: false, flip: false, settle });
+    if (up && settle && ticket === pageTicket && zoomFloor.unmoved(settle.framed)) {
+      zoomFloor.turnSettle(settle.chose);
       requestDraw();
     }
+  }
+  // The drawing it landed on is up (or never will be): the sheet's saved
+  // overlay comes up on its own drawing -- on the newest of a reissued sheet
+  // it is not drawn, and he is told where it is (js/core/saved-overlay.js).
+  if (ticket === pageTicket) savedOv.settle({ arrival: true, how });
+  // ...and the Items list on one sheet follows it now -- once, for both
+  // changes of the landing.
+  if (landingTicket === ticket) {
+    landingTicket = 0;
+    itemsPanel.onSheetShown();
   }
 }
 
@@ -1435,7 +1616,7 @@ const MAIN_LRU_COMPARING = 2;
  * on screen flips back to the original — that back-and-forth is what makes a
  * change jump out, and it is how the desktop behaves.
  */
-async function showSheetVersion(page, revId, { announce = true, flip = true } = {}) {
+async function showSheetVersion(page, revId, { announce = true, flip = true, settle = null } = {}) {
   if (!(page >= 0 && page < app.pages.pageCount)) return false;
   const revs = allRevisions();
 
@@ -1474,6 +1655,9 @@ async function showSheetVersion(page, revId, { announce = true, flip = true } = 
     return false;
   }
 
+  // Coming up, while it decodes (comingUp): the drawing a save's re-read
+  // brings up in its place, and how the landing that asked for it settles.
+  comingUp = { page, version: want, ticket: pageTicket, vticket: ticket, settle };
   let bmp;
   try {
     bmp = await app.pages.getRevisionPage(set, hit.revPage);
@@ -1482,6 +1666,8 @@ async function showSheetVersion(page, revId, { announce = true, flip = true } = 
       setStatus(`Could not open that revision sheet — ${err.message}`);
     }
     return false;
+  } finally {
+    if (comingUp && comingUp.vticket === ticket) comingUp = null;   // it came, or it never will
   }
   if (ticket !== versionTicket) return false;            // the user moved on
 
@@ -1515,6 +1701,181 @@ async function showSheetVersion(page, revId, { announce = true, flip = true } = 
 /** Land on a sheet showing ITS OWN drawing, whatever Newest says. */
 function goToPageOwnVersion(index) {
   return goToPage(index, { version: '' });
+}
+
+/**
+ * Which shape a tap on a row stepped to last (desktop _shape_cycle_gid /
+ * _shape_cycle_idx): {key, idx}. A view of the list, never saved; another
+ * job starts again.
+ */
+let shapeCycle = null;
+app.project.addEventListener('reset', () => { shapeCycle = null; });
+
+/** The gesture a row's stepping is done with, as the status line names it
+ *  (the desktop's 'double-click'). */
+function rowGesture() {
+  return document.documentElement.dataset.ui === 'touch' ? 'tap' : 'click';
+}
+
+/**
+ * A tap on a row of the Items list is the desktop's double-click
+ * (_on_item_activated). With the list on one sheet (the SHEET chip) it walks
+ * the item's shapes painted on the drawing on screen, one per tap -- 'Shape
+ * 2 of 3 on X1.1' -- zoomed to and selected, and never turns the page or
+ * drops the revision up (desktop _activate_on_this_sheet): turning would swap
+ * the list out from under the finger. True when it did; false -- the chip
+ * off, nothing of the item painted here, the sheet still opening -- and the
+ * row's tap goes on to stepAcrossSheets and the jump. An item whose main
+ * shape is filed on no sheet steps through its shapes here like any other
+ * (the desktop asks every row but a standalone or a Group); of a standalone
+ * nothing is painted anywhere, and its tap goes on.
+ */
+function stepOnThisSheet(m, pageIdx) {
+  if (!itemsPanel.sheetOnly()) return false;
+  const view = sheetView();
+  if (!view) return false;
+  if (!onSheetUp(view.page)) {
+    // A sheet whose drawing would not open has its takeoff listed (sheetFailed):
+    // a tap on a row of it stays on it -- the walk across sheets would turn
+    // the page out from under the list -- and says why nothing is shown.
+    // Any other sheet not up is still opening: the tap goes on.
+    if (view.coming || !sheetFailedOn(view.page)
+      || !shapesOnScreen(countingModel(), view, pageIdx, m).length) return false;
+    sayToFinger(`The drawing of ${pageFinalLabel(view.page)} did not open — “${deleteName(m)}” cannot be shown on it`);
+    return true;
+  }
+  const hit = activateOnThisSheet(countingModel(), view, pageIdx, m, shapeCycle, rowGesture());
+  if (!hit) return false;
+  shapeCycle = hit.cycle;
+  if (hit.said) sayToFinger(hit.said);
+  controller.select([hit.target._uid]);
+  // A settle parked for want of a canvas must not come after it.
+  if (zoomFloor.zoomToItem(hit.target.points || [], hit.target.type)) pendingTurn = null;
+  // On a phone the open drawer covers most of the drawing, and the shape
+  // zoomed to would come up under it: the drawer goes, the shape is seen --
+  // once a double-tap can no longer be one (closeItemsDrawerSoon), never
+  // inside this tap. (An iPad's portrait drawer covers well under half: it
+  // stays open.)
+  if (itemsDrawerHidesDrawing()) closeItemsDrawerSoon();
+  requestDraw();
+  return true;
+}
+
+/** How long a row's step leaves a phone's Items drawer open: the longest a
+ *  second tap still makes a double-tap by the usual defaults (a Windows
+ *  double-click, 500 ms; a finger's is shorter -- Chrome's 400, measured). */
+const STEP_CLOSE_MS = 500;
+let stepCloseTimer = 0;
+
+/**
+ * The drawer a row's step closes, closed once the tap cannot be the first
+ * of a double-tap. Closed inside the tap, the drawer bared the drawing under
+ * the finger, and the second tap of a double-tap -- Properties (the row's
+ * dblclick) -- landed on the canvas instead: its own double-click opened the
+ * form of whatever shape was there, another item's, or none, and with a
+ * drawing tool armed the tap went to the tool. A finger back on the list
+ * first keeps the drawer (keepItemsDrawer); a step after re-arms the wait.
+ */
+function closeItemsDrawerSoon() {
+  clearTimeout(stepCloseTimer);
+  stepCloseTimer = setTimeout(() => {
+    stepCloseTimer = 0;
+    // (still open, and still over most of the drawing: not shut, turned
+    // or swapped for the sheets drawer meanwhile)
+    if (itemsDrawerHidesDrawing()) closeDrawers();
+  }, STEP_CLOSE_MS);
+}
+
+/** The finger is back on the Items list -- a double-tap's second tap, a
+ *  scroll, another row -- or a drawer was opened or shut by hand: the close
+ *  a row's step was waiting to make is not made. */
+function keepItemsDrawer() {
+  clearTimeout(stepCloseTimer);
+  stepCloseTimer = 0;
+}
+
+/** Whether `page` is the sheet whose drawing would not decode, in the job
+ *  open now (sheetFailed) -- and is still not up. */
+function sheetFailedOn(page) {
+  return !!sheetFailed && sheetFailed.page === page && sheetFailed.job === jobNow() && !onSheetUp(page);
+}
+
+/** How much of the drawing the open Items drawer may cover before a row's
+ *  step closes it: a phone's (320 px of 390) does, an iPad's in portrait
+ *  (320 of 768) does not. */
+const DRAWER_HIDES_SHARE = 0.6;
+
+/** Whether the Items drawer is open over most of the drawing. */
+function itemsDrawerHidesDrawing() {
+  if (!isMobileLayout()) return false;
+  const d = $('itemsPanel');
+  if (!d || !d.classList.contains('mopen')) return false;
+  const w = viewport.width || 0;
+  return w > 0 && d.getBoundingClientRect().width >= DRAWER_HIDES_SHARE * w;
+}
+
+/**
+ * A sentence a finger asked for -- a tap on the list's title, on '+N', on a
+ * ⊘ tag, a row's step, a Delete of this sheet's shapes -- in the status
+ * line, and where that line is not drawn (a phone: max-width 720px) in a
+ * toast over everything for a few seconds as well: a tap that shows nothing
+ * reads as a tap that did nothing.
+ */
+let fingerToastTimer = 0;
+function sayToFinger(text) {
+  setStatus(text);
+  const bar = document.querySelector('.statusbar');
+  if (!text || !bar || getComputedStyle(bar).display !== 'none') return;
+  let t = $('fingerToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'fingerToast';
+    t.className = 'toast finger-toast';
+    t.setAttribute('role', 'status');
+    document.body.appendChild(t);
+  }
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(fingerToastTimer);
+  fingerToastTimer = setTimeout(() => { t.hidden = true; }, FINGER_TOAST_MS);
+}
+const FINGER_TOAST_MS = 4000;
+
+/**
+ * A sentence about the step just taken -- 'Renamed floor level … — Undo
+ * puts it back', 'Filed 2 items under …' -- said as sayToFinger says it,
+ * and taken down the moment the history moves past that step (its Undo, a
+ * Redo, the next edit): left up, it went on naming a rename the Undo had
+ * just taken back. Nothing new is said in its place; the line goes back to
+ * the tool's own hint.
+ */
+let stepSaid = '';
+function sayStep(text) {
+  sayToFinger(text);
+  stepSaid = text || '';
+}
+app.project.addEventListener('history-changed', () => {
+  const was = stepSaid;
+  stepSaid = '';
+  if (!was) return;
+  if ($('statusText').textContent === was) setStatus(HINTS[controller.mode] || 'Ready');
+  const t = $('fingerToast');
+  if (t && !t.hidden && t.textContent === was) t.hidden = true;
+});
+
+/**
+ * The shape a row's tap is for, as [page, shape], when it is not stepping
+ * on one sheet: a multi-shape item walks its shapes ACROSS sheets, master
+ * first, one per tap -- 'Shape 2 of 3' -- each landed on as the drawing it
+ * was traced on (the row's jump); anything else is the item itself (desktop
+ * _on_item_activated with the list not on one sheet).
+ */
+function stepAcrossSheets(m, pageIdx) {
+  if (pageIdx === STANDALONE_PAGE) return [pageIdx, m];
+  const step = activateAcrossSheets(countingModel(), pageIdx, m, shapeCycle, rowGesture());
+  shapeCycle = step.cycle;
+  if (step.said) sayToFinger(step.said);
+  return step.target;
 }
 
 /**
@@ -1911,6 +2272,10 @@ async function startOverlay() {
     revId = v.revId; revPage = v.revPage; set = v.rev._setIndex;
   }
   showProgress('Preparing the comparison…', 0, 1, '');
+  // Asked of the sheet he is on: a turn while it is built leaves it unbuilt,
+  // or it went up over the next sheet -- and took that sheet's saved overlay
+  // down with it. (A save's re-read of this sheet is the same visit.)
+  const askedOn = savedOv.visit;
   let inkNew = null;
   let inkOld = null;
   try {
@@ -1930,7 +2295,16 @@ async function startOverlay() {
   } finally {
     hideProgress();
   }
+  if (askedOn !== savedOv.visit || app.currentPage !== page) {
+    inkNew?.close?.();
+    inkOld?.close?.();
+    return;
+  }
   clearOverlay({ draw: false });
+  // One overlay on screen at a time: the sheet's saved one gives way, and
+  // stays down for the rest of this visit -- it does not come back when
+  // Compare ends (the next arrival on the sheet brings it back).
+  const gaveWay = savedOv.stepAside();
   overlay.revId = revId;
   overlay.revPage = revPage;
   overlay.bitmap = inkNew;
@@ -1953,7 +2327,18 @@ async function startOverlay() {
   syncVersionUi();
   requestDraw();
   setStatus('Comparing: older in blue, newest in red. Slide towards the one '
-    + 'you want to see more of — the centre shows both.');
+    + 'you want to see more of — the centre shows both.'
+    + (gaveWay ? ` ${COMPARE_NOTE}` : ''));
+  // Where there is no status line (a phone), the saved overlay's going is
+  // said in the finger's toast: decision 3's choice is said, not only made.
+  // (sayToFinger's line is the hidden one there, so nothing is lost by it.)
+  if (gaveWay && !statusLineShown()) sayToFinger(COMPARE_NOTE);
+}
+
+/** Whether the status line is drawn (a phone's layout hides it). */
+function statusLineShown() {
+  const bar = document.querySelector('.statusbar');
+  return !!bar && getComputedStyle(bar).display !== 'none';
 }
 
 /**
@@ -2036,6 +2421,354 @@ function toggleOverlayFlash() {
   }
   requestDraw();
 }
+
+/* ── the overlay the desktop SAVED for a sheet ─────────────────────────────
+ *
+ * Not the comparison above. The desktop (3.06) keeps one overlay per sheet in
+ * metadata.page_overlays -- another sheet, a revision of this one, or a
+ * picture of it, in its own tint, fade and look -- and puts it up whenever he
+ * arrives on that sheet. So does this build now, READ-ONLY: it shows what the
+ * desktop saved and writes none of it, so a save still gives the file back as
+ * it came (tests/picture-overlay-format.mjs). The rules -- which record can be
+ * shown, the visit, Hide, the paint gate, Compare -- are
+ * js/core/saved-overlay.js; the pixels are js/core/overlay-look.js, the
+ * desktop's own arithmetic. Here: decoding the source, building the mask,
+ * the strip, and the words.
+ */
+
+/** A canvas for one pass over a decode, as tintLinework makes one. */
+function passCanvas(w, h) {
+  return typeof OffscreenCanvas !== 'undefined'
+    ? new OffscreenCanvas(w, h)
+    : Object.assign(document.createElement('canvas'), { width: w, height: h });
+}
+
+/**
+ * A source, ready to be read: {img, owned, bytes, head, facts, colourKey}.
+ * `img` is a decode the page store already holds or is already making (used
+ * as it is, the store's to close), or null; `bytes()` hands its PNG bytes
+ * (none for a blank sheet drawn here), `head()` the first few KB of them,
+ * and `facts` is what has been learnt of them this job (sourceFacts).
+ * Nothing is decoded here: overlaySurface decides how it is read, and closes
+ * whatever it decodes itself. A picture is read from its base64 the way the
+ * desktop reads it, and its tRNS colour key counts (_picture_pil converts it
+ * to RGBA); a sheet's does not.
+ */
+async function overlayPixels(src) {
+  if (src.kind === 'sheet') {
+    const s = (app.pages.sources || [])[src.page];
+    if (s && s.kind === 'bitmap') return { img: s.data, owned: false, bytes: null };
+    const bytes = () => app.pages.pngBytes(src.page);
+    const head = () => app.pages.pngHead(src.page);
+    const facts = sourceFacts(s && s.data);
+    const live = app.pages.peekPage(src.page);
+    if (live) return { img: live, owned: false, bytes, head, facts };
+    // A neighbour the turn's prefetch is already decoding: wait for that one.
+    const coming = app.pages.decoding?.(src.page);
+    const shared = coming ? await coming.catch(() => null) : null;
+    return { img: shared || null, owned: false, bytes, head, facts };
+  }
+  if (src.kind === 'revision') {
+    if (!app.pages.hasRevisionPage(src.set, src.revPage)) {
+      throw new Error('this file carries no image for that revision sheet');
+    }
+    const live = app.pages.peekRevisionPage(src.set, src.revPage);
+    return {
+      img: live || null, owned: false,
+      bytes: () => app.pages.revisionPngBytes(src.set, src.revPage),
+      head: () => app.pages.revisionPngHead(src.set, src.revPage),
+      facts: sourceFacts(((app.pages.revisionSlices || [])[src.set] || [])[src.revPage]),
+    };
+  }
+  const raw = pictureBytes(src.entity.img_b64);
+  if (!raw || !raw.length) throw new Error('the picture has no pixels that can be read');
+  return { img: null, owned: false, bytes: () => raw, colourKey: true };
+}
+
+/**
+ * What the overlay has learnt of a source sheet's PNG -- whether a browser
+ * reads it exactly (`plain`), and Auto's cut-off off its full-size rows --
+ * kept with the page store's own object for that sheet's bytes, so it is
+ * asked once a job, not on every arrival: on a job read over the network
+ * each asking is a read of the sheet. Every way the sheet is read (held by
+ * the store or not) then gives the same answer. A fresh object, kept
+ * nowhere, for anything that is not such an object.
+ */
+function sourceFacts(key) {
+  if (!key || typeof key !== 'object') return {};
+  const memo = sourceFacts.memo || (sourceFacts.memo = new WeakMap());
+  let facts = memo.get(key);
+  if (!facts) {
+    facts = {};
+    memo.set(key, facts);
+  }
+  return facts;
+}
+
+/** A read the overlay can do without: what it gives, or undefined when it
+ *  fails (offline) -- never thrown. */
+function readIfYouCan(read) {
+  return read ? Promise.resolve().then(read).catch(() => undefined) : Promise.resolve(null);
+}
+
+/** A decode the page store holds, read at once: its pixels, or null when
+ *  the store has closed it already (a closed bitmap is 0 x 0, and drawing
+ *  one throws 'The image source is detached'). */
+function readHeld(img) {
+  const bmp = img && (img.bitmap || img);
+  if (!bmp || !(bmp.width > 0) || !(bmp.height > 0)) return null;
+  try {
+    return readDecode(img);
+  } catch {
+    return null;
+  }
+}
+
+/** A decode's pixels through a 2D canvas: exact for a plain PNG's (pngPlain). */
+function readDecode(img) {
+  const bmp = img.bitmap || img;
+  const w = bmp.width;
+  const h = bmp.height;
+  const cv = passCanvas(w, h);
+  try {
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0);
+    return ctx.getImageData(0, 0, w, h);
+  } finally {
+    // The drawn copy is done with: let it go before the mask is made.
+    cv.width = 0;
+    cv.height = 0;
+  }
+}
+
+/**
+ * The mask, built once per arrival: the desktop's _overlay_rgba over the
+ * source's pixels (in place, so a 28-megapixel sheet costs no second
+ * buffer), held as one bitmap outside the page store. Lines are white with
+ * the line's alpha, so the renderer tints them when it draws; Original keeps
+ * its own colours. Reports the source's NATIVE size: a ReducedPage's, on an
+ * iPad.
+ *
+ * The pixels are what PIL reads (js/core/overlay-look.js pngRgba) whenever a
+ * browser's decode could differ -- a semi-transparent picture, a colour
+ * profile, 16 bits, a colour key -- and the browser's own decode otherwise,
+ * where it is exact. A decode the browser must make smaller (an iPad over
+ * its canvas cap) is read as it is, but Auto's cut-off is read off the
+ * full-size rows (pngAutoCutoff), as the desktop reads it. Every decode made
+ * here is closed the moment its pixels are read, and `free` lets the
+ * caller's go then too, so an iPad holds the pixels and the mask -- never
+ * the decode as well.
+ *
+ * A decode the page store HOLDS is read first, before anything here waits:
+ * the store closes what it evicts, and a neighbour's prefetch landing while
+ * this waited on the network closed it ('The image source is detached').
+ * Read, it is in hand, and the PNG's own bytes only refine it -- whether it
+ * is plain, asked of its head (a few KB), not of the whole sheet; and on a
+ * reduced one, Auto off the full-size rows -- each learnt once a job
+ * (px.facts). A refining read that fails (offline) leaves the held read as
+ * it is: never an overlay lost for want of bytes it did not need.
+ */
+async function overlaySurface(px, look, free = () => {}) {
+  const auto = look.cutoff === null || look.cutoff === undefined;
+  const key = !!px.colourKey;
+  const facts = px.facts || {};
+  const autoKey = `auto${key ? ' keyed' : ''}${look.invert ? ' inverted' : ''}`;
+  let freed = false;
+  const letGo = () => {
+    if (freed) return;
+    freed = true;
+    free();
+  };
+  let img = px.img || null;
+  // Now, with no wait before it. Closed already: read as if it were not held.
+  let pixels = img ? readHeld(img) : null;
+  if (!pixels) img = null;
+  let reduced = !!(img && img.reduced);
+  let width = img ? img.width || pixels.width : 0;
+  let height = img ? img.height || pixels.height : 0;
+  let raw = null;
+  let info = null;
+  let mine = null;
+  try {
+    if (pixels) {
+      letGo();
+      if (!reduced && facts.plain === undefined) {
+        const head = await readIfYouCan(px.head);
+        const h = head ? pngHeadInfo(head) : null;
+        if (h) facts.plain = pngPlain(h);
+        // A head that cannot tell (or none): its bytes do. One that could
+        // not be READ: neither can they, and the held read stands.
+        else if (head !== undefined) raw = await readIfYouCan(px.bytes);
+      }
+      if (!reduced && facts.plain === false && !raw) raw = await readIfYouCan(px.bytes);
+    } else {
+      // Nothing in hand: the bytes are the source, and a failed read is said.
+      raw = px.bytes ? await px.bytes() : null;
+      if (!raw) throw new Error('there are no pixels to read');
+    }
+    if (raw) {
+      info = pngInfo(raw);
+      if (info) facts.plain = pngPlain(info);
+    }
+    if (!pixels && info) reduced = await decodeReduces(info.width, info.height);
+    if (info && !reduced && !pngPlain(info)) {
+      const exact = await pngRgba(raw, { colourKey: key, info });
+      if (exact) {
+        pixels = exact;
+        width = exact.width;
+        height = exact.height;
+      }
+    }
+    if (!pixels) {
+      mine = await decodeSheet(raw, { colorSpaceConversion: 'none' });
+      pixels = readDecode(mine);
+      reduced = reduced || !!mine.reduced;
+      width = mine.width || pixels.width;
+      height = mine.height || pixels.height;
+      mine.close?.();
+      mine = null;
+    }
+  } finally {
+    mine?.close?.();
+    letGo();
+  }
+  let cutoff = look.cutoff;
+  if (auto && reduced) {
+    if (typeof facts[autoKey] === 'number') {
+      cutoff = facts[autoKey];
+    } else {
+      // The full-size rows, when they can be had; when not, Auto is read
+      // off the reduced pixels in hand.
+      if (!raw) {
+        raw = await readIfYouCan(px.bytes);
+        info = raw ? pngInfo(raw) : null;
+      }
+      const full = info ? await pngAutoCutoff(raw, { colourKey: key, invert: look.invert, info }) : null;
+      if (full !== null) cutoff = facts[autoKey] = full;
+    }
+  }
+  const used = overlayRgba(pixels, look.mode, look.invert, cutoff, pixels.data).cutoff;
+  const image = await createImageBitmap(pixels instanceof ImageData
+    ? pixels : new ImageData(pixels.data, pixels.width, pixels.height));
+  return {
+    image, cutoff: used, width, height,
+    close() { image?.close?.(); },
+  };
+}
+
+/** What the strip calls a revision source: the version bar's name for it,
+ *  the sheet number printed on that page, and its date (the desktop's
+ *  Overlay list, 'Reissue 2  X1.2  (11/05/2026)'). */
+function savedRevisionName(src) {
+  const rl = revPageLabel(src.rev, src.revPage);
+  const date = String((src.rev && src.rev.date) || '').trim() || 'no date';
+  const head = revisionLabel(src.revId, allRevisions());
+  return `${rl ? `${head}  ${rl}` : head}  (${date})`;
+}
+
+/** The strip: what is up, its tint, the fade, Flash and Hide -- or nothing. */
+function syncSavedOverlayStrip(s) {
+  const bar = $('savedOvBar');
+  if (!bar) return;
+  bar.hidden = !s;
+  if (!s) {
+    delete bar.dataset.kind;
+    delete bar.dataset.cutoff;
+    return;
+  }
+  // Written only when it changes: the strip is a live region, and every
+  // version step settles it again.
+  const what = $('sovWhat');
+  if (what.textContent !== s.label) { what.textContent = s.label; what.title = s.label; }
+  const fade = `${s.percent}%`;
+  if ($('sovFade').textContent !== fade) $('sovFade').textContent = fade;
+  const sw = $('sovSwatch');
+  sw.hidden = !s.color;
+  if (s.color) sw.style.background = s.color;
+  const fl = $('sovFlash');
+  fl.classList.toggle('on', !!s.flashing);
+  fl.setAttribute('aria-pressed', s.flashing ? 'true' : 'false');
+  bar.dataset.kind = s.kind;
+  bar.dataset.cutoff = String(s.cutoff);
+}
+
+/**
+ * A sentence the arrival owes him: where the line is drawn, immediately on a
+ * turn and, on a job's first sheet, once the opening's own lines are said
+ * (sayWhenQuiet); where it is not (a phone), in the finger's toast.
+ *
+ * A job's first sheet lands INSIDE the opening (loadProjectFile's goToPage),
+ * before it says 'Opened ...': so the sentence waits while the opening is
+ * still under way (its progress card is up), then for that line to go quiet
+ * -- said at once, the opening's own line wiped it a millisecond later.
+ * `still()` (js/core/saved-overlay.js stillTrue) is asked at every look: a
+ * sentence queued on one visit is never said on another -- a turn, or
+ * another job opening on the same sheet number -- nor the arrival's note
+ * once he is on the sheet's own drawing, where the overlay is to be seen.
+ */
+function sayOnArrival(text, how, still = () => true) {
+  const bar = document.querySelector('.statusbar');
+  const lineShown = !!bar && getComputedStyle(bar).display !== 'none';
+  if (how === 'open' && lineShown) {
+    sayWhenQuiet(text, { still: () => still() && inLandedJob(), wait: openingUnderWay });
+    return;
+  }
+  sayToFinger(text);
+}
+
+/** A job is being opened: its progress card is up until it has said so. */
+function openingUnderWay() {
+  const p = $('progress');
+  return !!p && !p.hidden;
+}
+
+/** A turn to another sheet: a sentence about the last sheet's saved overlay
+ *  ('this sheet') comes off the status line and the finger's toast, as the
+ *  desktop's arrival note does (_retire_kept_note). Nothing else is touched. */
+function retireOverlayWords() {
+  if (overlayWords($('statusText').textContent)) setStatus(HINTS[controller.mode] || 'Ready');
+  const t = $('fingerToast');
+  if (t && !t.hidden && overlayWords(t.textContent)) t.hidden = true;
+}
+
+/** The drawing on screen changed (syncVersionUi): the saved overlay follows,
+ *  but not while a landing is still deciding its drawing -- goToPage settles
+ *  it once at the end. */
+function settleSavedOverlay() {
+  if (landingTicket !== 0 && landingTicket === pageTicket) return;
+  savedOv.settle();
+}
+
+/** Hide (and Escape): down for this visit. Writes nothing. */
+function hideSavedOverlay() {
+  if (!savedOv.hide()) return false;
+  sayToFinger(HIDDEN_NOTE);
+  return true;
+}
+
+function flashSavedOverlay() {
+  savedOv.flash();
+}
+
+// The strip's two buttons are not menu actions (no data-act): they act on
+// the overlay and hand the keyboard back to the sheet, as a mode button does.
+$('sovHide')?.addEventListener('click', () => {
+  hideSavedOverlay();
+  canvas.focus({ preventScroll: true });
+});
+$('sovFlash')?.addEventListener('click', () => {
+  flashSavedOverlay();
+  canvas.focus({ preventScroll: true });
+});
+// Another job, or none: whatever was up was the last job's.
+app.project.addEventListener('reset', () => savedOv.takeDown());
+// ...but a draft restored over this job (offerDraftRestore) is the same sheets
+// and the same visit: once the load is through, the sheet he is on puts its
+// overlay back. A job opened from a file has a new page store by then, and
+// its own first sheet's landing does that.
+app.project.addEventListener('loaded', () => queueMicrotask(() => {
+  if (inLandedJob()) settleSavedOverlay();
+}));
 
 /**
  * The two-colour slip-sheet diff.
@@ -2204,6 +2937,18 @@ function applyDefaultZoomTo(mode) {
   return true;
 }
 
+/**
+ * 1 (100%), the key, the menu and the readout's: the desktop's _set_zoom_100,
+ * which is set_zoom(1.0) -- the zoom alone. A sheet he dragged aside stays
+ * where he put it (its centre at the same place on the screen); a centred
+ * one stays centred. It is a zoom he chose: the next sheet comes up at it,
+ * centred, as before.
+ */
+function zoomTo100() {
+  zoomFloor.setZoom(1);
+  zoomFloor.chosen();
+}
+
 function pageFinalLabel(idx) {
   if (idx === STANDALONE_PAGE) return 'no sheet';
   return app.project.pageLabel(idx);
@@ -2252,6 +2997,8 @@ function setUiMode(mode, { announce = true } = {}) {
   syncUiModeMenu();
   // The canvas box changed underneath the viewport.
   requestDraw();
+  // The headings' tooltips say a click or a tap, a right-click or a hold.
+  itemsPanel.refresh();
   if (announce) {
     setStatus(next === 'touch'
       ? 'Touch layout — bigger targets, made for a finger.'
@@ -2270,6 +3017,16 @@ function syncUiModeMenu() {
 const MOBILE_Q = window.matchMedia('(max-width: 1023px)');
 const isMobileLayout = () => MOBILE_Q.matches;
 
+/** Is the Items list on screen? A drawer that is open below 1024px, a
+ *  column that is not tidied away above. (Its own query, not MOBILE_Q: the
+ *  list asks during start-up too.) */
+function itemsListShown() {
+  if (window.matchMedia('(max-width: 1023px)').matches) {
+    return $('itemsPanel').classList.contains('mopen');
+  }
+  return !document.querySelector('.body').classList.contains('no-items');
+}
+
 function closeDrawers() {
   $('thumbsPanel').classList.remove('mopen');
   $('itemsPanel').classList.remove('mopen');
@@ -2277,6 +3034,8 @@ function closeDrawers() {
 }
 
 function toggleDrawer(which) {
+  // (a drawer opened or shut by hand is his: a row's step does not shut it later)
+  keepItemsDrawer();
   const el = which === 'thumbs' ? $('thumbsPanel') : $('itemsPanel');
   const other = which === 'thumbs' ? $('itemsPanel') : $('thumbsPanel');
   const open = !el.classList.contains('mopen');
@@ -2348,19 +3107,34 @@ function syncScaleSelect() {
   const match = [...sel.options].find(o => Math.abs(Number(o.value) - ppf) < 0.01);
   sel.value = match ? match.value : String(ppf);
   $('scaleReadout').textContent = app.pages.pageCount
-    ? `Scale ${label}   ·   ${ppf.toFixed(2)} px/ft`
+    ? `Scale ${label}   ·   ${pyFixed(ppf, 2)} px/ft`
     : '';
+}
+
+/**
+ * The Custom… prompt's answer: a scale he typed, 'unchanged', or null for
+ * none. The box shows the sheet's scale to 2 places (Python's rounding), so
+ * OK on that text as it was shown is no change -- the sheet keeps its exact
+ * scale, never the rounded figure (16.125 px/ft is shown 16.12 and stays
+ * 16.125). A figure he typed is read as typed.
+ */
+function customScaleAnswer(txt, shown) {
+  if (txt === null || txt === undefined) return null;
+  if (String(txt).trim() === shown) return 'unchanged';
+  const n = Number(txt);
+  return n > 0 ? n : null;
 }
 
 $('scaleSelect').addEventListener('change', async ev => {
   const sel = ev.target;
   let ppf;
   if (sel.value === 'custom') {
-    const txt = await D.promptDialog('Custom Scale', 'Pixels per foot',
-      String(app.project.pagePpf(app.currentPage).toFixed(2)),
-      `At ${app.project.dpi} DPI, 1/4" = 1 ft is ${computePixelsPerFoot(app.project.dpi, 0.25, 1).toFixed(1)} px/ft.`);
-    ppf = Number(txt);
-    if (!(ppf > 0)) { syncScaleSelect(); return; }
+    const shown = pyFixed(app.project.pagePpf(app.currentPage), 2);
+    const txt = await D.promptDialog('Custom Scale', 'Pixels per foot', shown,
+      `At ${app.project.dpi} DPI, 1/4" = 1 ft is ${pyFixed(computePixelsPerFoot(app.project.dpi, 0.25, 1), 1)} px/ft.`);
+    const answer = customScaleAnswer(txt, shown);
+    if (typeof answer !== 'number') { syncScaleSelect(); return; }
+    ppf = answer;
   } else {
     ppf = Number(sel.value);
   }
@@ -2517,7 +3291,7 @@ function syncCompareLabel() {
   const out = $('ovBalanceOut');
   if (!out) return;
   const b = overlay.balance || 0;
-  const pct = Math.round(Math.abs(b) * 100);
+  const pct = pyRoundInt(Math.abs(b) * 100);
   out.textContent = pct < 3 ? 'both'
     : b > 0 ? `newest +${pct}%`
       : `older +${pct}%`;
@@ -3412,7 +4186,30 @@ async function reacquireAfterSave(handle) {
     const file = await handle.getFile();
     const reopened = await openProject(file);
     if (reopened.pageCount === app.pages.pageCount) {
+      // How the sheet comes back up, asked before the store is re-pointed
+      // and the drawing taken down: kept as it is when he is on the sheet
+      // with its drawing up (onSheetUp). Otherwise a turn he made is still
+      // decoding (or the job's first sheet is still opening), and the
+      // re-read lands it as that turn would have: at his zoom, centred,
+      // with the choice asked of the drawing still up (leftByChoice). The
+      // re-read is the same job -- setFromProject re-points app.pages, so
+      // the job a sheet landed in is carried over (landedJob), or viewOf
+      // would take the turn for a job opening.
+      // The drawing it brings up is the one the landing in force was still
+      // bringing up (comingUp): the one a turn or a jump asked for (his own
+      // drawing, for a jump to his work), or the one a flip of the sheet up
+      // still decodes, settled as that landing would have been. And the size
+      // of the drawing on screen is taken now: setFromProject closes every
+      // bitmap the store holds, the ones on screen included.
+      const up = onSheetUp(app.currentPage);
+      const chose = leftByChoice();
+      const sameJob = inLandedJob();
+      const coming = comingUp && comingUp.page === app.currentPage && comingUp.ticket === pageTicket
+        ? comingUp : null;
+      const decoding = up && coming && coming.vticket === versionTicket ? coming : null;
+      const from = up ? shownDrawingSize() : null;
       app.pages.setFromProject(reopened);
+      if (sameJob) landedJob = jobNow();
       // Every sheet now comes from the file just written, so a Plans Library
       // copy the project was opened from is free to go — and the save check
       // must not keep holding this project to it.
@@ -3423,8 +4220,10 @@ async function reacquireAfterSave(handle) {
       // NEWEST — so saving while working on a sheet's own drawing swapped the
       // drawing underneath the estimator and hid every item they had just
       // taken off. Re-pointing the blob slices at the re-written file is
-      // bookkeeping; it must not move anybody.
-      await goToPage(app.currentPage, { version: versionView.revId });
+      // bookkeeping; it must not move anybody -- the view included.
+      await goToPage(app.currentPage, up
+        ? { version: decoding ? decoding.version : versionView.revId, view: 'keep', from, settle: decoding && decoding.settle }
+        : { version: coming ? coming.version : undefined, view: 'turn', chose });
       thumbs.refresh(app.currentPage);
     }
   } catch (err) {
@@ -3547,7 +4346,7 @@ function askChangedOnDisk(now) {
   const when = ms => new Date(ms).toLocaleString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
   });
-  const mb = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const mb = n => (n >= 1048576 ? `${pyFixed(n / 1048576, 1)} MB` : `${Math.max(1, pyRoundInt(n / 1024))} KB`);
   const was = app.archive.stamp;
   const text = now
     ? `${app.fileName} was changed after you opened it — saved from another `
@@ -4182,10 +4981,46 @@ function nowStamp() {
 
 // ── item editing ──────────────────────────────────────────────────────────
 
+/**
+ * Properties… from the Items list (a double-tap on a row, or its menu).
+ * With the list on one sheet (the SHEET chip) the shape painted here is
+ * selected first -- the main shape when it is one of them -- and the form
+ * stays on this sheet (desktop _properties_on_this_sheet); openProperties
+ * never turns the page, chip or not.
+ */
+function openPropertiesFromList(item) {
+  const at = app.project.findItem(item._uid)?.pageKey;
+  const view = itemsPanel.sheetOnly() ? sheetView() : null;
+  // (an item whose main shape is filed on no sheet, too: its shape here is
+  // selected -- propertiesOnThisSheet finds none of a standalone)
+  if (view && Number.isInteger(at) && onSheetUp(view.page) && !controller.readOnly) {
+    const shape = propertiesOnThisSheet(countingModel(), view, at, item);
+    if (shape) {
+      controller.select([shape._uid]);
+      requestDraw();
+    }
+  }
+  return openProperties(item);
+}
+
+/** A run of a multi-sheet item is part of its item: its form is the item's
+ *  (desktop _edit_selected_properties). */
+function itemOfShape(m) {
+  if (!m || !m.group_child || !m.group_id) return m;
+  for (const [, it] of app.project.allItems()) {
+    if (it.group_id === m.group_id && !it.group_child) return it;
+  }
+  return m;
+}
+
 async function openProperties(item) {
   // Reachable from the items panel, which never touches the canvas hit test,
   // so the pointer gates do not cover it.
   if (controller.readOnly) { setStatus(controller.readOnlyReason); return; }
+  // A run's form is its item's: the name, floor and price the desktop reads
+  // are the main shape's, and what a run was given of its own the desktop
+  // writes over (_propagate_group_props).
+  item = itemOfShape(item);
   // A reference distance has no name, floor, trade, category or unit cost —
   // not blank ones, NONE. That is the desktop's _finalize_ref_distance, and
   // its reason holds here too: a field that exists is a field some report
@@ -4280,22 +5115,15 @@ function showItemMenu(item, ev, { from = 'canvas' } = {}) {
     setStatus(controller.readOnlyReason);
     return;
   }
-  const menu = $('ctxMenu');
-  menu.textContent = '';
-  const add = (label, fn, cls) => {
-    const b = document.createElement('button');
-    b.textContent = label;
-    if (cls) b.className = cls;
-    b.addEventListener('click', () => { menu.hidden = true; fn(); });
-    menu.appendChild(b);
-  };
+  const entries = [];
+  const add = (label, run) => entries.push({ label, run });
   // The two rows that would give a reference distance a name or a price are
   // not offered on one — see openProperties. Hide, Isolate, Zoom to and
   // Delete are, because it is an object on the sheet like any other.
   if (item.type !== 'ref_distance') {
-    add('Properties…', () => openProperties(item));
+    add('Properties…', () => (from === 'list' ? openPropertiesFromList(item) : openProperties(item)));
     add('Associated materials…', () => openMaterials(item));
-    menu.appendChild(document.createElement('hr'));
+    entries.push('-');
   }
   add(item.visible === false ? 'Show' : 'Hide',
     () => { app.project.setVisible([item._uid], item.visible === false); itemsPanel.refresh(); });
@@ -4317,12 +5145,25 @@ function showItemMenu(item, ev, { from = 'canvas' } = {}) {
     // to where it is not painted. (From the drawing, what was pressed is on
     // the drawing up.)
     const at = app.project.findItem(item._uid)?.pageKey;
+    // The list on one sheet (the SHEET chip) is about that sheet: its row's
+    // item is zoomed to where it is painted HERE -- every shape of it on the
+    // drawing on screen -- and the page is never turned away, as a tap on
+    // the row never turns it (stepOnThisSheet). Nothing of it here: the
+    // ordinary way below.
+    const view = from === 'list' && itemsPanel.sheetOnly() ? sheetView() : null;
+    if (view && Number.isInteger(at) && onSheetUp(view.page)) {
+      const local = shapesOnScreen(countingModel(), view, at, item);
+      if (local.length) {
+        if (zoomFloor.zoomToItem(local.flatMap(s => s.points || []), local.length === 1 ? local[0].type : item.type)) requestDraw();
+        return;
+      }
+    }
     const elsewhere = !onSheetUp(at)
       || (from === 'list' && String(item.rev_id || '') !== String(versionView.revId || ''));
     if (Number.isInteger(at) && at >= 0 && elsewhere) { void jumpToItem(item, at); return; }
     if (zoomFloor.zoomToItem(item.points || [], item.type)) requestDraw();
   });
-  menu.appendChild(document.createElement('hr'));
+  entries.push('-');
   // Delete takes exactly what was asked, as on the desktop. From the Items
   // list it is the whole item -- every shape on every sheet -- and it asks
   // first (_on_item_delete). From the drawing it is the one shape pressed
@@ -4330,16 +5171,83 @@ function showItemMenu(item, ev, { from = 'canvas' } = {}) {
   // shape going hands the item on. Neither asked anything before, and the
   // list's took a multi-sheet item off one sheet only.
   add('Delete', () => {
-    if (from === 'list') { void deleteWholeItem(item); return; }
+    if (from === 'list') { void deleteFromList(item); return; }
     app.project.dropShapes([item._uid]);
     forgetDeletedSelection();
     requestDraw();
   });
+  return showMenu(entries, ev);
+}
+
+/**
+ * The Items list's Delete (desktop _on_item_delete). With the list on one
+ * sheet, an item that also has shapes elsewhere asks which first -- 'Delete
+ * the 2 shapes on X1.1', 'Delete the whole item (4 shapes on X1.0, X1.1,
+ * X2.0)', or Cancel, the default -- because there 'Delete' reads as 'take it
+ * off this sheet', and an item never loses its other sheets in silence
+ * (_ask_delete_here). This sheet's shapes go the way the drawing's Delete
+ * takes a shape (dropShapes: a run re-adds its item, a main shape hands it
+ * on), in one undo level. Otherwise -- the chip off, one shape, or every
+ * shape on screen -- the plain question (deleteWholeItem).
+ */
+async function deleteFromList(item) {
+  const at = app.project.findItem(item._uid)?.pageKey;
+  const view = itemsPanel.sheetOnly() ? sheetView() : null;
+  const name = deleteName(item);
+  // On the sheet the list shows: its drawing up, or a sheet whose drawing
+  // would not open, whose takeoff is listed all the same (sheetFailed).
+  const ch = view && Number.isInteger(at) && (onSheetUp(view.page) || (!view.coming && sheetFailedOn(view.page)))
+    ? deleteHereChoice(countingModel(), view, at, item, name) : null;
+  if (!ch) { await deleteWholeItem(item); return; }
+  const pick = await D.choiceDialog(ch.title, ch.text, ch.info, [
+    { key: 'here', label: ch.buttons[0], danger: true },
+    { key: 'whole', label: ch.buttons[1], danger: true },
+    { key: 'cancel', label: ch.buttons[2] },
+  ], { defaultKey: 'cancel' });
+  if (pick !== 'here' && pick !== 'whole') return;
+  // The question was a pause: delete only what is still there to delete.
+  if (controller.readOnly) { setStatus(controller.readOnlyReason); return; }
+  if (!app.project.findItem(item._uid)) return;
+  if (pick === 'whole') {
+    app.project.removeItems([item._uid]);
+    forgetDeletedSelection();
+    setStatus(`Deleted “${name}”.`);
+    requestDraw();
+    return;
+  }
+  const n = app.project.dropShapes(ch.local.map(s => s._uid).filter(u => app.project.findItem(u)));
+  forgetDeletedSelection();
+  if (n) sayToFinger(deletedHereWords(n, name, ch.where, ch.rest));
+  requestDraw();
+}
+
+/**
+ * A menu at a point: the item menu, and the Items list's heading menu.
+ * `entries` are {label, run}, and '-' draws a rule; `at` is where it was
+ * asked for -- the event, or a held finger's {clientX, clientY,
+ * pointerType}. A finger's menu is drawn off the finger (menuPlace,
+ * js/ui/hold.js), so the lift cannot land on its first entry, and every
+ * menu stays on screen, a phone's too. Returns a handle whose close()
+ * closes THIS menu only -- not one opened over it since.
+ */
+function showMenu(entries, at) {
+  const menu = $('ctxMenu');
+  // A menu opened over another one takes the old one's listeners with it.
+  closeMenu();
+  menu.textContent = '';
+  for (const e of entries) {
+    if (e === '-') { menu.appendChild(document.createElement('hr')); continue; }
+    const b = document.createElement('button');
+    b.textContent = e.label;
+    b.addEventListener('click', () => { closeMenu(); e.run(); });
+    menu.appendChild(b);
+  }
 
   menu.hidden = false;
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = `${Math.min(ev.clientX, window.innerWidth - w - 8)}px`;
-  menu.style.top = `${Math.min(ev.clientY, window.innerHeight - h - 8)}px`;
+  const { left, top } = menuPlace(at, menu.offsetWidth, menu.offsetHeight,
+    window.innerWidth, window.innerHeight);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
   // Only a press OUTSIDE the menu closes it. A press on one of its own
   // buttons used to close it as well -- before that button's click: the
   // release then landed on whatever lay under the menu, the click went to
@@ -4349,10 +5257,47 @@ function showItemMenu(item, ev, { from = 'canvas' } = {}) {
   // for itself cannot leave it open.
   const dismiss = e => {
     if (e && e.target instanceof Node && menu.contains(e.target)) return;
-    menu.hidden = true;
-    document.removeEventListener('pointerdown', dismiss, true);
+    if (menu.dismiss === dismiss) closeMenu();
   };
-  setTimeout(() => document.addEventListener('pointerdown', dismiss, true), 0);
+  // Escape closes it, as it closes a desktop menu, and goes no further: it
+  // is the menu's, not the sheet's or the version's (capture phase, ahead
+  // of the app's own keys).
+  const onKey = e => {
+    if (e.key !== 'Escape' || menu.dismiss !== dismiss) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeMenu();
+  };
+  menu.dismiss = dismiss;
+  menu.onKey = onKey;
+  setTimeout(() => {
+    if (menu.dismiss === dismiss) document.addEventListener('pointerdown', dismiss, true);
+  }, 0);
+  document.addEventListener('keydown', onKey, true);
+  return { close: () => { if (menu.dismiss === dismiss) closeMenu(); } };
+}
+
+/**
+ * A heading's Rename floor level… / Rename category… / Rename
+ * sub-category… or Set … for these N items… chosen from its menu (desktop
+ * 3.07): the Items list asks its form and writes one undo level, with what
+ * the rename moves in the tool and the list on it. (The list has already
+ * asked whether it may write, when the entry was chosen.)
+ */
+function classifyFromHeading(act, meta, rows) {
+  if (act === 'rename') void itemsPanel.renameFromHeader(meta);
+  else if (act === 'assign') void itemsPanel.assignFromHeader(meta, rows);
+}
+
+/** Close the menu on screen and stop listening for its dismiss and its
+ *  Escape. */
+function closeMenu() {
+  const menu = $('ctxMenu');
+  menu.hidden = true;
+  if (menu.dismiss) document.removeEventListener('pointerdown', menu.dismiss, true);
+  if (menu.onKey) document.removeEventListener('keydown', menu.onKey, true);
+  menu.dismiss = null;
+  menu.onKey = null;
 }
 
 /**
@@ -4384,6 +5329,85 @@ function forgetDeletedSelection() {
 
 // ── menus ─────────────────────────────────────────────────────────────────
 
+/**
+ * Below 1024 px the menu bar scrolls sideways (css/app.css), and a scroller
+ * clips what hangs out of it: an open menu showed as nothing but its lit
+ * title, and a tap meant for File › Save landed on the sheet. There the open
+ * menu hangs from the chrome instead, and is put here under its title -- on
+ * screen, above the phone's foot bar, scrolling when it is taller than the
+ * room. Its spot is worked out from where it lands at 0,0, so wherever the
+ * chrome is (pinned, or slid down over the sheet) the menu is where its
+ * title is. Wider, the stylesheet hangs it from its title as it always did.
+ */
+function placeOpenMenu(opening = false) {
+  const menu = $('menus').querySelector('.menu.open');
+  const pop = menu && menu.querySelector('.menu-pop');
+  if (!pop) return;
+  // Taking the height off for the measuring loses the place in a scrolled
+  // menu, so it is put back: a menu opens at its top, and following its
+  // title keeps the place in it.
+  const keep = pop.scrollTop;
+  for (const k of ['--menu-x', '--menu-y', '--menu-max-h']) pop.style.removeProperty(k);
+  if (!window.matchMedia('(max-width: 1023px)').matches) return;
+  pop.style.setProperty('--menu-x', '0px');
+  pop.style.setProperty('--menu-y', '0px');
+  const origin = pop.getBoundingClientRect();
+  const title = menu.querySelector('.menu-btn').getBoundingClientRect();
+  const top = $('menubar').getBoundingClientRect().bottom;
+  const foot = $('mobileBar');
+  const footRect = foot.hidden ? null : foot.getBoundingClientRect();
+  let bottom = footRect && footRect.height > 0 ? footRect.top : window.innerHeight;
+  // iOS's keyboard shrinks only the visual viewport: the menu stops above it.
+  const vv = window.visualViewport;
+  if (vv) bottom = Math.min(bottom, vv.offsetTop + vv.height);
+  const x = Math.max(6, Math.min(title.left, document.documentElement.clientWidth - pop.offsetWidth - 6));
+  const room = Math.max(120, bottom - top - 6);
+  pop.style.setProperty('--menu-x', `${x - origin.left}px`);
+  pop.style.setProperty('--menu-y', `${top - origin.top}px`);
+  pop.style.setProperty('--menu-max-h', `${room}px`);
+  pop.scrollTop = opening === true ? 0 : keep;
+}
+
+/** Shut whichever menu of the menu bar is open. */
+function closeOpenMenus() {
+  for (const m of $('menus').querySelectorAll('.menu.open')) m.classList.remove('open');
+}
+
+/**
+ * What moves an open menu, and what puts it away, below 1024 px.
+ *  - The bar scrolled sideways, the screen turned, the keyboard came up, the
+ *    foot bar came or went (crossing 1024 px: its media query answers after
+ *    'resize'), the toolbars finished sliding down: it follows its title.
+ *  - The toolbars slid away (a press on the sheet, unpinning): it goes with
+ *    them -- left open it hung over the drawing from nothing. And a finger
+ *    down anywhere outside the menus shuts it, because iOS sends no mouse
+ *    press for a tap on the sheet, which has no click listener.
+ *  - While a menu is open the toolbars stand above the Sheets and Items
+ *    drawers (css .chrome.menu-up: both are z-index 60 and the drawers come
+ *    later in the page), so a menu over an open drawer is all there and the
+ *    drawer stays as it was -- View › Sheets Panel still shuts it.
+ */
+function wireMenuPlacement() {
+  const follow = () => placeOpenMenu();
+  $('menubar').addEventListener('scroll', follow, { passive: true });
+  window.addEventListener('resize', follow);
+  window.visualViewport?.addEventListener('resize', follow);
+  new ResizeObserver(follow).observe($('mobileBar'));
+  $('chrome').addEventListener('transitionend', ev => {
+    if (ev.target === $('chrome') && ev.propertyName === 'transform') follow();
+  });
+  new MutationObserver(() => {
+    const a = $('app');
+    if (a.classList.contains('chrome-float') && !a.classList.contains('chrome-open')) closeOpenMenus();
+  }).observe($('app'), { attributes: true, attributeFilter: ['class'] });
+  document.addEventListener('pointerdown', ev => {
+    if (ev.pointerType !== 'mouse' && !ev.target.closest('.menu')) closeOpenMenus();
+  }, true);
+  new MutationObserver(() => {
+    $('chrome').classList.toggle('menu-up', !!$('menus').querySelector('.menu.open'));
+  }).observe($('menus'), { subtree: true, attributes: true, attributeFilter: ['class'] });
+}
+
 function wireMenus() {
   const menus = $('menus');
   menus.addEventListener('click', ev => {
@@ -4392,7 +5416,10 @@ function wireMenus() {
       const menu = btn.parentElement;
       const wasOpen = menu.classList.contains('open');
       for (const m of menus.querySelectorAll('.menu')) m.classList.remove('open');
-      if (!wasOpen) menu.classList.add('open');
+      if (!wasOpen) {
+        menu.classList.add('open');
+        placeOpenMenu(true);
+      }
       return;
     }
     const act = ev.target.closest('button[data-act]');
@@ -4607,14 +5634,10 @@ async function runAction(act) {
         requestDraw();
       }
       break;
-    case 'zoom-100': {
-      viewport.zoom = 1;
-      const s = shownDrawingSize();
-      if (s) viewport.centerOn(s.w / 2, s.h / 2);
-      zoomFloor.chosen();
+    case 'zoom-100':
+      zoomTo100();
       requestDraw();
       break;
-    }
     case 'zoom-width':
       if (pageImage) {
         pendingFit = !applyDefaultZoomTo('width');
@@ -4789,7 +5812,7 @@ function stepMarkerScale(dir) {
   if (i < 0) i = MARKER_STEPS.indexOf(1.0);
   i = Math.max(0, Math.min(MARKER_STEPS.length - 1, i + dir));
   app.settings.set('marker_scale', MARKER_STEPS[i]);
-  setStatus(`Marker size ${Math.round(MARKER_STEPS[i] * 100)}%`);
+  setStatus(`Marker size ${pyIntStr(pyRoundInt(MARKER_STEPS[i] * 100))}%`);
   requestDraw();
 }
 
@@ -5082,7 +6105,7 @@ async function showRecent() {
         sub.style.cssText = 'font-size:10.5px;color:#7d7d7d';
         nameCell.appendChild(sub);
         tr.appendChild(nameCell);
-        tr.appendChild(D.el('td', 'num', `${(r.size / 1048576).toFixed(1)} MB`));
+        tr.appendChild(D.el('td', 'num', `${pyFixed(r.size / 1048576, 1)} MB`));
         tr.appendChild(D.el('td', null, new Date(r.at).toLocaleDateString('en-US')));
         tr.style.cursor = 'pointer';
         tr.addEventListener('click', () => { close(true); safeRun('open-project'); });
@@ -5169,6 +6192,9 @@ document.addEventListener('keydown', ev => {
     // Escape walks back out of comparing, one layer at a time: the overlay
     // first, then the version, then the panel.
     if (overlayActive()) { ev.preventDefault(); clearOverlay(); return; }
+    // The sheet's saved overlay next: hidden for this visit. A trace in
+    // progress owns Escape first, as below.
+    if (savedOv.shown() && !controller.chainLive) { ev.preventDefault(); hideSavedOverlay(); return; }
     // A trace in progress owns Escape. This branch used to be reachable only
     // when a revision had been deliberately raised; it is now true on the
     // original of every reissued sheet, so Escape on a half-placed area threw
@@ -5341,6 +6367,32 @@ function setStatus(text) {
   }
 }
 
+/**
+ * A sentence that can wait: said once the status line is quiet -- showing
+ * nothing but the tool's own hint -- so it does not wipe what the action
+ * that brought it on screen has just said (Edit Mode's sentence, the touch
+ * layout's). Looked at after this turn, then once a second; said anyway
+ * after about twelve seconds. The Items list's one-time hold hint.
+ * `still()` is asked at every look: once the sentence is no longer true
+ * where it would be said (the layout went standard, the drawer shut) it is
+ * dropped unsaid, and `dropped()` tells the asker, so it can ask again.
+ * While `wait()` is true (a job's opening, which has its own line still to
+ * say) nothing is said and no look is counted -- for five minutes at most.
+ */
+function sayWhenQuiet(text, { still = () => true, dropped = () => {}, wait = () => false } = {}) {
+  let tries = 0;
+  let waits = 0;
+  const attempt = () => {
+    if (!still()) { dropped(); return; }
+    if (wait() && ++waits <= 300) { setTimeout(attempt, 1000); return; }
+    const now = $('statusText').textContent || '';
+    const quiet = !now || now === 'Ready' || now === (HINTS[controller.mode] || 'Ready');
+    if (quiet || ++tries > 12) setStatus(text);
+    else setTimeout(attempt, 1000);
+  };
+  setTimeout(attempt, 0);
+}
+
 // Why zooming out stopped -- said once a session, not on every refused
 // notch (the desktop's _say_zoom_floor_once): a fast spin sends thirty of
 // them, and the status line is where the tools say what they want next. The
@@ -5479,6 +6531,7 @@ buildToolButtons();
 buildScaleSelect();
 syncScaleSelect();
 wireMenus();
+wireMenuPlacement();
 // Inside the portal its Plans Library keeps the plans: this app's own doors
 // to a folder and to a copy of its own are not offered (js/core/embedded.js).
 if (embedded) {
@@ -5493,6 +6546,20 @@ if (window.matchMedia('(max-width: 720px)').matches) $('markupBar').hidden = tru
 // the menu agree with it and settles the value on a first-ever launch.
 document.documentElement.dataset.ui = uiMode();
 syncUiModeMenu();
+// Every Floor and Trade box lists this job's own names first (desktop
+// _fill_class_combo): the forms read the open project's store each time
+// one opens.
+D.setClassSource(() => app.project.measurements);
+// The Items list's one-time hold hint waits for the list to be ON SCREEN:
+// a drawer opened, the panel shown again, the layout made touch. Each of
+// those is a class or an attribute, so one observer hears all of them,
+// whichever menu, button or key did it.
+{
+  const shown = new MutationObserver(() => itemsPanel.maybeHint());
+  shown.observe($('itemsPanel'), { attributes: true, attributeFilter: ['class'] });
+  shown.observe(document.querySelector('.body'), { attributes: true, attributeFilter: ['class'] });
+  shown.observe(document.documentElement, { attributes: true, attributeFilter: ['data-ui'] });
+}
 // Settle the mode chrome before anything is open, so the empty state is not
 // briefly offering an Edit Mode button for a project that does not exist.
 syncModeUi();
@@ -5504,6 +6571,9 @@ syncChrome();
 requestAnimationFrame(() => appEl.classList.remove('chrome-still'));
 MOBILE_Q.addEventListener('change', () => { syncMobileBar(); requestDraw(); });
 $('scrim').addEventListener('click', closeDrawers);
+// A finger back on the Items list keeps the drawer a row's step was about to
+// close (closeItemsDrawerSoon): the second tap of a double-tap lands on the row.
+$('itemsPanel').addEventListener('pointerdown', keepItemsDrawer, true);
 syncMobileBar();
 syncHistoryButtons();
 syncTitle();
@@ -6425,9 +7495,9 @@ async function keepOnDevice() {
 function librarySize(bytes) {
   const n = Number(bytes);
   if (!(n > 0)) return '';
-  if (n >= 1073741824) return `${(n / 1073741824).toFixed(1)} GB`;
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(n / 1024))} KB`;
+  if (n >= 1073741824) return `${pyFixed(n / 1073741824, 1)} GB`;
+  if (n >= 1048576) return `${pyFixed(n / 1048576, 1)} MB`;
+  return `${Math.max(1, pyRoundInt(n / 1024))} KB`;
 }
 
 function libraryVersionDate(ms) {
@@ -6518,7 +7588,7 @@ requestDraw();
 // leave the app fully usable, so it is warmed in the background and never
 // awaited by anything on the critical path.
 loadCatalog().then(n => {
-  if (n) setStatus(`Materials catalog ready — ${n.toLocaleString('en-US')} items`);
+  if (n) setStatus(`Materials catalog ready — ${pyIntStr(n, true)} items`);
 }).catch(() => {});
 
 /**

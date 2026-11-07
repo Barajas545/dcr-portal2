@@ -35,6 +35,9 @@ import {
   DEFAULT_HIGHLIGHT_WIDTH, DEFAULT_PEN_WIDTH, ERASER_RADIUS_PX,
 } from './markup.js';
 import { wheelInOut } from '../render/zoom-floor.js';
+import { pinFiling, applyClassTool } from '../core/classify.js';
+import { pyFixed, pyG, pyIntStr, pyStrFloat } from '../core/pyformat.js';
+import { pitchLabel, pitchFromPoints } from '../core/measure.js';
 
 /** The takeoff tools — the ones that produce a quantity. */
 export const TAKEOFF_TOOLS = [
@@ -118,14 +121,14 @@ const CONSTRAINED_TOOLS = new Set([
 /** Tools whose polygon closes when the cursor snaps back to the first vertex. */
 const CLOSING_TOOLS = new Set(['area', 'slope_area', 'grid', 'tile']);
 
-const CATEGORY_DEFAULT_OPENINGS = 'Doors & Windows';
-
-/** How far a finger may slide and still count as a tap, in screen px. */
-const TAP_SLOP = 11;
+/** How far a finger may slide and still count as a tap, in screen px.
+ *  (The Items list's hold, js/ui/hold.js, uses the same number.) */
+export const TAP_SLOP = 11;
 /** A mouse is steadier than a finger: the desktop uses 4px for this. */
 const CLICK_SLOP = 4;
-/** How long a finger must rest before it means the right mouse button. */
-const LONG_PRESS_MS = 500;
+/** How long a finger must rest before it means the right mouse button.
+ *  (The Items list's hold uses the same timer.) */
+export const LONG_PRESS_MS = 500;
 
 export const TILE_PATTERNS = [
   // (id, display label, typical waste %) — the labels print in the items
@@ -335,11 +338,18 @@ export class ToolController extends EventTarget {
     // putting a trembled shape back: the count being placed, and the ones
     // held on other drawings, are found again in the store put back.
     this.project.addEventListener('restored', ev => this._rearmCount((ev.detail || {}).before));
+    // An undo or redo of a rename of a floor, trade or sub-category: what it
+    // moved here -- the next item's floor and sub-category, the armed
+    // count's answers -- goes back (or forward) with the names, while it
+    // still holds what the rename left (js/core/classify.js applyClassTool).
+    this.project.addEventListener('class-tool', ev => applyClassTool(ev.detail,
+      mv => mv[1] === this || mv[0] === 'spec', { countSpec: () => this.countSpec }));
     // Anything that moves the history while a press on a shape is held -- a
     // Ctrl+Z, a Ctrl+Y -- ends that press: its release must not then keep,
     // or put back, a picture of the job from before that edit (the
-    // desktop's _restore_state ends a drag the same way).
-    this.project.addEventListener('history-changed', () => this._dropPress());
+    // desktop's _restore_state ends a drag the same way). An eraser sweep
+    // too (_putDownSweep).
+    this.project.addEventListener('history-changed', () => { this._dropPress(); this._putDownSweep(); });
 
     this._panning = false;
     this._panLast = null;
@@ -357,10 +367,19 @@ export class ToolController extends EventTarget {
     this._openingPress = null;
     this._lpTimer = null;
     this._lpFired = false;
+    // A finger's press selected a shape and may yet be the hold: the Items
+    // list is told to look for it once that is decided (_pressSelect).
+    this._revealDue = false;
     this._rmbCandidate = null;
     this._rmbPanned = false;
     this._moveDrag = null;
     this._suppressClick = false;
+    // An eraser sweep going on: the picture taken at its press (none: no
+    // sweep, or one put down), whether its first deletion has filed that
+    // picture as its undo level, and that filing under way (_eraseAt).
+    this._eraseSnapshot = null;
+    this._erasedAny = false;
+    this._filingSweep = false;
 
     this._bind();
   }
@@ -553,11 +572,15 @@ export class ToolController extends EventTarget {
    *
    * A form still up from the last job answers nothing now (_ask), and a
    * press on one of its shapes still held is over: its release would have
-   * put the last job's picture back over this one.
+   * put the last job's picture back over this one. So is an eraser sweep's
+   * picture (_endEraseSweep): filed in the next job, one Ctrl+Z there put
+   * the last job's takeoff into it -- and a sweep still held takes nothing
+   * off the next job's sheet (_eraseAt).
    */
   _dropPerProject() {
     this._job += 1;
     this._dropPress();
+    this._endEraseSweep();
     const shown = String(this.options.pendingName || '').trim();
     if (this.mode === 'count' && shown && shown === String(this.countNamed || '').trim()) {
       this._syncToolName('');
@@ -634,9 +657,13 @@ export class ToolController extends EventTarget {
    * Abandon whatever is in progress. Never touches saved work -- and a drag
    * cut short (a page turn with the button still down) keeps what it moved
    * as an undo level, as its release would have, instead of leaving an edit
-   * that no Ctrl+Z can take back.
+   * that no Ctrl+Z can take back. So does an eraser sweep in progress: what
+   * it took off is already gone, its undo level filed at its first
+   * deletion (_eraseAt), and its lift (_markupRelease) finds nothing
+   * drawing.
    */
   cancel() {
+    if (this.markup.drawing) this._endEraseSweep();
     this.markup.clear();
     this.current = [];
     this.constrainedPt = null;
@@ -760,9 +787,14 @@ export class ToolController extends EventTarget {
     }
 
     // Right-drag pans from any tool. The press only arms it; a click that
-    // never moves falls through to the context menu on release.
+    // never moves falls through to the context menu on release -- on the
+    // sheet it was pressed on (page; see _onPointerUp). Pressed while the
+    // sheet turned to is still opening, it was pressed on no sheet of its
+    // own (the drawing up was the last one's): `why` keeps the words of
+    // that moment, as a finger's refusal does (_openingPress).
     if (ev.button === 2) {
-      this._rmbCandidate = { x: ev.clientX, y: ev.clientY };
+      const why = this.host.sheetOpening?.() || '';
+      this._rmbCandidate = { x: ev.clientX, y: ev.clientY, page: why ? null : this.getCurrentPage(), why };
       this._rmbPanned = false;
       return;
     }
@@ -802,9 +834,10 @@ export class ToolController extends EventTarget {
     // one finger down, and committing here dropped a stray vertex into the
     // polygon being traced each time the estimator zoomed in to find a
     // corner — with no way to remove just that one. The point is earned on
-    // the lift instead, once it is known no second finger arrived.
+    // the lift instead, once it is known no second finger arrived -- on the
+    // sheet it was pressed on (page; see _onPointerUp).
     if (ev.pointerType === 'touch') {
-      this._pendingTap = { x: ev.clientX, y: ev.clientY };
+      this._pendingTap = { x: ev.clientX, y: ev.clientY, page: this.getCurrentPage() };
       return;
     }
     this._collectPoint(ev, pt, usePt);
@@ -871,14 +904,14 @@ export class ToolController extends EventTarget {
   _panModePress(ev, pt) {
     const hit = this.hitTest(pt);
     if (hit && hit.item.type === 'page_ref') {
-      this._calloutPress = { item: hit.item, x: ev.clientX, y: ev.clientY };
+      this._calloutPress = { item: hit.item, x: ev.clientX, y: ev.clientY, page: this.getCurrentPage() };
     }
     // Read-only: select it so it can be read, but arm NO drag. This is the
     // single place a move or a reshape begins, which is why the gate is here
     // rather than in the hit test — a viewer that cannot click a wall to see
     // what it is would not be a viewer.
     if (this.readOnly) {
-      if (hit) this._select(hit.item, ev);
+      if (hit) this._pressSelect(hit.item, ev);
       else if (!ev.ctrlKey && !ev.metaKey && !ev.shiftKey) {
         this.selected.clear();
         this.emit('selection-changed', { ids: [] });
@@ -887,7 +920,7 @@ export class ToolController extends EventTarget {
       return;
     }
     if (hit && hit.vertexIndex >= 0) {
-      this._select(hit.item, ev);
+      this._pressSelect(hit.item, ev);
       this.dragVertex = { id: hit.item._uid, index: hit.vertexIndex };
       this._preDrag = this.project.snapshot();
       this._dragMoved = false;
@@ -896,7 +929,7 @@ export class ToolController extends EventTarget {
     }
     if (hit) {
       const already = this.selected.has(hit.item._uid);
-      this._select(hit.item, ev);
+      this._pressSelect(hit.item, ev);
       if (already) {
         this._moveDrag = { id: hit.item._uid, last: pt };
         this._preDrag = this.project.snapshot();
@@ -931,8 +964,10 @@ export class ToolController extends EventTarget {
       this.canvas.style.cursor = CURSORS[this.mode] || 'default';
     }
     // A stroke cannot survive: you cannot draw and pinch with the same hand.
-    // Say so rather than letting it vanish without a word.
+    // Say so rather than letting it vanish without a word. An eraser sweep
+    // ends here too: what it took off is its undo level.
     if (this.markup.drawing) {
+      this._endEraseSweep();
       this.markup.clear();
       this.emit('status', { text: 'Stroke discarded — two fingers zoom.' });
     }
@@ -999,13 +1034,26 @@ export class ToolController extends EventTarget {
   _armLongPress(ev) {
     this._clearLongPress();
     this._lpFired = false;
+    // (It says it is a finger: the item menu it opens is drawn off the
+    // finger, as the Items list's is -- js/ui/hold.js menuPlace.)
     const at = { x: ev.clientX, y: ev.clientY,
-                 clientX: ev.clientX, clientY: ev.clientY };
+                 clientX: ev.clientX, clientY: ev.clientY, pointerType: ev.pointerType };
+    const page = this.getCurrentPage();
     this._lpStart = at;
     this._lpTimer = setTimeout(() => {
       this._lpTimer = null;
       if (this._pinch) return;
+      // Held across a turn (the foot bar's Next, Page Down): the hold was on
+      // a sheet that is no longer up, and the menu would open on what is
+      // under the finger on the sheet turned to, or be refused while it
+      // opens. Nothing: the finger goes on panning, as one pressed while a
+      // sheet opens does.
+      if (this._turnedFrom(page)) return;
       this._lpFired = true;
+      // The press was the hold -- the right-click, which selects without a
+      // word to the Items list (_pressSelect): what it selected is lit there
+      // where it is listed, and not looked for.
+      this._revealDue = false;
       if (this._panning) {
         this._panning = false;
         this._panLast = null;
@@ -1035,6 +1083,13 @@ export class ToolController extends EventTarget {
   _clearLongPress() {
     if (this._lpTimer) { clearTimeout(this._lpTimer); this._lpTimer = null; }
     this._lpStart = null;
+    // The finger was not holding after all -- it lifted, slid, or a second
+    // one came: the press was a press, and what it selected is looked for
+    // in the Items list now, as a click's is (_pressSelect).
+    if (this._revealDue) {
+      this._revealDue = false;
+      this.emit('selection-changed', { ids: [...this.selected], reveal: true });
+    }
   }
 
   _startPan(ev) {
@@ -1083,7 +1138,7 @@ export class ToolController extends EventTarget {
       if (Math.abs(dx) + Math.abs(dy) > RMB_PAN_THRESHOLD) {
         this._rmbPanned = true;
         this.viewport.panBy(dx, dy);
-        this._rmbCandidate = { x: ev.clientX, y: ev.clientY };
+        this._rmbCandidate = { ...this._rmbCandidate, x: ev.clientX, y: ev.clientY };
         this.emit('changed');
       }
       return;
@@ -1198,21 +1253,35 @@ export class ToolController extends EventTarget {
       if (ev.type === 'pointerup') this.emit('status', { text: refused.why });
     }
 
-    // A tap earns its point here, once no second finger has arrived.
+    // A tap earns its point here, once no second finger has arrived -- and
+    // only on the sheet it was pressed on. A turn made while the finger was
+    // down (the foot bar's Next, Page Down) took that sheet away: while the
+    // sheet turned to opens, the drawing under the finger is still the last
+    // one's, and once it is up it is another sheet's, so the point would go
+    // on a sheet he never pressed, at a place he pressed on another. It is
+    // dropped; while the sheet still opens he is told why, in the words a
+    // finger pressed then is told on its lift (_openingPress).
     const tap = this._pendingTap;
     this._pendingTap = null;
     if (tap && !this._pinch && !this._lpFired && ev.type === 'pointerup'
         && Math.hypot(ev.clientX - tap.x, ev.clientY - tap.y) <= TAP_SLOP) {
-      const pt = this.viewport.eventToPage(ev);
-      this._collectPoint(ev, pt, pt);   // no Shift constraint from a finger
+      const opening = this.host.sheetOpening?.();
+      if (opening) {
+        this.emit('status', { text: opening });
+      } else if (!this._turnedFrom(tap.page)) {
+        const pt = this.viewport.eventToPage(ev);
+        this._collectPoint(ev, pt, pt);   // no Shift constraint from a finger
+      }
     }
 
     // Decided here rather than on press, because the same gesture also
     // moves the pin. Captured before the drag teardown below clears the flag.
+    // A bubble pressed on a sheet he has turned from since is not on screen
+    // (or soon will not be): it opens nothing.
     const bubble = this._calloutPress;
     this._calloutPress = null;
     if (bubble && !this._dragMoved && !this._lpFired
-        && ev.type === 'pointerup'
+        && ev.type === 'pointerup' && !this._turnedFrom(bubble.page)
         && Math.hypot(ev.clientX - bubble.x, ev.clientY - bubble.y) <= CLICK_SLOP) {
       this.emit('callout-activated', {
         item: bubble.item, x: ev.clientX, y: ev.clientY,
@@ -1256,15 +1325,31 @@ export class ToolController extends EventTarget {
     if (isMarkupTool(this.mode) && ev.button === 0 && ev.type === 'pointerup') {
       this._markupRelease(ev);
     } else if (isMarkupTool(this.mode) && ev.type === 'pointercancel') {
-      this.markup.clear();     // the browser took the gesture; leave no ghost
+      // The browser took the gesture; leave no ghost -- and an eraser sweep
+      // it cut short keeps what it took off as its undo level.
+      if (this.markup.drawing) this._endEraseSweep();
+      this.markup.clear();
       this.emit('changed');
     }
 
     if (ev.button === 2 && this._rmbCandidate) {
+      const { page, why } = this._rmbCandidate;
       const panned = this._rmbPanned;
       this._rmbCandidate = null;
       this._rmbPanned = false;
-      if (!panned) this._onRightClick(ev);
+      // A right press on a sheet he has turned from since (Page Down with
+      // the other hand) opens nothing: the item menu would be for what is
+      // under the pointer on the sheet turned to, a shape he never pressed.
+      // While that sheet still opens _onRightClick says why -- the words a
+      // tap is told (_onPointerUp's tap). A press made while it was opening
+      // was on no sheet at all: released once it is up, it opens nothing
+      // there either, and is told why in the words of the moment it was
+      // pressed, as a finger pressed then is told on its lift.
+      if (!panned) {
+        if (this.host.sheetOpening?.()) this._onRightClick(ev);   // refused, and said why
+        else if (why) this.emit('status', { text: why });
+        else if (!this._turnedFrom(page)) this._onRightClick(ev);
+      }
     }
   }
 
@@ -1281,6 +1366,15 @@ export class ToolController extends EventTarget {
     if (!why) return false;
     this.emit('status', { text: why });
     return true;
+  }
+
+  /**
+   * Whether he has turned away from sheet `page`, the one a press still
+   * held was made on: the sheet turned to is still opening (the drawing up
+   * is the one he left), or it is up -- another sheet under the finger.
+   */
+  _turnedFrom(page) {
+    return !!this.host.sheetOpening?.() || this.getCurrentPage() !== page;
   }
 
   _onDoubleClick(ev) {
@@ -1327,15 +1421,20 @@ export class ToolController extends EventTarget {
     }
     if (this.mode === 'pan') {
       const hit = this.hitTest(pt);
+      // The desktop's right-click selects (or re-selects) the shape without
+      // emitting selection_changed (_do_right_click), so its Items list never
+      // goes looking for it: a floor he has folded stays folded. Its row is
+      // still lit where it is listed (reveal: false).
+      const quiet = { ctrlKey: false, shiftKey: false };
       // The item menu is Delete / Hide / Properties — all edits. Selecting
       // is still allowed, so a right-click still says what you clicked.
       if (this.readOnly) {
-        if (hit) this._select(hit.item, { ctrlKey: false, shiftKey: false });
+        if (hit) this._select(hit.item, quiet, { reveal: false });
         this.emit('status', { text: this.readOnlyReason || READ_ONLY_DEFAULT });
         return;
       }
       if (hit) {
-        this._select(hit.item, { ctrlKey: false, shiftKey: false });
+        this._select(hit.item, quiet, { reveal: false });
         this.host.showItemMenu?.(hit.item, ev);
       } else if (this.selected.size) {
         const first = this.project.findItem([...this.selected][0]);
@@ -1623,12 +1722,7 @@ export class ToolController extends EventTarget {
       }
       case 'erase': {
         st.eraserPos = null;
-        // Only an erase that removed something is an undo step.
-        if (this._erasedAny && this._eraseSnapshot) {
-          this.project.pushUndo('Erase', this._eraseSnapshot);
-        }
-        this._eraseSnapshot = null;
-        this._erasedAny = false;
+        this._endEraseSweep();
         break;
       }
       case 'textnote': {
@@ -1644,7 +1738,47 @@ export class ToolController extends EventTarget {
     this.emit('changed');
   }
 
+  /**
+   * An eraser sweep is over -- lifted, or cut short: a second finger, the
+   * browser taking the gesture, a page turn (cancel), another job, the
+   * history moving under it (_putDownSweep). One snapshot was taken for the
+   * whole sweep, at its press, and its first deletion filed it as the
+   * sweep's undo level (_eraseAt); only a sweep that took something off has
+   * one. Nothing is filed here, and none of it is left behind: a picture of
+   * the project kept past its sweep was filed by whatever ended things next
+   * -- a turn, out of order, and an open in the NEXT job, where one Ctrl+Z
+   * put this job's takeoff back.
+   */
+  _endEraseSweep() {
+    this._eraseSnapshot = null;
+    this._erasedAny = false;
+  }
+
+  /**
+   * The history moved while an eraser sweep goes on -- Ctrl+Z, or the
+   * toolbar's Undo, with the button or the finger still down; Ctrl+Y;
+   * another edit filed; the history cleared. The sweep is over there, as a
+   * press on a shape is (_dropPress). What it took off so far is its own
+   * undo level, filed at its first deletion, so a Ctrl+Z takes back exactly
+   * that, with its redo kept. Filed at the lift instead, its picture from
+   * before the step he took back went over that step: the next Ctrl+Z
+   * brought back what he had undone, and its redo was gone. And the rest of
+   * the sweep takes nothing off the store put back (the stroke he just
+   * brought back is under the eraser). Not the sweep's own filing.
+   */
+  _putDownSweep() {
+    if (this._filingSweep || !this._eraseSnapshot) return;
+    this._endEraseSweep();
+    if (this.mode === 'erase' && this.markup.drawing) {
+      this.markup.clear();
+      this.emit('changed');
+    }
+  }
+
   _eraseAt(pt) {
+    // A sweep put down -- the history moved under it, another job came in
+    // -- takes nothing more off: no deletion without its undo level.
+    if (!this._eraseSnapshot) return;
     const page = this.getCurrentPage();
     const list = this.project.annotations[page] || [];
     if (!list.length) return;
@@ -1653,8 +1787,19 @@ export class ToolController extends EventTarget {
     if (!hits.length) return;
     const gone = new Set(hits);
     this.project.annotations[page] = list.filter(a => !gone.has(a));
-    this._erasedAny = true;
     this.project.markDirty();
+    if (!this._erasedAny) {
+      // The sweep's first deletion files its undo level, the picture from
+      // its press -- as a drag's first move files its own (desktop
+      // _commit_pre_drag) -- and every later one in the sweep joins it.
+      this._erasedAny = true;
+      this._filingSweep = true;
+      try {
+        this.project.pushUndo('Erase', this._eraseSnapshot);
+      } finally {
+        this._filingSweep = false;
+      }
+    }
     this.project.emit('annotations-changed', { pageKey: page });
   }
 
@@ -1781,7 +1926,19 @@ export class ToolController extends EventTarget {
     return null;
   }
 
-  _select(item, ev) {
+  /**
+   * Select a shape pressed on the drawing. 'selection-changed' goes out only
+   * when the selection CHANGED, as the desktop's selection_changed does: a
+   * press on the shape already selected starts its move and says nothing
+   * (mousePressEvent), a vertex drag says so only `if sel_changed`. Its
+   * `reveal` says whether the Items list goes looking for the item -- opens
+   * the sections its row is folded away in (highlight_measurement, the one
+   * listener of selection_changed) -- or only lights its row where it is
+   * listed: false for a right-click (see _onRightClick). True or false, the
+   * list's lit rows follow the selection. Returns whether it changed.
+   */
+  _select(item, ev, { reveal = true } = {}) {
+    const was = [...this.selected];
     const additive = ev && (ev.ctrlKey || ev.metaKey);
     if (additive) {
       if (this.selected.has(item._uid)) this.selected.delete(item._uid);
@@ -1789,13 +1946,29 @@ export class ToolController extends EventTarget {
     } else if (!this.selected.has(item._uid) || this.selected.size > 1) {
       this.selected = new Set([item._uid]);
     }
-    this.emit('selection-changed', { ids: [...this.selected] });
+    const changed = was.length !== this.selected.size || was.some(id => !this.selected.has(id));
+    if (changed) this.emit('selection-changed', { ids: [...this.selected], reveal });
     this.emit('changed');
+    return changed;
   }
 
+  /**
+   * A press that selects (_panModePress). A finger's press may yet turn out
+   * to be the hold, which is the right-click: the list is not sent looking
+   * until that is decided -- _clearLongPress sends it when the finger lifts,
+   * slides or is joined by a second one, and the hold firing drops it. A
+   * mouse's press is a press at once.
+   */
+  _pressSelect(item, ev) {
+    const held = ev.pointerType === 'touch' && !!this._lpTimer;
+    if (this._select(item, ev, { reveal: !held }) && held) this._revealDue = true;
+  }
+
+  /** A selection made FOR the drawing -- the Items list's click, a jump to
+   *  an item (desktop select_measurement): always said, and looked for. */
   select(ids) {
     this.selected = new Set(Array.isArray(ids) ? ids : [ids]);
-    this.emit('selection-changed', { ids: [...this.selected] });
+    this.emit('selection-changed', { ids: [...this.selected], reveal: true });
     this.emit('changed');
   }
 
@@ -1843,10 +2016,7 @@ export class ToolController extends EventTarget {
   }
 
   _finalizePitch(pts) {
-    const dx = Math.abs(pts[1][0] - pts[0][0]);
-    const dy = Math.abs(pts[1][1] - pts[0][1]);
-    const rise12 = dx < 1e-9 ? Infinity : (12.0 * dy) / dx;
-    const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const [rise12, angle] = pitchFromPoints(pts[0], pts[1]);
     const m = this._base('pitch', {
       points: pts.map(p => p.slice()),
       name: this.options.pendingName || '',
@@ -1864,7 +2034,7 @@ export class ToolController extends EventTarget {
     const created = this._commit(m, 'Pitch');
     if (created) delete created.sort_order;
     this.emit('status', {
-      text: `Pitch ${pitchLabel(rise12)} (${angle.toFixed(0)}°)`
+      text: `Pitch ${pitchLabel(rise12)} (${pyFixed(angle, 0)}°)`
         + (this.scratchSink ? ' — temporary; not saved with the project' : ''),
     });
   }
@@ -1881,13 +2051,13 @@ export class ToolController extends EventTarget {
       // clicks and a double-click, not a form.
       this._commit(this._base('area', {
         points: pts.map(p => p.slice()),
-        label: `${areaFt2.toFixed(1)} sq ft`,
+        label: `${pyFixed(areaFt2, 1)} sq ft`,
         value: areaFt2, perimeter: perimFt,
         name: '', color: nextPaletteColor(),
         floor_level: '', category: '', sub_category: '',
       }), 'Area');
       this.emit('status', {
-        text: `${areaFt2.toFixed(1)} sq ft, ${formatFt(perimFt)} around `
+        text: `${pyFixed(areaFt2, 1)} sq ft, ${formatFt(perimFt)} around `
           + '— a temporary dimension; it is not saved with the project',
       });
       return;
@@ -1896,7 +2066,7 @@ export class ToolController extends EventTarget {
     if (mode === 'area') {
       const spec = await this._ask(this.host.askItem?.({
         type: 'area',
-        suggestedName: this.options.pendingName || `Area ${areaFt2.toFixed(0)} sq ft`,
+        suggestedName: this.options.pendingName || `Area ${pyFixed(areaFt2, 0)} sq ft`,
         color: peekPaletteColor(),
       }));
       if (!spec) { this.emit('changed'); return; }
@@ -1904,7 +2074,7 @@ export class ToolController extends EventTarget {
       this._remember(spec);
       this._commit(this._base('area', {
         points: pts.map(p => p.slice()),
-        label: spec.name || `${areaFt2.toFixed(1)} sq ft`,
+        label: spec.name || `${pyFixed(areaFt2, 1)} sq ft`,
         value: areaFt2, perimeter: perimFt,
         ...spec,
       }), 'Area');
@@ -1925,7 +2095,7 @@ export class ToolController extends EventTarget {
       const sloped = areaFt2 * factor;
       this._commit(this._base('slope_area', {
         points: pts.map(p => p.slice()),
-        label: spec.name || `${sloped.toFixed(1)} sq ft (${trimNum(pitch)}:12)`,
+        label: spec.name || `${pyFixed(sloped, 1)} sq ft (${pyG(pitch)}:12)`,
         value: sloped, flat_area: areaFt2, perimeter: perimFt, pitch,
         ...spec,
       }), 'Slope roof');
@@ -1956,7 +2126,7 @@ export class ToolController extends EventTarget {
     const spec = await this._ask(this.host.askItem?.({
       type: 'grid',
       suggestedName: this.options.pendingName
-        || `Grid ${cols}×${rows}  (${trimNum(cwFt, 2)}×${trimNum(chFt, 2)} ft)`,
+        || `Grid ${cols}×${rows}  (${pyG(cwFt, 2)}×${pyG(chFt, 2)} ft)`,
       color: peekPaletteColor(),
       gridCells: [cwFt, chFt],
     }));
@@ -2010,7 +2180,7 @@ export class ToolController extends EventTarget {
     });
     recompute(item);
     item.label = spec.name ||
-      `Tile ${(item.tile_count || 0).toLocaleString('en-US')} (${patternLabel(item.pattern)})`;
+      `Tile ${pyIntStr(item.tile_count || 0, true)} (${patternLabel(item.pattern)})`;
     this._commit(item, 'Tile');
   }
 
@@ -2019,7 +2189,7 @@ export class ToolController extends EventTarget {
     const ft = pathLength(pts) / ppf;
     const spec = await this._ask(this.host.askItem?.({
       type: 'polyline',
-      suggestedName: this.options.pendingName || `Run ${ft.toFixed(1)} ft`,
+      suggestedName: this.options.pendingName || `Run ${pyFixed(ft, 1)} ft`,
       color: peekPaletteColor(),
     }));
     if (!spec) { this.emit('changed'); return; }
@@ -2040,7 +2210,7 @@ export class ToolController extends EventTarget {
     const count = countAlong(pts, spacingPx);
     const spec = await this._ask(this.host.askItem?.({
       type: 'linear_count',
-      suggestedName: this.options.pendingName || `${count} items @ ${trimNum(spacingIn)}"`,
+      suggestedName: this.options.pendingName || `${count} items @ ${pyG(spacingIn)}"`,
       color: peekPaletteColor(),
       spacingIn,
     }));
@@ -2351,7 +2521,11 @@ export class ToolController extends EventTarget {
       label, name: label,
       color,
       value: 1,
-      category: CATEGORY_DEFAULT_OPENINGS,
+      // Filed under the trade its kind is filed under: 'Doors & Windows',
+      // or wherever a rename of that trade moved it (metadata.pin_filing,
+      // desktop _pin_filing) -- a pin dropped with no form after a rename
+      // must not bring the old heading back beside the new one.
+      category: pinFiling(this.project.metadata, kind)[0],
     }), { label });
     this.emit('changed');
   }
@@ -2374,7 +2548,7 @@ export class ToolController extends EventTarget {
     this.project.setPageScale(page, ppf);
     this.host.alert?.(
       'Scale Calibrated',
-      `Scale set: ${ppf.toFixed(2)} pixels per foot\n(${distPx.toFixed(1)} px = ${Number(text)} ft)`
+      `Scale set: ${pyFixed(ppf, 2)} pixels per foot\n(${pyFixed(distPx, 1)} px = ${pyStrFloat(Number(text))} ft)`
     );
     this.emit('changed');
   }
@@ -2634,20 +2808,13 @@ function storeHolds(store, m) {
   return false;
 }
 
-export function pitchLabel(rise12) {
-  if (!Number.isFinite(rise12)) return 'vertical';
-  const r = Math.round(rise12 * 10) / 10;
-  if (Math.abs(r - Math.round(r)) < 0.05) return `${Math.round(r)}:12`;
-  return `${r.toFixed(1)}:12`;
-}
+// pitchLabel (desktop _pitch_label) is measure.js's, with the reshape that
+// re-reads a dragged pitch line; handed on from here as it always has been.
+export { pitchLabel };
 
 function patternLabel(key) {
   const row = TILE_PATTERNS.find(p => p[0] === key);
   return row ? row[1] : String(key || 'grid');
-}
-
-function trimNum(v, dp = 6) {
-  return String(parseFloat((Number(v) || 0).toPrecision(dp)));
 }
 
 function formatDistanceLabel(ft, precision) {

@@ -14,6 +14,8 @@ import {
 import {
   itemPpf, formatQty, formatFt, formatDistancePrecision, DEFAULT_PPF,
 } from './units.js';
+import { pyFixed, pyG, pyIntStr, pyRound, pyRoundInt } from './pyformat.js';
+import { valueStr, PIN_TYPES } from './counting.js';
 
 /**
  * What each item type measures, and the unit its value is in.
@@ -40,7 +42,11 @@ export const ITEM_MEASURE = {
 /**
  * The (qty, unit) pair every report and export uses for an item.
  * Matches the desktop report builder exactly, including the special cases:
- * a count is the number of POINTS, and an opening always counts as one.
+ * a count is the number of POINTS, and a pin always counts as one -- every
+ * kind of pin, a partition and a header as well as an opening (desktop
+ * ReportCenterDialog._collect: `elif mtype in PIN_TYPES: qty, unit = 1.0,
+ * "EA"`, priced and its materials listed). With window and door only, a
+ * priced header and its materials were in no report and no footer total.
  */
 export function reportQty(m) {
   const t = m.type;
@@ -49,7 +55,7 @@ export function reportQty(m) {
   }
   if (t === 'count') return { qty: (m.points || []).length, unit: 'EA' };
   if (t === 'linear_count') return { qty: Math.trunc(Number(m.value) || 0), unit: 'EA' };
-  if (t === 'window' || t === 'door') return { qty: 1, unit: 'EA' };
+  if (PIN_TYPES.has(t)) return { qty: 1, unit: 'EA' };
   const spec = ITEM_MEASURE[t];
   if (!spec || !spec.unit) return null;
   return { qty: Number(m.value) || 0, unit: spec.unit };
@@ -104,6 +110,15 @@ export function computeValue(item) {
 
     case 'standalone':
       return Number(item.qty) || 0;
+
+    case 'pitch': {
+      // A ratio of pixels (desktop _recalc_value: _pitch_from_points), so a
+      // dragged end re-reads it. A vertical line is 'vertical' and stores 0:
+      // a JSON file cannot hold Infinity.
+      if (pts.length < 2) return Number(item.value) || 0;
+      const rise12 = pitchFromPoints(pts[0], pts[1])[0];
+      return Number.isFinite(rise12) ? rise12 : 0;
+    }
 
     default:
       return Number(item.value) || 0;
@@ -181,6 +196,12 @@ export function recompute(item) {
     item.self_intersects = selfIntersects(pts);
   }
 
+  if (item.type === 'pitch' && pts.length >= 2) {
+    // ...and its angle with it (the web also keeps the rise in `pitch`).
+    item.angle_deg = pitchFromPoints(pts[0], pts[1])[1];
+    if ('pitch' in item) item.pitch = item.value;
+  }
+
   if (item.type === 'slope_area') {
     const flat = polygonArea(pts) / (ppf * ppf);
     if (master) {
@@ -197,19 +218,21 @@ export function recompute(item) {
     if (cw > 0 && ch > 0) {
       item.cell_w_ft = cw / ppf;
       item.cell_h_ft = ch / ppf;
-      // cols and rows span the traced outline's own rotated bounding box.
-      // Reading two of its corners as though they were opposite ends of a
-      // rectangle is what used to overwrite the right answer with a wrong one.
-      const g = gridForPolygon(pts, cw, ch, Number(item.angle) || 0, {
-        anchor: item.grid_origin || pts[0],
-      });
-      item.cols = g.cols;
-      item.rows = g.rows;
+    }
+    if (cw > 0 && ch > 0 && pts.length >= 3) {
+      // cols and rows span the traced outline's own rotated bounding box --
+      // the desktop's count (gridSpan), which its reshape writes and its
+      // canvas draws. Reading two of its corners as though they were opposite
+      // ends of a rectangle is what used to overwrite the right answer with a
+      // wrong one; the anchor-aligned span of the cells drawn (gridForPolygon)
+      // can be a cell more on each side, and wrote 'Grid 4×4' where the
+      // desktop says 'Grid 3×3'.
+      [item.cols, item.rows] = gridSpan(item);
       // NOT group_count. That is the number of SHAPES in a multi-shape item,
       // read by both apps' labels, reports and delete confirmations — writing
       // a cell count there made a grid announce "total of 25 shapes", and on a
       // real multi-shape item it destroyed the true count.
-      item.cell_count = g.cols * g.rows;
+      item.cell_count = item.cols * item.rows;
     }
   }
 
@@ -275,26 +298,49 @@ export function recompute(item) {
  * "243.5 sq ft" in every report while its quantity column read 500.
  */
 export function refreshLabel(item) {
+  const pts = item.points || [];
+  // A Measure line's label is its length, named or not: the desktop's reshape
+  // (_recalc_value) writes format_distance_precision(ft, m.get("precision",
+  // "1/2")) for every distance -- its name is a field of its own -- and the
+  // reports list an unnamed one by that label.
+  if (item.type === 'distance' && pts.length >= 2) {
+    item.label = formatDistancePrecision(shapeOwn(item).value,
+      'precision' in item ? item.precision : '1/2');
+    return item.label;
+  }
   const name = String(item.name || '').trim();
   if (name) { item.label = name; return item.label; }
   const own = shapeOwn(item);
   switch (item.type) {
+    // The desktop's own label words (the reshape, GLPageWidget._recalc_value):
+    // f"{a:.1f} sq ft", f"Grid {cols}×{rows}", f"{sloped:.1f} sq ft
+    // ({pitch:g}:12)", f"Tile {n:,} (...)", format_ft, f"{count} items",
+    // _pitch_label -- written into the file, so rounded its way.
     case 'area':
-    case 'grid':
-      item.label = `${own.value.toFixed(1)} sq ft`;
+      item.label = `${pyFixed(own.value, 1)} sq ft`;
+      break;
+    case 'grid': {
+      // cols and rows as recompute has just counted them
+      const cols = Math.max(1, Number(item.cols) || 1);
+      const rows = Math.max(1, Number(item.rows) || 1);
+      item.label = `Grid ${pyIntStr(cols)}×${pyIntStr(rows)}`;
+      break;
+    }
+    case 'pitch':
+      if (pts.length >= 2) item.label = pitchLabel(pitchFromPoints(pts[0], pts[1])[0]);
       break;
     case 'slope_area':
-      item.label = `${own.value.toFixed(1)} sq ft (${trimNum(item.pitch ?? 4)}:12)`;
+      item.label = `${pyFixed(own.value, 1)} sq ft (${pyG(item.pitch ?? 4)}:12)`;
       break;
     case 'tile':
-      item.label = `Tile ${(Number(item.tile_count) || 0).toLocaleString('en-US')} ` +
+      item.label = `Tile ${pyIntStr(Number(item.tile_count) || 0, true)} ` +
                    `(${tilePatternLabel(item.pattern || 'grid')})`;
       break;
     case 'polyline':
       item.label = formatFt(own.value);
       break;
     case 'linear_count':
-      item.label = `${Math.trunc(own.value)} items`;
+      item.label = `${pyIntStr(own.value)} items`;
       break;
     case 'ref_distance':
       // To the half inch, not formatFt's whole inch: what this type measures
@@ -304,13 +350,31 @@ export function refreshLabel(item) {
       item.label = formatDistancePrecision(own.value, item.precision || '1/2');
       break;
     default:
-      break;   // distance recomputes live; count/window/door keep their names
+      break;   // count/window/door keep their names
   }
   return item.label;
 }
 
-function trimNum(v, dp = 6) {
-  return String(parseFloat((Number(v) || 0).toPrecision(dp)));
+/**
+ * The desktop's _pitch_from_points: (rise per 12 of run, angle in degrees)
+ * of a line along a roof slope -- a ratio of pixels, no scale. Its own
+ * arithmetic, in its order (math.degrees is x * (180 / pi)): the rise agrees
+ * to the bit; the angle can differ in its last bit, atan2 being each
+ * platform's own. A vertical line's rise is Infinity.
+ */
+export function pitchFromPoints(p0, p1) {
+  const dx = Math.abs(p1[0] - p0[0]);
+  const dy = Math.abs(p1[1] - p0[1]);
+  const rise12 = dx < 1e-9 ? Infinity : (12.0 * dy) / dx;
+  return [rise12, Math.atan2(dy, dx) * (180 / Math.PI)];
+}
+
+/** desktop _pitch_label: round(rise12, 1), a whole number within 0.05 snapped -- Python's rounding (6.25 -> '6.2:12'). */
+export function pitchLabel(rise12) {
+  if (!Number.isFinite(rise12)) return 'vertical';
+  const r = pyRound(rise12, 1);
+  if (Math.abs(r - pyRoundInt(r)) < 0.05) return `${pyIntStr(pyRoundInt(r))}:12`;
+  return `${pyFixed(r, 1)}:12`;
 }
 
 /** The grid cells an item draws, derived not stored. */
@@ -328,6 +392,28 @@ export function gridCellsFor(item) {
     // desktop app lands half a cell off in the browser.
     { anchor: item.grid_origin || pts[0] }
   );
+}
+
+/**
+ * [cols, rows] a grid spans, as the desktop counts them -- its reshape
+ * (_recalc_value) and its canvas label (_gl_draw_measurement_label), in their
+ * arithmetic: the points turned by the grid's angle, max(1, ceil(span /
+ * cell)) across the outline's rotated bounding box. An axis whose cell is not
+ * positive keeps the count stored (the canvas's m.get("cols", 1)). This is
+ * the count the label and the stored cols/rows say; the cells DRAWN start at
+ * the anchor (gridCellsFor), which can need one more on a side.
+ */
+export function gridSpan(item) {
+  const pts = item.points || [];
+  const a = (Number(item.angle) || 0) * (Math.PI / 180);      // math.radians
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const us = pts.map(([x, y]) => x * ca + y * sa);
+  const vs = pts.map(([x, y]) => -x * sa + y * ca);
+  const span = (vals, cell, stored) => (cell > 0 && vals.length
+    ? Math.max(1, Math.ceil((Math.max(...vals) - Math.min(...vals)) / cell))
+    : Math.max(1, Number(stored) || 1));
+  return [span(us, Number(item.cell_w_px ?? 1), item.cols),
+    span(vs, Number(item.cell_h_px ?? 1), item.rows)];
 }
 
 /** The array dots an item draws, derived not stored. */
@@ -382,70 +468,15 @@ export function tilePatternLabel(key) {
   return TILE_PATTERN_LABELS[key] || String(key || 'grid');
 }
 
-function g(v, dp = 6) {
-  // Python's %g: the shortest form that round-trips at this precision.
-  const n = Number(v) || 0;
-  return String(parseFloat(n.toPrecision(dp)));
-}
-
 /**
- * The item's quantity line, exactly as the desktop panel writes it.
+ * The item's quantity line, exactly as the desktop panel writes it
+ * (TakeoffItemsPanel._value_str): counting.js's valueStr, the one port of
+ * it, so a row reads the same with the SHEET chip on and off -- the same
+ * words and the same rounding (12.25 sq ft is '12.2 sq ft' on both).
  * Empty string means the row shows no value line at all.
  */
 export function valueString(m) {
-  const type = m.type || '';
-
-  if (type === 'standalone') {
-    const q = Number(m.qty) || 0;
-    const u = String(m.unit || 'each').trim();
-    return q ? `${g(q)} ${u}` : 'no quantity yet — double-click to set';
-  }
-
-  const parts = [];
-  // group_count is the number of SHAPES in the item. Never a cell or dot count.
-  const nShapes = Number(m.group_count) || 1;
-  if (nShapes > 1) parts.push(`total of ${nShapes} shapes`);
-  const sc = String(m.scale || '').trim();
-  if (sc) parts.push(`${sc} scale`);
-  const suffix = parts.length ? `   ·  ${parts.join('  ·  ')}` : '';
-
-  const v = Number(m.value) || 0;
-
-  if (type === 'area' || type === 'grid') {
-    return v ? `${v.toFixed(1)} sq ft${suffix}` : '';
-  }
-  if (type === 'slope_area') {
-    return v ? `${v.toFixed(1)} sq ft (${g(m.pitch || 0)}:12)${suffix}` : '';
-  }
-  if (type === 'tile') {
-    if (!v) return '';
-    const needed = Math.trunc(Number(m.tiles_needed) || 0);
-    const pat = tilePatternLabel(m.pattern || 'grid');
-    let out = `${v.toFixed(1)} sq ft · ${needed.toLocaleString('en-US')} tiles (${pat})`;
-    if (m.boxes) out += ` · ${m.boxes} boxes`;
-    return out + suffix;
-  }
-  if (type === 'distance' || type === 'polyline') {
-    return v ? `${v.toFixed(2)} ft${suffix}` : '';
-  }
-  if (type === 'window' || type === 'door') {
-    const p = type === 'window' ? 'win_' : 'door_';
-    const tag = m[p + 'number'] || '';
-    const w = m[p + 'width'] || '';
-    const h = m[p + 'height'] || '';
-    if (w || h) return `${tag ? tag + '  ' : ''}${w} × ${h}`.trim();
-    return tag || 'no size yet — double-click to edit';
-  }
-  if (type === 'linear_count') {
-    const n = Math.trunc(v);
-    const sp = m.spacing_in ?? 12;
-    return `${n} items @ ${g(sp)}"${suffix}`;
-  }
-  if (type === 'count') {
-    const cnt = (m.points || []).length;
-    return cnt ? `× ${cnt}` : '';
-  }
-  return '';
+  return valueStr(m);
 }
 
 /** The notes line with the purpose leading it. One helper, so nothing drifts. */
@@ -492,9 +523,19 @@ export function expandAssembly(m) {
   }));
 }
 
-/** The item's own cost line, before its associated materials. */
+/**
+ * The item's own cost line, before its associated materials, as the reports
+ * price it (reports.js collectItems; desktop _collect: qty * rate): its
+ * report quantity × rate -- a count by its points, an array by its whole
+ * dots, a pin as one, an item on no sheet by its typed quantity, whose
+ * `value` is not its quantity. A kind with no report quantity (a pitch line)
+ * is value × rate, and no report lists it. The Items list's footer adds the
+ * same.
+ */
 export function itemCost(m) {
-  return (Number(m.value) || 0) * (Number(m.unit_cost) || 0);
+  const rate = Number(m.unit_cost) || 0;
+  const q = reportQty(m);
+  return (q ? q.qty : (Number(m.value) || 0)) * rate;
 }
 
 /** Item cost plus every associated line. */

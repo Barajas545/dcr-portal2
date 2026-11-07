@@ -106,6 +106,7 @@
   --filter-h: 30px;
   --rowact-h: 0px;
   --rowact-pad: 0 3px;
+  --grp-h: 0px;
   --cost-pad: 3px 6px;
   --form-cols: 128px 1fr;
 }
@@ -121,6 +122,7 @@
     --panel-head-h: 46px;
     --filter-h: 48px;
     --rowact-h: 38px; --rowact-pad: 0 10px;
+    --grp-h: 36px;
     --cost-pad: 8px 10px;
     --form-cols: 1fr;
   }
@@ -136,6 +138,7 @@
   --panel-head-h: 46px;
   --filter-h: 48px;
   --rowact-h: 38px; --rowact-pad: 0 10px;
+  --grp-h: 36px;
   --cost-pad: 8px 10px;
   --form-cols: 1fr;
 }
@@ -152,6 +155,7 @@
   --panel-head-h: 36px;
   --filter-h: 30px;
   --rowact-h: 0px; --rowact-pad: 0 3px;
+  --grp-h: 0px;
   --cost-pad: 3px 6px;
   --form-cols: 128px 1fr;
 }
@@ -610,6 +614,44 @@ button { font-family: inherit; }
   background: rgba(0, 0, 0, .3); border-radius: 3px; padding: 1px 6px;
 }
 
+/* ── the overlay the desktop saved for this sheet ─────────────────────── */
+
+/* One line at the foot of the sheet, above the phone and tablet bar
+   (--mbar-h, as the canvas stops there): what is up, its tint, the fade,
+   Flash and Hide. Over the sheet, so it is never pushed off by a toolbar;
+   never wider than the sheet, the name giving way first. */
+.sov-bar {
+  position: absolute; left: 10px; bottom: calc(var(--mbar-h, 0px) + 10px); z-index: 30;
+  max-width: calc(100% - 20px);
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 10px;
+  background: var(--chip-bg); color: var(--text);
+  border: 1px solid var(--border-hard); border-radius: 8px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .45);
+  font-size: 12px; user-select: none; -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.sov-bar[hidden] { display: none; }
+.sov-swatch {
+  flex: 0 0 auto; width: 12px; height: 12px; border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, .5);
+}
+.sov-swatch[hidden] { display: none; }
+/* `pre`: the desktop's names are two spaces apart ('P3  X1.2'), and kept so. */
+.sov-what {
+  min-width: 0; flex: 0 1 auto;
+  white-space: pre; overflow: hidden; text-overflow: ellipsis;
+}
+.sov-fade {
+  flex: 0 0 auto; color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.sov-btn { flex: 0 0 auto; }
+/* A finger's size where the layout is for fingers. */
+:root[data-ui="touch"] .sov-btn { min-height: 44px; min-width: 44px; }
+@media (pointer: coarse) {
+  :root:not([data-ui]) .sov-btn { min-height: 44px; min-width: 44px; }
+}
+
 /* ── items panel ──────────────────────────────────────────────────────── */
 
 .cost-toggle { display: flex; gap: 2px; margin-left: 6px; }
@@ -628,10 +670,41 @@ button { font-family: inherit; }
   background: var(--filter-bg); flex-shrink: 0;
 }
 .filter-bar select { flex: 1; min-width: 0; }
+/* The SHEET chip: the list shows only what is drawn on the drawing on
+   screen. A toggle styled like the ALL / LAB / MAT chips, and a finger's
+   size in the touch layout (--rowact-h). */
+.sheet-chip {
+  flex-shrink: 0;
+  background: #232323; color: var(--text-faint);
+  border: 1px solid #2e2e2e; border-radius: 4px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .5px;
+  padding: var(--cost-pad); min-height: var(--rowact-h); min-width: var(--rowact-h);
+  cursor: pointer;
+}
+.sheet-chip.on { background: var(--accent); color: #fff; border-color: transparent; }
+/* 'ITEMS ON X1.1' shares the bar with ALL / LAB / MAT and two buttons: cut
+   with an ellipsis if it must be; a tap on it says the sheet in full. */
+#itemsTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#itemsTitle.sheet { cursor: pointer; color: var(--text-2); }
+/* What the SHEET chip leaves out, said in the list. */
+.sheet-note { color: var(--text-faint); font-size: 10px; padding: 6px 10px; line-height: 1.4; }
+.sheet-note.empty {
+  text-align: center; color: var(--text-ghost);
+  font-size: 11.5px; padding: 30px 10px; line-height: 1.6;
+}
+/* 'X1.0 +2': a tap says the other sheets. */
+.row .pg.also { cursor: pointer; text-decoration: underline dotted; }
+:root[data-ui="touch"] .row .pg.also { padding: 8px 0 8px 10px; margin: -8px 0; }
 
 .grp {
   display: flex; align-items: center; gap: 6px;
   padding: 0 4px 0 6px; cursor: pointer; user-select: none;
+  /* A finger holds a heading for its menu (js/ui/hold.js): no text
+     selection and no iOS callout may start under it, and in the touch
+     layout it is tall enough to hold (about 20px otherwise). The list
+     itself keeps scrolling with a finger: no touch-action here. */
+  -webkit-user-select: none; -webkit-touch-callout: none;
+  min-height: var(--grp-h);
 }
 .grp .gutter { flex-shrink: 0; align-self: stretch; }
 .grp-label { font-weight: 700; padding: 4px 0; flex: 1; min-width: 0; }
@@ -644,6 +717,7 @@ button { font-family: inherit; }
 .row {
   display: flex; align-items: stretch; gap: 6px;
   padding: 0 6px; cursor: pointer; user-select: none;
+  -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .row:hover { filter: brightness(1.14); }
 .row.on { background: var(--select) !important; }
@@ -688,8 +762,19 @@ button { font-family: inherit; }
 .row .eye { color: var(--eye-on); font-size: 13px; }
 .row.hidden .eye { color: var(--eye-off); }
 
-.gutter { width: 12px; position: relative; }
-.gutter svg { display: block; height: 100%; }
+/* The tree's lines are laid over the gutter, not in it. The gutter is
+   stretched to its row's height (a flex item), and the svg is taken out of
+   flow and pinned to the gutter's box. In flow, its height of 100% had no
+   definite height to resolve against -- a row is as tall as its text -- so
+   it fell back to the 150px default of a replaced element with no size of
+   its own, and every heading and row of the list was 150px tall
+   (Chromium). Out of flow it adds nothing to the row's height, and an
+   absolutely positioned box's percentage height is taken of its containing
+   block's padding box, which is laid out by then however its own height
+   was found: the lines are exactly the row's height in every engine, so
+   they still join from row to row, the elbow at each row's middle. */
+.gutter { width: 12px; position: relative; align-self: stretch; }
+.gutter svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
 
 .items-foot {
   padding: 6px 8px; border-top: 1px solid var(--border-soft);
@@ -736,12 +821,23 @@ button { font-family: inherit; }
   -webkit-tap-highlight-color: transparent;
 }
 
+/* The start card stops at the foot bar (--mbar-h, as the canvas does) and
+   scrolls when it is taller than the room above it: at 844x390 it is, and
+   its last line was under the bar with no way to reach it. Centred by its
+   auto margins, not by place-items: an
+   auto margin takes only free space and is nothing when there is none, so a
+   card that fits sits in the middle and one that does not starts at the top
+   and overflows downwards, where scrolling reaches it -- centred alignment
+   would push the top of the card out of reach above the scroll origin. */
 .empty-state[hidden] { display: none; }
 .empty-state {
-  position: absolute; inset: 0; display: grid; place-items: center;
+  position: absolute; top: 0; left: 0; right: 0; bottom: var(--mbar-h, 0px);
+  display: grid; padding: 12px;
+  overflow-x: hidden; overflow-y: auto;
   pointer-events: none;
 }
 .es-card {
+  margin: auto;
   pointer-events: auto; text-align: center; max-width: 460px; padding: 32px 36px;
   background: #1a1a1a; border: 1px solid var(--border);
   border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.5);
@@ -1007,20 +1103,42 @@ button.es-lib-manage { background: none; border: 0; cursor: pointer; font-family
   padding: 12px 18px; border-top: 1px solid #333;
 }
 .dlg-foot .spacer { margin-right: auto; }
+/* OK / Cancel / Yes / No: a finger's height in the touch layout, as tall as
+   the controls above them (0 in the standard layout: padding decides). */
+.dlg-foot .btn { min-height: var(--ctl-h); }
+/* Answers named in full (choiceDialog): one per line, each the width of the
+   box, so a long one is never cut and every one is a finger's size. */
+.dlg-foot.stack { flex-direction: column; align-items: stretch; }
+.dlg-foot.stack .btn { text-align: left; min-height: var(--ctl-h); white-space: normal; }
+.choice-info { margin-top: 8px; color: var(--text-dim); }
 
 .form { display: grid; grid-template-columns: var(--form-cols); gap: 9px 12px; align-items: center; }
 .form > label { font-size: 12px; color: var(--text-dim); text-align: right; }
 .form .full { grid-column: 1 / -1; }
+/* The field's size: 12.5px, or the touch layout's 16px -- this rule outranks
+   the plain `input, select, textarea` one, and under 16px iOS zooms the whole
+   page in when the field takes focus (and never zooms back out). */
 .form input[type=text], .form input[type=number], .form select, .form textarea {
   width: 100%; background: var(--field-bg); color: var(--text);
   border: 1px solid #303030; border-radius: 5px;
-  padding: 6px 8px; font-size: 12.5px; font-family: inherit;
+  padding: 6px 8px; font-size: max(var(--field-fs), 12.5px); font-family: inherit;
 }
 .form textarea { min-height: 62px; resize: vertical; }
 .form .hint { font-size: 11px; color: var(--text-faint); grid-column: 2; margin-top: -4px; }
 .form .err { font-size: 11.5px; color: var(--err); grid-column: 1 / -1; min-height: 15px; }
 .radio-row { display: flex; gap: 14px; align-items: center; font-size: 12.5px; }
 .radio-row label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+/* A heading's Rename / Set form (askClassification): the name, the choice
+   of how far it reaches, the sentence of what will change, the notes and
+   the refusal -- one column, as the desktop's form. Each choice is a whole
+   row, a finger's height in the touch layout. */
+.cls-form { grid-template-columns: 1fr; }
+.cls-form .cls-label { font-size: 12.5px; color: var(--text); }
+.cls-opts { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.cls-opts label { display: flex; gap: 8px; align-items: center; cursor: pointer; min-height: var(--ctl-h, 0px); }
+.cls-what { font-size: 12px; color: #9fc6ee; line-height: 1.5; }
+.cls-note { font-size: 11.5px; color: #d4b06a; line-height: 1.45; }
+.cls-err { font-size: 12px; color: #ff8a8a; line-height: 1.45; }
 
 .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
 .swatch {
@@ -1074,6 +1192,12 @@ table.grid td.indent { padding-left: 26px; color: var(--text-dim); }
   box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: 12.5px;
 }
 .toast.err { border-color: #6a3030; color: #ffbdbd; }
+/* What a finger's tap answered, where the status line is not drawn (a
+   phone): a line of text, wrapped inside the screen, never in the way. */
+.finger-toast {
+  width: max-content; max-width: calc(100vw - 32px);
+  text-align: center; line-height: 1.4; pointer-events: none;
+}
 
 /* ══════════════════════════════════════════════════════════════════════
    Phones and tablets
@@ -1125,6 +1249,23 @@ table.grid td.indent { padding-left: 26px; color: var(--text-dim); }
   .menubar > * { flex: 0 0 auto; }
   .menubar-right { margin-left: 8px; }
 
+  /* ...and a scroller clips whatever hangs out of it: overflow-x makes
+     overflow-y auto too, and an open menu showed as nothing but its lit
+     title, while a tap meant for Save landed on the sheet (every phone, an
+     iPad held upright). So here an open menu does not hang from its title's
+     box but from the chrome's, which is positioned and clips nothing:
+     wireMenus (main.js placeOpenMenu) puts it under its title, on screen
+     and above the foot bar, and it scrolls when it is taller than that. */
+  .menu { position: static; }
+  .menu-pop {
+    left: var(--menu-x, 0px); top: var(--menu-y, 100%);
+    max-height: var(--menu-max-h, none);
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+  /* The Sheets and Items drawers are z-index 60 too, later in the page: while
+     a menu is open the toolbars stand above them, still under the foot bar. */
+  .chrome.menu-up { z-index: 65; }
+
   /* One scrolling row per toolbar beats wrapping: wrapping the 13 tools
      cost 122px of height on a 844px screen, and height is the scarce one. */
   .toolbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
@@ -1144,9 +1285,13 @@ table.grid td.indent { padding-left: 26px; color: var(--text-dim); }
   .stage { grid-column: 1; }
   .grip { display: none; }
 
+  /* Each drawer stops at the foot bar's top edge (--mbar-h, written on the
+     body by fitCanvasAboveFootBar): the bar is drawn over them, and under
+     it were the Items list's count and totals (#itemsFoot) and the last
+     sheet card, which no scroll could bring clear. */
   .thumbs, .items {
     grid-column: 1;
-    position: absolute; top: 0; bottom: 0; z-index: 60;
+    position: absolute; top: 0; bottom: var(--mbar-h, 0px); z-index: 60;
     width: min(320px, 84vw);
     box-shadow: 0 0 44px rgba(0, 0, 0, .65);
     transition: transform .18s ease-out;
@@ -1176,6 +1321,7 @@ table.grid td.indent { padding-left: 26px; color: var(--text-dim); }
 .es-btn { min-height: var(--ctl-h); }
 .menu-btn { min-height: var(--menu-h); }
 .menu-pop button { min-height: var(--menuitem-h); }
+.ctx-menu button { min-height: var(--menuitem-h); }
 input, select, textarea { font-size: max(var(--field-fs), 12px); }
 
 @media (max-width: 480px) {
@@ -1496,9 +1642,12 @@ input, select, textarea { font-size: max(var(--field-fs), 12px); }
 }
 
 /* On a phone the panel is the whole screen — a 12-column grid next to a
-   drawing neither of which fits is worse than one of them at a time. */
+   drawing neither of which fits is worse than one of them at a time. Down
+   to the foot bar's top edge (--mbar-h, on the body, as the drawers read
+   it): the bar is drawn over the panel, and under it were the last sheet
+   row and the legend, which no scroll could bring clear. */
 @media (max-width: 1023px) {
-  .revpanel { width: 100%; border-left: none; }
+  .revpanel { width: 100%; border-left: none; bottom: var(--mbar-h, 0px); }
 }
 
 /* One dot per revision that re-issued this sheet. An empty span on a job with

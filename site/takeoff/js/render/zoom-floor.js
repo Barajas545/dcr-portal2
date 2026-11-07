@@ -50,6 +50,8 @@
 // how big it is, whether the Settings box is ticked, which sheet this is,
 // and how to say the once-a-session sentence.
 
+import { pyZoomPercent } from '../core/pyformat.js';
+
 /** Float noise, not a zoom anyone could pick: two answers this close are the same view. */
 export const FIT_EPS = 1e-6;
 
@@ -559,19 +561,22 @@ export class ZoomFloor {
     this.chosen(before);
   }
 
-  /** The minus button (zoom_out): the wheel's floor, and never past it. */
+  /**
+   * The minus button (zoom_out): the wheel's floor, and never past it. A
+   * step that is not refused is the desktop's set_zoom -- the zoom alone, so
+   * a sheet he dragged aside stays that far aside (setZoom), as 1 does; the
+   * step that crosses the floor lands on Fit, centred, as there.
+   */
   zoomOut() {
     const before = this.vp.zoom;
     if (this.takesNotch(1 / 1.2, 'button')) { this.chosen(before, true); return; }
-    this._zoomAbout(this.vp.width / 2, this.vp.height / 2,
-      Math.max(before / 1.2, this.min));
+    this.setZoom(Math.max(before / 1.2, this.min));
     this.chosen();
   }
 
-  /** The plus button (zoom_in). */
+  /** The plus button (zoom_in): set_zoom, the pan kept (setZoom). */
   zoomIn() {
-    this._zoomAbout(this.vp.width / 2, this.vp.height / 2,
-      Math.min(this.vp.zoom * 1.2, this.max));
+    this.setZoom(Math.min(this.vp.zoom * 1.2, this.max));
     this.chosen();
   }
 
@@ -645,6 +650,25 @@ export class ZoomFloor {
     if (!(z > 0)) return false;
     this.zoomToZoom(z, cx, cy);
     return true;
+  }
+
+  /**
+   * The desktop's set_zoom: the zoom alone (1, 100%: _set_zoom_100). Its
+   * pan -- the page centre's offset from the canvas centre, in screen
+   * pixels -- is not touched, so a sheet dragged aside stays that far aside
+   * at the new zoom, and a centred one stays centred. The caller says
+   * whether it is a zoom he chose (chosen()). With no drawing up (a sheet
+   * that could not be opened, or one decoding again after a save) there is
+   * no page centre to keep: the zoom is about the middle of the screen, so
+   * a centred view -- the desktop's pan 0 -- stays centred, and the takeoff
+   * still drawn there does not run off to the top-left corner.
+   */
+  setZoom(zoom) {
+    const s = this._size();
+    if (!s) { this._zoomAbout(this.vp.width / 2, this.vp.height / 2, zoom); return; }
+    const [px, py] = this._pan(s);
+    this.vp.zoom = zoom;
+    this.vp.centerOn(s.w / 2 - px / zoom, s.h / 2 - py / zoom);
   }
 
   /**
@@ -793,9 +817,11 @@ export class ZoomFloor {
   /**
    * The readout: "Fit 21%" on the floor, the number alone anywhere else --
    * and on a floor the minimum zoom raised, where the sheet does not fit.
+   * The number is the desktop's (update_zoom_label: int(zoom * 100)): it
+   * TRUNCATES, so 12.5% reads '12%' on both.
    */
   label() {
-    const pct = `${Math.round(this.vp.zoom * 100)}%`;
+    const pct = pyZoomPercent(this.vp.zoom);
     return this.atFloor() && this._floorFits() ? `Fit ${pct}` : pct;
   }
 }

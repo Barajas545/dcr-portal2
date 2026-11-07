@@ -16,7 +16,7 @@
 import * as D from './dialogs.js';
 import { assemblyTotal, notesWithPurpose } from '../core/measure.js';
 import { attachSearch, catalogPrice } from './catalog.js';
-import { FLOOR_LEVEL_PRESETS, CATEGORY_PRESETS } from './items-panel.js';
+import { pyG, pyMoney } from '../core/pyformat.js';
 
 /** The "Per <hint>" label, by what the parent measures. */
 const UNIT_HINT = {
@@ -46,9 +46,7 @@ export function openAssemblyManager(item) {
     const head = D.el('div', 'hint');
     head.style.cssText = 'margin-bottom:10px;color:#bdbdbd;font-size:12px';
     head.textContent =
-      `${item.name || item.label || 'Item'} — ${parentValue.toLocaleString('en-US', {
-        maximumFractionDigits: 2,
-      })} ${hint}. A "per unit" line multiplies by that figure.`;
+      `${item.name || item.label || 'Item'} — ${pyG(parentValue)} ${hint}. A "per unit" line multiplies by that figure.`;
     body.appendChild(head);
 
     const wrap = D.el('div');
@@ -214,10 +212,10 @@ export function editLine(parent, existing, hint) {
     kindRef.node = kind;
 
     const floor = D.field(form, 'Floor / Level',
-      D.combo(ex.floor_level || '', FLOOR_LEVEL_PRESETS, 'aiFloor'),
+      D.combo(ex.floor_level || '', D.classChoices('floor_level'), 'aiFloor'),
       'Blank inherits the parent item’s.');
     const cat = D.field(form, 'Group / Trade',
-      D.combo(ex.category || '', CATEGORY_PRESETS, 'aiCat'));
+      D.combo(ex.category || '', D.classChoices('category'), 'aiCat'));
     const sub = D.field(form, 'Sub-group', D.input(ex.sub_category || ''));
 
     const notes = document.createElement('textarea');
@@ -275,14 +273,12 @@ export function editLine(parent, existing, hint) {
   });
 }
 
+/** A material's quantity, as the desktop's material rows write it: f"{q:g}". */
 function num(v) {
-  const n = Number(v) || 0;
-  return Number.isInteger(n) ? n.toLocaleString('en-US')
-    : n.toLocaleString('en-US', { maximumFractionDigits: 3 });
+  return pyG(Number(v) || 0);
 }
 
+/** Money, as the desktop writes it: f"${x:,.2f}". */
 function money(v) {
-  return Number(v).toLocaleString('en-US', {
-    style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
-  });
+  return pyMoney(v);
 }

@@ -20,7 +20,7 @@
  * fails when one main.js can reach is missing, and when an entry names a
  * file that does not exist — that would fail every install.
  */
-const CACHE = 'ptt-web-v22';
+const CACHE = 'ptt-web-v29';
 
 /**
  * The program, precached on install: the page, the stylesheet, and every
@@ -47,11 +47,13 @@ const PROGRAM = [
   'js/ui-mode-boot.js',
   'js/site-config.js',
   'js/core/canvas-limits.js',
+  'js/core/classify.js',
   'js/core/counting.js',
   'js/core/drafts.js',
   'js/core/embedded.js',
   'js/core/geom.js',
   'js/core/measure.js',
+  'js/core/overlay-look.js',
   'js/core/page-store.js',
   'js/core/pdf-import.js',
   'js/core/plans-folder.js',
@@ -59,9 +61,11 @@ const PROGRAM = [
   'js/core/plans-link.js',
   'js/core/portal-handoff.js',
   'js/core/project.js',
+  'js/core/pyformat.js',
   'js/core/remote-file.js',
   'js/core/revisions.js',
   'js/core/save-route.js',
+  'js/core/saved-overlay.js',
   'js/core/scratch.js',
   'js/core/takeoff-file.js',
   'js/core/units.js',
@@ -79,6 +83,7 @@ const PROGRAM = [
   'js/ui/callout-preview.js',
   'js/ui/catalog.js',
   'js/ui/dialogs.js',
+  'js/ui/hold.js',
   'js/ui/items-panel.js',
   'js/ui/plans-archive.js',
   'js/ui/report-html.js',

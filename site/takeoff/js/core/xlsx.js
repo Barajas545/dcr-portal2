@@ -143,6 +143,18 @@ export const STYLES = {
   moneyBold: { bold: true, numFmt: '"$"#,##0.00' },
   moneyGrand: { bold: true, numFmt: '"$"#,##0.00', color: 'FFFFFFFF', fill: 'FF1F3864' },
   int: { numFmt: '#,##0' },
+  // A quantity rounded to 2 places before it is written, as the desktop's
+  // Takeoff sheet writes an area or a length (f"{v:.2f}": no thousands
+  // separator); the number holds Python's digits, so Excel has no tie left
+  // to round its own way.
+  fixed2: { numFmt: '0.00' },
+  // A number under Excel's General, which shows its own digits -- as the
+  // desktop's workbook shows every number it writes (a whole count bare, a
+  // round(v, 4) to its four places, a '%g' quantity to its six digits).
+  general: {},
+  // A rate the export rounded to 4 places (the desktop's round(rate, 4)),
+  // shown to its own digits as money: $0.125, $1.2346, $2.00.
+  money4: { numFmt: '"$"#,##0.00##' },
 };
 
 const STYLE_ORDER = Object.keys(STYLES);

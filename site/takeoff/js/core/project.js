@@ -857,8 +857,12 @@ export class Project extends EventTarget {
   undo() {
     const step = this._undo.pop();
     if (!step) return false;
-    this._redo.push({ label: step.label, state: this.snapshot(), booking: step.booking });
+    const back = { label: step.label, state: this.snapshot(), booking: step.booking };
+    this._redo.push(back);
     this._restoreKeepingBook(step, 'undo');
+    // A rename's moves of the tool and the list go back with its names --
+    // before 'items-changed' below rebuilds the list (_fireTool).
+    this._fireTool(step, back, 'undo');
     this._endIsolation();
     this.markDirty();
     this.emit('history-changed', {});
@@ -870,8 +874,10 @@ export class Project extends EventTarget {
   redo() {
     const step = this._redo.pop();
     if (!step) return false;
-    this._undo.push({ label: step.label, state: this.snapshot(), booking: step.booking });
+    const back = { label: step.label, state: this.snapshot(), booking: step.booking };
+    this._undo.push(back);
     this._restoreKeepingBook(step, 'redo');
+    this._fireTool(step, back, 'redo');
     this._endIsolation();
     this.markDirty();
     this.emit('history-changed', {});
@@ -947,6 +953,41 @@ export class Project extends EventTarget {
     else delete this.metadata.sheet_version;
     this.emit('booking', { page, direction, kind: tag.kind || 'first', to, bookBefore: before,
       prior });
+  }
+
+  // ── what a rename moved in the tool and the list, across an undo ────
+  //
+  // A rename (js/core/classify.js renameClassification) rewrites names in
+  // the store -- the snapshot takes those back -- and moves what the TOOL
+  // and the LIST hold that named the old one: the next item's floor, an
+  // armed count's answers, the list's filters and folded headings. None of
+  // that is in the snapshot, so the rename's level carries it (`step.tool`,
+  // the desktop's class_tool tag). An undo or redo says 'class-tool'
+  // {tag, direction, applied} once the store is back and before anything
+  // rebuilds the list: each holder (the controller, the Items list) puts
+  // back its own moves -- only those still holding what the step left
+  // there -- and adds them to `applied`. The level that reverses this one
+  // carries exactly those, so Redo moves them forward again.
+
+  /**
+   * Hang a rename's tool moves on the newest undo level -- the rename's own
+   * -- when that level is still `level`. False when the history has moved
+   * past it.
+   */
+  tagTool(level, tag) {
+    if (!level || this._undo[this._undo.length - 1] !== level) return false;
+    level.tool = tag;
+    return true;
+  }
+
+  _fireTool(step, back, direction) {
+    const tag = step.tool;
+    if (!tag) return;
+    const applied = new Set();
+    this.emit('class-tool', { tag, direction, applied });
+    const moves = (tag.moves || []).filter(mv => applied.has(mv));
+    if (!moves.length && !tag.rename) return;
+    back.tool = { ...tag, moves };
   }
 
   /**

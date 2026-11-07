@@ -340,6 +340,12 @@ export class PageStore {
     return job;
   }
 
+  /** The decode of a page already under way (a prefetch), else null. Never
+   *  starts one: the saved overlay shares it rather than decoding twice. */
+  decoding(index) {
+    return this._pending.get(index) || null;
+  }
+
   /** The decoded page if it happens to be resident, else null. Never decodes. */
   peekPage(index) {
     return this._lru.get(index) || null;
@@ -384,6 +390,32 @@ export class PageStore {
     if (!blob) throw new Error(`No page ${page + 1} in revision set ${set + 1}`);
     const { inflate } = await import('./zlib.js');
     return inflate(new Uint8Array(await blob.arrayBuffer()));
+  }
+
+  /**
+   * The first few KB of a sheet's PNG -- its header chunks, which come
+   * before its pixels -- from a prefix of its blob, as revisionPageSize
+   * reads an IHDR: never the whole sheet. The saved overlay asks it whether
+   * a decode this store already holds reads exactly (an untagged, opaque
+   * 8-bit PNG), so a job read over the network does not fetch that sheet
+   * again to find out. null when it cannot tell; rejects when the read
+   * itself fails (offline) -- the overlay then uses the decode it holds.
+   */
+  async pngHead(index, want = 16384) {
+    const src = this.sources[index];
+    if (!src) return null;
+    if (src.kind === 'png') return src.data;
+    if (this._bytes && this._bytes.index === index) return this._bytes.bytes;
+    if (src.kind === 'raw') return headOf(src.data.subarray(0, want), want);
+    if (src.kind !== 'slice' || typeof src.data?.slice !== 'function') return null;
+    return headOf(src.data.slice(0, want), want);
+  }
+
+  /** pngHead for a revision sheet. */
+  async revisionPngHead(set, page, want = 16384) {
+    const blob = (this.revisionSlices[set] || [])[page];
+    if (!blob || typeof blob.slice !== 'function') return null;
+    return headOf(blob.slice(0, want), want);
   }
 
   /** One revision sheet, decoded. Concurrent calls share one decode. */
@@ -681,29 +713,56 @@ export class PageStore {
  * drawing set, and iOS caps a canvas just as hard whichever set a sheet came
  * from. `ReducedPage` still reports the sheet's TRUE size, so page space and
  * every measurement on it are unchanged.
+ *
+ * Exported for the saved overlay (main.js overlaySurface): a source sheet it
+ * decodes outside the LRU, and a picture's img_b64, come down the same way.
+ * `opts` are extra createImageBitmap options for that decode (the overlay
+ * asks for the file's own colours, colorSpaceConversion 'none', as the
+ * desktop's PIL reads them); the page store passes none.
  */
-async function decodeSheet(bytes) {
+export async function decodeSheet(bytes, opts) {
   // How big is this sheet, before anything tries to hold it? The PNG says so
   // in its IHDR, 16 bytes in — far cheaper than finding out by failing.
   const nat = pngSize(bytes);
   const limits = await canvasLimits();
   const factor = nat ? fitFactor(nat.width, nat.height, limits) : 1;
-  if (!nat || factor >= 1) return decodePng(bytes);
+  if (!nat || factor >= 1) return decodePng(bytes, opts);
 
   const w = Math.max(1, Math.floor(nat.width * factor));
   const h = Math.max(1, Math.floor(nat.height * factor));
   let small = null;
   if (limits.resizeOnDecode) {
     small = await decodePng(bytes, {
-      resizeWidth: w, resizeHeight: h, resizeQuality: 'high',
+      ...opts, resizeWidth: w, resizeHeight: h, resizeQuality: 'high',
     });
     // Asked for, not necessarily given. A decoder that ignored the request
     // just handed back the full-size bitmap we were trying to avoid.
     if (small.width !== w) small = await shrinkBitmap(small, w, true);
   } else {
-    small = await shrinkBitmap(await decodePng(bytes), w, true);
+    small = await shrinkBitmap(await decodePng(bytes, opts), w, true);
   }
   return new ReducedPage(small, nat.width, nat.height);
+}
+
+/** A zlib(PNG) prefix (bytes, or a Blob slice to read) inflated as far as it
+ *  goes: the PNG's first `want` bytes, or null. A prefix IS a truncated
+ *  stream, so this is inflatePartial's job (see revisionPageSize). A read
+ *  that FAILS (a job read over the network, offline) rejects, so the caller
+ *  can tell "could not read" from "read, and it cannot tell". */
+async function headOf(part, want) {
+  const bytes = part instanceof Uint8Array ? part : new Uint8Array(await part.arrayBuffer());
+  try {
+    const { inflatePartial } = await import('./zlib.js');
+    return await inflatePartial(bytes, want);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether decodeSheet would hand back a sheet this size REDUCED: this
+ *  browser cannot hold it whole (an iPad's canvas cap). */
+export async function decodeReduces(width, height) {
+  return fitFactor(width, height, await canvasLimits()) < 1;
 }
 
 /**
