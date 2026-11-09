@@ -1842,6 +1842,74 @@ function sayToFinger(text) {
 const FINGER_TOAST_MS = 4000;
 
 /**
+ * The finger's toast and the saved overlay's strip (#savedOvBar) both sit
+ * at the foot of a phone's screen, just over the foot bar -- and the toast,
+ * drawn over everything, hid the strip's Flash and Hide for its four
+ * seconds (a row's step in the Items drawer says one, and the drawer closes
+ * onto the sheet while it is up). While the strip is shown the toast stands
+ * just above it instead; with no strip it is where the stylesheet puts it.
+ * Anchored by its bottom edge, so a longer sentence grows upwards, away
+ * from the strip. Asked whenever either one shows, goes or moves.
+ *
+ * And while a menu is open the toast is not drawn at all: a menu of the menu
+ * bar (.menu.open in #menus), or a menu at a point (a shown .ctx-menu on the
+ * body: the item menu a finger's hold on a shape or a row opens, a heading's
+ * menu, a catalog search's list). Raised over the strip, on a phone held
+ * upright it lay over the View menu's last entries (Bigger Markers), and
+ * over the item menu's Delete, for the rest of its four seconds -- and on
+ * smaller phones, or one held sideways, over other entries wherever it
+ * stood: a menu opened just after a row's step read as half covered. It is
+ * only put out of sight -- its own time still runs (`hidden` is still its
+ * timer's), so a menu shut within that time shows it again, where it was.
+ */
+const TOAST_GAP_PX = 8;
+function menuOnScreen() {
+  return !!($('menus')?.querySelector('.menu.open') || document.querySelector('body > .ctx-menu:not([hidden])'));
+}
+function keepFingerToastClear() {
+  const t = $('fingerToast');
+  if (!t) return;
+  const strip = $('savedOvBar');
+  let bottom = '';
+  if (!t.hidden && strip && !strip.hidden) {
+    const r = strip.getBoundingClientRect();
+    const vh = document.documentElement.clientHeight || window.innerHeight || 0;
+    if (r.height > 0 && vh > 0) bottom = `${Math.max(0, vh - r.top + TOAST_GAP_PX)}px`;
+  }
+  if (t.style.bottom !== bottom) t.style.bottom = bottom;
+  const visibility = menuOnScreen() ? 'hidden' : '';
+  if (t.style.visibility !== visibility) t.style.visibility = visibility;
+}
+{
+  const strip = $('savedOvBar');
+  const watched = new WeakSet();
+  const look = () => {
+    // the toast, and every menu at a point: each shown and put away by its
+    // `hidden` (#ctxMenu is in the page; a catalog search makes its list on
+    // the body, and the body's children are watched below)
+    for (const el of [$('fingerToast'), ...document.querySelectorAll('body > .ctx-menu')]) {
+      if (el && !watched.has(el)) { watched.add(el); seen.observe(el, { attributes: true, attributeFilter: ['hidden'] }); }
+    }
+    keepFingerToastClear();
+  };
+  const seen = new MutationObserver(look);
+  // the toast is made on its first sentence (sayToFinger), on the body; so
+  // is a catalog search's list (js/ui/catalog.js attachSearch)
+  seen.observe(document.body, { childList: true });
+  if (strip) seen.observe(strip, { attributes: true, attributeFilter: ['hidden'] });
+  // a menu opening or shutting, every way one does (wireMenus: its title, an
+  // entry, a press outside, another title; below 1024 a finger outside it or
+  // the toolbars sliding away): each is the 'open' class on its .menu
+  if ($('menus')) seen.observe($('menus'), { subtree: true, attributes: true, attributeFilter: ['class'] });
+  // ...and the strip rides on the foot bar, whose height (and the stage's)
+  // moves it: a turn of the phone, the home-indicator inset, the layout.
+  const moved = new ResizeObserver(look);
+  for (const id of ['savedOvBar', 'stage', 'mobileBar']) if ($(id)) moved.observe($(id));
+  window.addEventListener('resize', look);
+  look();
+}
+
+/**
  * A sentence about the step just taken -- 'Renamed floor level … — Undo
  * puts it back', 'Filed 2 items under …' -- said as sayToFinger says it,
  * and taken down the moment the history moves past that step (its Undo, a
@@ -3459,6 +3527,7 @@ function syncToolOptions(mode) {
   // exactly what the top bar's Undo and Redo do (data-act, the same
   // dispatcher), and a finger can hit them.
   if (mode === 'count') {
+    const history = [];
     for (const [act, glyph, word] of [['undo', '↶', 'Undo'], ['redo', '↷', 'Redo']]) {
       const b = D.el('button', 'tb-btn', `${glyph} ${word}`);
       b.type = 'button';
@@ -3470,8 +3539,11 @@ function syncToolOptions(mode) {
       // does: left on the button, a Space or a Return from a keyboard took
       // another step back, with nothing on screen to show why.
       b.addEventListener('click', () => $('canvas')?.focus({ preventScroll: true }));
-      parts.push(['', b]);
+      history.push(b);
     }
+    // One pair, the two of them: where the bar wraps (a phone) they go to a
+    // new line together, never Redo alone under its Undo.
+    parts.push(['', ...history]);
   }
 
   if (mode === 'linear_count') {
@@ -3516,9 +3588,16 @@ function syncToolOptions(mode) {
 
   if (!parts.length) { bar.hidden = true; return; }
 
-  for (const [label, node] of parts) {
-    if (label) bar.appendChild(D.el('span', 'tb-label', label));
-    bar.appendChild(node);
+  // One label and its control to a pair: where the bar is narrower than its
+  // options (a phone: css/app.css .tool-opts) it wraps between pairs, never
+  // leaving a label at the end of one line and its box on the next. From
+  // 1024 up a pair is no box of its own (display: contents). A pair can hold
+  // more than one control (Count's Undo and Redo).
+  for (const [label, ...nodes] of parts) {
+    const pair = D.el('span', 'tool-opt');
+    if (label) pair.appendChild(D.el('span', 'tb-label', label));
+    for (const node of nodes) pair.appendChild(node);
+    bar.appendChild(pair);
   }
   syncCountHistoryButtons();
   bar.hidden = false;
@@ -3587,6 +3666,15 @@ function placeToolOptions(mode) {
 }
 
 window.addEventListener('resize', () => placeToolOptions(controller.mode));
+// ...and whenever the toolbars change height. View › Markup Toolbar adds a
+// row (49px on a phone), the Touch layout's buttons are taller than the
+// Standard's: pinned, the sheet then starts lower, pulled down the stack
+// ends lower -- and the bar, left where it was, had its first row under the
+// toolbars (Count's name box, its Undo and Redo; Tile's Item and Size),
+// where a tap meant for the name box picked a markup tool instead. Only a
+// change of the stack's size: a slide (a transform) is none, and the bar is
+// not in the stack, so placing it cannot resize the stack again.
+new ResizeObserver(() => placeToolOptions(controller.mode)).observe($('chrome'));
 
 // ── open and save ─────────────────────────────────────────────────────────
 
@@ -5386,6 +5474,10 @@ function closeOpenMenus() {
  *    drawers (css .chrome.menu-up: both are z-index 60 and the drawers come
  *    later in the page), so a menu over an open drawer is all there and the
  *    drawer stays as it was -- View › Sheets Panel still shuts it.
+ * And at every width, Escape shuts an open menu, as it does a desktop menu,
+ * and goes no further: it is the menu's, not the sheet's. It used to pass
+ * the menu by -- the saved overlay's strip went, or a trace in progress lost
+ * its points, behind a menu still open.
  */
 function wireMenuPlacement() {
   const follow = () => placeOpenMenu();
@@ -5406,6 +5498,14 @@ function wireMenuPlacement() {
   new MutationObserver(() => {
     $('chrome').classList.toggle('menu-up', !!$('menus').querySelector('.menu.open'));
   }).observe($('menus'), { subtree: true, attributes: true, attributeFilter: ['class'] });
+  // Capture phase, ahead of the app's own keys (as the right-click menu's).
+  // A dialog on screen keeps its own Escape, as it does in the app's keys.
+  document.addEventListener('keydown', ev => {
+    if (ev.key !== 'Escape' || D.dialogsOpen() || !$('menus').querySelector('.menu.open')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeOpenMenus();
+  }, true);
 }
 
 function wireMenus() {
@@ -7612,6 +7712,160 @@ function reloadForUpdateIfIdle() {
   return true;
 }
 
+/** The CACHE line of a sw.js's text ('ptt-web-v28'), or ''. */
+function cacheOfSwText(text) {
+  const m = /^const CACHE = '([^'\n]+)';$/m.exec(String(text || ''));
+  return m ? m[1] : '';
+}
+
+/** This app's own worker, as the page registers it (below): its script's URL. */
+const OWN_WORKER = new URL('sw.js', document.baseURI).href;
+
+/**
+ * The CACHE of the sw.js on the network now -- which version a page that
+ * fetched its own files from the network at its start is running. Read at
+ * that start. sw.js never answers a read of itself (its fetch handler), so
+ * this is the network's or nothing: never a copy kept in a cache, never a
+ * fetch held open in the old worker (that would keep the next one from
+ * taking over). Given up after `ms` -- a read answered only after a later
+ * release would take that release for this page's own. '' when there is no
+ * reading it in time (offline, a stalled line): then a new worker is taken
+ * for an update, as it always was.
+ */
+async function cacheOfThisPage(ms = 4000) {
+  const stop = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer = 0;
+  const late = new Promise(resolve => {
+    timer = setTimeout(() => { try { stop?.abort(); } catch { /* gone */ } resolve(''); }, ms);
+  });
+  const read = (async () => {
+    try {
+      const res = await fetch(new URL('sw.js', document.baseURI),
+        stop ? { cache: 'no-store', signal: stop.signal } : { cache: 'no-store' });
+      return res && res.ok ? cacheOfSwText(await res.text()) : '';
+    } catch {
+      return '';
+    }
+  })();
+  try {
+    return await Promise.race([read, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * What a worker of THIS app answers 'ptt-cache?' (sw.js): { cache, fromCache }
+ * -- the version it caches, and whether it served any of the asking page
+ * from that cache rather than the network. null for another site's worker
+ * (inside the portal its root worker can hold a frame), or no answer within
+ * `ms` (a worker from before it answered).
+ */
+function askWorker(worker, ms = 3000) {
+  return new Promise(resolve => {
+    if (!worker || worker.scriptURL !== OWN_WORKER || typeof MessageChannel === 'undefined') { resolve(null); return; }
+    const ch = new MessageChannel();
+    const t = setTimeout(() => { ch.port1.close(); resolve(null); }, ms);
+    ch.port1.onmessage = ev => {
+      clearTimeout(t);
+      ch.port1.close();
+      const d = ev.data;
+      resolve(d && d.type === 'ptt-cache' && typeof d.cache === 'string'
+        ? { cache: d.cache, fromCache: d.fromCache === true } : null);
+    };
+    try { worker.postMessage({ type: 'ptt-cache?' }, [ch.port2]); } catch { clearTimeout(t); resolve(null); }
+  });
+}
+
+/**
+ * Which version this page is running, or '' for not known.
+ *
+ * Its files came from the network unless the worker in front of it says it
+ * served some of them from its own cache: a shell file is network-first
+ * with 2.5 s to answer (sw.js), so on a slow line a page can be part the
+ * old cache's and part the new network's, or all the old cache's when
+ * there is no line at all. Either way it is not the version on the network,
+ * and not known -- the update path it always was. Otherwise it is the
+ * network's CACHE, read at the start (cacheOfThisPage). `startWorker` is
+ * asked at once, while the worker that served this page is surely still up.
+ *
+ * A worker of this app that gives no answer is one from before it could
+ * (v28, v29): the first release after them is served through one. It
+ * cannot say what it served from its cache, and taking its silence for 'all
+ * from the network' let a page that was part its cache (one slow file) and
+ * part the network's take itself for the new version: neither reloaded
+ * from an idle start screen nor told. Its silence is not taken for 'not
+ * known' outright either -- that said the false line once on every device
+ * right after that release, and inside the portal a plan is always open.
+ * The page's own timings say instead (mayHaveComeFromOldCache): a file that
+ * took as long as such a worker waits for the network, and the version is
+ * not known; none, and the network's read stands.
+ */
+async function versionOfThisPage(startWorker) {
+  const [read, said] = await Promise.all([cacheOfThisPage(), askWorker(startWorker)]);
+  if (said && said.fromCache) return '';
+  if (!said && startWorker && startWorker.scriptURL === OWN_WORKER && mayHaveComeFromOldCache()) return '';
+  return read;
+}
+
+/**
+ * Whether any of this page's own files may have come from an older worker's
+ * cache, by the one sign such a worker leaves on it: the file took about
+ * as long as that worker waits for the network before it answers from its
+ * cache (sw.js NET_TIMEOUT_MS, 2.5 s), or longer. Every same-origin file
+ * the page has had -- the page itself (its navigation entry) and every
+ * resource entry -- but this page's reads of sw.js (cacheOfThisPage: no
+ * file of the page, and on a slow line slow for its own reasons). Yes, too,
+ * when the timings cannot be read: then this page's version is not known.
+ * A file that failed outright, not slowly, leaves no such sign: such a
+ * worker answers it from its cache at once. With no line at all the read
+ * of sw.js fails as well, and the version is not known that way. But a
+ * line lost for a moment part-way through the load -- one file failing
+ * fast, the read of sw.js (made once main.js runs) coming back -- leaves a
+ * page part old and part new that takes itself for the new version until
+ * it is next opened. That is the first release after v28/v29 only, and no
+ * timing the page can read tells it from a page all the network's.
+ */
+const OLD_CACHE_SIGN_MS = 2400;
+function mayHaveComeFromOldCache() {
+  try {
+    const perf = globalThis.performance;
+    if (!perf || typeof perf.getEntriesByType !== 'function') return true;
+    const page = perf.getEntriesByType('navigation');
+    if (!page || !page.length) return true;
+    for (const e of [...page, ...perf.getEntriesByType('resource')]) {
+      let url;
+      try { url = new URL(e.name, document.baseURI); } catch { continue; }
+      if (url.origin !== location.origin || !/^https?:$/.test(url.protocol) || url.href === OWN_WORKER) continue;
+      if (!(e.responseEnd > 0) || e.responseEnd - e.startTime >= OLD_CACHE_SIGN_MS) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 'A new version is ready', once the status line is quiet -- showing nothing
+ * but the tool's hint (or the start screen's line). Never over a sentence
+ * still up: inside the portal that is its arrival line ('Opened …, saved on
+ * this iPad by the portal …'), which says what Save does with his work and
+ * must not be wiped by a reload hint. Looked at once a second until it can
+ * be said, and dropped once it is moot (the page reloading for it).
+ */
+const UPDATE_READY = 'A new version of Professional Takeoff Tools is ready — it '
+  + 'loads when you close this project or reload the page.';
+function sayUpdateReady() {
+  const look = () => {
+    if (!updateWaiting || updateReloading) return;
+    const now = $('statusText').textContent || '';
+    const quiet = !now || now === 'Ready' || now === (HINTS[controller.mode] || 'Ready') || now === IDLE_STATUS;
+    if (quiet) setStatus(UPDATE_READY);
+    else setTimeout(look, 1000);
+  };
+  look();
+}
+
 // Offline. Registered late and never awaited: a worker that fails to
 // register must not stop the app from opening a project.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
@@ -7628,14 +7882,43 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   // iOS shows no leave-page prompt. So from an idle start screen it reloads
   // at once, as it always has; otherwise it says so and waits for the
   // project to be closed (runAction 'new-project'), or for the next launch.
-  const hadController = !!navigator.serviceWorker.controller;
+  //
+  // And only when the page is really behind. The program is fetched
+  // network-first, so the first open after a release already RUNS the new
+  // version -- and the new worker it brings (installed by this page's own
+  // register below) takes the page over all the same: a controllerchange
+  // with nothing to load. Saying 'a new version is ready' then was false,
+  // and inside the portal it wrote over the portal's own arrival line. So
+  // the worker that has just taken over is asked which version it caches
+  // (sw.js: 'ptt-cache?'), and the page knows which one it runs
+  // (versionOfThisPage): the same, and nothing is said and nothing reloads.
+  // Its own version unknown -- a page some of which came from the old
+  // cache (a slow line, or none), a read of sw.js that did not come back in
+  // time -- or a worker that does not answer, and it is the update it
+  // always was. That holds for a page that came with no worker in front of
+  // it too (its first visit, a hard reload): the first install taking it
+  // over is its own version and says nothing, a later release is said. Of
+  // such a page whose version is not known, a takeover is the first
+  // install's, and says nothing, as before.
+  //
+  // Only this app's worker is a version of it: inside the portal the
+  // portal's own root worker holds a frame whose takeoff worker could not
+  // install, and its updates are none of this app's.
+  const startWorker = navigator.serviceWorker.controller;
+  const hadController = !!startWorker;
+  const runningCache = versionOfThisPage(startWorker);
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController || updateWaiting) return;   // first install: nothing to replace
-    updateWaiting = true;
-    if (!reloadForUpdateIfIdle()) {
-      setStatus('A new version of Professional Takeoff Tools is ready — it '
-        + 'loads when you close this project or reload the page.');
-    }
+    if (updateWaiting) return;
+    const worker = navigator.serviceWorker.controller;
+    if (!worker || worker.scriptURL !== OWN_WORKER) return;
+    void (async () => {
+      const [running, claimed] = await Promise.all([runningCache, askWorker(worker)]);
+      if (running && claimed && running === claimed.cache) return;   // this page is that version already
+      if (!hadController && !running) return;   // first install, of a page it could not place: nothing to replace
+      if (updateWaiting) return;
+      updateWaiting = true;
+      if (!reloadForUpdateIfIdle()) sayUpdateReady();
+    })();
   });
   // Relative to this page, so its scope is this app's own folder — on GitHub
   // Pages the project's path, inside the portal /takeoff/ (never the

@@ -18,7 +18,7 @@ import { writeWorkbook, cell } from '../core/xlsx.js';
 import { CountingModel, valueLine } from '../core/counting.js';
 import * as H from './report-html.js';
 import { pyG, pyIntStr, pyRound, pyStrFloat } from '../core/pyformat.js';
-import { itemCost } from '../core/measure.js';
+import { itemCost, finiteOrZero } from '../core/measure.js';
 
 export const REPORTS = [
   ['estimate', 'Estimate Summary',
@@ -194,7 +194,9 @@ export function collectRows(project, pageLabel, filters = {}) {
       const sub = m.sub_category || '';
       const notes = notesWithPurpose(m);
       const name = m.name || m.label || '';
-      const parentVal = Number(m.value) || 0;
+      // finite: a vertical pitch line's Infinity (the desktop's) is the 0 this
+      // app stores for one, so its materials never total inf
+      const parentVal = finiteOrZero(m.value);
 
       if (!NO_ROW_TYPES.has(m.type)) {
         const row = {
@@ -207,7 +209,7 @@ export function collectRows(project, pageLabel, filters = {}) {
           ItemCostType: (m.cost_type || 'material') === 'labor' ? 'Labor' : 'Material',
           ItemType: TYPE_LABEL[m.type] || '',
           ItemArea: null, ItemDistance: null, ItemCount: null,
-          _rate: Number(m.unit_cost) || 0,
+          _rate: finiteOrZero(m.unit_cost),
         };
         // Which numbers are Python floats in the desktop's export: every count
         // here (float(len(points)), float(qty), float(int(value)), 1.0); an
@@ -229,7 +231,7 @@ export function collectRows(project, pageLabel, filters = {}) {
           case 'standalone':
             row.ItemCount = Number(m.qty) || 0; break;
           case 'linear_count':
-            row.ItemCount = Math.trunc(Number(m.value) || 0);
+            row.ItemCount = Math.trunc(finiteOrZero(m.value));
             row.ItemDescription = joinDesc(`@ ${g(m.spacing_in ?? 12)}″ spacing`, notes);
             break;
           case 'window': case 'door': case 'partition': case 'header':
@@ -258,9 +260,10 @@ export function collectRows(project, pageLabel, filters = {}) {
           ItemArea: null, ItemDistance: null,
           ItemCount: round4(assemblyTotal(ai, parentVal)),
           ParentItemName: name,
-          _rate: Number(ai.unit_cost) || 0,
+          _rate: finiteOrZero(ai.unit_cost),
         };
-        PY_FLOATS.set(row, new Set(materialCountIsFloat(ai, m.value) ? ['ItemCount'] : []));
+        PY_FLOATS.set(row, new Set(materialCountIsFloat(ai, Number.isFinite(Number(m.value)) ? m.value : 0)
+          ? ['ItemCount'] : []));
         rows.push(row);
       }
     }
@@ -283,7 +286,7 @@ export function collectRows(project, pageLabel, filters = {}) {
 /** desktop round(v, 4): the nearest double to the half-even 4-place decimal. */
 function round4(v) {
   const n = Number(v);
-  return pyRound(Number.isNaN(n) ? 0 : n, 4);
+  return pyRound(Number.isFinite(n) ? n : 0, 4);
 }
 
 /** f"{x:g}" as a number: six significant digits, half to even. */
@@ -406,7 +409,7 @@ export function collectItems(project, pageLabel, filters = {}) {
         typeLabel: TYPE_LABEL[m.type] || '',
         qty: q.qty,
         unit: q.unit,
-        rate: Number(m.unit_cost) || 0,
+        rate: finiteOrZero(m.unit_cost),
         // its report quantity × rate (desktop _collect: qty * rate): a count
         // by its points, an array by its whole dots, a pin as one, a
         // standalone item by its typed quantity -- measure.js itemCost, which

@@ -37,6 +37,9 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { inflate, deflate } from './zlib.js';
+// The metadata block is the desktop's json.dumps, read and written as its
+// json module does: a vertical pitch line's rise is a bare Infinity there.
+import { parsePyJson, stringifyPyJson } from './py-json.js';
 
 export const MAGIC = 'PDFCACHE1';
 export const REVS_MAGIC = 'TKREVS01';
@@ -110,7 +113,7 @@ async function readHead(blob) {
 export async function readHeader(blob) {
   const { pageCount, metaLen, metaStart } = await readHead(blob);
   const metaBytes = await blob.slice(metaStart, metaStart + metaLen).arrayBuffer();
-  return { pageCount, metaLen, metadata: JSON.parse(td.decode(metaBytes)) };
+  return { pageCount, metaLen, metadata: parsePyJson(td.decode(metaBytes)) };
 }
 
 // The project browser shows a dozen short fields, and in every real project the
@@ -184,7 +187,7 @@ export async function readProjectSummary(blob, prefix = PROJECT_SUMMARY_PREFIX) 
 export async function openProject(file) {
   const { pageCount, metaLen, metaStart } = await readHead(file);
   const metaBytes = await file.slice(metaStart, metaStart + metaLen).arrayBuffer();
-  const metadata = JSON.parse(td.decode(metaBytes));
+  const metadata = parsePyJson(td.decode(metaBytes));
 
   const indexStart = metaStart + metaLen;
   const indexSize = pageCount * 12;
@@ -370,7 +373,9 @@ async function bitmapToPng(bitmap) {
 export async function writeProject({
   metadata, pageSources, revisionSources = [], onProgress,
 }) {
-  const metaBytes = te.encode(JSON.stringify(metadata));
+  // Python's spelling for a number that is not finite, so the desktop reads
+  // back the float it wrote; with none, exactly JSON.stringify's bytes.
+  const metaBytes = te.encode(stringifyPyJson(metadata));
   const pageCount = pageSources.length;
 
   const encoded = new Array(pageCount);

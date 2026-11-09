@@ -831,7 +831,7 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
   mark) is the broker's answer, so a 504 `{error: "Gateway Timeout"}` waits the broker's longest run like any other.
 - **Limits** (listed under the program's stopping rule, contract addendum 6 H5; DCR Desktop 2's `docs/ONEDRIVE.md` 18c
   lists the broker's):
-  - The takeoff app's own words (takeoff-web 9011eff, `js/core/save-route.js` portalNewsWords) are a little stronger
+  - The takeoff app's own words (takeoff-web df6739d, `js/core/save-route.js` portalNewsWords) are a little stronger
     or weaker than what the portal knows in three cases. "checking" says "Your save of <plan> is in OneDrive and is being
     checked against office saves" also while the broker waits for OneDrive's hash of a version that only has the save's
     size. "failed" says "the portal's Plans Library sends it again" also for a failure that waits for the person's
@@ -875,11 +875,6 @@ expression look-behind (older iPhones), Portal 2's own browser names and no trac
     item is edited), so OneDrive gets a new version of the plan that differs only in that stamp - or, when the office
     saved the plan meanwhile, a `<stem> - iPad YYYY-MM-DD HHMM.takeoff` copy with no work of the person's in it.
     Nothing is ever written over the office's save.
-  - The first time a device that ran the portal's previous copy of the takeoff app opens a plan after a new copy is
-    published, the app's status line says "A new version of Professional Takeoff Tools is ready - it loads when you
-    close this project or reload the page." in place of the portal's "Opened ..." line, although the new version is
-    already the one running (the page comes from the network first; the new service worker's claim is what the app
-    hears). Nothing is lost and nothing reloads; it happens once per device per published copy. Phones hide the line.
   - None of this has run on WebKit or a real iPad here (headless Chrome with a tablet's user agent): the go-live run on
     the owner's iPad covers it.
 - **Save after Save in one opening.** The frame stays open and the app may Save again and again: each save goes against

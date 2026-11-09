@@ -564,8 +564,12 @@ test("the copy's own worker is registered before its page loads in the frame (el
   assert.equal(await F.activeOf(null, 5), null);
   const on = { active: {} };
   assert.equal(await F.activeOf(on, 5), on);
-  // the vendored app does reload itself on a new controller - the reason for all this
-  assert.match(read("takeoff/js/main.js"), /const hadController = !!navigator\.serviceWorker\.controller;/);
+  // the vendored app does reload itself on a new controller - the reason for all this. Since takeoff-web 9b4df09 only
+  // when its own worker takes over and the page cannot tell it runs that version (it asks the worker, 'ptt-cache?'):
+  // a page started under the portal's worker whose read of the copy's sw.js did not come back is still such a page.
+  const app = read("takeoff/js/main.js");
+  assert.match(app, /const startWorker = navigator\.serviceWorker\.controller;\s*const hadController = !!startWorker;/);
+  assert.match(app, /navigator\.serviceWorker\.addEventListener\('controllerchange', \(\) => \{[\s\S]{0,900}?if \(!worker \|\| worker\.scriptURL !== OWN_WORKER\) return;[\s\S]{0,900}?if \(!reloadForUpdateIfIdle\(\)\) sayUpdateReady\(\);/);
 });
 
 test("plan-frame.js: a same-site frame of the copy, over everything, with Close; the page under it held still; it never posts itself", () => {

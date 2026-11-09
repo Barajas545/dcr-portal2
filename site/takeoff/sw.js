@@ -20,7 +20,7 @@
  * fails when one main.js can reach is missing, and when an entry names a
  * file that does not exist — that would fail every install.
  */
-const CACHE = 'ptt-web-v29';
+const CACHE = 'ptt-web-v31';
 
 /**
  * The program, precached on install: the page, the stylesheet, and every
@@ -61,6 +61,7 @@ const PROGRAM = [
   'js/core/plans-link.js',
   'js/core/portal-handoff.js',
   'js/core/project.js',
+  'js/core/py-json.js',
   'js/core/pyformat.js',
   'js/core/remote-file.js',
   'js/core/revisions.js',
@@ -148,8 +149,46 @@ self.addEventListener('activate', ev => {
   })());
 });
 
+/**
+ * The pages this worker served any part of the program to from its cache,
+ * not the network (a shell request with no network, or none in time: the
+ * fetch handler below). Such a page is running this worker's version, or a
+ * mixture of it and the network's -- so it must not take itself for the
+ * version on the network. It asks at its start (js/main.js
+ * versionOfThisPage), a moment after its files came, so this is kept in
+ * memory only, and only the last few pages. A navigation with no client id
+ * of its own to give (a browser without FetchEvent.resultingClientId) is
+ * kept by its time: any page that asks soon after is told so. A
+ * navigation's clientId is never that id: it is the page the navigation
+ * came FROM (a reload's, a link's) -- kept under it, the page being made
+ * asked and was told no, and a page whose index.html came from this cache
+ * (the request a cold line is slowest to answer) took itself for the
+ * network's version.
+ */
+const FROM_CACHE = new Set();
+const FROM_CACHE_KEPT = 64;
+const UNNAMED_MS = 20000;
+let unnamedFromCacheAt = -Infinity;
+
+function servedFromCache(ev) {
+  const id = (ev.request.mode === 'navigate' ? ev.resultingClientId : ev.clientId) || '';
+  if (!id) { unnamedFromCacheAt = Date.now(); return; }
+  FROM_CACHE.delete(id);
+  FROM_CACHE.add(id);
+  while (FROM_CACHE.size > FROM_CACHE_KEPT) FROM_CACHE.delete(FROM_CACHE.values().next().value);
+}
+
 self.addEventListener('message', ev => {
   if (ev.data === 'skip-waiting') self.skipWaiting();
+  // Which version this worker caches, and whether it served the asking page
+  // any of it from that cache: asked by a page at its start and by a page
+  // it has just taken over (js/main.js askWorker). A page already running
+  // this version has nothing to load, and says nothing of a new one.
+  else if (ev.data && ev.data.type === 'ptt-cache?' && ev.ports && ev.ports[0]) {
+    const id = ev.source && ev.source.id;
+    ev.ports[0].postMessage({ type: 'ptt-cache', cache: CACHE,
+      fromCache: (!!id && FROM_CACHE.has(id)) || Date.now() - unnamedFromCacheAt < UNNAMED_MS });
+  }
 });
 
 /**
@@ -164,8 +203,12 @@ self.addEventListener('message', ev => {
  * page where no button could be clicked.
  *
  * So the shell is network-first with a short timeout, falling back to cache
- * the moment the network is slow or absent. Offline still works; a stale
- * mixture cannot happen. Assets that never change without changing their
+ * the moment the network is slow or absent. Offline still works. A slow
+ * line can still leave a page with some files from the cache and some from
+ * the network; this worker notes every page it answered from its cache
+ * (servedFromCache), and the page, told so, takes itself for an older
+ * version -- reloaded from an idle start screen when the next one takes
+ * over, as js/main.js does. Assets that never change without changing their
  * name — pdf.js, the icons, the catalog — stay cache-first, which is where
  * nearly all the bytes are anyway.
  */
@@ -186,6 +229,13 @@ self.addEventListener('fetch', ev => {
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // never proxy elsewhere
+  // This worker's own script is never answered here. The browser fetches it
+  // for an update past every worker anyway; and a page's read of it (which
+  // version is on the network: js/main.js cacheOfThisPage) must be the
+  // network's or nothing -- never a copy kept in this cache, and never a
+  // fetch held open in this worker, which would keep the next version from
+  // taking over until it ended.
+  if (url.pathname === self.location.pathname) return;
   // A range request is how a media element asks for part of a file; the
   // Cache API cannot answer one, and answering it wrong breaks playback.
   if (req.headers.has('range')) return;
@@ -216,7 +266,7 @@ self.addEventListener('fetch', ev => {
     if (isShell) {
       const fresh = await withTimeout(go(), NET_TIMEOUT_MS);
       if (fresh) return fresh;
-      if (hit) return hit;
+      if (hit) { servedFromCache(ev); return hit; }
     } else if (hit) {
       ev.waitUntil(go());                 // refresh for next time
       return hit;
@@ -227,7 +277,7 @@ self.addEventListener('fetch', ev => {
     // Offline and never cached. A navigation still has somewhere to go.
     if (req.mode === 'navigate') {
       const shell = await cache.match('index.html') || await cache.match('./');
-      if (shell) return shell;
+      if (shell) { servedFromCache(ev); return shell; }
     }
     return new Response('Offline, and this part of the app was never cached.',
                         { status: 503, headers: { 'Content-Type': 'text/plain' } });

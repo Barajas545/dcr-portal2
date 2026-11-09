@@ -14,7 +14,7 @@
 // into a bid.
 
 import * as D from './dialogs.js';
-import { assemblyTotal, notesWithPurpose } from '../core/measure.js';
+import { assemblyTotal, notesWithPurpose, finiteOrZero } from '../core/measure.js';
 import { attachSearch, catalogPrice } from './catalog.js';
 import { pyG, pyMoney } from '../core/pyformat.js';
 
@@ -36,7 +36,7 @@ const UNIT_OPTIONS = [
  * Resolves with the new associated_items array, or null if cancelled.
  */
 export function openAssemblyManager(item) {
-  const parentValue = Number(item.value) || 0;
+  const parentValue = finiteOrZero(item.value);
   const hint = hintFor(item.type);
   let lines = (item.associated_items || []).map(l => ({ ...l }));
 

@@ -820,7 +820,14 @@ export class Renderer {
         // `pitch` key. Reading `pitch` here made every desktop-authored pitch
         // render as "0:12" beside a correct angle.
         const p = Number(m.value ?? m.pitch) || 0;
-        const ang = Number(m.angle_deg) || (Math.atan2(p, 12) * 180) / Math.PI;
+        // The stored angle, a 0 included, as the desktop reads it
+        // (m.get("angle_deg", 0.0)): two clicks on one point make a line whose
+        // rise is Infinity and whose angle is atan2(0, 0), 0 -- the desktop
+        // draws 'vertical   0°', and `|| atan2(p, 12)` drew 90°. The rise is a
+        // fallback only for a line that holds no angle a number can read.
+        const a = Number(m.angle_deg);
+        const ang = m.angle_deg != null && m.angle_deg !== '' && Number.isFinite(a)
+          ? a : (Math.atan2(p, 12) * 180) / Math.PI;
         // A vertical line: the desktop stores its rise as Infinity and draws
         // _pitch_label(inf), 'vertical'. A JSON file cannot hold Infinity, so
         // this app stores 0 -- and a 0 on a line its own two ends say is

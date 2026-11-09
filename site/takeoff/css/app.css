@@ -390,6 +390,11 @@ button { font-family: inherit; }
   box-shadow: 0 6px 22px rgba(0,0,0,.5);
 }
 .tool-opts .tb-label { color: #bdbdbd; }
+/* One label and its control (main.js syncToolOptions). From 1024 up it is
+   no box of its own: the bar lays them out exactly as it always has. Below
+   1024 the bar wraps between pairs: the rule after the touch layout's block
+   (search 'Tile's name, Size'). */
+.tool-opt { display: contents; }
 
 /* ── sheet versions ───────────────────────────────────────────────────── */
 
@@ -1304,6 +1309,27 @@ table.grid td.indent { padding-left: 26px; color: var(--text-dim); }
   .stage { padding-bottom: 0; }
   .statusbar { padding-bottom: env(safe-area-inset-bottom); }
   .toast { bottom: calc(64px + env(safe-area-inset-bottom)); }
+}
+
+/* The floating tool options bar (.tool-opts, .tool-opt above), below 1024.
+   Its own block, after the touch layout's: tests/menu-touch.mjs reads the
+   first one of these for the menus' rules. The bar can be wider than the
+   screen -- Tile's name, Size, Pattern and Angle are 600px of controls on a
+   390px phone, and the bar never wrapped, so Pattern and Angle were off its
+   edge, out of reach of any finger. It wraps instead, between pairs, inside
+   the screen less a 6px margin each side. Its width is its own
+   (max-content, then that cap), not whatever room is left right of where
+   it was last parked -- so the width placeToolOptions measures is the width
+   it gets, and its clamp (6px from either edge) keeps all of it on screen.
+   A wrap, not a sideways scroll: every control stays where a finger can see
+   it, and a scroll inside a bar floating over the drawing would fight the
+   drawing's own pan. */
+@media (max-width: 1023px) {
+  .tool-opts {
+    flex-wrap: wrap; row-gap: 6px;
+    box-sizing: border-box; width: max-content; max-width: calc(100% - 12px);
+  }
+  .tool-opt { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; max-width: 100%; }
 }
 
 @media (max-width: 720px) {

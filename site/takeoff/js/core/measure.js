@@ -40,6 +40,21 @@ export const ITEM_MEASURE = {
 };
 
 /**
+ * A stored number read as a quantity: itself, or 0 where it is none -- as
+ * `Number(v) || 0` reads it, and 0 for a number that is not finite too. The
+ * desktop stores a vertical pitch line's rise as Infinity (its
+ * _pitch_from_points; json.dumps writes the bare word, js/core/py-json.js
+ * reads it, and an edit here keeps it: computeValue below), where this app
+ * stores 0 for a vertical line it draws (ToolController._finalizePitch): read
+ * here as the 0 it is here, so no total, report, CSV or workbook says inf,
+ * nan or $nan of it.
+ */
+export function finiteOrZero(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? (n || 0) : 0;
+}
+
+/**
  * The (qty, unit) pair every report and export uses for an item.
  * Matches the desktop report builder exactly, including the special cases:
  * a count is the number of POINTS, and a pin always counts as one -- every
@@ -51,14 +66,14 @@ export const ITEM_MEASURE = {
 export function reportQty(m) {
   const t = m.type;
   if (t === 'standalone') {
-    return { qty: Number(m.qty) || 0, unit: String(m.unit || 'each') };
+    return { qty: finiteOrZero(m.qty), unit: String(m.unit || 'each') };
   }
   if (t === 'count') return { qty: (m.points || []).length, unit: 'EA' };
-  if (t === 'linear_count') return { qty: Math.trunc(Number(m.value) || 0), unit: 'EA' };
+  if (t === 'linear_count') return { qty: Math.trunc(finiteOrZero(m.value)), unit: 'EA' };
   if (PIN_TYPES.has(t)) return { qty: 1, unit: 'EA' };
   const spec = ITEM_MEASURE[t];
   if (!spec || !spec.unit) return null;
-  return { qty: Number(m.value) || 0, unit: spec.unit };
+  return { qty: finiteOrZero(m.value), unit: spec.unit };
 }
 
 export function isAreaType(type) { return ITEM_MEASURE[type]?.kind === 'area'; }
@@ -113,11 +128,19 @@ export function computeValue(item) {
 
     case 'pitch': {
       // A ratio of pixels (desktop _recalc_value: _pitch_from_points), so a
-      // dragged end re-reads it. A vertical line is 'vertical' and stores 0:
-      // a JSON file cannot hold Infinity.
+      // dragged end re-reads it. A vertical line is 'vertical' and stores 0,
+      // as every line drawn here always has -- except a line that already
+      // holds the desktop's own Infinity (a desktop save, where json.dumps
+      // wrote the bare word; js/core/py-json.js reads it), which keeps it
+      // while it is still vertical. A reshape, a move, a nudge and the
+      // Properties dialog's OK all come here; a 0 written over the desktop's
+      // Infinity is read back there as '0:12'. Nothing new is kept: every
+      // reader here already reads such a line, untouched, as 'vertical' and
+      // as the 0 of a quantity (finiteOrZero).
       if (pts.length < 2) return Number(item.value) || 0;
       const rise12 = pitchFromPoints(pts[0], pts[1])[0];
-      return Number.isFinite(rise12) ? rise12 : 0;
+      if (Number.isFinite(rise12)) return rise12;
+      return item.value === Infinity && !isGroupMaster(item) ? Infinity : 0;
     }
 
     default:
@@ -504,18 +527,18 @@ export function itemUnit(m) {
 // measured value. The legacy field `qty_per` means per_unit.
 
 export function assemblyTotal(ai, parentValue) {
-  const qty = Number(ai.qty ?? ai.qty_per ?? 0) || 0;
+  const qty = finiteOrZero(ai.qty ?? ai.qty_per ?? 0);
   const mode = ai.qty_mode ?? (('qty_per' in ai && !('qty_mode' in ai)) ? 'per_unit' : 'total');
-  return mode === 'total' ? qty : qty * (Number(parentValue) || 0);
+  return mode === 'total' ? qty : qty * finiteOrZero(parentValue);
 }
 
 export function assemblyCost(ai, parentValue) {
-  return assemblyTotal(ai, parentValue) * (Number(ai.unit_cost ?? ai.price ?? 0) || 0);
+  return assemblyTotal(ai, parentValue) * finiteOrZero(ai.unit_cost ?? ai.price ?? 0);
 }
 
 /** Every associated line of an item, with its computed total and cost. */
 export function expandAssembly(m) {
-  const parentValue = Number(m.value) || 0;
+  const parentValue = finiteOrZero(m.value);
   return (m.associated_items || []).map(ai => ({
     ...ai,
     total: assemblyTotal(ai, parentValue),
@@ -533,9 +556,9 @@ export function expandAssembly(m) {
  * same.
  */
 export function itemCost(m) {
-  const rate = Number(m.unit_cost) || 0;
+  const rate = finiteOrZero(m.unit_cost);
   const q = reportQty(m);
-  return (q ? q.qty : (Number(m.value) || 0)) * rate;
+  return (q ? q.qty : finiteOrZero(m.value)) * rate;
 }
 
 /** Item cost plus every associated line. */
