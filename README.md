@@ -151,9 +151,20 @@ site/                       published as is
                             migration 20261110000100_photo_schedule, its docs/PHOTO-SCHEDULE.md): the mirror of DCR Agents
                             2's photo plans, the change queue (preview; request with the plan rev read and a client key
                             stable per device and per attempt; cancel), the photo team through set_photo_team only, the
-                            DCR server's line, the Realtime watch; the Agenda, the Month grid, the chips, the Move sheet's
-                            choices and every code in words - the shift rule is the database's, never worked out here (no
-                            page yet: shoots.html is the next part)
+                            office computer's line, the Realtime watch; the Agenda, the Month grid, the chips, the Move
+                            sheet's choices and every code in words - the shift rule is the database's, never worked out
+                            here; shootForTask (a My Tasks task's shoot, photo_shoots.task_id)
+  shoots.html, css/shoots.css, js/pages/shoots.js, js/map/shoots.js  the shoot schedule (P3; owner decisions 2026-11-09):
+                            Agenda / By job / Month, phone first (a shoot full screen) and a desk layout (the list left,
+                            the shoot right); the office computer's state when it is not running; ?shoot= (DCR Agents 2's
+                            reminders), ?plan=, ?task=; a shoot's sheet (day and grace, the anchor in words, chips, the
+                            brief's safe fields, history, my changes waiting with Cancel, my recent ones); Move... (always
+                            Only this shoot / This shoot and the later ones / The job date moved, the preview of EVERY
+                            shoot that moves, what stays and why, what is skipped, the series re-planned, the office's
+                            approval; Apply with the rev read; a PT409 shows the new preview), Mark done..., Undo...;
+                            marketing reads only. The top bar's entry and Home's card for admins and the photo team (a
+                            hint kept per account: common2.js showsShoots); My Tasks' "Open in shoot schedule"; the
+                            Access tab's Photo team (admin.js, map/access.js photo*: set_photo_team at the row's version)
 tests/                      node --test (pure modules, the demo engine, the site guard)
 tools/devserve.mjs          the local demo server (development only)
 tools/fake/                 the demo database (development only, never published)
@@ -239,8 +250,8 @@ tools/fake/p10-photo.js     the shoot schedule in the demo database (the migrati
                             server that takes and applies changes: new -> taken -> applied | refused)
 tools/schema-check-p10-photo.mjs  repo/photo.js and map/photo.js on the REAL migration as every role (two photographers,
                             marketing, people on no team, the agents account), the mirror seeded through the agents RPCs
-                            from the demo's own plans, the demo's previews equal to the database's, drift (schema-check
-                            runs it)
+                            from the demo's own plans, the demo's previews equal to the database's, the pages' parts (a
+                            task's shoot, the Access tab's Photo team payloads), drift (schema-check runs it)
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
 ```

@@ -202,6 +202,71 @@ async function main() {
     shots.push(await o.shot("core_offline_overlay.png"));
     await o.eval("DCR2Demo.setOffline(false); true");
 
+    // 7b. the shoot schedule (the photographer screen program, P3): the demo photographer on a phone - the Home card and the
+    //     top bar's entry, the Agenda, a shoot full screen, Move…'s three choices ("Only this shoot" preselected) and its
+    //     preview, the Month grid, no page scrolling sideways; marketing reads only (no action button); a manager is told
+    //     it is not for their account and has neither the card nor the entry
+    {
+      const ph = await newPage(cdp, "shoots-phone"); pages.push(ph);
+      await ph.size(375, 812, true);
+      await signIn(ph, "field@demo.test", true, "dashboard.html");
+      await ph.until("!!document.getElementById('hmShoots')", 8000).catch(() => null);
+      check("P3 shoots: the photographer's Home card (📷 Shoot schedule)", await ph.eval("!!document.getElementById('hmShoots') && /Shoot schedule/.test(document.getElementById('hmShoots').textContent)"));
+      await ph.goto(base + "/shoots.html", 1500);
+      await ph.until("document.querySelectorAll('#shList .sh-row').length > 3", 8000).catch(() => null);
+      const groups = await ph.eval("Array.from(document.querySelectorAll('#shList .sh-grp > h3, #shList .sh-grp > summary')).map(n => n.firstChild.textContent.trim()).join('|')");
+      check("P3 shoots: the Agenda's groups (Late first, Done & closed folded last)", /^Late\|Today\|/.test(groups) && /Done & closed$/.test(groups), groups);
+      check("P3 shoots: the top bar's Shoot schedule entry", await ph.eval("Array.from(document.querySelectorAll('#dcr2Nav a')).some(a => a.getAttribute('href') === 'shoots.html' && a.getAttribute('aria-current') === 'page')"));
+      check("P3 shoots: phone - no horizontal scroll (the Agenda)", await ph.eval("document.documentElement.scrollWidth <= innerWidth + 1"), await ph.eval("document.documentElement.scrollWidth + ' > ' + innerWidth"));
+      shots.push(await ph.shot("p3_shoots_agenda_phone.png"));
+      await ph.eval("document.querySelector('#shList .sh-row').click(); true");
+      await sleep(400);
+      check("P3 shoots: a shoot opens full screen on a phone", await ph.eval("document.getElementById('shDetail').classList.contains('open') && !!document.querySelector('#shDScroll [data-act=move]')"));
+      shots.push(await ph.shot("p3_shoots_shoot_phone.png"));
+      await ph.eval("document.querySelector('#shDScroll [data-act=move]').click(); true");
+      await sleep(300);
+      const kinds = await ph.eval("Array.from(document.querySelectorAll('input[name=mvKind]')).map(r => r.value + (r.checked ? '*' : '')).join('|')");
+      check("P3 shoots: Move… asks the three choices, Only this shoot preselected", kinds === "move_one*|move_later|milestone", kinds);
+      await ph.eval("Array.from(document.querySelectorAll('#mvDay [data-act=pick]')).filter(b => !/\\b(off|cur)\\b/.test(b.className))[1].click(); true");
+      await ph.until("/Will move \\(\\d+\\)|already on that day|has passed/.test(document.getElementById('mvPreview').textContent)", 8000).catch(() => null);
+      check("P3 shoots: the preview lists the shoots that move", /Will move \(\d+\)/.test(await ph.eval("document.getElementById('mvPreview').textContent")),
+        await ph.eval("document.getElementById('mvPreview').textContent"));
+      check("P3 shoots: phone - no horizontal scroll (the Move sheet)", await ph.eval("document.documentElement.scrollWidth <= innerWidth + 1"));
+      shots.push(await ph.shot("p3_shoots_move_phone.png"));
+      await ph.eval("document.querySelector('#shSheet [data-act=mv-close]').click(); document.getElementById('shBack').click(); true");
+      await sleep(400);
+      await ph.eval("document.querySelector('#shViews [data-view=month]').click(); true");
+      await sleep(300);
+      check("P3 shoots: the Month grid (Sunday first)", (await ph.eval("Array.from(document.querySelectorAll('#shList .sh-wd')).map(n => n.textContent).join('')")) === "SunMonTueWedThuFriSat");
+      check("P3 shoots: phone - no horizontal scroll (Month)", await ph.eval("document.documentElement.scrollWidth <= innerWidth + 1"));
+      shots.push(await ph.shot("p3_shoots_month_phone.png"));
+      // marketing (the demo's view-only Taylor) reads only
+      await signIn(ph, "viewer@demo.test", true, "shoots.html");
+      await ph.until("document.querySelectorAll('#shList .sh-row').length > 3", 8000).catch(() => null);
+      await ph.eval("document.querySelector('#shList .sh-row').click(); true");
+      await sleep(400);
+      check("P3 shoots: marketing reads only (no action button)", await ph.eval("!!document.getElementById('shDTitle') && !document.querySelector('#shRoot [data-act=move], #shRoot [data-act=done], #shRoot [data-act=undo]')"));
+      // a manager is not on the team
+      await signIn(ph, "manager@demo.test", true, "shoots.html");
+      await ph.until("/Not for your account/.test(document.getElementById('shList').innerText)", 8000).catch(() => null);
+      check("P3 shoots: someone not on the photo team is told so", /Not for your account/.test(await ph.eval("document.getElementById('shList').innerText")));
+      check("P3 shoots: ... and has no top bar entry", !(await ph.eval("Array.from(document.querySelectorAll('#dcr2Nav a')).some(a => a.getAttribute('href') === 'shoots.html')")));
+      // the desk, dark: the list on the left and the shoot on the right; the Access tab's Photo team
+      const dk = await newPage(cdp, "shoots-desk"); pages.push(dk);
+      await dk.size(1440, 900, false);
+      await dk.dark(true);
+      await signIn(dk, "admin@demo.test", true, "shoots.html?shoot=4");
+      await dk.until("!!document.getElementById('shDTitle')", 8000).catch(() => null);
+      check("P3 shoots: a reminder's link (?shoot=) opens the shoot beside the list", await dk.eval("document.getElementById('shDetail').getBoundingClientRect().left > document.getElementById('shList').getBoundingClientRect().right - 1"));
+      shots.push(await dk.shot("p3_shoots_desk_dark.png"));
+      await dk.goto(base + "/admin.html?tab=access", 1500);
+      await dk.until("document.querySelectorAll('#adPhoto [data-person]').length > 2", 8000).catch(() => null);
+      check("P3 Access: the Photo team card (the default photographer, the marketing member's Google e-mail)",
+        /default photographer: Jordan Field/.test(await dk.eval("document.getElementById('adPhoto').innerText")), await dk.eval("document.getElementById('adPhoto').innerText.slice(0, 200)"));
+      shots.push(await dk.shot("p3_access_photo_team_dark.png"));
+      await dk.dark(false);
+    }
+
     // 8. every page as admin: CSP violations and errors only (the project pages are another builder's)
     if (PAGES === "all") {
       const a = await newPage(cdp, "admin"); pages.push(a);
@@ -224,7 +289,9 @@ async function main() {
         // way in, a new one, the Materials Library and the drawing tool on its own
         "estimates.html", "estimate-deck.html?id=1", "estimate-deck.html?new=1", "materials-library.html", "cme.html",
         // P5c sub form: the review queue, and the public form (its own client: a signed-in browser changes nothing)
-        "submissions.html", "submit.html"]) {
+        "submissions.html", "submit.html",
+        // the photographer screen program, P3: the shoot schedule's three views and a plan, the Access tab's Photo team
+        "shoots.html", "shoots.html?view=job", "shoots.html?view=month", "shoots.html?plan=2", "admin.html?tab=access"]) {
         await a.goto(base + "/" + path, 1500);
       }
       // P5a: the Estimate and Takeoffs tabs and their printed pages, as the admin (prices) and, on a phone, as a lead
