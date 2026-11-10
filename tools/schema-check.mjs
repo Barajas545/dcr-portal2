@@ -2145,6 +2145,11 @@ section = "The Books, release B part 2b: Advanced mode - the vendor list, the 10
 // ===========================================================================================
 await (await import("./schema-check-p8-advanced.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "The photographer screen program, P3: the shoot schedule's data layer - the photo team, the mirror, the preview, the change queue, the DCR server's line, Realtime (repo/photo.js, map/photo.js, migration 20261110000100_photo_schedule)";
+// ===========================================================================================
+await (await import("./schema-check-p10-photo.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

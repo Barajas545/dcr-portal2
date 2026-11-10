@@ -147,6 +147,13 @@ site/                       published as is
   js/repo/*.js              data modules (the only code that talks to the database)
   js/map/*.js               Desktop 2 rows <-> the shapes the old pages use (pure)
   js/pages/*.js             the project pages' screens
+  js/repo/photo.js, js/map/photo.js  the shoot schedule's data layer (the photographer screen program, P3; DCR Desktop 2
+                            migration 20261110000100_photo_schedule, its docs/PHOTO-SCHEDULE.md): the mirror of DCR Agents
+                            2's photo plans, the change queue (preview; request with the plan rev read and a client key
+                            stable per device and per attempt; cancel), the photo team through set_photo_team only, the
+                            DCR server's line, the Realtime watch; the Agenda, the Month grid, the chips, the Move sheet's
+                            choices and every code in words - the shift rule is the database's, never worked out here (no
+                            page yet: shoots.html is the next part)
 tests/                      node --test (pure modules, the demo engine, the site guard)
 tools/devserve.mjs          the local demo server (development only)
 tools/fake/                 the demo database (development only, never published)
@@ -227,6 +234,13 @@ tools/schema-check.mjs      Portal 2's own modules against the REAL database rul
                             20261029000100: the empty groups) and
                             tools/schema-p5a-sweep.mjs the P5 acceptance check 1 as a sweep of raw REST answers (every
                             price / money table, quotes, the print RPCs, search) per role, plus check 5 for M5a's log lines
+tools/fake/p10-photo.js     the shoot schedule in the demo database (the migration's tables, rules, codes and sentences; its
+                            shift rule ported for the demo's previews and held to the shared case file; a made-up DCR
+                            server that takes and applies changes: new -> taken -> applied | refused)
+tools/schema-check-p10-photo.mjs  repo/photo.js and map/photo.js on the REAL migration as every role (two photographers,
+                            marketing, people on no team, the agents account), the mirror seeded through the agents RPCs
+                            from the demo's own plans, the demo's previews equal to the database's, drift (schema-check
+                            runs it)
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
 ```
