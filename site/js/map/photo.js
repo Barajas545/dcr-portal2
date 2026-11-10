@@ -51,7 +51,7 @@ export const EXPIRE_DAYS = 7;        // §8.4: a new change nobody took for 7 da
 export const REASON_MAX = 200;       // §8.1 reason
 export const NOTE_MAX = 500;         // §8.1 done note
 export const EMAIL_MAX = 254;        // photo_team.google_email
-export const EMPTY_TEXT = "No shoot schedule yet - the DCR server publishes it";
+export const EMPTY_TEXT = "No shoot schedule yet - the office computer publishes it";
 export const NOT_READY_TEXT = "The shoot schedule is not in the database yet";
 export const GROUPS = Object.freeze([["late", "Late"], ["today", "Today"], ["this_week", "This week"], ["next_week", "Next week"],
   ["later", "Later"], ["undated", "No date yet"], ["closed", "Done & closed"]]);
@@ -499,7 +499,8 @@ export function changeStatusText(c, o) {
     }
     case "taken": return { state: st, text: "The office computer is applying it", cls: "pending", words: "" };
     case "applied": {
-      if (c.result && c.result.outcome === "suggested") return { state: st, text: "Sent to the office to approve", cls: "office", words };
+      // the PC's words say "Sent to the office: …" too - said once ("Sent to the office to approve: Framing start is Firm")
+      if (c.result && c.result.outcome === "suggested") return { state: st, text: "Sent to the office to approve", cls: "office", words: words.replace(/^Sent to the office\s*[:-]\s*/i, "") };
       const differs = c.result && c.result.differs_from_preview === true;
       return { state: st, text: "Applied" + (differs ? " - it came out a little differently from the preview" : ""), cls: "ok", words };
     }

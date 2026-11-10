@@ -113,7 +113,7 @@ test("a photographer: the Agenda, a shoot, Move… (three choices, Only this sho
   click('#shList [data-shoot="' + bf.id + '"]');
   assert.equal(S.sel, bf.id);
   assert.match(text("shDScroll"), /Before framing/);
-  assert.match(text("shDScroll"), /2 days before Framing start \(Framing start .* · Firm\)/);
+  assert.match(text("shDScroll"), /2 days before Framing start \([A-Z][a-z]{2} [A-Z][a-z]{2} \d+(, \d{4})? · Firm\)/, "the job date's day, its name said once");
   assert.ok($("shDScroll").querySelector('[data-act="move"]') && $("shDScroll").querySelector('[data-act="done"]'), "Move… and Mark done…");
   click('#shDScroll [data-act="move"]');
   const kinds = document.querySelectorAll('input[name="mvKind"]');
@@ -285,8 +285,9 @@ test("marketing reads only (no action button); someone not on the team reads not
   // someone not on the team: told so, nothing of the mirror read
   const asked = [];
   await open(E, "manager", "", (c) => ({ from: (t) => { asked.push(t); return c.from(t); }, rpc: (n, a) => { asked.push("rpc:" + n); return c.rpc(n, a); } }));
-  assert.equal(text("shLead"), V.NO_ACCESS_TEXT);
+  assert.equal(text("shLead"), "", "the box says it - once, not in the header too");
   assert.match(text("shList"), /Not for your account/);
+  assert.equal(text("shRoot").split(V.NO_ACCESS_TEXT).length - 1, 1, "said once");
   assert.deepEqual(asked, ["rpc:photo_my_access"], "only the gate was asked");
   assert.equal($("shBar").hidden, true);
   // a database without the migration (42883 / PGRST202): plain words, nothing more asked
@@ -295,8 +296,9 @@ test("marketing reads only (no action button); someone not on the team reads not
     asked2.push("rpc:" + n);
     return n === "photo_my_access" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function", status: 404 } }) : c.rpc(n, a);
   } }));
-  assert.equal(text("shLead"), NOT_READY_TEXT);
+  assert.equal(text("shLead"), "", "the box says it - once, not in the header too");
   assert.match(text("shList"), /Not in the database yet/);
+  assert.equal(text("shRoot").split(NOT_READY_TEXT).length - 1, 1, "said once");
   assert.deepEqual(asked2, ["rpc:photo_my_access"]);
 });
 

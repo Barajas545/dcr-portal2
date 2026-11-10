@@ -189,6 +189,8 @@ test("changes: the pending change of a shoot (its own, or a job-date change of t
   assert.deepEqual([ap.text, /\$/.test(ap.words)], ["Applied", false]);
   assert.equal(st({ status: "applied", result: { outcome: "applied", differs_from_preview: true } }).text, "Applied - it came out a little differently from the preview");
   assert.equal(st({ status: "applied", result: { outcome: "suggested", words: "Sent to the office: Framing start is Firm" } }).text, "Sent to the office to approve");
+  assert.equal(st({ status: "applied", result: { outcome: "suggested", words: "Sent to the office: Framing start is Firm" } }).words, "Framing start is Firm",
+    "the PC's own \"Sent to the office:\" not said twice");
   assert.equal(st({ status: "refused", error: { code: "changed", message: "x" } }).text, "Not done: The shoot changed meanwhile - look again.");
   const odd = st({ status: "refused", error: { code: "weird_one", message: "Something odd ($90 more)" } }).text;
   assert.ok(odd.startsWith("Not done: Something odd (") && !odd.includes("$") && !odd.includes("90"), "an unknown code keeps its sentence, masked: " + odd);
@@ -340,7 +342,7 @@ test("the office computer's line (the DCR server)", () => {
   assert.equal(M.pcLine({ online: false, paused: false, minutesAgo: null, lastSeen: null }).text, "The office computer has not been seen yet - changes wait until it is on");
   assert.equal(M.pcLine(null).state, "unknown");
   assert.deepEqual([0, 59, 60, 2879, 2880].map(M.agoText), ["just now", "59 min ago", "1 h ago", "47 h ago", "2 days ago"]);
-  assert.equal(M.EMPTY_TEXT, "No shoot schedule yet - the DCR server publishes it");
+  assert.equal(M.EMPTY_TEXT, "No shoot schedule yet - the office computer publishes it");
 });
 
 test("the shared shift cases (DCR Desktop 2 photo_shift_cases.json) - ONLY their words: each expected answer, as the database would send it, is worded whole", { skip: !existsSync(CASES) && "the shared case file is not on this PC (DCR_DESKTOP2_DIR)" }, () => {

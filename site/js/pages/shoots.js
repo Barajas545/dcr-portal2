@@ -49,7 +49,7 @@ function freshState() {
     me: null, access: null, accessError: "", today: "", plans: [], shoots: [], changes: [], pc: null, ready: false, loaded: false, failed: "",
     view: "agenda", month: "", mine: false, archived: false, planFocus: null, day: null, openClosed: false,
     sel: null, open: false, pushed: false, msg: "", lastDetail: null,
-    mv: null, seen: {}, seenReady: false, loadSeq: 0, stopWatch: null, timers: [], wired: false,
+    mv: null, seen: {}, seenReady: false, loadSeq: 0, stopWatch: null, timers: [], wired: false, held: [],
   };
 }
 const state = freshState();
@@ -112,10 +112,16 @@ function noticeFinished() {
     if (!state.seenReady || before === undefined) continue;
     if ((before === "new" || before === "taken") && c.state !== before) {
       const f = V.finishedText(c, { pc: state.pc });
-      if (f) toast(f.text, f.kind === "error" ? "error" : f.kind === "ok" ? "ok" : "info");
+      // a sheet open: said when it closes (a toast would sit over the sheet's preview and its buttons)
+      if (f && state.mv) state.held.push(f);
+      else if (f) say(f);
     }
   }
   state.seenReady = true;
+}
+
+function say(f) {
+  toast(f.text, f.kind === "error" ? "error" : f.kind === "ok" ? "ok" : "info");
 }
 
 /* ── drawing: the header ──────────────────────────────────────────────── */
@@ -132,8 +138,8 @@ function renderHead() {
   const a = state.access;
   const ok = !!(a && a.ready && a.canRead);
   if ($("shWho")) $("shWho").textContent = whoText(a);
-  const lead = state.accessError ? "" : !a ? "Loading the shoot schedule…" : !a.ready ? NOT_READY_TEXT : !a.canRead ? V.NO_ACCESS_TEXT
-    : a.canEdit ? V.EDIT_TEXT : V.READ_ONLY_TEXT;
+  // not on the team, or no shoot schedule in the database yet: the box under it says so (once, not twice)
+  const lead = state.accessError || (a && (!a.ready || !a.canRead)) ? "" : !a ? "Loading the shoot schedule…" : a.canEdit ? V.EDIT_TEXT : V.READ_ONLY_TEXT;
   if ($("shLead")) $("shLead").textContent = lead;
   const pc = ok && state.loaded ? V.pcHeader(state.pc) : null;
   const pcBox = $("shPc");
@@ -150,7 +156,12 @@ function renderHead() {
   if ($("shMine")) $("shMine").checked = !!state.mine;
   if ($("shArchived")) $("shArchived").checked = !!state.archived;
   const layout = $("shLayout");
-  if (layout) layout.classList.toggle("month", state.view === "month");
+  if (layout) {
+    layout.classList.toggle("month", state.view === "month");
+    // nothing to pick (not for this account, no schedule in the database, a failed read, no plan yet): no empty "Pick a
+    // shoot" panel beside the words on a desk
+    layout.classList.toggle("solo", !!(state.accessError || (a && (!a.ready || !a.canRead)) || (state.loaded && (state.failed || !state.ready || !state.plans.length))));
+  }
   const count = $("shCount");
   if (count) {
     if (!ok || !state.loaded || state.failed || !state.plans.length) { count.innerHTML = ""; return; }
@@ -280,7 +291,7 @@ function renderList() {
   if (!a) return;
   if (!a.ready) { box.innerHTML = emptyHtml("Not in the database yet", NOT_READY_TEXT + "."); return; }
   if (!a.canRead) {
-    box.innerHTML = emptyHtml("Not for your account", V.NO_ACCESS_TEXT) + '<p class="sh-lead" style="margin-top:12px"><a href="dashboard.html">← Home</a></p>';
+    box.innerHTML = emptyHtml("Not for your account", V.NO_ACCESS_TEXT) + '<p style="margin-top:12px"><a class="sh-btn" href="dashboard.html">← Home</a></p>';
     return;
   }
   if (state.failed) { box.innerHTML = note + emptyHtml("Could not read the shoot schedule", state.failed, true); return; }
@@ -312,7 +323,7 @@ function factsHtml(s, plan) {
   let day = "<b>" + esc(d.day) + "</b>" + (d.window ? " · " + esc(d.window) : "");
   if (d.late) day += '<div class="late">' + esc("Late - " + plural(lateDays(s, today), "day") + " past its grace") + "</div>";
   rows.push(["Day", day]);
-  rows.push(["Follows", esc(anchorText(s, plan)) + (m && m.date ? " (" + esc(m.label + " " + dayText(m.date, today) + (m.firm ? " · Firm" : " · estimate")) + ")" : "")]);
+  rows.push(["Follows", esc(anchorText(s, plan)) + (m && m.date ? " (" + esc(dayText(m.date, today) + (m.firm ? " · Firm" : " · estimate")) + ")" : "")]);
   rows.push(["Phase", esc((PHASE_LABEL[s.phase] || s.phase || "") + (s.series && s.n ? " · visit " + s.n : ""))]);
   if (s.status === "announced") {
     rows.push(["Heads-up", movedNotTold(s) ? esc("Sent for " + dayText(s.announcedFor, today) + " - the shoot moved since; the photographer hears of it on the next reminder")
@@ -398,7 +409,8 @@ function renderDetail() {
     return;
   }
   const keep = state.lastDetail === s.id ? sc.scrollTop : 0;
-  sc.innerHTML = detailHtml(s, plan);
+  if (state.lastDetail === s.id) keepFocus("shDScroll", () => { sc.innerHTML = detailHtml(s, plan); });
+  else sc.innerHTML = detailHtml(s, plan);
   sc.scrollTop = keep;
   state.lastDetail = s.id;
   lock((state.open && !wide()) || !!state.mv);
@@ -497,6 +509,10 @@ async function follow(link) {
 
 /* ── the sheets: Move…, Mark done…, Undo… ─────────────────────────────── */
 
+function sheetOpen(on) {
+  try { document.documentElement.classList.toggle("sh-sheet", !!on); } catch (e) { /* */ }
+}
+
 function sheetShell(title, body, foot, closeLabel) {
   return '<div class="sh-mo" id="shMo" role="dialog" aria-modal="true" aria-labelledby="mvTitle"><div class="sh-mo-card">' +
     '<div class="sh-mo-hd"><h3 id="mvTitle">' + title + '</h3><button type="button" class="sh-x" data-act="mv-close" aria-label="' + esc(closeLabel) + '">×</button></div>' +
@@ -528,7 +544,7 @@ function openMove(id) {
   const ms = followsMilestone(s) ? s.anchor : MILESTONES[0];
   state.mv = { type: "move", shootId: s.id, planId: plan.id, baseRev: plan.rev, kind: "move_one", day: null, milestone: ms, msDay: null,
     firm: !!(plan.milestones[ms] && plan.milestones[ms].firm), start: null, seq: 0, timer: null, pv: null, words: null, pvError: "", pending: false,
-    busy: false, msg: "", msgKind: "" };
+    busy: false, msg: "", msgKind: "", opener: "move" };
   const body = nowLine(s, plan) +
     '<fieldset class="mv-fs" id="mvChoices"></fieldset><div id="mvMs"></div><div id="mvDay"></div>' +
     '<div class="mv-note" id="mvNote" role="status"></div><div id="mvFirmRow"></div>' +
@@ -540,6 +556,7 @@ function openMove(id) {
   $("shSheet").innerHTML = sheetShell("Move " + T(s.name), body, foot, "Close without moving");
   fillMove();
   lock(true);
+  sheetOpen(true);
   try { const first = document.querySelector('#mvChoices input[value="move_one"]'); if (first && first.focus) first.focus(); } catch (e) { /* */ }
 }
 
@@ -549,7 +566,9 @@ function keepFocus(boxId, draw) {
   try {
     const a = document.activeElement;
     const box = $(boxId);
-    if (a && box && box.contains(a)) key = { day: a.getAttribute("data-day"), id: a.getAttribute("id"), value: a.getAttribute("value"), act: a.getAttribute("data-act") };
+    if (a && box && box.contains(a)) {
+      key = { day: a.getAttribute("data-day"), id: a.getAttribute("id"), value: a.getAttribute("value"), act: a.getAttribute("data-act"), change: a.getAttribute("data-change") };
+    }
   } catch (e) { key = null; }
   draw();
   if (!key) return;
@@ -557,6 +576,7 @@ function keepFocus(boxId, draw) {
     const box = $(boxId);
     if (!box) return;
     const hit = (key.day && box.querySelector('[data-day="' + key.day + '"]')) || (key.id && $(key.id)) ||
+      (key.change && key.act && box.querySelector('[data-act="' + key.act + '"][data-change="' + key.change + '"]')) ||
       (key.value && key.act && box.querySelector('[data-act="' + key.act + '"][value="' + key.value + '"]')) || (key.act && box.querySelector('[data-act="' + key.act + '"]'));
     if (hit && hit.focus) hit.focus();
   } catch (e) { /* */ }
@@ -754,7 +774,7 @@ function openDone(id) {
   const s = shootOf(id);
   const plan = s ? planOf(s.planId) : null;
   if (!s || !plan) return;
-  state.mv = { type: "done", shootId: s.id, planId: plan.id, baseRev: plan.rev, busy: false, msg: "", msgKind: "", seq: 0 };
+  state.mv = { type: "done", shootId: s.id, planId: plan.id, baseRev: plan.rev, busy: false, msg: "", msgKind: "", seq: 0, opener: "done" };
   const ahead = isDay(s.plannedDate) && s.plannedDate > state.today;
   const body = nowLine(s, plan) +
     (ahead ? '<div class="mv-note">' + esc("Its day (" + dayText(s.plannedDate, state.today) + ") is still ahead - mark it done only if it was shot.") + "</div>" : "") +
@@ -766,6 +786,7 @@ function openDone(id) {
   $("shSheet").innerHTML = sheetShell("Mark " + T(s.name) + " done", body, foot, "Close without marking it done");
   fillApply();
   lock(true);
+  sheetOpen(true);
   try { const t = $("dnNote"); if (t && t.focus) t.focus(); } catch (e) { /* */ }
 }
 
@@ -777,7 +798,7 @@ function openUndo(id, changeId) {
   if (!s || !plan || !c) return;
   const line = V.changeLine(c, { shoots: planShoots(plan, state.shoots), plan, today: state.today });
   state.mv = { type: "undo", shootId: s.id, planId: plan.id, baseRev: plan.rev, change: c.id, busy: false, msg: "", msgKind: "", seq: 0, pv: null, words: null,
-    pvError: "", pending: true, timer: null };
+    pvError: "", pending: true, timer: null, opener: "undo" };
   const body = '<p class="mv-now"><b>' + T(line.title) + "</b>" + (line.when ? " · " + esc(line.when) : "") + "</p>" +
     '<div class="mv-pv wait" id="mvPreview" aria-live="polite"></div>';
   const foot = '<button type="button" class="sh-btn" data-act="mv-close">Keep it</button>' +
@@ -785,16 +806,35 @@ function openUndo(id, changeId) {
   $("shSheet").innerHTML = sheetShell("Undo this change?", body, foot, "Close without undoing");
   fillPreview();
   lock(true);
+  sheetOpen(true);
   runPreview();
 }
 
+/** Close the sheet. The keyboard goes back to the button that opened it (Move…, Mark done…, Undo…) while it is still
+    there, else to the shoot's title (a change sent: the shoot is drawn again without that button). */
 function closeSheet() {
   const mv = state.mv;
   if (mv) clearTimeout(mv.timer);
   state.mv = null;
   if ($("shSheet")) $("shSheet").innerHTML = "";
   lock(state.open && !wide());
-  try { const t = $("shDTitle"); if (t && t.focus) t.focus(); } catch (e) { /* */ }
+  sheetOpen(false);
+  try {
+    const back = mv && mv.opener ? document.querySelector('#shDScroll [data-act="' + mv.opener + '"]') : null;
+    const t = back || $("shDTitle");
+    if (t && t.focus) t.focus();
+  } catch (e) { /* */ }
+  // what the office computer answered while the sheet was open
+  const held = state.held.splice(0);
+  held.forEach(say);
+}
+
+/** The controls of the open sheet the keyboard reaches, in order (a radio group is one stop: its ticked choice). */
+function sheetStops() {
+  const mo = $("shMo");
+  if (!mo) return [];
+  return Array.prototype.filter.call(mo.querySelectorAll("button, input, textarea, select, a[href], [tabindex]:not([tabindex='-1'])"), (n) =>
+    !n.disabled && n.getClientRects().length && !(n.type === "radio" && !n.checked && mo.querySelector('input[type=radio][name="' + n.name + '"]:checked')));
 }
 
 /** Apply / Mark done / Undo: photo_change_request with the rev this screen read. */
@@ -953,7 +993,16 @@ function onChange(ev) {
 }
 
 function onKey(e) {
-  if (e.key !== "Escape" || e.defaultPrevented) return;       // a dialog of the site's own took it
+  if (e.defaultPrevented) return;                             // a dialog of the site's own took it
+  if (e.key === "Tab" && state.mv) {
+    const f = sheetStops();
+    if (!f.length) return;
+    const i = f.indexOf(document.activeElement);
+    if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+    else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+    return;
+  }
+  if (e.key !== "Escape") return;
   if (state.mv) { e.preventDefault(); closeSheet(); return; }
   if (state.open && !wide() && state.sel) { e.preventDefault(); closeShoot(false); }
 }
@@ -1015,6 +1064,8 @@ export async function init(me, o) {
   render();
   if (state.sel && wide()) {
     try { const row = document.querySelector('.sh-listcol [data-shoot="' + state.sel + '"]'); if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" }); } catch (e) { /* */ }
+  } else if (state.sel && state.open) {
+    try { const t = $("shDTitle"); if (t && t.focus) t.focus(); } catch (e) { /* */ }
   }
   if (opt.watch !== false) watch();
 }

@@ -99,6 +99,10 @@
       .ad-ph-acts { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
       .ad-ph-head { display: grid; grid-template-columns: minmax(140px, 1fr) 128px 112px 182px minmax(180px, 1.2fr); gap: 4px 14px; padding: 0 4px 4px;
         font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+      /* light: the card's grey and gold a shade darker - WCAG AA on a team member's tinted line (the site's grey is 4.3:1
+         there, its gold under 3:1) */
+      @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .ad-photo { --text-muted: #56677c; --gold: #8f5c0c; } }
+      :root[data-theme="light"] .ad-photo { --text-muted: #56677c; --gold: #8f5c0c; }
       @media (max-width: 560px) {
         .ad-fg { grid-template-columns: 1fr; }
         .ad-sched { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "s1 e1" "s2 e2" "l ."; }
@@ -109,6 +113,11 @@
         .ad-ph-head { display: none; }
         .ad-ph-row { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
         .ad-ph-who, .ad-ph-mail { grid-column: 1 / -1; }
+        /* a finger's size: each tick's whole line, the e-mail box (16px: a phone does not zoom into it), Save / Cancel */
+        .ad-ph-row .ad-sw { min-height: 44px; align-items: center; padding: 0; }
+        .ad-ph-row .ad-sw input { margin: 0; }
+        .ad-ph-row input[type=email] { min-height: 44px; font-size: 16px; }
+        .ad-ph-acts .btn { min-height: 44px; }
       }
     </style>
   </head>

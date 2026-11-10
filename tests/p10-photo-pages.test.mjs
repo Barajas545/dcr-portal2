@@ -241,7 +241,7 @@ test("after Apply, and when the office computer answered: the words", () => {
   assert.equal(V.sentText({ again: true }, null).text, "That change was sent already - it is on the shoot now.");
   assert.deepEqual(V.finishedText(ch()), { text: "Applied - 1 shoot moved", kind: "ok" });
   assert.deepEqual(V.finishedText(ch({ result: { outcome: "suggested", words: "Sent to the office: Framing start is Firm" } })),
-    { text: "Sent to the office to approve: Sent to the office: Framing start is Firm", kind: "info" });
+    { text: "Sent to the office to approve: Framing start is Firm", kind: "info" }, "said once, not \"Sent to the office to approve: Sent to the office: …\"");
   assert.deepEqual(V.finishedText(ch({ status: "refused", result: null, error: { code: "past", message: "x" } })), { text: "Not done: That day has passed.", kind: "error" });
   assert.equal(V.finishedText(ch({ status: "new", result: null, requested_at: "2026-11-09T17:00:00Z" })), null, "still waiting");
   assert.equal(V.requestProblem({ reason: "changed" }), V.CHANGED_TEXT);
