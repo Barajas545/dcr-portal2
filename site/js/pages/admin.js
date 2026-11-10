@@ -11,16 +11,25 @@
      upload to OneDrive (everyone but view-only) through rpc admin_set_profile (map/access.js words it; ticking
      Estimator ticks prices too, which may be unticked again); financials, approving payments and sales estimates
      are shown and changed in DCR Desktop 2 → Users. Managers keep the page without this tab.
+   - the Photo team (an admin only; the photographer screen program, P3 - the owner's decision 3 of 2026-11-09): each
+     person's Photographer and Marketing ticks, the one default photographer and the marketing member's Google e-mail,
+     through set_photo_team at the row's version (the same rules as DCR Desktop 2 → Users → Photo team).
    Never pay rates (Q16), never the old portal's address/password columns. The database refuses
    every write from anyone but an admin or a manager (the switches: an admin only). */
 
 import { boot, el, esc, errorText, toast, confirmBox } from "./shell.js";
 import * as employees from "../repo/employees.js";
 import { scheduleText, hm, hoursText } from "../map/timesheets.js";
-import { offers, tick, diff, stateOf, saveProblem } from "../map/access.js";
+import {
+  offers, tick, diff, stateOf, saveProblem, photoPeople, photoGate, photoTick, photoStateOf, photoPayload, photoSummary, photoSaveProblem,
+  photoChanged, PHOTO_TITLE, PHOTO_SUB, PHOTO_ADMINS_NOTE, PHOTOGRAPHER_TIP, DEFAULT_TIP, MARKETING_TIP, EMAIL_TIP, PHOTO_CHANGED,
+  PHOTO_NOT_READY, PHOTO_NOT_READY_TEXT,
+} from "../map/access.js";
+import * as photo from "../repo/photo.js";
 import { avatarInitials } from "./ts-shared.js";
 
-const state = { list: [], accounts: [], crews: [], tab: "emp", me: null, access: [], accReady: true, accLoaded: false, acc: {} };
+const state = { list: [], accounts: [], crews: [], tab: "emp", me: null, access: [], accReady: true, accLoaded: false, acc: {},
+  photo: { ready: null, team: [], edits: {}, busy: {}, msgs: {}, say: "", loaded: false, error: "" } };
 const ROLE_WORD = { admin: "Admin", manager: "Manager", accountant: "Accountant", lead: "Lead", field: "Field", viewer: "View only" };
 
 function account(id) { return state.accounts.find(function (a) { return String(a.id) === String(id); }) || null; }
@@ -312,6 +321,177 @@ async function loadAccess() {
   }
 }
 
+/* ── the photo team (admin; the photographer screen program, P3) ──────────
+   The same list as DCR Desktop 2 → Users → Photo team: each person's Photographer and Marketing ticks, the ONE default
+   photographer and the marketing member's Google e-mail (map/access.js photo* words and gates it). Every save is one
+   set_photo_team of that person's whole row at the version shown (repo/photo.js setTeam - never a write of the table);
+   a "changed" refusal reads the list again and says so. A database without the photo team: "Not in the database yet". */
+
+function photoNames() {
+  const m = {};
+  state.access.forEach(function (a) { m[String(a.id)] = String(a.full_name || "").trim(); });
+  return m;
+}
+function photoRows() { return photoPeople(state.access, state.photo.team); }
+function photoPerson(id) { return photoRows().find(function (x) { return x.id === String(id); }) || null; }
+/** What is ticked on screen: the person's own edit, else their saved row as it is now (kept only once a box changed - a
+    row read again after someone's save shows the new truth, never an old copy of it). */
+function photoEdit(x) {
+  return state.photo.edits[x.id] || photoStateOf(x.row);
+}
+
+function photoNotes(x, g) {
+  const out = [];
+  const msg = state.photo.msgs[x.id];
+  if (msg) out.push(["err", msg]);
+  if (g.photographer.note) out.push(["warn", g.photographer.note]);
+  if (g.def.on && g.def.note && (x.row || g.dirty) && !g.photographer.note) out.push(["", g.def.note]);
+  else if (!g.def.on && !g.def.disabled && g.def.note && g.dirty) out.push(["", g.def.note]);
+  if (g.email.note) out.push([g.email.note === "No Google e-mail yet" ? "warn" : "err", g.email.note]);
+  if (g.offNote) out.push(["warn", g.offNote]);
+  return out;
+}
+
+function photoRowHtml(x, names) {
+  const ed = photoEdit(x);
+  const g = photoGate(x, ed, state.photo.team, names);
+  const busy = !!state.photo.busy[x.id];
+  const box = function (key, label, o, tip) {
+    return '<label class="ad-sw' + (o.disabled ? " ro" : "") + '" title="' + esc(tip) + '"><input type="checkbox" data-ph="' + key + '"' +
+      (o.on ? " checked" : "") + (o.disabled || busy ? " disabled" : "") + "><span>" + esc(label) + "</span></label>";
+  };
+  return '<div class="ad-ph-row' + (x.row ? " on" : "") + '" data-person="' + esc(x.id) + '">' +
+    '<div class="ad-ph-who"><b>' + esc(x.name) + (state.me && String(state.me.id) === x.id ? " (you)" : "") + "</b><span>" +
+      esc((ROLE_WORD[x.role] || x.role || "") + (x.active ? "" : " · turned off")) + "</span></div>" +
+    box("photographer", "Photographer", g.photographer, PHOTOGRAPHER_TIP) +
+    box("marketing", "Marketing", g.marketing, MARKETING_TIP) +
+    box("isDefault", "Default photographer", g.def, DEFAULT_TIP) +
+    '<div class="ad-ph-mail"><input type="email" data-ph="googleEmail" inputmode="email" placeholder="Google e-mail (marketing)" aria-label="' +
+      esc("Google e-mail of " + x.name) + '" title="' + esc(EMAIL_TIP) + '" value="' + esc(g.email.value) + '"' + (g.email.disabled || busy ? " disabled" : "") +
+      ' autocomplete="off" spellcheck="false" maxlength="254"></div>' +
+    '<div class="ad-ph-notes" data-phnotes="1" style="display:contents">' + photoNotes(x, g).map(function (n) {
+      return '<div class="ad-ph-note' + (n[0] ? " " + n[0] : "") + '">' + esc(n[1]) + "</div>";
+    }).join("") + "</div>" +
+    '<div class="ad-ph-acts" data-phacts="1"' + (g.dirty ? "" : " hidden") + '><button type="button" class="btn btn-sm" data-phsave="1"' + (busy ? " disabled" : "") + ">" +
+      (busy ? "Saving…" : x.row ? "Save" : "Add to the photo team") + '</button><button type="button" class="btn btn-ghost btn-sm" data-phcancel="1"' + (busy ? " disabled" : "") +
+      ">Cancel</button></div>" +
+    "</div>";
+}
+
+function renderPhoto() {
+  const box = el("adPhoto");
+  if (!box) return;
+  const P = state.photo;
+  box.hidden = false;
+  const head = "<h3>📷 " + esc(PHOTO_TITLE) + "</h3>";
+  if (P.ready === false) {
+    box.innerHTML = head + '<div class="sub" id="adPhotoNotReady">' + esc(PHOTO_NOT_READY + " - " + PHOTO_NOT_READY_TEXT) + "</div>";
+    return;
+  }
+  if (!P.loaded) {
+    box.innerHTML = head + (P.error ? '<div class="ad-accmsg" role="alert">' + esc(P.error) + '</div><div class="ad-acts"><button type="button" class="btn btn-ghost btn-sm" data-phreload="1">Try again</button></div>'
+      : '<div class="sub">Loading…</div>');
+    return;
+  }
+  const rows = photoRows();
+  const names = photoNames();
+  box.innerHTML = head + '<div class="sub" title="' + esc(PHOTO_SUB) + '">' + esc(photoSummary(rows)) + "</div>" +
+    '<div class="ad-ph-say" role="status">' + esc(P.say) + "</div>" +
+    '<div class="ad-ph-head" aria-hidden="true"><span>Person</span><span>Photographer</span><span>Marketing</span><span>Default</span><span>Google e-mail</span></div>' +
+    (rows.length ? rows.map(function (x) { return photoRowHtml(x, names); }).join("") : '<div class="ad-empty">No sign-in accounts.</div>') +
+    '<div class="note">' + esc(PHOTO_ADMINS_NOTE) + "</div>";
+}
+
+/** Read the photo team (after the sign-ins: the names come from them). A database without it says so. */
+async function loadPhoto(opts) {
+  const P = state.photo;
+  try {
+    if (P.ready === null) {
+      const a = await photo.myAccess();
+      if (!a.ready) { P.ready = false; renderPhoto(); return; }
+    }
+    P.team = await photo.team();
+    P.ready = true;
+    P.loaded = true;
+    P.error = "";
+    if (opts && opts.keepEdits === false) P.edits = {};
+  } catch (e) {
+    if (e && e.missing) P.ready = false;
+    else P.error = errorText(e);
+  }
+  renderPhoto();
+}
+
+function onPhotoChange(ev) {
+  const inp = ev.target.closest("[data-ph]");
+  const row = ev.target.closest("[data-person]");
+  if (!inp || !row || inp.getAttribute("data-ph") === "googleEmail") return;
+  const x = photoPerson(row.getAttribute("data-person"));
+  if (!x) return;
+  state.photo.edits[x.id] = photoTick(photoEdit(x), inp.getAttribute("data-ph"), inp.checked, { id: x.id, team: state.photo.team });
+  delete state.photo.msgs[x.id];
+  state.photo.say = "";
+  renderPhoto();
+}
+
+/** Typing the e-mail: no redraw (the box keeps its focus) - only the line's Save and its note follow. */
+function onPhotoInput(ev) {
+  const inp = ev.target.closest('[data-ph="googleEmail"]');
+  const row = ev.target.closest("[data-person]");
+  if (!inp || !row) return;
+  const x = photoPerson(row.getAttribute("data-person"));
+  if (!x) return;
+  const ed = photoTick(photoEdit(x), "googleEmail", inp.value, { id: x.id, team: state.photo.team });
+  state.photo.edits[x.id] = ed;
+  const acts = row.querySelector("[data-phacts]");
+  if (acts) acts.hidden = !photoChanged(x.row, ed);
+  const notes = row.querySelector("[data-phnotes]");
+  if (notes) {
+    const g = photoGate(x, ed, state.photo.team, photoNames());
+    notes.innerHTML = photoNotes(x, g).map(function (n) { return '<div class="ad-ph-note' + (n[0] ? " " + n[0] : "") + '">' + esc(n[1]) + "</div>"; }).join("");
+  }
+}
+
+async function onPhotoClick(ev) {
+  if (ev.target.closest("[data-phreload]")) { state.photo.error = ""; renderPhoto(); await loadPhoto(); return; }
+  const row = ev.target.closest("[data-person]");
+  if (!row) return;
+  const x = photoPerson(row.getAttribute("data-person"));
+  if (!x) return;
+  const P = state.photo;
+  if (ev.target.closest("[data-phcancel]")) { delete P.edits[x.id]; delete P.msgs[x.id]; renderPhoto(); return; }
+  if (!ev.target.closest("[data-phsave]") || P.busy[x.id]) return;
+  const mail = row.querySelector('[data-ph="googleEmail"]');
+  if (mail) P.edits[x.id] = photoTick(photoEdit(x), "googleEmail", mail.value, { id: x.id, team: P.team });
+  const pay = photoPayload(x, photoEdit(x), P.team);
+  if (pay.problem) { P.msgs[x.id] = pay.problem; renderPhoto(); return; }
+  if (pay.removing && !(await confirmBox(x.name + " can no longer move shoots or read the shoot schedule (unless they are an admin), and their Google " +
+    "e-mail is forgotten. The shoots' history stays.", { title: "Take " + x.name + " off the photo team?", okText: "Remove", danger: true }))) return;
+  P.busy[x.id] = true;
+  delete P.msgs[x.id];
+  P.say = "";
+  renderPhoto();
+  try {
+    const out = await photo.setTeam(x.id, pay.next, pay.version);
+    delete P.busy[x.id];
+    delete P.edits[x.id];
+    toast(out.removed ? x.name + " is off the photo team." : !x.row ? x.name + " is on the photo team." :
+      out.defaultPhotographer && !photoStateOf(x.row).isDefault ? x.name + " is the default photographer now." : "Saved.", "ok");
+    await loadPhoto();                       // the old default's row (and version) moved too
+  } catch (e) {
+    delete P.busy[x.id];
+    if (e && e.reason === "changed") {
+      delete P.edits[x.id];
+      P.say = PHOTO_CHANGED;
+      await loadPhoto();
+      return;
+    }
+    if (e && e.missing) { P.ready = false; renderPhoto(); return; }
+    P.msgs[x.id] = photoSaveProblem(e);
+    renderPhoto();
+  }
+}
+
 /* ── load, tabs ────────────────────────────────────────────────────────── */
 
 async function load() {
@@ -337,7 +517,7 @@ function tab(which) {
   el("paneAcc").hidden = which !== "acc";
   el("adNew").hidden = which === "acc";
   try { history.replaceState(null, "", which === "crew" ? "admin.html?tab=crews" : which === "acc" ? "admin.html?tab=access" : "admin.html"); } catch (e) { /* */ }
-  if (which === "acc" && !state.accLoaded) loadAccess();
+  if (which === "acc" && !state.accLoaded) loadAccess().then(function () { return loadPhoto(); });
 }
 
 async function start() {
@@ -351,6 +531,9 @@ async function start() {
   el("tabAcc").addEventListener("click", function () { tab("acc"); });
   el("adAccess").addEventListener("change", onAccessChange);
   el("adAccess").addEventListener("click", onAccessClick);
+  el("adPhoto").addEventListener("change", onPhotoChange);
+  el("adPhoto").addEventListener("input", onPhotoInput);
+  el("adPhoto").addEventListener("click", onPhotoClick);
   el("adList").addEventListener("click", function (ev) {
     const ed = ev.target.closest("[data-edit]"), ac = ev.target.closest("[data-active]");
     if (ed) openEditor(employee(ed.getAttribute("data-edit")));

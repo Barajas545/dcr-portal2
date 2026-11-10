@@ -32,8 +32,11 @@
    The Books program, release B: the Accounting card (books-home.html) first in Office for whoever sees the Books, with
    its "N to do" (counts only, a dynamic import of repo/books-home.js); The Books is "The Books (advanced)"; the approvals
    card says who asked about each bill ("asked by Casey · 2 h ago", money_messages); the installed app's Home sends an
-   accountant with financials to the Accounting page once per browser session (common2.js bounceFor). */
-import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday, bounceFor } from "../common2.js";
+   accountant with financials to the Accounting page once per browser session (common2.js bounceFor).
+   The photographer screen program, P3: the Shoot schedule card (📷, shoots.html) in Field & Time for admins and the photo
+   team, once photo_my_access() says so (a dynamic import of repo/photo.js), with "N late" / "N today"; its answer is kept
+   as the top bar's hint (common2.js rememberPhotoAccess). */
+import { requireAuth, topbar, el, companyInfo, roleLabel, companyToday, bounceFor, rememberPhotoAccess } from "../common2.js";
 import { plansCardFor, planFilesFor, floorPlansCard, handheld } from "../map/plans.js";
 import { keepPlansFresh } from "../pages/plan-buttons.js";
 import { crewOf } from "../repo/employees.js";
@@ -98,6 +101,11 @@ export function cardsFor(p, opts) {
     { href: "tasks-map.html", ic: "🗺️", tt: "Tasks on Map", ds: "Open tasks by job on a map, with directions." },
     { href: "capture.html", ic: "📸", tt: "Site Photos", show: role !== "viewer",
       ds: "Photograph or film the job you're standing on, filed by day. Works with no signal." },
+    /* the photographer screen program, P3: the shoot schedule - admins and the photo team, once photo_my_access says so
+       (photoCard, a dynamic import of repo/photo.js: a hint only, the database decides every read) */
+    { href: "shoots.html", ic: "📷", tt: "Shoot schedule", id: "hmShoots", show: !!(opts && opts.photo),
+      ds: opts && opts.photoEdit ? "Every shoot of the photo plans by day and by job: today's, the late ones, and moving one."
+        : "The shoots of the photo plans, by day and by job (read only)." },
     { href: "timesheet.html", ic: "🕐", tt: "Time Sheet",
       ds: role === "viewer" ? "Your hours and leave days (view only)." : "Enter your daily hours, schedule, and leave days.",
       links: [["Time card", "report-timecard.html"]] },
@@ -265,6 +273,35 @@ async function salesCard(p, homeOpts) {
   } catch (e) { /* no card */ }
 }
 
+/** The photographer screen program, P3: the Shoot schedule card for admins and the photo team. photo_my_access() is read
+    through a DYNAMIC import (repo/photo.js: a crew phone loads it only here) and kept on this device as the top bar's hint
+    (common2.js rememberPhotoAccess: the bar is drawn again when its entry changes). Its badge: the late shoots of the
+    live plans (a photographer's own plans when they have any), else today's - read only for those who see the card. Not
+    on the team, a database without the photo schedule yet, or offline: no card. */
+async function photoCard(p, homeOpts) {
+  let a = null, repo = null;
+  try {
+    repo = await import("../repo/photo.js");
+    a = await repo.myAccess();
+  } catch (e) { return; }
+  if (rememberPhotoAccess(p, a)) {
+    try { topbar("home", { presence: !!(window.matchMedia && window.matchMedia("(min-width: 761px) and (pointer: fine)").matches) }); } catch (e) { /* */ }
+  }
+  if (!a.ready || !a.canRead) return;
+  homeOpts.photo = true;
+  homeOpts.photoEdit = a.canEdit;
+  render(p, homeOpts);
+  myTasksBadge();
+  myAssistantBadge();
+  listBadges();
+  accountingBadge(p);
+  try {
+    const map = await import("../map/shoots.js");
+    const d = await repo.loadSchedule();
+    cardBadge("hmShoots", map.homeBadge(d.plans, d.shoots, companyToday(), { mine: a.photographer ? p.id : null }));
+  } catch (e) { /* no badge */ }
+}
+
 /** The DCR Agents 2 card's dot: green while the server reports, amber once it has gone quiet. */
 function agentsConsoleDot(line) {
   const card = $("hmAgentsConsole");
@@ -374,6 +411,7 @@ async function start() {
   // a lead's Batch Entry card waits for their crew (crew_members: their own rows)
   if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { homeOpts.hasCrew = true; render(p, homeOpts); myTasksBadge(); myAssistantBadge(); listBadges(); } }).catch(() => null);
   if (p.role !== "admin") salesCard(p, homeOpts);
+  photoCard(p, homeOpts);
   myTasksBadge();
   myAssistantBadge();
   if (p.role === "admin") agentsLine();

@@ -1169,8 +1169,10 @@
     shoot(a, 1, { key: "site-walk", phase: "special", name: "Site walk", anchor: "delivery", offset_days: -10, planned_date: day(-3), status: "done",
       done_at: at(3), done_source: "shoot page", done_note: "Walked the lot with the crew", window_days: 0 });
     shoot(a, 2, { key: "permit-board", phase: "special", name: "Permit board photo", anchor: "fixed", fixed_date: day(-4), window_days: 1 });
+    // its heads-up is the seed's Photo & Video task of Jordan (My Tasks: "Open in shoot schedule" finds this shoot by it)
+    const photoTask = (out.tasks || []).find((t) => t.agent_kind === "photo" && t.assigned_to === P.field && t.status === "open");
     shoot(a, 3, { key: "lot-before", phase: "before_framing", name: "Lot before work", anchor: "fixed", fixed_date: day(0), status: "announced",
-      announced_for: day(0), task_id: 9101, brief: brief("The empty lot before any work", ["Street view", "Corner to corner"]) });
+      announced_for: day(0), task_id: photoTask ? photoTask.id : 9101, brief: brief("The empty lot before any work", ["Street view", "Corner to corner"]) });
     shoot(a, 4, { key: "delivery", phase: "delivery", name: "Delivery day", anchor: "delivery", status: "announced", task_id: 9102, window_days: 0 });
     shoot(a, 5, { key: "before-framing", phase: "before_framing", name: "Before framing", anchor: "framing_start", offset_days: -2 });
     shoot(a, 6, { key: "progress-1", phase: "framing_progress", name: "Framing progress #1", anchor: "framing_start", offset_days: 7, window_days: 2,

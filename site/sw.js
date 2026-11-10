@@ -1,6 +1,6 @@
 /* DCR Employee Portal 2 service worker (BLUEPRINT 2.2.6).
 
-   - Cache "dcr-portal2-v5". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
+   - Cache "dcr-portal2-v6". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
      portal's "dcr-portal-*", nor the takeoff copy's "ptt-web-*", nor anything else on the device.
    - Never touches takeoff/ (the takeoff app's copy: its own worker keeps it; see v5 below).
    - Network FIRST for the site's own pages and files (always up to date online; the last copy
@@ -55,8 +55,13 @@
    has installed: kept here, the copy's files would sit in "dcr-portal2-*" beside the ones its own worker keeps, and an
    offline start could mix two versions of one program. The two workers' caches stay apart (each deletes only its own
    names). The frame (js/plan-frame.js) joins the list; the takeoff copy itself never does. A new name, so every
-   installed copy takes the pass-through and the plan pages' new routing at once. */
-const CACHE = "dcr-portal2-v5";
+   installed copy takes the pass-through and the plan pages' new routing at once.
+   v6 (the shoot schedule - the photographer screen program, P3, owner decisions of 2026-11-09): shoots.html, its styles,
+   its page module and its rules (repo/photo.js, map/photo.js, map/shoots.js) join the list, so a photographer's phone
+   opens a reminder's link (shoots.html?shoot=<id>) from a cold start; the top bar (common2.js: the Shoot schedule entry),
+   Home (its card) and My Tasks ("Open in shoot schedule") changed too: a new name, so every installed copy takes them at
+   once. Only the code is kept: no answer of the database (the mirror, the changes, the photo team) is ever kept here. */
+const CACHE = "dcr-portal2-v6";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
 // tests/core-sw.test.mjs checks it), so the installed app also opens offline from a cold start (a
@@ -101,6 +106,9 @@ const SHELL = [
   "js/pages/avatar.js", "js/repo/contacts.js",
   // check-off notes (v4): the box on a note in the Log tab, the Board's panel and Log History
   "js/pages/note-ticks.js",
+  // the shoot schedule (v6): the page, its styles and rules (repo/photo.js reads the mirror; map/photo.js and map/shoots.js
+  // put it into words)
+  "shoots.html", "css/shoots.css", "js/pages/shoots.js", "js/repo/photo.js", "js/map/photo.js", "js/map/shoots.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

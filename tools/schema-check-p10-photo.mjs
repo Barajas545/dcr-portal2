@@ -20,6 +20,9 @@
      true), pending, key_reused, changed {table, id, rev}, the rule's refusals as typed errors, cancel, the agents' take /
      done / error lifecycle as the page reads it, undo within the rules, a Firm job date "suggested";
    * photo_pc_status's line; the Realtime watch joining the four tables' private channels and reading once;
+   * the pages' parts: a My Tasks task's shoot (shootForTask: the team only); the Access tab's Photo team payloads
+     (map/access.js photoPayload) through set_photo_team - the e-mail tidied, Marketing off forgets it, a stale row in the
+     card's words, both ticks off removes the row;
    * drift: the demo database's columns, RPC arguments and codes equal the migration's, and its port of the shift rule
      answers the shared case file as app.photo_shift does.
    Made-up people and jobs only. */
@@ -403,14 +406,14 @@ export async function run(h) {
         "Sent to the office: Framing start is Firm", false], "suggested: never undone here");
     });
 
-    await check("P10 photo: photo_pc_status - the DCR server's line for the photo team (online, then last seen 2 h ago and paused), no host name; 42501 for anyone else", async () => {
+    await check("P10 photo: photo_pc_status - the office computer's line for the photo team (online, then last seen 2 h ago and paused), no host name; 42501 for anyone else", async () => {
       await as("market");
       let st = await photo.pcStatus();
       same([st.online, st.paused, st.minutesAgo, M.pcLine(st).state], [true, false, 1, "on"], "seen a minute ago");
       ok(!JSON.stringify(st).includes("PC#"), "no host name");
       await sql("update app.agents_hosts set at = now() - interval '2 hours', payload = '{\"paused\": true}' where host_id = $1", [HOST]);
       st = await photo.pcStatus();
-      same(M.pcLine(st).text, "Waiting for the DCR server (last seen 2 h ago, paused)", "the line");
+      same(M.pcLine(st).text, "The office computer is off - changes wait until it is back on (last seen 2 h ago, paused)", "the line");
       for (const k of NO_TEAM) {
         await as(k);
         same((await refused(() => photo.pcStatus(), "42501", k)).reason, "forbidden", k);
@@ -431,6 +434,46 @@ export async function run(h) {
       ok(reads.length >= 1 && reads[0].join, "a read after the join: " + JSON.stringify(reads));
       same(reads.reduce((all, r) => all.concat(r.tables), []).sort(), ["photo_changes", "photo_plans", "photo_shoots", "photo_team"], "all four joined");
       reads = [];
+    });
+
+    await check("P10 photo: the pages' parts - My Tasks' task finds its shoot (photo_shoots.task_id: the team only), the Access tab's Photo team payload (map/access.js) through set_photo_team: the e-mail tidied, Marketing off forgets it, both ticks off removes the row", async () => {
+      const V = await site("map/shoots.js");
+      const A = await site("map/access.js");
+      const withTask = await one("select id, plan_id, task_id from public.photo_shoots where task_id is not null order by id limit 1");
+      ok(withTask, "the mirror carries a task id");
+      await as("photo");
+      same(await photo.shootForTask(Number(withTask.task_id)), { id: Number(withTask.id), planId: Number(withTask.plan_id) }, "a photographer finds the task's shoot");
+      same(await photo.shootForTask(987654321), null, "a task with no shoot");
+      for (const k of ["lead", "viewer"]) { await as(k); same(await photo.shootForTask(Number(withTask.task_id)), null, k + " (on no team): nothing"); }
+      // the Access tab: a lead put on marketing with a pasted Google e-mail, then Marketing off, then off the team
+      await as("admin");
+      const profiles = (await one("select json_agg(json_build_object('id', id, 'full_name', full_name, 'role', role, 'active', active)) as v from public.profiles")).v;
+      let team = await photo.team();
+      let x = A.photoPeople(profiles, team).find((r) => r.id === PEOPLE.lead.id);
+      ok(x && !x.row, "the lead is listed, not on the team");
+      ok(!A.photoPeople(profiles, team).some((r) => r.role === "agents"), "never the agents account");
+      let ed = A.photoTick(A.photoTick(A.photoStateOf(null), "marketing", true, { id: x.id, team }), "googleEmail", " Ri.Lead@Example.TEST\t", { id: x.id, team });
+      let pay = A.photoPayload(x, ed, team);
+      same([pay.problem, pay.version, pay.next.googleEmail], [null, null, "ri.lead@example.test"], "the payload");
+      let out = await photo.setTeam(x.id, pay.next, pay.version);
+      same([out.marketing, out.googleEmail, out.photographer], [true, "ri.lead@example.test", false], "on marketing, the e-mail as the database keeps it");
+      team = await photo.team();
+      x = A.photoPeople(profiles, team).find((r) => r.id === PEOPLE.lead.id);
+      pay = A.photoPayload(x, A.photoTick(A.photoTick(A.photoStateOf(x.row), "photographer", true, { id: x.id, team }), "marketing", false, { id: x.id, team }), team);
+      out = await photo.setTeam(x.id, pay.next, pay.version);
+      same([out.photographer, out.marketing, out.googleEmail, out.defaultPhotographer], [true, false, null, false], "Marketing off forgets the e-mail; the default stays the default's");
+      team = await photo.team();
+      x = A.photoPeople(profiles, team).find((r) => r.id === PEOPLE.lead.id);
+      const stale = A.photoPayload(x, A.photoStateOf(x.row), team);
+      await photo.setTeam(x.id, Object.assign({}, stale.next, { marketing: true }), stale.version);            // someone else's save meanwhile
+      same(A.photoSaveProblem(await refused(() => photo.setTeam(x.id, stale.next, stale.version), "PT409", "a stale row")), A.PHOTO_CHANGED, "changed, in the card's words");
+      team = await photo.team();
+      x = A.photoPeople(profiles, team).find((r) => r.id === PEOPLE.lead.id);
+      pay = A.photoPayload(x, Object.assign(A.photoStateOf(x.row), { photographer: false, marketing: false }), team);
+      same([pay.removing, pay.problem], [true, null], "both ticks off");
+      out = await photo.setTeam(x.id, pay.next, pay.version);
+      same(out.removed, true, "off the team");
+      ok(V.officeLine("framing_start").startsWith("This job date (Framing start) is Firm"), "the Move sheet's words load");
     });
 
     await check("P10 photo: drift - the demo database (tools/fake/p10-photo.js) has the real columns, the RPCs' arguments and the migration's codes, and its port of the shift rule answers the shared case file as app.photo_shift", async () => {

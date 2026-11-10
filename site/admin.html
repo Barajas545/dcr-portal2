@@ -74,10 +74,41 @@
       .ad-sw small { display: block; font-weight: 400; font-size: 11.5px; color: var(--text-muted); }
       .ad-hint { font-size: 12px; color: var(--gold); min-height: 0; }
       .ad-accmsg { font-size: 12.5px; color: var(--err); }
+      /* the Access tab's Photo team (the photographer screen program, P3): one line per person, the ticks, the default, the
+         marketing member's Google e-mail; Save / Cancel on a line that changed */
+      .ad-photo { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 16px; box-shadow: var(--shadow); }
+      .ad-photo[hidden] { display: none; }
+      .ad-photo h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .ad-photo .sub { font-size: 12.5px; color: var(--text-muted); margin: 2px 0 10px; }
+      .ad-photo .note { font-size: 12px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }
+      .ad-ph-say { font-size: 13px; min-height: 0; margin: 0 0 8px; color: var(--gold); font-weight: 700; }
+      .ad-ph-say:empty { display: none; }
+      .ad-ph-row { display: grid; grid-template-columns: minmax(140px, 1fr) 128px 112px 182px minmax(180px, 1.2fr); gap: 4px 14px; align-items: start;
+        padding: 9px 4px; border-top: 1px solid var(--border); }
+      .ad-ph-row:first-of-type { border-top: 0; }
+      .ad-ph-row.on { background: var(--tint); border-radius: 8px; }
+      .ad-ph-who { min-width: 0; }
+      .ad-ph-who b { display: block; font-size: 14px; overflow-wrap: anywhere; }
+      .ad-ph-who span { font-size: 11.5px; color: var(--text-muted); }
+      .ad-ph-row .ad-sw { white-space: nowrap; }
+      .ad-ph-row input[type=email] { padding: 7px 10px; font-size: 14px; min-height: 38px; }
+      .ad-ph-row input[type=email]:disabled { opacity: .55; }
+      .ad-ph-note { grid-column: 1 / -1; font-size: 12px; color: var(--text-muted); }
+      .ad-ph-note.warn { color: var(--gold); }
+      .ad-ph-note.err { color: var(--err); }
+      .ad-ph-acts { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+      .ad-ph-head { display: grid; grid-template-columns: minmax(140px, 1fr) 128px 112px 182px minmax(180px, 1.2fr); gap: 4px 14px; padding: 0 4px 4px;
+        font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
       @media (max-width: 560px) {
         .ad-fg { grid-template-columns: 1fr; }
         .ad-sched { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "s1 e1" "s2 e2" "l ."; }
         .ad-grid { grid-template-columns: 1fr; }
+      }
+      /* the photo team's line: the ticks under the name, the e-mail under them (a phone, a tablet, a narrow window) */
+      @media (max-width: 900px) {
+        .ad-ph-head { display: none; }
+        .ad-ph-row { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+        .ad-ph-who, .ad-ph-mail { grid-column: 1 / -1; }
       }
     </style>
   </head>
@@ -116,7 +147,9 @@
           orders on the web and in DCR Desktop 2; ticking it ticks <b>Sees prices</b> too — untick prices for an estimator who works
           in quantities only. <b>Can upload to OneDrive</b>: adds files to the project's OneDrive folder from Portal 2 (DCR Desktop 2
           writes through each office computer's OneDrive and does not ask). A change reaches the person's open pages the next time
-          they load one. The database checks every change; financials, approving payments and sales estimates stay in DCR Desktop 2 → Users.</div>
+          they load one. The database checks every change; financials, approving payments and sales estimates stay in DCR Desktop 2 → Users.
+          <b>Photo team</b>: who moves shoots on the shoot schedule and who is on marketing - the same list as DCR Desktop 2 → Users.</div>
+        <div id="adPhoto" class="ad-photo" hidden></div>
         <div id="adAccess"><div class="ad-empty">Loading…</div></div>
       </section>
       <div id="adModal"></div>

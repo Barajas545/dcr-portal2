@@ -18,7 +18,8 @@
    * changes(o)               photo_changes (o.planId, o.mine: requested by that profile, o.open: new and taken only,
                               o.days: asked within that many days, 30) -> map toChange, newest first; myChanges(uid, o),
                               planChanges(planId, o);
-   * team()                   photo_team with each person's name (profiles) -> map toTeamMember, by name.
+   * team()                   photo_team with each person's name (profiles) -> map toTeamMember, by name;
+   * shootForTask(taskId)     the mirrored shoot of a My Tasks task (photo_shoots.task_id) -> {id, planId} | null.
    Writes:
    * preview(planId, kind, args)                rpc photo_change_preview -> the database's preview (§6.3; the shift rule
                                                 is the database's - map previewWords puts it into words);
@@ -200,6 +201,23 @@ export async function changes(o) {
     return opt.open ? list.filter((c) => c.state === "new" || c.state === "taken") : list;
   } catch (e) {
     if (e.missing) return [];
+    throw e;
+  }
+}
+
+/** The mirrored shoot of a My Tasks task (photo_shoots.task_id: the heads-up's task, DCR Agents 2's sp_task_id; no foreign
+    key - a stale id finds nothing): {id, planId} | null. Nothing on a database without the photo schedule, or for
+    someone who does not read it (row level security). */
+export async function shootForTask(taskId) {
+  const id = Number(taskId);
+  if (!Number.isInteger(id) || id < 1) return null;
+  try {
+    const rows = await read(async () => must(await (await db()).from("photo_shoots").select("id, plan_id").eq("task_id", id)
+      .order("id", { ascending: false }).range(0, 0)));
+    const r = Array.isArray(rows) ? rows[0] : null;
+    return r ? { id: Number(r.id), planId: Number(r.plan_id) } : null;
+  } catch (e) {
+    if (e.missing) return null;
     throw e;
   }
 }

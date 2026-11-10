@@ -24,7 +24,8 @@
    * who may act:      shootActions (can_photo may request, marketing reads only, closed shoots never move),
                        canUndo (within 7 days, the requester or an admin, never of "done"), canCancel;
    * the team:         teamSummary, googleEmailProblem (the database's rule, as a hint before sending);
-   * the DCR server:   pcLine ("Waiting for the DCR server (last seen 2 h ago)"). */
+   * the office computer: pcLine ("The office computer is off - changes wait until it is back on (last seen 2 h ago)");
+                       the page says "the office computer" (DCR Agents 2 on the DCR server PC: the owner's plain words). */
 
 import { addDays, dayOfWeek } from "./pacific.js";
 import { maskAmounts } from "../money-mask.js";
@@ -462,7 +463,7 @@ export function pendingFor(changes, s) {
 
 function pendingText(c) {
   if (c.needsOffice) return "Waiting for the office to approve";
-  return (c.state || c.status) === "taken" ? "Being applied by the DCR server" : "Change waiting for the DCR server";
+  return (c.state || c.status) === "taken" ? "Being applied by the office computer" : "Change waiting for the office computer";
 }
 
 /** What a change asked for, in words: "Move Delivery day to Mon Nov 16 - only this shoot". ctx: {shoots, plan, today}. */
@@ -485,7 +486,7 @@ export function changeTitle(c, ctx) {
   }
 }
 
-/** {state, text, cls, words} for a change (o: {now, pc: the DCR server's status}). words: the PC's own answer, masked. */
+/** {state, text, cls, words} for a change (o: {now, pc: the office computer's status}). words: the PC's own answer, masked. */
 export function changeStatusText(c, o) {
   const opt = o || {};
   const st = c ? c.state || changeState(c, opt.now) : "";
@@ -493,10 +494,10 @@ export function changeStatusText(c, o) {
   switch (st) {
     case "new": {
       const pc = opt.pc ? pcLine(opt.pc) : null;
-      if (c.needsOffice) return { state: st, text: "Waiting for the DCR server - then the office approves", cls: "pending", words: "" };
-      return { state: st, text: pc && pc.state !== "on" ? pc.text : "Waiting for the DCR server", cls: "pending", words: "" };
+      if (c.needsOffice) return { state: st, text: "Waiting for the office computer - then the office approves", cls: "pending", words: "" };
+      return { state: st, text: pc && pc.state !== "on" ? pc.text : "Waiting for the office computer", cls: "pending", words: "" };
     }
-    case "taken": return { state: st, text: "The DCR server is applying it", cls: "pending", words: "" };
+    case "taken": return { state: st, text: "The office computer is applying it", cls: "pending", words: "" };
     case "applied": {
       if (c.result && c.result.outcome === "suggested") return { state: st, text: "Sent to the office to approve", cls: "office", words };
       const differs = c.result && c.result.differs_from_preview === true;
@@ -507,7 +508,7 @@ export function changeStatusText(c, o) {
       return { state: st, text: "Not done: " + refusalText(code, { where: "pc", message: c.error && c.error.message, milestone: c.args && c.args.milestone }),
         cls: "refused", words: "" };
     }
-    case "expired": return { state: st, text: "Expired - the DCR server did not take it within 7 days", cls: "dim", words: "" };
+    case "expired": return { state: st, text: "Expired - the office computer did not take it within 7 days", cls: "dim", words: "" };
     case "cancelled": return { state: st, text: "Cancelled", cls: "dim", words: "" };
     default: return { state: st, text: prettyKey(st), cls: "", words: "" };
   }
@@ -524,11 +525,11 @@ const REFUSAL = {
   bad_args: "The change's details are not right.",
   bad_rev: "The schedule changed since this page read it - look again.",
   rate: "That is a lot of changes in a short time - wait a moment and try again.",
-  too_many: "You have 20 changes waiting for the DCR server - wait for them first.",
+  too_many: "You have 20 changes waiting for the office computer - wait for them first.",
   no_shoot: "That shoot is not in the plan any more.",
   unknown_shoot: "That shoot is not in the plan any more.",
   changed: "The schedule changed meanwhile - look again.",
-  pending: "A change of that shoot is already waiting for the DCR server.",
+  pending: "A change of that shoot is already waiting for the office computer.",
   no_original: "That change is not in this plan.",
   not_undoable: "That change cannot be undone any more.",
   past: "That day has passed.",
@@ -551,9 +552,9 @@ const REFUSAL = {
   // the PC's answers (agents_photo_change_error, §8.5) and the rows the database writes itself
   gone: "That shoot or plan is no longer in the plan.",
   not_active: "The plan is in review, done or archived.",
-  failed: "The DCR server could not make that change.",
-  expired: "The DCR server did not take it within 7 days.",
-  cancelled: "It was cancelled before the DCR server took it.",
+  failed: "The office computer could not make that change.",
+  expired: "The office computer did not take it within 7 days.",
+  cancelled: "It was cancelled before the office computer took it.",
   offline: "No connection - the change was not sent. Try again when you have signal.",
 };
 export const REFUSAL_CODES = Object.freeze(Object.keys(REFUSAL));
@@ -777,7 +778,7 @@ export function canCancel(c, me, access, now) {
   const a = access || {};
   if (!c) return { ok: false, why: "" };
   const st = c.state || changeState(c, now);
-  if (st !== "new") return { ok: false, why: st === "taken" ? "The DCR server is applying it already." : "" };
+  if (st !== "new") return { ok: false, why: st === "taken" ? "The office computer is applying it already." : "" };
   if (a.admin) return { ok: true, why: "" };
   if (a.canEdit && me && c.requestedBy === me) return { ok: true, why: "" };
   return { ok: false, why: "Only the person who asked, or an admin, can cancel a change." };
@@ -811,7 +812,7 @@ export function teamSummary(list) {
   return { photographers: ph.length, marketing: mk.length, defaultId: def.length ? def[0].profileId : null, problems };
 }
 
-/* ── the DCR server ───────────────────────────────────────────────────── */
+/* ── the office computer (the DCR server) ─────────────────────────────── */
 
 /** "just now", "5 min ago", "2 h ago", "3 days ago" */
 export function agoText(minutes) {
@@ -823,13 +824,13 @@ export function agoText(minutes) {
   return plural(Math.floor(m / 1440), "day") + " ago";
 }
 
-/** The DCR server line: {state: on | paused | off | unknown, text, cls}. */
+/** The office computer's line (DCR Agents 2, the lease holder): {state: on | paused | off | unknown, text, cls}. */
 export function pcLine(st) {
   if (!st) return { state: "unknown", text: "", cls: "" };
-  if (st.online && st.paused) return { state: "paused", text: "The DCR server is paused - changes wait until it runs again", cls: "warn" };
-  if (st.online) return { state: "on", text: "The DCR server is on - a change is applied in a minute or two", cls: "ok" };
+  if (st.online && st.paused) return { state: "paused", text: "DCR Agents 2 is paused on the office computer - changes wait until it runs again", cls: "warn" };
+  if (st.online) return { state: "on", text: "The office computer is on - a change is applied in a minute or two", cls: "ok" };
   if (st.lastSeen === null || st.lastSeen === undefined || st.minutesAgo === null || st.minutesAgo === undefined) {
-    return { state: "off", text: "Waiting for the DCR server (not seen yet)", cls: "warn" };
+    return { state: "off", text: "The office computer has not been seen yet - changes wait until it is on", cls: "warn" };
   }
-  return { state: "off", text: "Waiting for the DCR server (last seen " + agoText(st.minutesAgo) + (st.paused ? ", paused" : "") + ")", cls: "warn" };
+  return { state: "off", text: "The office computer is off - changes wait until it is back on (last seen " + agoText(st.minutesAgo) + (st.paused ? ", paused" : "") + ")", cls: "warn" };
 }

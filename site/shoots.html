@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' blob: data: https://nmjoenqkjyhngjvdealh.supabase.co https://*.tile.openstreetmap.org; media-src 'self' blob: https://nmjoenqkjyhngjvdealh.supabase.co; connect-src 'self' https://nmjoenqkjyhngjvdealh.supabase.co wss://nmjoenqkjyhngjvdealh.supabase.co https://nominatim.openstreetmap.org; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>DCR Portal 2 — Shoot schedule</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/shoots.css" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <meta name="theme-color" content="#0f8b7d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Portal 2" />
+    <script src="js/config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="topbar" id="dcr2Topbar"></div>
+    <main class="sh" id="shRoot">
+      <header class="sh-head">
+        <div class="sh-titlerow">
+          <h2 id="shTitle" tabindex="-1">📷 Shoot schedule</h2>
+          <span class="sh-who" id="shWho"></span>
+        </div>
+        <p class="sh-lead" id="shLead">Loading the shoot schedule…</p>
+        <div class="sh-pc" id="shPc" role="status" hidden></div>
+        <div class="sh-bar" id="shBar" hidden>
+          <div class="sh-seg" id="shViews" role="group" aria-label="How the shoots are shown">
+            <button type="button" data-view="agenda" aria-pressed="true">Agenda</button>
+            <button type="button" data-view="job" aria-pressed="false">By job</button>
+            <button type="button" data-view="month" aria-pressed="false">Month</button>
+          </div>
+          <div class="sh-filters">
+            <label class="sh-chk" id="shMineBox" hidden><input type="checkbox" id="shMine" /> Only my jobs</label>
+            <label class="sh-chk"><input type="checkbox" id="shArchived" /> Archived plans too</label>
+          </div>
+        </div>
+        <div class="sh-count" id="shCount" role="status"></div>
+      </header>
+      <div class="sh-layout" id="shLayout">
+        <section class="sh-listcol" id="shList" aria-label="Shoots">
+          <div class="sh-skel"></div><div class="sh-skel"></div><div class="sh-skel"></div>
+        </section>
+        <section class="sh-detail" id="shDetail" role="region" aria-label="Shoot">
+          <div class="sh-dbar">
+            <button type="button" class="sh-back" id="shBack">‹ All shoots</button>
+            <button type="button" class="sh-x" id="shClose" aria-label="Close this shoot">×</button>
+          </div>
+          <div class="sh-dscroll" id="shDScroll"><div class="sh-ph">Pick a shoot to see its day, its brief and its history.</div></div>
+        </section>
+      </div>
+      <div id="shSheet"></div>
+    </main>
+    <script type="module" src="js/pages/shoots.js"></script>
+  </body>
+</html>

@@ -776,12 +776,51 @@ export function navItems(p) {
     { key: "search", href: "search.html", text: "Search" },
     { key: "logs", href: "logs.html", text: "Log History" },
     { key: "capture", href: "capture.html", text: "Site Photos", show: role !== "viewer" },
+    // the photographer screen program, P3: admins and the photo team (a hint kept per account: showsShoots)
+    { key: "shoots", href: "shoots.html", text: "Shoot schedule", show: showsShoots(p) },
     { key: "timesheet", href: "timesheet.html", text: "Time Sheet" },
     { key: "teamsheets", href: "timesheet-manager.html", text: "Team Sheets", show: ["admin", "manager", "accountant", "lead"].indexOf(role) !== -1 },
     // the Books program, release B: the one doorway to the money pages - whoever sees the Books (the Home card's gate)
     { key: "books", href: "books-home.html", text: "Accounting", show: role === "admin" || !!(p && p.can_see_financials) },
     { key: "settings", href: "settings.html", text: "Settings" },
   ].filter((i) => i.show !== false);
+}
+
+/* The shoot schedule's entry (the photographer screen program, P3; DCR Desktop 2 migration 20261110000100): for admins
+   and the photo team. Who is on the team is a list the database keeps (photo_my_access()); Home and the shoot schedule
+   keep its answer on this device per account (localStorage "dcr2:photoTeam:<id>" = "1" reads it / "0" does not), so the
+   bar is drawn at once. It is a hint only: the database decides every read. An admin sees the entry until the database
+   said it has no shoot schedule yet; anyone else once it said they are on the team. */
+const PHOTO_HINT = "dcr2:photoTeam:";
+
+/** What this device last heard for this person: true (reads the shoot schedule), false (does not, or no schedule in the
+    database yet), null (never asked here). */
+export function photoHint(p) {
+  if (!p || !p.id) return null;
+  try {
+    if (typeof localStorage === "undefined" || !localStorage) return null;
+    const v = localStorage.getItem(PHOTO_HINT + p.id);
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch (e) { return null; }
+}
+
+/** Keep photo_my_access()'s answer (repo/photo.js myAccess: {ready, canRead}) as this person's hint. -> whether the top
+    bar's entry changes. */
+export function rememberPhotoAccess(p, access) {
+  if (!p || !p.id || !access) return false;
+  const before = showsShoots(p);
+  try {
+    if (typeof localStorage !== "undefined" && localStorage) localStorage.setItem(PHOTO_HINT + p.id, access.ready && access.canRead ? "1" : "0");
+  } catch (e) { /* a private window: the bar keeps what it had */ }
+  return showsShoots(p) !== before;
+}
+
+/** Whether the top bar (and Home) offers the shoot schedule: an admin unless the database said no; anyone else once it
+    said yes. */
+export function showsShoots(p) {
+  if (!p || p.active === false || p.role === "agents") return false;
+  const hint = photoHint(p);
+  return p.role === "admin" ? hint !== false : hint === true;
 }
 
 /** Draw the top bar: back/forward, the company mark with the "Portal 2" badge, the pages this role
@@ -1384,6 +1423,7 @@ export const DCR2 = {
   mapError, errorText, sentence,
   safeNext, thisPage,
   requireAuth, logout, roleLabel, navItems, topbar, paintPresence, offlineOverlay,
+  photoHint, rememberPhotoAccess, showsShoots,
   live,
   sb, me,
 };

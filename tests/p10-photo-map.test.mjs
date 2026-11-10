@@ -181,10 +181,10 @@ test("changes: the pending change of a shoot (its own, or a job-date change of t
   assert.equal(M.changeTitle(ch({ kind: "done", args: { shoot: "delivery" } }), ctx), "Mark Delivery day done");
   assert.equal(M.changeTitle(ch({ kind: "undo", args: { change: 4 } }), ctx), "Undo change #4");
   const st = (o, opt) => M.changeStatusText(ch(o), Object.assign({ now }, opt || {}));
-  assert.equal(st({}).text, "Waiting for the DCR server");
-  assert.equal(st({}, { pc: { online: false, lastSeen: "2026-11-09T16:00:00Z", minutesAgo: 120, paused: false } }).text, "Waiting for the DCR server (last seen 2 h ago)");
-  assert.equal(st({ needs_office: true }).text, "Waiting for the DCR server - then the office approves");
-  assert.equal(st({ status: "taken" }).text, "The DCR server is applying it");
+  assert.equal(st({}).text, "Waiting for the office computer");
+  assert.equal(st({}, { pc: { online: false, lastSeen: "2026-11-09T16:00:00Z", minutesAgo: 120, paused: false } }).text, "The office computer is off - changes wait until it is back on (last seen 2 h ago)");
+  assert.equal(st({ needs_office: true }).text, "Waiting for the office computer - then the office approves");
+  assert.equal(st({ status: "taken" }).text, "The office computer is applying it");
   const ap = st({ status: "applied", result: { outcome: "applied", words: "4 shoots moved - the $250 fee stays" } });
   assert.deepEqual([ap.text, /\$/.test(ap.words)], ["Applied", false]);
   assert.equal(st({ status: "applied", result: { outcome: "applied", differs_from_preview: true } }).text, "Applied - it came out a little differently from the preview");
@@ -193,7 +193,7 @@ test("changes: the pending change of a shoot (its own, or a job-date change of t
   const odd = st({ status: "refused", error: { code: "weird_one", message: "Something odd ($90 more)" } }).text;
   assert.ok(odd.startsWith("Not done: Something odd (") && !odd.includes("$") && !odd.includes("90"), "an unknown code keeps its sentence, masked: " + odd);
   assert.equal(st({ status: "cancelled" }).text, "Cancelled");
-  assert.equal(st({ status: "expired" }).text, "Expired - the DCR server did not take it within 7 days");
+  assert.equal(st({ status: "expired" }).text, "Expired - the office computer did not take it within 7 days");
   assert.equal(st({ requested_at: "2026-11-01T17:00:00Z" }).state, "expired", "7 days untaken");
 });
 
@@ -314,7 +314,7 @@ test("who may act: can_photo may request (an admin, a photographer), marketing r
   assert.equal(M.canCancel(fresh(), "u-pat", ph, now).ok, true);
   assert.equal(M.canCancel(fresh(), "u-kim", ph, now).ok, false);
   assert.equal(M.canCancel(fresh(), "u-kim", admin, now).ok, true);
-  assert.equal(M.canCancel(fresh({ status: "taken" }), "u-pat", ph, now).why, "The DCR server is applying it already.");
+  assert.equal(M.canCancel(fresh({ status: "taken" }), "u-pat", ph, now).why, "The office computer is applying it already.");
   assert.equal(M.canCancel(fresh({ requested_at: "2026-11-01T17:00:00Z" }), "u-pat", ph, now).ok, false, "expired by time");
 });
 
@@ -332,12 +332,12 @@ test("the team: the Google e-mail as the database keeps it (white space of every
   assert.deepEqual(M.teamSummary(team.slice(1)).problems[0], "Pick one default photographer.");
 });
 
-test("the DCR server line", () => {
-  assert.equal(M.pcLine({ online: true, paused: false, minutesAgo: 0, lastSeen: "x" }).text, "The DCR server is on - a change is applied in a minute or two");
+test("the office computer's line (the DCR server)", () => {
+  assert.equal(M.pcLine({ online: true, paused: false, minutesAgo: 0, lastSeen: "x" }).text, "The office computer is on - a change is applied in a minute or two");
   assert.equal(M.pcLine({ online: true, paused: true, minutesAgo: 0, lastSeen: "x" }).state, "paused");
-  assert.equal(M.pcLine({ online: false, paused: false, minutesAgo: 125, lastSeen: "x" }).text, "Waiting for the DCR server (last seen 2 h ago)");
-  assert.equal(M.pcLine({ online: false, paused: true, minutesAgo: 4, lastSeen: "x" }).text, "Waiting for the DCR server (last seen 4 min ago, paused)");
-  assert.equal(M.pcLine({ online: false, paused: false, minutesAgo: null, lastSeen: null }).text, "Waiting for the DCR server (not seen yet)");
+  assert.equal(M.pcLine({ online: false, paused: false, minutesAgo: 125, lastSeen: "x" }).text, "The office computer is off - changes wait until it is back on (last seen 2 h ago)");
+  assert.equal(M.pcLine({ online: false, paused: true, minutesAgo: 4, lastSeen: "x" }).text, "The office computer is off - changes wait until it is back on (last seen 4 min ago, paused)");
+  assert.equal(M.pcLine({ online: false, paused: false, minutesAgo: null, lastSeen: null }).text, "The office computer has not been seen yet - changes wait until it is on");
   assert.equal(M.pcLine(null).state, "unknown");
   assert.deepEqual([0, 59, 60, 2879, 2880].map(M.agoText), ["just now", "59 min ago", "1 h ago", "47 h ago", "2 days ago"]);
   assert.equal(M.EMPTY_TEXT, "No shoot schedule yet - the DCR server publishes it");

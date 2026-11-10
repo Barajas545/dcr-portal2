@@ -18,10 +18,12 @@
 
    Kept: needs-an-update first, the deep link, drafts per task on this phone (per account), the quick
    phrases and "Scheduled for…", the shoot brief with its shot list, the recurring chip, "Next:" after
-   Saved, the phone's Back gesture closing the task, the keyboard-aware full-screen task view. */
+   Saved, the phone's Back gesture closing the task, the keyboard-aware full-screen task view.
+   The photographer screen program, P3: a Photo & Video task whose shoot is on the shoot schedule (photo_shoots.task_id)
+   has "Open in shoot schedule" for admins and the photo team (shootLink). */
 
 import { boot, el, esc, errorText, maskFor, D, store } from "./shell.js";
-import { companyToday } from "../common2.js";
+import { companyToday, showsShoots, photoHint } from "../common2.js";
 import * as tasksRepo from "../repo/tasks.js";
 import * as projectsRepo from "../repo/projects.js";
 import {
@@ -260,6 +262,34 @@ function briefHtml(t) {
   return { html: html, shots: b.shots };
 }
 
+/* The photographer screen program, P3: a Photo & Video task (DCR Agents 2's shoot reminder) opens its shoot on the shoot
+   schedule. The mirror names the task in photo_shoots.task_id (the heads-up's task; no foreign key); it is looked up only
+   for admins and the photo team (common2.js showsShoots - a hint, the database decides; and while this device has not
+   asked yet), through a dynamic import
+   (repo/photo.js), once per task; no shoot found (not mirrored, or not readable): no link. */
+const SHOOT_OF = {};
+/** Look for the shoot: admins and the photo team (the hint), and anyone this device has not asked yet (a photographer's
+    first visit may be a reminder's link to My Tasks: row level security answers nothing to anyone else). */
+function mayShoot(t) {
+  return !!(t && t.photo && S.me && (showsShoots(S.me) || photoHint(S.me) === null));
+}
+function shootLink(t) {
+  if (!mayShoot(t)) return;
+  const k = String(t.id);
+  const paint = function (hit) {
+    const slot = el("mtShootLink");
+    if (!slot || slot.getAttribute("data-task") !== k || !hit || !hit.id) return;
+    slot.innerHTML = '<a class="mt-photo" href="shoots.html?shoot=' + encodeURIComponent(hit.id) + '">📅 Open in shoot schedule</a>';
+    slot.hidden = false;
+  };
+  if (Object.prototype.hasOwnProperty.call(SHOOT_OF, k)) { Promise.resolve(SHOOT_OF[k]).then(paint, function () { /* no link */ }); return; }
+  SHOOT_OF[k] = import("../repo/photo.js").then(function (m) { return m.shootForTask(t.id); }).then(function (hit) {
+    SHOOT_OF[k] = hit;
+    return hit;
+  }, function () { delete SHOOT_OF[k]; return null; });
+  SHOOT_OF[k].then(paint, function () { /* no link */ });
+}
+
 function renderDetail(t) {
   const pl = placeOf(t);
   const reqAgo = t.requested ? daysBetween(t.requested, today()) : null;
@@ -313,8 +343,10 @@ function renderDetail(t) {
       (work ? '<button type="button" class="mt-complete" id="mtComplete">Mark complete</button>' : "") +
       (maps ? '<a class="mt-photo" target="_blank" rel="noopener" href="' + esc(maps) + '">🗺️ Open in Maps</a>' : "") +
       upload + projLink +
+      (mayShoot(t) ? '<span class="mt-shootslot" id="mtShootLink" data-task="' + esc(t.id) + '" hidden></span>' : "") +
     "</div>";
 
+  shootLink(t);
   if (shoot) {
     el("mtDScroll").querySelectorAll("[data-shot]").forEach(function (c) {
       c.addEventListener("change", function () {

@@ -233,7 +233,7 @@ test("the request's refusals in the contract's order, as typed errors the page s
       requested_by: uid("field"), requested_at: new Date(Date.now() - 2 * 3600000).toISOString(), result: null, error: null }));
   }
   const many = await refused(() => photo.request(a.id, "move_one", { shoot: "delivery", to: addDays(dl.plannedDate, 1) }, a.rev), "PT429", "too_many");
-  assert.equal(M.refusalText(many.reason), "You have 20 changes waiting for the DCR server - wait for them first.");
+  assert.equal(M.refusalText(many.reason), "You have 20 changes waiting for the office computer - wait for them first.");
 });
 
 test("cancel: the requester while new, an admin anyone's; another photographer 42501, marketing PT404; once taken or finished {ok: false, status}; a new change older than 7 days reads expired", { skip }, async () => {

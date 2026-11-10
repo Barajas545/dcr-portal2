@@ -109,6 +109,8 @@
       .mt-photo{display:inline-flex; align-items:center; gap:6px; min-height:48px; padding:10px 16px; border-radius:12px;
         border:1px solid var(--border); background:var(--surface); color:var(--text); font-weight:700; text-decoration:none;}
       .mt-complete:focus-visible, .mt-photo:focus-visible{outline:2px solid var(--acc); outline-offset:2px;}
+      /* a Photo & Video task's "Open in shoot schedule" (filled once its shoot is found) sits in the row like the others */
+      .mt-shootslot:not([hidden]){display:contents;}
 
       html.mt-locked, html.mt-locked body{overflow:hidden;}
 
