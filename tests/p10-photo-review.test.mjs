@@ -395,6 +395,22 @@ test("a slow network: 'Close (still sending)' while a change is on its way; a lo
   letGo();
   await until(() => toasts.some((t) => /^Sent - /.test(t[0])), 4000, "the answer said after the sheet closed");
   assert.equal(E.rows.photo_changes.length, n0 + 1, "closing did not stop it - as the button said");
+  // closed while on its way AND its answer lost: there is no Apply to press any more - never "Press Apply again"
+  await open(E, "field", "", { wrap });
+  click('#shList [data-shoot="' + shootBy("A000T9", "progress-2").id + '"]');
+  click('#shDScroll [data-act="move"]');
+  pickDay(3);
+  await ready();
+  letGo = slow();
+  drop = 1;
+  click("#mvApply");
+  await until(() => S.mv && S.mv.busy && $("mvApply").textContent === "Sending…", 4000, "sending");
+  click('#shMo .sh-mo-ft [data-act="mv-close"]');
+  const n1 = E.rows.photo_changes.length;
+  letGo();
+  await until(() => toasts.some((t) => t[0] === V.NO_ANSWER_CLOSED_TEXT), 4000, toasts);
+  assert.ok(!toasts.some((t) => t[0] === V.NO_ANSWER_TEXT), "no Apply to press: not told to press it");
+  assert.equal(E.rows.photo_changes.length, n1 + 1, "it did reach the database - 'may have been sent'");
   // the words of an again: true answer, whatever became of the change (§17: the row's status, result and error)
   const pcOn = { online: true, paused: false };
   assert.equal(V.sentText({ again: true, status: "new", state: "new" }, pcOn).text, "That change was sent already - it waits for the office computer.");

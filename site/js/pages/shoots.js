@@ -1096,7 +1096,7 @@ async function apply() {
     }
     // no answer: it may have reached the database - a second press sends the same key, never a second change
     const t = e && e.retryable ? V.NO_ANSWER_TEXT : problem(e);
-    if (closed) { toast(t, "error"); return; }
+    if (closed) { toast(e && e.retryable ? V.NO_ANSWER_CLOSED_TEXT : t, "error"); return; }
     setMsg(t, "error");
     fillApply();
     return;

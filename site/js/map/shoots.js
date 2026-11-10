@@ -42,6 +42,9 @@ export const NOT_SENT_CHANGED = "Not sent: someone changed this job's shoots mea
 // a request with no answer (a dropped connection, a gateway's 5xx): it may have reached the database - the same key is
 // sent again, so a second press never queues it twice (repo/photo.js attemptKey)
 export const NO_ANSWER_TEXT = "No answer - it may not have been sent. Press Apply again: it will not be sent twice.";
+// the same, after the sheet was closed while it was on its way: there is no Apply to press (DCR Desktop 2 says the
+// same, naming its changes strip)
+export const NO_ANSWER_CLOSED_TEXT = "No answer - it may have been sent. The shoot shows it once it arrives; if it is not there in a few minutes, make the change again.";
 // the sheet's Cancel while a change is on its way: closing it does not stop the change
 export const CLOSE_SENDING = "Close (still sending)";
 export const MOVE_MAX_DAYS = 365;      // §7.3 too_far: a shoot at most a year ahead
