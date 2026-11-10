@@ -347,7 +347,7 @@ async function main() {
       await mirror(T9.plan.local_id);
       const n0 = Number((await sql("select count(*)::int as n from public.photo_changes"))[0].n);
       await clickSel(ph, "#mvApply");
-      await ph.until("document.getElementById('mvMsg').textContent === 'Someone changed this plan meanwhile - here is the new preview.'", 15000);
+      await ph.until("document.getElementById('mvMsg').textContent === " + JSON.stringify("Someone changed this job's shoots meanwhile - here is the new preview."), 15000);
       await ph.until(PREVIEWED, 15000);
       check("PGlite: PT409 from the real photo_change_request - said in plain words, the new preview, nothing queued",
         Number((await sql("select count(*)::int as n from public.photo_changes"))[0].n) === n0 && /→/.test(await text(ph, "#mvPreview")));

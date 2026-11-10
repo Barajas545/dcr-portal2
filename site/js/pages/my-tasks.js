@@ -279,7 +279,7 @@ function shootLink(t) {
   const paint = function (hit) {
     const slot = el("mtShootLink");
     if (!slot || slot.getAttribute("data-task") !== k || !hit || !hit.id) return;
-    slot.innerHTML = '<a class="mt-photo" href="shoots.html?shoot=' + encodeURIComponent(hit.id) + '">📅 Open in shoot schedule</a>';
+    slot.innerHTML = '<a class="mt-photo" href="shoots.html?shoot=' + encodeURIComponent(hit.id) + '">📷 Open in shoot schedule</a>';
     slot.hidden = false;
   };
   if (Object.prototype.hasOwnProperty.call(SHOOT_OF, k)) { Promise.resolve(SHOOT_OF[k]).then(paint, function () { /* no link */ }); return; }

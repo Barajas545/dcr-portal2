@@ -161,10 +161,14 @@ site/                       published as is
                             brief's safe fields, history, my changes waiting with Cancel, my recent ones); Move... (always
                             Only this shoot / This shoot and the later ones / The job date moved, the preview of EVERY
                             shoot that moves, what stays and why, what is skipped, the series re-planned, the office's
-                            approval; Apply with the rev read; a PT409 shows the new preview), Mark done..., Undo...;
-                            marketing reads only. The top bar's entry and Home's card for admins and the photo team (a
-                            hint kept per account: common2.js showsShoots); My Tasks' "Open in shoot schedule"; the
-                            Access tab's Photo team (admin.js, map/access.js photo*: set_photo_team at the row's version)
+                            approval; Apply with the rev read; a PT409 shows the new preview; a watch read redraws the
+                            open sheet and Apply asks the preview once more, so what is sent is what is listed), Mark
+                            done..., Undo...; marketing reads only; the answers named, and kept per account so one that
+                            came while the page was closed is still told ("Not done - see why" on the row). The top bar's
+                            entry and Home's card for admins and the photo team (a hint kept per account: common2.js
+                            showsShoots); My Tasks' "Open in shoot schedule"; the Access tab's Photo team (admin.js,
+                            map/access.js photo*: set_photo_team at the version each line's edit began from - a line
+                            changed since is put back and said, never saved over)
 tests/                      node --test (pure modules, the demo engine, the site guard)
 tools/devserve.mjs          the local demo server (development only)
 tools/fake/                 the demo database (development only, never published)

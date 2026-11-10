@@ -157,6 +157,9 @@ export function cardsFor(p, opts) {
   return sections.map((s) => Object.assign(s, { cards: s.cards.filter((c) => c.show !== false) })).filter((s) => s.cards.length);
 }
 
+// what was read once and is painted again whenever the cards are drawn again (rerender)
+const painted = { agents: null, shoots: null };
+
 function render(p, opts) {
   const host = $("hmSections");
   host.innerHTML = "";
@@ -265,11 +268,7 @@ async function salesCard(p, homeOpts) {
     const a = await repo.salesAccess(p);
     if (!a.sales) return;
     homeOpts.sales = true;
-    render(p, homeOpts);
-    myTasksBadge();
-    myAssistantBadge();
-    listBadges();
-    accountingBadge(p);
+    rerender(p, homeOpts);
   } catch (e) { /* no card */ }
 }
 
@@ -290,20 +289,40 @@ async function photoCard(p, homeOpts) {
   if (!a.ready || !a.canRead) return;
   homeOpts.photo = true;
   homeOpts.photoEdit = a.canEdit;
+  rerender(p, homeOpts);
+  try {
+    const map = await import("../map/shoots.js");
+    const d = await repo.loadSchedule();
+    painted.shoots = map.homeBadge(d.plans, d.shoots, companyToday(), { mine: a.photographer ? p.id : null });
+    shootsBadge();
+  } catch (e) { /* no badge */ }
+}
+
+/** The Shoot schedule card's badge, and its link: the page opens with "Only my jobs" ticked when the badge counted
+    only the photographer's own jobs (map/shoots.js homeBadge), so both say the same number. */
+function shootsBadge() {
+  const b = painted.shoots;
+  cardBadge("hmShoots", b);
+  const card = $("hmShoots");
+  const go = card ? card.querySelector("a.hm-card-go") : null;
+  if (go) go.setAttribute("href", b && b.mine ? "shoots.html?mine=1" : "shoots.html");
+}
+
+/** The cards drawn again (a card arrived: Sales estimates, the Shoot schedule, a lead's Batch Entry) with every badge and
+    dot they had - the ones read once (the DCR Agents 2 dot, the shoots badge) painted again from what was read. */
+function rerender(p, homeOpts) {
   render(p, homeOpts);
   myTasksBadge();
   myAssistantBadge();
   listBadges();
   accountingBadge(p);
-  try {
-    const map = await import("../map/shoots.js");
-    const d = await repo.loadSchedule();
-    cardBadge("hmShoots", map.homeBadge(d.plans, d.shoots, companyToday(), { mine: a.photographer ? p.id : null }));
-  } catch (e) { /* no badge */ }
+  if (painted.agents) agentsConsoleDot(painted.agents);
+  if (painted.shoots) shootsBadge();
 }
 
 /** The DCR Agents 2 card's dot: green while the server reports, amber once it has gone quiet. */
 function agentsConsoleDot(line) {
+  if (line) painted.agents = line;            // kept: a later redraw of the cards paints it again (rerender)
   const card = $("hmAgentsConsole");
   if (!card || !line) return;
   const tt = card.querySelector(".tt");
@@ -409,7 +428,7 @@ async function start() {
   const homeOpts = {};
   render(p, homeOpts);
   // a lead's Batch Entry card waits for their crew (crew_members: their own rows)
-  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { homeOpts.hasCrew = true; render(p, homeOpts); myTasksBadge(); myAssistantBadge(); listBadges(); } }).catch(() => null);
+  if (p.role === "lead") crewOf(p.id).then((ids) => { if (ids.length) { homeOpts.hasCrew = true; rerender(p, homeOpts); } }).catch(() => null);
   if (p.role !== "admin") salesCard(p, homeOpts);
   photoCard(p, homeOpts);
   myTasksBadge();

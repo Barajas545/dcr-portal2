@@ -51,7 +51,7 @@ export const EXPIRE_DAYS = 7;        // §8.4: a new change nobody took for 7 da
 export const REASON_MAX = 200;       // §8.1 reason
 export const NOTE_MAX = 500;         // §8.1 done note
 export const EMAIL_MAX = 254;        // photo_team.google_email
-export const EMPTY_TEXT = "No shoot schedule yet - the office computer publishes it";
+export const EMPTY_TEXT = "No shoot schedule yet - the DCR server publishes it";   // the contract's §2 words, word for word
 export const NOT_READY_TEXT = "The shoot schedule is not in the database yet";
 export const GROUPS = Object.freeze([["late", "Late"], ["today", "Today"], ["this_week", "This week"], ["next_week", "Next week"],
   ["later", "Later"], ["undated", "No date yet"], ["closed", "Done & closed"]]);
@@ -404,7 +404,8 @@ export function monthGrid(month, plans, shoots, today, o) {
 /* ── chips ────────────────────────────────────────────────────────────── */
 
 /** The chips of one shoot: status, Late (or its grace), Moved - not told yet, the Firm job date it follows, a change
-    waiting (o.pending: the open change of this shoot, pendingFor), a day picked by hand. Each {key, text, cls}. */
+    waiting (o.pending: the open change of this shoot, pendingFor), else "Not done - see why" (o.refused: my last change
+    of it that the office computer refused, map/shoots.js lastRefused), a day picked by hand. Each {key, text, cls}. */
 export function shootChips(s, plan, today, o) {
   const opt = o || {};
   const out = [];
@@ -423,6 +424,7 @@ export function shootChips(s, plan, today, o) {
   const m = plan && plan.milestones && followsMilestone(s) ? plan.milestones[s.anchor] : null;
   if (m && m.firm) out.push({ key: "firm", text: m.label + " is Firm", cls: "firm" });
   if (opt.pending) out.push({ key: "pending", text: pendingText(opt.pending), cls: "pending" });
+  else if (opt.refused) out.push({ key: "refused", text: "Not done - see why", cls: "late" });
   if (isOpen(s) && s.pinDay && s.pinDay === s.plannedDate) out.push({ key: "pinned", text: "Day picked by hand", cls: "dim" });
   return out;
 }
@@ -454,11 +456,26 @@ export function isOpenChange(c, now) {
   return st === "new" || st === "taken";
 }
 
-/** The open change of a shoot (the same shoot, or a job-date change of the date it follows), or null. */
+/** The open change of a shoot (the same shoot, or a job-date change of the date it follows), or null. The chip and the
+    "A change waiting" box use it; the gate of Move… and Mark done… is pendingTarget's. */
 export function pendingFor(changes, s) {
   if (!s || !Array.isArray(changes)) return null;
   return changes.find((c) => c && c.planId === s.planId && isOpenChange(c) &&
     (c.targetKey === s.key || (c.kind === "milestone" && followsMilestone(s) && c.args && c.args.milestone === s.anchor))) || null;
+}
+
+/** The open change that holds this very shoot (its target_key), or null: what photo_change_request refuses PT409
+    "pending" for a move or a done of it (§6.1 step 10). A job-date change waiting does not hold the shoots that follow
+    that date - only another change of the same job date (pendingMilestone). */
+export function pendingTarget(changes, s) {
+  if (!s || !Array.isArray(changes)) return null;
+  return changes.find((c) => c && c.planId === s.planId && isOpenChange(c) && c.targetKey === s.key) || null;
+}
+
+/** The open change of one job date of a plan (kind milestone), or null: a second one is refused "pending". */
+export function pendingMilestone(changes, planId, milestone) {
+  if (!Array.isArray(changes) || !milestone) return null;
+  return changes.find((c) => c && c.planId === planId && isOpenChange(c) && c.kind === "milestone" && c.args && c.args.milestone === milestone) || null;
 }
 
 function pendingText(c) {
@@ -520,8 +537,8 @@ const REFUSAL = {
   forbidden: "Only an admin or a photographer can change the shoot schedule.",
   bad_key: "The change could not be sent as it was. Try again.",
   key_reused: "That change was sent as another one before. Try again.",
-  no_plan: "That plan is not on the shoot schedule any more.",
-  plan_not_active: "Only an active or paused plan's shoots can change.",
+  no_plan: "That job is not on the shoot schedule any more.",
+  plan_not_active: "Only the shoots of an active or paused job can change.",
   bad_kind: "That is not a change the shoot schedule knows.",
   bad_args: "The change's details are not right.",
   bad_rev: "The schedule changed since this page read it - look again.",
@@ -572,6 +589,7 @@ export function refusalText(code, ctx) {
   if (k === "forbidden" && x.where === "pc") return "The person who asked lost the right to change the schedule meanwhile.";
   if (k === "forbidden" && x.where === "cancel") return "Only the person who asked, or an admin, can cancel a change.";
   if (k === "forbidden" && x.where === "undo") return "Only the person who made a change, or an admin, can undo it.";
+  if (k === "changed" && x.where === "undo") return "The shoot was moved again since - move it instead.";
   if (k === "firm" && ms) return ms + " is Firm - only the office can set it back (move it instead and the office is asked).";
   if (k === "too_far" && x.milestone) return "That job date is more than a year away or more than 60 days back.";
   if (k === "rate" && Number(x.retryAfter) > 0) {
@@ -738,8 +756,9 @@ export function previewWords(pv, ctx) {
 
 const ACTIVE_PLAN = ["active", "paused"];
 
-/** What one person may do with one shoot: {move: {ok, why}, done: {ok, why}} (access: toAccess; o.pending: its open
-    change). The database decides; these are the page's hints (§3.2). */
+/** What one person may do with one shoot: {move: {ok, why}, done: {ok, why}} (access: toAccess; o.pending: the open
+    change that holds this very shoot - pendingTarget, not a job-date change of the date it follows). The database
+    decides; these are the page's hints (§3.2). */
 export function shootActions(s, plan, access, o) {
   const a = access || {};
   const opt = o || {};

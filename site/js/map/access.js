@@ -135,6 +135,7 @@ export const KEEP_DEFAULT = "This is the default photographer. To change it, mak
 export const PICK_DEFAULT_FIRST = "Make another photographer the default first - then take this one off.";
 export const BOTH_OFF = "Both ticks off takes them off the photo team.";
 export const PHOTO_CHANGED = "Someone changed the photo team meanwhile, so nothing was saved. The list is read again - look and try again.";
+export const PHOTO_STALE = "This line changed meanwhile (saved elsewhere, or the default photographer moved), so your unsaved ticks were put back. Look and tick again.";
 export const PHOTO_NOT_READY = "Not in the database yet";
 export const PHOTO_NOT_READY_TEXT = "The photo team arrives with the database update 20261110000100 (DCR Desktop 2.27).";
 export const PHOTO_BAD_EMAIL = "That doesn't look like an e-mail address (name@gmail.com, or the company's Google address).";
@@ -244,15 +245,35 @@ export function photoGate(person, edit, team, names) {
 }
 
 /** A tick on screen -> the next edit: Photographer off takes the default off; the first photographer is the default.
-    ctx: {id (the person), team (the saved team)}. */
+    ctx: {id (the person), team (the saved team)}. The first tick of a line keeps the version of the row the edit began
+    from (`base`, null: no row yet): that is the version its save sends, so a row someone changed since - another
+    admin's save, or this admin's own save of another line that moved the default - is refused "changed" (PT409),
+    never written over by an old copy at the row's new version. */
 export function photoTick(edit, key, value, ctx) {
   const next = Object.assign({}, edit || {});
+  if (!Object.prototype.hasOwnProperty.call(next, "base")) {
+    const row = ((ctx && ctx.team) || []).find((r) => r && pid(r.profileId) === pid(ctx && ctx.id)) || null;
+    next.base = row && row.version !== undefined && row.version !== null ? Number(row.version) : null;
+  }
   if (key === "googleEmail") next.googleEmail = String(value === null || value === undefined ? "" : value);
   else next[key] = !!value;
   if (!next.photographer) next.isDefault = false;
   const others = ((ctx && ctx.team) || []).filter((r) => r && r.photographer && pid(r.profileId) !== pid(ctx && ctx.id));
   if (next.photographer && !others.length) next.isDefault = true;
   return next;
+}
+
+/** The row's version as it was read now (null: no row). */
+function rowVersion(row) {
+  return row && row.version !== undefined && row.version !== null ? Number(row.version) : null;
+}
+
+/** Whether an unsaved edit began from another version of the row than the one read now (someone saved that line since,
+    or a save of another line moved the default off it): the card drops such an edit and says so (PHOTO_STALE). */
+export function photoStale(person, edit) {
+  const x = person || {};
+  if (!edit || !Object.prototype.hasOwnProperty.call(edit, "base")) return false;
+  return edit.base !== rowVersion(x.row);
 }
 
 /** Whether the edit differs from the saved row (the e-mail only while marketing). */
@@ -271,13 +292,15 @@ export function photoPayload(person, edit, team) {
   const e = edit || photoStateOf(x.row);
   const next = { photographer: !!e.photographer, marketing: !!e.marketing, isDefault: !!(e.photographer && e.isDefault),
     googleEmail: e.marketing ? photoEmail(e.googleEmail) || null : null };
-  const version = x.row && x.row.version !== undefined && x.row.version !== null ? Number(x.row.version) : null;
+  // the version the edit began from (photoTick's base), never the one read since: a newer row is refused, not overwritten
+  const based = Object.prototype.hasOwnProperty.call(e, "base");
+  const version = based ? (e.base === null || e.base === undefined ? null : Number(e.base)) : rowVersion(x.row);
   const others = (team || []).filter((r) => r && r.photographer && pid(r.profileId) !== x.id);
   let problem = null;
   if (!x.row && !next.photographer && !next.marketing) problem = PHOTO_NO_TICK;
   else if (x.row && photoStateOf(x.row).isDefault && !next.photographer && others.length) problem = PICK_DEFAULT_FIRST;
   else if (next.marketing && photoEmailProblem(e.googleEmail)) problem = photoEmailProblem(e.googleEmail);
-  return { next, version: x.row ? version : null, removing: !!x.row && !next.photographer && !next.marketing, problem };
+  return { next, version: based || x.row ? version : null, removing: !!x.row && !next.photographer && !next.marketing, problem };
 }
 
 /** The card's subtitle: "1 photographer · 1 on marketing · default photographer: Jordan Field". rows: photoPeople. */

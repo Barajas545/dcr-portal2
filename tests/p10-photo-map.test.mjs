@@ -342,7 +342,7 @@ test("the office computer's line (the DCR server)", () => {
   assert.equal(M.pcLine({ online: false, paused: false, minutesAgo: null, lastSeen: null }).text, "The office computer has not been seen yet - changes wait until it is on");
   assert.equal(M.pcLine(null).state, "unknown");
   assert.deepEqual([0, 59, 60, 2879, 2880].map(M.agoText), ["just now", "59 min ago", "1 h ago", "47 h ago", "2 days ago"]);
-  assert.equal(M.EMPTY_TEXT, "No shoot schedule yet - the office computer publishes it");
+  assert.equal(M.EMPTY_TEXT, "No shoot schedule yet - the DCR server publishes it", "the contract's §2 words");
 });
 
 test("the shared shift cases (DCR Desktop 2 photo_shift_cases.json) - ONLY their words: each expected answer, as the database would send it, is worded whole", { skip: !existsSync(CASES) && "the shared case file is not on this PC (DCR_DESKTOP2_DIR)" }, () => {

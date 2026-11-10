@@ -27,7 +27,19 @@
      move (from -> to), what stays and why, what will be skipped and the series that will be re-planned, and says when
      the office approves first ("This job date (Framing start) is Firm - your change goes to the office to approve").
      Apply sends photo_change_request with the base rev the screen read; a PT409 "changed" reads the plan again and shows
-     the new preview ("Someone changed this plan meanwhile - here is the new preview") - never a silent overwrite.
+     the new preview ("Someone changed this job's shoots meanwhile - here is the new preview") - never a silent overwrite.
+     What is sent is what the sheet lists (the P3 review): a watch read while the sheet is open draws it again from the
+     new read (the shoot's day, the job dates, the admin's Firm box) and previews again; Apply asks the preview once more
+     and shows a different answer instead of sending it (the database's "changed" looks at the named shoot only); the
+     queued change's own preview is compared after. An admin's Firm is sent only once he ticked it himself (else the job
+     date's current flag, §8.1). On a phone the new preview comes into view and its count stands beside Apply; the sheet
+     has its own history entry (Back closes the sheet only). While a change is on its way Cancel reads "Close (still
+     sending)"; a lost answer is "it may not have been sent" and a second press is the same change (again: true, worded
+     from what became of it).
+   * The answers: the office computer's answer to a change of mine is a toast naming the change and its job; what this
+     device heard is kept per account, so an answer that came while the page was closed is told on the next visit, and a
+     refusal marks the row "Not done - see why". A photo team change heard by the watch reads photo_my_access again.
+     A poll or watch read that changed nothing leaves the list and the status regions as they are (the keyboard stays).
    Every free text is the mirror's (masked by the database) and goes through the site's money masks again (map/photo.js
    safeText) before it is put on the page escaped. */
 
@@ -36,7 +48,7 @@ import { companyToday, rememberPhotoAccess } from "../common2.js";
 import * as repo from "../repo/photo.js";
 import {
   agenda, monthGrid, planShoots, plansInOrder, visiblePlans, shootChips, milestoneChips, anchorText, moveChoices, moveArgs, previewWords,
-  shootActions, canCancel, pendingFor, isOpen, isLate, followsMilestone, dayText, isDay, safeText, movedNotTold, refusalText, lateDays,
+  shootActions, canCancel, pendingFor, pendingTarget, isOpen, isLate, followsMilestone, dayText, isDay, safeText, movedNotTold, refusalText, lateDays,
   MILESTONES, MILESTONE_LABEL, PHASE_LABEL, NOT_READY_TEXT, EMPTY_TEXT, NOTE_MAX, REASON_MAX, isOpenChange,
 } from "../map/photo.js";
 import * as V from "../map/shoots.js";
@@ -49,9 +61,15 @@ function freshState() {
     me: null, access: null, accessError: "", today: "", plans: [], shoots: [], changes: [], pc: null, ready: false, loaded: false, failed: "",
     view: "agenda", month: "", mine: false, archived: false, planFocus: null, day: null, openClosed: false,
     sel: null, open: false, pushed: false, msg: "", lastDetail: null,
-    mv: null, seen: {}, seenReady: false, loadSeq: 0, stopWatch: null, timers: [], wired: false, held: [],
+    mv: null, seen: {}, seenReady: false, loadSeq: 0, stopWatch: null, timers: [], wired: false, held: [], skipPop: 0,
   };
 }
+// the tasks' readers beside the task's own people (20261020000100: the office reads all; field and view-only their own)
+const TASK_READERS = ["admin", "manager", "lead", "accountant"];
+// what this device heard of my changes, per account: a change the office computer answered while the page was closed is
+// still told on the next visit (a refusal is never left unsaid)
+const SEEN_KEY = "dcr2:photoSeen:";
+const SEEN_MAX = 200;
 const state = freshState();
 
 const $ = (id) => (typeof document !== "undefined" ? document.getElementById(id) : null);
@@ -74,10 +92,13 @@ function errorWords(e) {
 /* ── reading ──────────────────────────────────────────────────────────── */
 
 /** Read the mirror (every plan: the archived ones are shown only when asked), the changes the person may see (the last 30
-    days) and the office computer's state; draw. o.quiet: a read after a watch or a poll (an error is not shouted). */
+    days) and the office computer's state; draw. o.quiet: a read after a watch or a poll (an error is not shouted).
+    An open sheet whose plan moved on is drawn again from this read (sheetReread); o.forceSheet: always (a PT409, or a
+    preview that no longer matched at Apply). */
 async function load(o) {
   const opt = o || {};
   const seq = ++state.loadSeq;
+  let ok = false;
   try {
     const [sched, ch, pc] = await Promise.all([
       repo.loadSchedule({ archived: true }),
@@ -93,6 +114,7 @@ async function load(o) {
     state.pc = pc;
     state.loaded = true;
     state.failed = "";
+    ok = true;
     noticeFinished();
   } catch (e) {
     if (seq !== state.loadSeq) return;
@@ -100,24 +122,57 @@ async function load(o) {
     else if (!opt.quiet) toast(errorWords(e), "error");
   }
   render();
+  if (ok) sheetReread(!!opt.forceSheet);
 }
 
-/** A change of mine that the office computer answered since the last read: say what it came to. */
+/* what this device heard of my changes (localStorage, per account; any failure: this page's memory only) */
+function seenStore() {
+  try { return W.localStorage || null; } catch (e) { return null; }
+}
+function readSeen(me) {
+  try {
+    const s = seenStore();
+    const v = s && me ? JSON.parse(s.getItem(SEEN_KEY + me) || "null") : null;
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch (e) { return {}; }
+}
+function writeSeen(me) {
+  try {
+    const s = seenStore();
+    if (!s || !me) return;
+    const keep = {};
+    // my changes of the last 30 days as read, and what Apply just sent (not read back yet)
+    const ids = new Set(state.changes.filter((c) => c.requestedBy === me).map((c) => String(c.id)));
+    Object.keys(state.seen).filter((id) => ids.has(id) || state.seen[id] === "new" || state.seen[id] === "taken").slice(-SEEN_MAX)
+      .forEach((id) => { keep[id] = state.seen[id]; });
+    s.setItem(SEEN_KEY + me, JSON.stringify(keep));
+  } catch (e) { /* a blocked storage: this page's memory only */ }
+}
+
+/** A change of mine that the office computer answered since the last read - on this visit, or while the page was closed
+    (what this device heard before, per account) - says what it came to, named (V.finishedText with its plan). */
 function noticeFinished() {
   const me = meId();
+  if (!me) return;
+  if (!state.seenReady) {
+    const kept = readSeen(me);
+    Object.keys(kept).forEach((id) => { if (state.seen[id] === undefined) state.seen[id] = kept[id]; });
+  }
   for (const c of state.changes) {
-    if (!me || c.requestedBy !== me) continue;
+    if (c.requestedBy !== me) continue;
     const before = state.seen[c.id];
     state.seen[c.id] = c.state;
-    if (!state.seenReady || before === undefined) continue;
+    if (before === undefined) continue;          // first heard here: asked on another device, or long ago
     if ((before === "new" || before === "taken") && c.state !== before) {
-      const f = V.finishedText(c, { pc: state.pc });
+      const plan = planOf(c.planId);
+      const f = V.finishedText(c, { pc: state.pc, plan, shoots: plan ? planShoots(plan, state.shoots) : [], today: state.today });
       // a sheet open: said when it closes (a toast would sit over the sheet's preview and its buttons)
       if (f && state.mv) state.held.push(f);
       else if (f) say(f);
     }
   }
   state.seenReady = true;
+  writeSeen(me);
 }
 
 function say(f) {
@@ -144,9 +199,10 @@ function renderHead() {
   const pc = ok && state.loaded ? V.pcHeader(state.pc) : null;
   const pcBox = $("shPc");
   if (pcBox) {
-    pcBox.hidden = !pc;
-    pcBox.textContent = pc ? pc.text : "";
-    pcBox.setAttribute("data-state", pc ? pc.state : "on");
+    // a status region: written only when its words change (every poll and watch read would have it read out again)
+    if (pcBox.hidden !== !pc) pcBox.hidden = !pc;
+    if (pcBox.textContent !== (pc ? pc.text : "")) pcBox.textContent = pc ? pc.text : "";
+    if (pcBox.getAttribute("data-state") !== (pc ? pc.state : "on")) pcBox.setAttribute("data-state", pc ? pc.state : "on");
   }
   const bar = $("shBar");
   if (bar) bar.hidden = !(ok && state.loaded && !state.failed && state.plans.length);
@@ -164,12 +220,19 @@ function renderHead() {
   }
   const count = $("shCount");
   if (count) {
-    if (!ok || !state.loaded || state.failed || !state.plans.length) { count.innerHTML = ""; return; }
-    const plans = visiblePlans(state.plans, { archived: state.archived, mine: mineOpt() });
-    const ids = new Set(plans.map((p) => p.id));
-    const open = state.shoots.filter((s) => ids.has(s.planId) && isOpen(s));
-    const late = open.filter((s) => isLate(s, state.today)).length;
-    count.innerHTML = esc(plural(plans.length, "job") + " · " + plural(open.length, "open shoot")) + (late ? " · <b>" + esc(late + " late") + "</b>" : "");
+    let html = "";
+    if (ok && state.loaded && !state.failed && state.plans.length) {
+      const plans = visiblePlans(state.plans, { archived: state.archived, mine: mineOpt() });
+      const ids = new Set(plans.map((p) => p.id));
+      const open = state.shoots.filter((s) => ids.has(s.planId) && isOpen(s));
+      const late = open.filter((s) => isLate(s, state.today)).length;
+      html = esc(plural(plans.length, "job") + " · " + plural(open.length, "open shoot")) + (late ? " · <b>" + esc(late + " late") + "</b>" : "");
+    }
+    // a status region too: the same words are not written again
+    if (count.getAttribute("data-said") !== html) {
+      count.innerHTML = html;
+      count.setAttribute("data-said", html);
+    }
   }
 }
 
@@ -187,7 +250,8 @@ function dateHtml(s) {
 }
 
 function rowChips(s, plan) {
-  const out = shootChips(s, plan, state.today, { pending: pendingFor(state.changes, s) }).filter((c) => !(c.key === "status" && s.status === "planned"));
+  const out = shootChips(s, plan, state.today, { pending: pendingFor(state.changes, s), refused: V.lastRefused(state.changes, s, meId(), new Date()) })
+    .filter((c) => !(c.key === "status" && s.status === "planned"));
   // a plan that is not live says so on each of its shoots (in review: its days are not settled yet)
   if (plan && plan.status !== "active") out.push({ key: "plan", text: V.planFacts(plan).statusText, cls: "dim" });
   return out;
@@ -282,23 +346,31 @@ function monthHtml() {
   return '<div class="sh-month">' + head + '<div class="sh-grid">' + cells + "</div>" + dayList + undated + "</div>";
 }
 
+/** The list's markup now ("" while there is nothing to draw yet). */
+function listHtml() {
+  const a = state.access;
+  const note = state.msg ? '<div class="sh-pc" role="status">' + esc(state.msg) + "</div>" : "";
+  if (state.accessError) return emptyHtml("Could not open the shoot schedule", state.accessError, true);
+  if (!a) return null;
+  if (!a.ready) return emptyHtml("Not in the database yet", NOT_READY_TEXT + ".");
+  if (!a.canRead) return emptyHtml("Not for your account", V.NO_ACCESS_TEXT) + '<p style="margin-top:12px"><a class="sh-btn" href="dashboard.html">← Home</a></p>';
+  if (state.failed) return note + emptyHtml("Could not read the shoot schedule", state.failed, true);
+  if (!state.loaded) return null;
+  if (!state.ready) return emptyHtml("Not in the database yet", NOT_READY_TEXT + ".");
+  if (!state.plans.length) return note + emptyHtml("No shoot schedule yet", EMPTY_TEXT + ".");
+  return note + (state.view === "job" ? jobHtml() : state.view === "month" ? monthHtml() : agendaHtml());
+}
+
+/** Draw the list. A read that changed nothing leaves it as it is (every poll and watch read comes here: a row or day the
+    keyboard is on keeps the focus); a changed list keeps the keyboard on the same row or day (keepFocus). */
 function renderList() {
   const box = $("shList");
   if (!box) return;
-  const a = state.access;
-  const note = state.msg ? '<div class="sh-pc" role="status">' + esc(state.msg) + "</div>" : "";
-  if (state.accessError) { box.innerHTML = emptyHtml("Could not open the shoot schedule", state.accessError, true); return; }
-  if (!a) return;
-  if (!a.ready) { box.innerHTML = emptyHtml("Not in the database yet", NOT_READY_TEXT + "."); return; }
-  if (!a.canRead) {
-    box.innerHTML = emptyHtml("Not for your account", V.NO_ACCESS_TEXT) + '<p style="margin-top:12px"><a class="sh-btn" href="dashboard.html">← Home</a></p>';
-    return;
-  }
-  if (state.failed) { box.innerHTML = note + emptyHtml("Could not read the shoot schedule", state.failed, true); return; }
-  if (!state.loaded) return;
-  if (!state.ready) { box.innerHTML = emptyHtml("Not in the database yet", NOT_READY_TEXT + "."); return; }
-  if (!state.plans.length) { box.innerHTML = note + emptyHtml("No shoot schedule yet", EMPTY_TEXT + "."); return; }
-  box.innerHTML = note + (state.view === "job" ? jobHtml() : state.view === "month" ? monthHtml() : agendaHtml());
+  const html = listHtml();
+  if (html === null) return;
+  if (box._shHtml === html) return;
+  keepFocus("shList", () => { box.innerHTML = html; });
+  box._shHtml = html;
 }
 
 /* ── drawing: the shoot ───────────────────────────────────────────────── */
@@ -310,7 +382,7 @@ function changeBox(c, s, plan, mine) {
     '<div class="t">' + esc(mine ? "Your change: " : "A change waiting: ") + T(l.title) + "</div>" +
     '<div class="s ' + esc(l.status.cls) + '">' + T(l.status.text) + "</div>" +
     (l.status.words ? '<div class="w">' + T(l.status.words) + "</div>" : "") +
-    (l.when ? '<div class="w">Asked ' + esc(l.when) + "</div>" : "") +
+    (l.asked || l.answered ? '<div class="w">' + esc([l.asked ? "Asked " + l.asked : "", l.answered ? "answered " + l.answered : ""].filter(Boolean).join(" · ")) + "</div>" : "") +
     (can.ok ? '<button type="button" class="sh-btn" data-act="cancel-change" data-change="' + esc(c.id) + '">Cancel this change</button>' : "") +
     "</div>";
 }
@@ -341,16 +413,21 @@ function actionsHtml(s, plan) {
   const parts = [];
   let why = "";
   if (editor()) {
-    const pending = pendingFor(state.changes, s);
+    // only a change that holds this very shoot stops its Move… and Mark done… (the database's "pending" rule, §6.1 step
+    // 10); a job-date change waiting shows as a chip and a box, and leaves both
+    const pending = pendingTarget(state.changes, s);
     const act = shootActions(s, plan, state.access, { pending });
-    const undo = V.undoFor(state.changes, s, meId(), state.access, new Date());
+    const shoots = planShoots(plan, state.shoots);
+    const undo = V.undoFor(state.changes, s, meId(), state.access, new Date(), { shoots, plan });
     if (act.move.ok) parts.push('<button type="button" class="sh-btn primary" data-act="move" data-shoot="' + esc(s.id) + '">Move…</button>');
     if (act.done.ok) parts.push('<button type="button" class="sh-btn ok" data-act="done" data-shoot="' + esc(s.id) + '">Mark done…</button>');
     if (undo) parts.push('<button type="button" class="sh-btn warn" data-act="undo" data-shoot="' + esc(s.id) + '" data-change="' + esc(undo.id) + '" title="' +
-      T(V.changeLine(undo, { shoots: planShoots(plan, state.shoots), plan, today: state.today }).title) + '">Undo my last change…</button>');
+      T(V.changeLine(undo, { shoots, plan, today: state.today }).title) + '">' + esc(V.undoLabel(undo, meId())) + "</button>");
     if (!act.move.ok && !pending) why = act.move.why;
   }
-  if (s.taskId && editor()) parts.push('<a class="sh-btn" href="my-tasks.html?task=' + esc(s.taskId) + '">✅ Its task in My Tasks</a>');
+  // the task is read by the office roles and by the people it is assigned to (the plan's photographer gets the heads-up)
+  const readsTask = !!(state.me && TASK_READERS.indexOf(state.me.role) !== -1) || (!!plan.photographerProfileId && plan.photographerProfileId === meId());
+  if (s.taskId && editor() && readsTask) parts.push('<a class="sh-btn" href="my-tasks.html?task=' + esc(s.taskId) + '">Open its task in My Tasks</a>');
   return (parts.length ? '<div class="sh-acts">' + parts.join("") + "</div>" : "") + (why ? '<div class="sh-ro">' + esc(why) + "</div>" : "");
 }
 
@@ -479,6 +556,8 @@ function setView(v) {
 async function follow(link) {
   if (link.view) state.view = link.view;
   if (link.month) state.month = link.month;
+  // Home's card counted only my jobs (map/shoots.js homeBadge): the page opens counting the same ones
+  if (link.mine && state.plans.some((p) => p.photographerProfileId && p.photographerProfileId === meId())) state.mine = true;
   let id = link.shoot;
   if (!id && link.task) {
     let hit = null;
@@ -511,6 +590,20 @@ async function follow(link) {
 
 function sheetOpen(on) {
   try { document.documentElement.classList.toggle("sh-sheet", !!on); } catch (e) { /* */ }
+  if (on) holdToasts();
+}
+
+/** A toast still showing as a sheet opens (the answer to the change just made) would sit over the sheet's list: it is
+    taken off and said again when the sheet closes, with what the office computer answers meanwhile (state.held). */
+function holdToasts() {
+  try {
+    document.querySelectorAll("#dcr2Toasts .dcr2-toast").forEach((t) => {
+      if (!t.classList.contains("out") && t.textContent) {
+        state.held.push({ text: t.textContent, kind: t.classList.contains("error") ? "error" : t.classList.contains("ok") ? "ok" : "info" });
+      }
+      t.remove();
+    });
+  } catch (e) { /* */ }
 }
 
 function sheetShell(title, body, foot, closeLabel) {
@@ -529,11 +622,44 @@ function setMsg(text, kind) {
   state.mv.msgKind = kind || "";
   const n = $("mvMsg");
   if (n) { n.textContent = state.mv.msg; n.className = "sh-mo-msg" + (state.mv.msgKind ? " " + state.mv.msgKind : ""); }
+  liftToasts();
 }
 
+function nowInner(s, plan) {
+  return T(plan.label) + " · now <b>" + esc(isDay(s.plannedDate) ? dayText(s.plannedDate, state.today) : "no date yet") + "</b>" +
+    (followsMilestone(s) ? " · " + esc(anchorText(s, plan)) : "");
+}
 function nowLine(s, plan) {
-  return '<p class="mv-now">' + T(plan.label) + " · now <b>" + esc(isDay(s.plannedDate) ? dayText(s.plannedDate, state.today) : "no date yet") + "</b>" +
-    (followsMilestone(s) ? " · " + esc(anchorText(s, plan)) : "") + "</p>";
+  return '<p class="mv-now" id="mvNow">' + nowInner(s, plan) + "</p>";
+}
+/** The shoot's day as the sheet says it, drawn again from the last read (a PT409 or a watch read moved it). */
+function drawNow() {
+  const n = $("mvNow");
+  const s = mvShoot(), plan = mvPlan();
+  if (n && s && plan) n.innerHTML = nowInner(s, plan);
+}
+
+/** A sheet is open and the plan was read again: when its rev moved on (or `force`: a PT409, a preview that no longer
+    matched at Apply), the sheet is drawn from the new read - the shoot's day now, the job dates, the Firm box (the
+    current flag, unless the admin ticked it himself) - with the new rev as its base, and the preview is asked again, so
+    the list beside Apply is always the one that will be sent (owner decision 2). A watch read says "changed" only when
+    the new preview differs from the one shown; a Mark done sheet keeps its base (the database's own check says so). */
+function sheetReread(force) {
+  const mv = state.mv;
+  if (!mv || (mv.busy && !force)) return;
+  const s = mvShoot(), plan = mvPlan();
+  if (!s || !plan) { setMsg(V.GONE_TEXT, "error"); mv.words = null; fillApply(); return; }
+  if (!force && plan.rev === mv.baseRev) return;
+  drawNow();
+  if (mv.type === "done" && !force) return;
+  mv.baseRev = plan.rev;
+  if (mv.type === "move") {
+    if (!mv.firmTouched) mv.firm = !!(plan.milestones[mv.milestone] && plan.milestones[mv.milestone].firm);
+    fillMove();
+  }
+  if (force) setMsg(mv.type === "done" ? V.CHANGED_DONE_TEXT : V.CHANGED_TEXT, "info");
+  if (mv.type === "done") { fillApply(); return; }
+  runPreview({ shown: force ? null : V.previewSig(mv.pv) });
 }
 
 /** Move… (owner decision 2): the three choices with "Only this shoot" preselected, the day, the preview. */
@@ -543,20 +669,25 @@ function openMove(id) {
   if (!s || !plan) return;
   const ms = followsMilestone(s) ? s.anchor : MILESTONES[0];
   state.mv = { type: "move", shootId: s.id, planId: plan.id, baseRev: plan.rev, kind: "move_one", day: null, milestone: ms, msDay: null,
-    firm: !!(plan.milestones[ms] && plan.milestones[ms].firm), start: null, seq: 0, timer: null, pv: null, words: null, pvError: "", pending: false,
-    busy: false, msg: "", msgKind: "", opener: "move" };
+    firm: !!(plan.milestones[ms] && plan.milestones[ms].firm), firmTouched: false, start: null, seq: 0, timer: null, pv: null, words: null, pvError: "",
+    pending: false, busy: false, msg: "", msgKind: "", opener: "move", reveal: false };
   const body = nowLine(s, plan) +
     '<fieldset class="mv-fs" id="mvChoices"></fieldset><div id="mvMs"></div><div id="mvDay"></div>' +
     '<div class="mv-note" id="mvNote" role="status"></div><div id="mvFirmRow"></div>' +
     '<label class="mv-lab" for="mvReason">Why (optional)</label>' +
     '<input class="mv-reason" id="mvReason" maxlength="' + REASON_MAX + '" autocomplete="off" placeholder="e.g. Rain in the forecast" />' +
     '<div class="mv-pv wait" id="mvPreview" aria-live="polite"></div>';
-  const foot = '<button type="button" class="sh-btn" data-act="mv-close">Cancel</button>' +
+  // the preview's count beside Apply (a phone shows the list below the fold: a tap brings it up, and it comes up by itself
+  // whenever a new preview arrives)
+  const foot = '<button type="button" class="mv-sum" id="mvSum" data-act="mv-see" hidden></button>' +
+    '<button type="button" class="sh-btn" data-act="mv-close">Cancel</button>' +
     '<button type="button" class="sh-btn primary" id="mvApply" data-act="mv-apply" disabled>Apply</button>';
-  $("shSheet").innerHTML = sheetShell("Move " + T(s.name), body, foot, "Close without moving");
+  state.mv.closeLabel = "Close without moving";
+  $("shSheet").innerHTML = sheetShell("Move " + T(s.name), body, foot, state.mv.closeLabel);
   fillMove();
   lock(true);
   sheetOpen(true);
+  sheetPushed();
   try { const first = document.querySelector('#mvChoices input[value="move_one"]'); if (first && first.focus) first.focus(); } catch (e) { /* */ }
 }
 
@@ -567,7 +698,8 @@ function keepFocus(boxId, draw) {
     const a = document.activeElement;
     const box = $(boxId);
     if (a && box && box.contains(a)) {
-      key = { day: a.getAttribute("data-day"), id: a.getAttribute("id"), value: a.getAttribute("value"), act: a.getAttribute("data-act"), change: a.getAttribute("data-change") };
+      key = { day: a.getAttribute("data-day"), id: a.getAttribute("id"), value: a.getAttribute("value"), act: a.getAttribute("data-act"), change: a.getAttribute("data-change"),
+        shoot: a.getAttribute("data-shoot"), cls: String(a.className || "").split(" ")[0] };
     }
   } catch (e) { key = null; }
   draw();
@@ -575,10 +707,14 @@ function keepFocus(boxId, draw) {
   try {
     const box = $(boxId);
     if (!box) return;
+    // a list row (the Agenda, By job) or a Month entry: the same shoot, in the same kind of element
+    const shootHit = () => (/^[0-9]+$/.test(String(key.shoot)) ? (key.cls && /^[a-z][a-z0-9-]*$/.test(key.cls) && box.querySelector("." + key.cls + '[data-shoot="' + key.shoot + '"]')) ||
+      box.querySelector('[data-shoot="' + key.shoot + '"]') : null);
     const hit = (key.day && box.querySelector('[data-day="' + key.day + '"]')) || (key.id && $(key.id)) ||
       (key.change && key.act && box.querySelector('[data-act="' + key.act + '"][data-change="' + key.change + '"]')) ||
-      (key.value && key.act && box.querySelector('[data-act="' + key.act + '"][value="' + key.value + '"]')) || (key.act && box.querySelector('[data-act="' + key.act + '"]'));
-    if (hit && hit.focus) hit.focus();
+      (key.value && key.act && box.querySelector('[data-act="' + key.act + '"][value="' + key.value + '"]')) || (key.act && box.querySelector('[data-act="' + key.act + '"]')) ||
+      (key.shoot && !key.act && shootHit());
+    if (hit && hit.focus && document.activeElement !== hit) hit.focus();
   } catch (e) { /* */ }
 }
 
@@ -654,6 +790,7 @@ function fillMove() {
   const plan = mvPlan();
   if (!mv || mv.type !== "move") return;
   if (!s || !plan) { setMsg(V.GONE_TEXT, "error"); fillApply(); return; }
+  drawNow();
   keepFocus("mvChoices", () => fillChoices(s, plan));
   keepFocus("mvMs", () => fillMilestones(s, plan));
   keepFocus("mvDay", () => fillDay(s, plan));
@@ -674,7 +811,9 @@ function argsNow(withReason) {
   if (mv.kind === "milestone") {
     if (!V.inBounds("milestone", mv.msDay, state.today)) return null;
     const pick = { kind: "milestone", milestone: mv.milestone, date: mv.msDay, reason };
-    if (state.access && state.access.admin) pick.firm = !!mv.firm;
+    // an admin's Firm is sent only once he ticked or unticked it himself: otherwise the database takes the job date's
+    // CURRENT flag at the request (§8.1), so an office decision made while the sheet was open is never turned back
+    if (state.access && state.access.admin && mv.firmTouched) pick.firm = !!mv.firm;
     return moveArgs(pick);
   }
   if (!V.inBounds(mv.kind, mv.day, state.today)) return null;
@@ -691,7 +830,9 @@ function schedulePreview() {
   mv.timer = setTimeout(runPreview, 300);
 }
 
-async function runPreview() {
+/** Ask photo_change_preview for what the sheet holds now. o.shown: the signature of the preview the sheet showed before a
+    watch read (sheetReread): when the new one differs, the sheet says "changed". */
+async function runPreview(o) {
   const mv = state.mv;
   if (!mv) return;
   clearTimeout(mv.timer);
@@ -704,9 +845,8 @@ async function runPreview() {
   try {
     const pv = await repo.preview(mv.planId, want.kind, want.args);
     if (state.mv !== mv || seq !== mv.seq) return;
-    mv.pv = pv;
-    mv.words = previewWords(pv, { plan: mvPlan() || plan, shoots: planShoots(mvPlan() || plan, state.shoots), today: (pv && pv.today) || state.today });
-    mv.pvError = "";
+    setPreview(mv, pv, plan);
+    if (o && o.shown && V.previewSig(pv) !== o.shown) setMsg(V.CHANGED_TEXT, "info");
   } catch (e) {
     if (state.mv !== mv || seq !== mv.seq) return;
     mv.pv = null;
@@ -715,6 +855,15 @@ async function runPreview() {
   }
   mv.pending = false;
   fillPreview();
+}
+
+/** The preview the sheet shows from now on (and brings into view when it arrives: a phone has it below the fold). */
+function setPreview(mv, pv, plan) {
+  const p = mvPlan() || plan;
+  mv.pv = pv;
+  mv.words = previewWords(pv, { plan: p, shoots: planShoots(p, state.shoots), today: (pv && pv.today) || state.today });
+  mv.pvError = "";
+  mv.reveal = mv.type === "move";
 }
 
 function stayWhy(st) {
@@ -732,8 +881,14 @@ function previewHtml(mv) {
   if (w.refused) return '<div class="no">' + esc(w.refused.text) + "</div>";
   const out = [];
   const nothing = !w.moved.length && !w.passed.length;
-  out.push('<div class="sum">' + esc(mv.type === "move" && mv.kind === "milestone" && nothing ? "No shoot moves - only the job date changes" : w.summary) +
+  const msMove = mv.type === "move" && mv.kind === "milestone";
+  out.push('<div class="sum">' + esc(msMove && nothing ? "No shoot moves - only the job date changes" : w.summary) +
     (mv.pending ? " · checking again…" : "") + "</div>");
+  // the job date's own move first ("Framing start: Thu Nov 19 → Mon Nov 23"), with weekday dates like the shoots below
+  if (msMove) {
+    const line = V.milestoneMove(mvPlan(), mv.milestone, (mv.pv && mv.pv.args && isDay(mv.pv.args.date) && mv.pv.args.date) || mv.msDay, state.today);
+    if (line) out.push('<p class="ms-move"><b>' + esc(line.split(": ")[0]) + '</b> <span class="from-to">' + esc(line.slice(line.indexOf(": ") + 2)) + "</span></p>");
+  }
   if (w.office) out.push('<div class="office">' + esc(V.officeLine(mv.kind === "milestone" ? mv.milestone : (mvShoot() || {}).anchor)) + "</div>");
   if (w.done) out.push("<p>" + T(w.done.text) + "</p>");
   if (w.moved.length) {
@@ -758,6 +913,19 @@ function fillApply() {
   b.disabled = !ok || mv.busy;
   const label = mv.type === "done" ? "Mark done" : mv.type === "undo" ? "Undo" : V.applyLabel(mv.words);
   b.textContent = mv.busy ? "Sending…" : label;
+  // while a change is on its way, closing the sheet does not stop it - the buttons say so
+  const closeWords = mv.type === "undo" ? "Keep it" : "Cancel";
+  document.querySelectorAll('#shMo .sh-mo-ft [data-act="mv-close"]').forEach((c) => { c.textContent = mv.busy ? V.CLOSE_SENDING : closeWords; });
+  const x = document.querySelector('#shMo .sh-x[data-act="mv-close"]');
+  if (x) x.setAttribute("aria-label", mv.busy ? "Close - the change is still being sent" : mv.closeLabel || "Close");
+  const sum = $("mvSum");
+  if (sum) {
+    const w = mv.words;
+    const t = mv.type === "move" && w && w.ok && !mv.pvError ? w.summary + " · see the list" : "";
+    sum.hidden = !t;
+    if (sum.textContent !== t) sum.textContent = t;
+  }
+  liftToasts();
 }
 
 function fillPreview() {
@@ -767,6 +935,25 @@ function fillPreview() {
   n.innerHTML = previewHtml(mv);
   n.className = "mv-pv" + (mv.pending || !mv.words ? " wait" : "");
   fillApply();
+  // a new preview: brought into view (on a phone the choices, the days and Why fill the screen above it)
+  if (mv.reveal && mv.words && !mv.pending) {
+    mv.reveal = false;
+    revealPreview();
+  }
+}
+
+function revealPreview() {
+  try { const n = $("mvPreview"); if (n && n.scrollIntoView) n.scrollIntoView({ block: "nearest" }); } catch (e) { /* */ }
+}
+
+/** The toasts stand above the open sheet's buttons and its message, however tall they are (a phone: the footer grows
+    with a refusal or "changed"), never over them. */
+function liftToasts() {
+  try {
+    const ft = document.querySelector("#shMo .sh-mo-ft");
+    const h = ft && ft.getBoundingClientRect ? Math.ceil(ft.getBoundingClientRect().height || 0) : 0;
+    if (h > 0 && document.documentElement.style && document.documentElement.style.setProperty) document.documentElement.style.setProperty("--sh-foot", h + "px");
+  } catch (e) { /* */ }
 }
 
 /** Mark done… : an optional note; the sheet is the confirm. */
@@ -783,10 +970,12 @@ function openDone(id) {
     '<p class="mv-now" style="margin-top:10px">' + esc("The office computer marks it done and closes its task on My Tasks. A shoot marked done is not undone here.") + "</p>";
   const foot = '<button type="button" class="sh-btn" data-act="mv-close">Cancel</button>' +
     '<button type="button" class="sh-btn ok" id="mvApply" data-act="mv-apply">Mark done</button>';
-  $("shSheet").innerHTML = sheetShell("Mark " + T(s.name) + " done", body, foot, "Close without marking it done");
+  state.mv.closeLabel = "Close without marking it done";
+  $("shSheet").innerHTML = sheetShell("Mark " + T(s.name) + " done", body, foot, state.mv.closeLabel);
   fillApply();
   lock(true);
   sheetOpen(true);
+  sheetPushed();
   try { const t = $("dnNote"); if (t && t.focus) t.focus(); } catch (e) { /* */ }
 }
 
@@ -803,22 +992,39 @@ function openUndo(id, changeId) {
     '<div class="mv-pv wait" id="mvPreview" aria-live="polite"></div>';
   const foot = '<button type="button" class="sh-btn" data-act="mv-close">Keep it</button>' +
     '<button type="button" class="sh-btn warn" id="mvApply" data-act="mv-apply" disabled>Undo</button>';
-  $("shSheet").innerHTML = sheetShell("Undo this change?", body, foot, "Close without undoing");
+  state.mv.closeLabel = "Close without undoing";
+  $("shSheet").innerHTML = sheetShell("Undo this change?", body, foot, state.mv.closeLabel);
   fillPreview();
   lock(true);
   sheetOpen(true);
+  sheetPushed();
   runPreview();
 }
 
+/** A sheet opened on a phone has its own history entry: the phone's Back closes the sheet and leaves the shoot (and the
+    page) where they were. */
+function sheetPushed() {
+  const mv = state.mv;
+  if (!mv || wide()) return;
+  try {
+    if (W.history && W.history.pushState) { W.history.pushState({ sh: state.sel || 0, sheet: 1 }, ""); mv.pushed = true; }
+  } catch (e) { /* not important */ }
+}
+
 /** Close the sheet. The keyboard goes back to the button that opened it (Move…, Mark done…, Undo…) while it is still
-    there, else to the shoot's title (a change sent: the shoot is drawn again without that button). */
-function closeSheet() {
+    there, else to the shoot's title (a change sent: the shoot is drawn again without that button). A sheet with its own
+    history entry takes it off (fromHistory: the phone's Back did). */
+function closeSheet(fromHistory) {
   const mv = state.mv;
   if (mv) clearTimeout(mv.timer);
   state.mv = null;
   if ($("shSheet")) $("shSheet").innerHTML = "";
   lock(state.open && !wide());
   sheetOpen(false);
+  if (mv && mv.pushed && !fromHistory) {
+    state.skipPop += 1;                         // onPop: that entry going is not a Back
+    try { W.history.back(); } catch (e) { state.skipPop -= 1; }
+  }
   try {
     const back = mv && mv.opener ? document.querySelector('#shDScroll [data-act="' + mv.opener + '"]') : null;
     const t = back || $("shDTitle");
@@ -837,7 +1043,11 @@ function sheetStops() {
     !n.disabled && n.getClientRects().length && !(n.type === "radio" && !n.checked && mo.querySelector('input[type=radio][name="' + n.name + '"]:checked')));
 }
 
-/** Apply / Mark done / Undo: photo_change_request with the rev this screen read. */
+/** Apply / Mark done / Undo: photo_change_request with the rev this screen read. What is sent is what the sheet shows: the
+    preview is asked once more first, and a different answer is shown instead of being sent (the database's own
+    "changed" check looks at the named shoot only - another shoot of the plan may have moved meanwhile, §6.1 step 9);
+    the queued change's own preview is compared again after, for the moment in between. The sheet may be closed while it
+    is on its way ("Close (still sending)"): the answer is then a toast. */
 async function apply() {
   const mv = state.mv;
   if (!mv || mv.busy || mv.pending) return;
@@ -847,30 +1057,62 @@ async function apply() {
   mv.busy = true;
   setMsg("", "");
   fillApply();
-  try {
-    const r = await repo.request(mv.planId, want.kind, want.args, mv.baseRev);
-    if (r && r.id !== null && r.id !== undefined && state.seen[r.id] === undefined) state.seen[r.id] = isOpenChange(r) ? r.state : "new";
-    if (state.mv === mv) closeSheet();
-    const t = V.sentText(r, state.pc);
-    toast(t.text, t.kind === "ok" ? "ok" : "info");
-    await load({ quiet: true });
-  } catch (e) {
-    if (state.mv !== mv) return;
-    mv.busy = false;
-    if (e && e.reason === "changed") {
-      await load({ quiet: true });
-      if (state.mv !== mv) return;
-      const plan = mvPlan();
-      if (plan) mv.baseRev = plan.rev;
-      if (mv.type === "move") fillMove();
-      setMsg(V.CHANGED_TEXT, "info");
-      if (mv.type === "done") { fillApply(); return; }
-      runPreview();
+  const problem = (e) => (e && e.retryable ? refusalText("offline") : V.requestProblem(e, { milestone: want.args && want.args.milestone, where: mv.type === "undo" ? "undo" : "request" }));
+  const changedText = mv.type === "done" ? V.CHANGED_DONE_TEXT : V.CHANGED_TEXT;
+  if (mv.type !== "done") {
+    let fresh = null;
+    try {
+      const look = argsNow(false) || want;
+      fresh = await repo.preview(mv.planId, look.kind, look.args);
+    } catch (e) {
+      mv.busy = false;                                        // nothing was sent
+      if (state.mv !== mv) { toast("Not sent: " + problem(e), "error"); return; }
+      setMsg(problem(e), "error");
+      fillApply();
       return;
     }
-    setMsg(e && e.retryable ? refusalText("offline") : V.requestProblem(e, { milestone: want.args && want.args.milestone, where: mv.type === "undo" ? "undo" : "request" }), "error");
-    fillApply();
+    if (V.previewSig(fresh) !== V.previewSig(mv.pv)) {
+      mv.busy = false;
+      if (state.mv !== mv) { toast(V.NOT_SENT_CHANGED, "error"); return; }
+      setPreview(mv, fresh, mvPlan());
+      setMsg(changedText, "info");
+      fillPreview();
+      await load({ quiet: true, forceSheet: true });         // the whole sheet from the new read, its new rev
+      return;
+    }
   }
+  let r;
+  try {
+    r = await repo.request(mv.planId, want.kind, want.args, mv.baseRev);
+  } catch (e) {
+    mv.busy = false;
+    const closed = state.mv !== mv;
+    if (e && e.reason === "changed") {
+      if (closed) { toast(V.NOT_SENT_CHANGED, "error"); await load({ quiet: true }); return; }
+      await load({ quiet: true, forceSheet: true });
+      if (state.mv === mv && !mv.msg) setMsg(changedText, "info");   // the read failed: still said
+      if (state.mv === mv) fillApply();
+      return;
+    }
+    // no answer: it may have reached the database - a second press sends the same key, never a second change
+    const t = e && e.retryable ? V.NO_ANSWER_TEXT : problem(e);
+    if (closed) { toast(t, "error"); return; }
+    setMsg(t, "error");
+    fillApply();
+    return;
+  }
+  if (r && r.id !== null && r.id !== undefined) { state.seen[r.id] = r.state || r.status || "new"; writeSeen(meId()); }
+  if (state.mv === mv) closeSheet();
+  const queued = mv.type !== "done" && r && r.preview && typeof r.preview === "object" ? r.preview : null;
+  if (queued && mv.pv && V.previewSig(queued) !== V.previewSig(mv.pv)) {
+    const plan = planOf(mv.planId);
+    const d = V.sentDiffers(previewWords(queued, { plan, shoots: plan ? planShoots(plan, state.shoots) : [], today: queued.today || state.today }));
+    toast(d.text, "error");
+  } else {
+    const t = V.sentText(r, state.pc);
+    toast(t.text, t.kind === "ok" ? "ok" : t.kind === "error" ? "error" : "info");
+  }
+  await load({ quiet: true });
 }
 
 async function cancelChange(id) {
@@ -899,6 +1141,7 @@ function onClick(ev) {
   const mv = state.mv;
   if (act === "mv-close") { closeSheet(); return; }
   if (act === "mv-apply") { apply(); return; }
+  if (act === "mv-see") { revealPreview(); return; }
   if (act === "mv-repreview") { runPreview(); return; }
   if (act === "pick" && mv) {
     const d = a.getAttribute("data-day");
@@ -974,12 +1217,14 @@ function onChange(ev) {
   } else if (act === "mv-ms") {
     mv.milestone = t.value;
     mv.firm = !!(plan.milestones[mv.milestone] && plan.milestones[mv.milestone].firm);
+    mv.firmTouched = false;
     mv.msDay = null;
     mv.start = null;
     fillMove();
     schedulePreview();
   } else if (act === "mv-firm") {
     mv.firm = !!t.checked;
+    mv.firmTouched = true;
     schedulePreview();
   } else if (act === "mv-date") {
     const d = String(t.value || "");
@@ -1008,8 +1253,13 @@ function onKey(e) {
 }
 
 function onPop() {
+  if (state.skipPop > 0) { state.skipPop -= 1; return; }        // a sheet's own entry, taken off as it closed
   const link = V.parseLink(W.location ? W.location.search : "");
-  if (state.mv) closeSheet();
+  if (state.mv) {
+    const own = !!state.mv.pushed;
+    closeSheet(true);
+    if (own) return;                                            // the phone's Back closed the sheet only
+  }
   if (!link.shoot && state.open && !wide()) { closeShoot(true); return; }
   if (link.shoot && shootOf(link.shoot) && link.shoot !== state.sel) { state.sel = link.shoot; state.open = true; render(); }
 }
@@ -1035,14 +1285,50 @@ function wire() {
     state every minute (it is not a table) and when the page is shown again; and every 20 s while a change of mine waits
     (a channel that dropped never leaves it waiting on screen). */
 async function watch() {
-  try { state.stopWatch = await repo.watchSchedule(() => load({ quiet: true })); } catch (e) { /* the polls below still read */ }
+  try { state.stopWatch = await repo.watchSchedule(onWatch); } catch (e) { /* the polls below still read */ }
   state.timers.push(setInterval(() => {
     repo.pcStatus().then((pc) => { state.pc = pc; renderHead(); }).catch(() => null);
   }, 60000));
   state.timers.push(setInterval(() => {
     if (state.changes.some((c) => c.requestedBy === meId() && isOpenChange(c))) load({ quiet: true });
   }, 20000));
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load({ quiet: true }); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") onWatch({ tables: ["photo_team"], join: false }); });
+}
+
+/** A watch read (repo/photo.js watchSchedule: {tables, join}): a photo team change (or a join, or the page shown again)
+    reads photo_my_access() again first - the gates follow the team without a reload - then the mirror. */
+async function onWatch(what) {
+  const w = what || {};
+  if (w.join || (Array.isArray(w.tables) && w.tables.indexOf("photo_team") !== -1)) {
+    await refreshAccess();
+    if (!state.access || !state.access.ready || !state.access.canRead) return;
+  }
+  await load({ quiet: true });
+}
+
+/** photo_my_access() again: Move…, Mark done… and Undo… come and go with the Photographer tick, the top bar's hint
+    follows, an open sheet closes when the person may no longer change the schedule, and someone taken off the team is
+    told so ("Not for your account") and nothing more is read. A failed read keeps what the page had. */
+async function refreshAccess() {
+  let a;
+  try { a = await repo.myAccess(); } catch (e) { return; }
+  const was = state.access;
+  state.access = a;
+  if (rememberPhotoAccess(state.me, a)) {
+    try { if (typeof D().topbar === "function") D().topbar("shoots"); } catch (e) { /* */ }
+  }
+  if (state.mv && !a.canEdit) closeSheet();
+  if (!a.ready || !a.canRead) {
+    stop();
+    state.plans = [];
+    state.shoots = [];
+    state.changes = [];
+    state.sel = null;
+    state.open = false;
+    lock(false);
+  }
+  if (!was || was.canEdit !== a.canEdit || was.canRead !== a.canRead || was.ready !== a.ready || was.admin !== a.admin ||
+    was.photographer !== a.photographer || was.marketing !== a.marketing) render();
 }
 
 /** Everything after signing in: the gates, the first read, the address, the watch. o: {search (the address's query,
@@ -1096,4 +1382,4 @@ function reset() {
 }
 
 export const _test = { state, reset, init, load, render, openShoot, closeShoot, openMove, openDone, openUndo, closeSheet, apply, runPreview, argsNow,
-  previewHtml, detailHtml: (id) => { const s = shootOf(id); return s ? detailHtml(s, planOf(s.planId)) : ""; }, follow, setView, stop };
+  previewHtml, detailHtml: (id) => { const s = shootOf(id); return s ? detailHtml(s, planOf(s.planId)) : ""; }, follow, setView, stop, onWatch, onPop };

@@ -22,7 +22,8 @@
    * photo_pc_status's line; the Realtime watch joining the four tables' private channels and reading once;
    * the pages' parts: a My Tasks task's shoot (shootForTask: the team only); the Access tab's Photo team payloads
      (map/access.js photoPayload) through set_photo_team - the e-mail tidied, Marketing off forgets it, a stale row in the
-     card's words, both ticks off removes the row;
+     card's words, both ticks off removes the row; an unsaved line's old copy after a save of another line moved the
+     default (the review of P3): sent at the version it began from, refused PT409;
    * drift: the demo database's columns, RPC arguments and codes equal the migration's, and its port of the shift rule
      answers the shared case file as app.photo_shift does.
    Made-up people and jobs only. */
@@ -474,6 +475,38 @@ export async function run(h) {
       out = await photo.setTeam(x.id, pay.next, pay.version);
       same(out.removed, true, "off the team");
       ok(V.officeLine("framing_start").startsWith("This job date (Framing start) is Firm"), "the Move sheet's words load");
+    });
+
+    await check("P10 photo: the Access tab's unsaved line keeps the version it began from - a save of another line that moved the default (the real set_photo_team raises the old default's version) makes its old copy refused PT409, never saved over", async () => {
+      const A = await site("map/access.js");
+      await as("admin");
+      let team = await photo.team();
+      const def0 = team.find((r) => r.photographer && r.defaultPhotographer);
+      const other = team.find((r) => r.photographer && !r.defaultPhotographer);
+      ok(def0 && other, "a default photographer and another photographer");
+      // the admin ticks Marketing on the default's line and types an e-mail - not saved
+      let edit = A.photoTick(A.photoStateOf(def0), "marketing", true, { id: def0.profileId, team });
+      edit = A.photoTick(edit, "googleEmail", "cam.example@example.test", { id: def0.profileId, team });
+      same(edit.base, def0.version, "the edit keeps the version it began from");
+      // then makes the other photographer the default and saves that line
+      const otherPerson = { id: other.profileId, name: "Dee Example", active: true, row: other };
+      const movePay = A.photoPayload(otherPerson, A.photoTick(A.photoStateOf(other), "isDefault", true, { id: other.profileId, team }), team);
+      const moved = await photo.setTeam(other.profileId, movePay.next, movePay.version);
+      same(moved.defaultProfileId, other.profileId, "the default moved");
+      team = await photo.team();
+      const def1 = team.find((r) => r.profileId === def0.profileId);
+      ok(def1.version > def0.version && !def1.defaultPhotographer, "the old default's row moved on (version " + def0.version + " -> " + def1.version + ")");
+      const person = { id: def0.profileId, name: "Cam Example", active: true, row: def1 };
+      same(A.photoStale(person, edit), true, "the card sees the old copy as stale (it is put back, PHOTO_STALE)");
+      const pay = A.photoPayload(person, edit, team);
+      same([pay.version, pay.next.isDefault], [def0.version, true], "a save of it would send the version it began from");
+      same(A.photoSaveProblem(await refused(() => photo.setTeam(def0.profileId, pay.next, pay.version), "PT409", "the old copy")), A.PHOTO_CHANGED, "refused, in the card's words");
+      team = await photo.team();
+      same(team.find((r) => r.defaultPhotographer).profileId, other.profileId, "the default the admin just saved stays");
+      // as it was: the default back
+      const back = team.find((r) => r.profileId === def0.profileId);
+      await photo.setTeam(def0.profileId, { photographer: true, marketing: !!back.marketing, isDefault: true, googleEmail: back.googleEmail }, back.version);
+      same((await photo.team()).find((r) => r.defaultPhotographer).profileId, def0.profileId, "the default back");
     });
 
     await check("P10 photo: drift - the demo database (tools/fake/p10-photo.js) has the real columns, the RPCs' arguments and the migration's codes, and its port of the shift rule answers the shared case file as app.photo_shift", async () => {

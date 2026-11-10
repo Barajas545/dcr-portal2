@@ -47,12 +47,15 @@ test("shoots.js: reads only through repo/photo.js (never a table write), the gat
   assert.match(s, /kind: "move_one", day: null/, "Only this shoot is preselected");
   assert.match(s, /repo\.request\(mv\.planId, want\.kind, want\.args, mv\.baseRev\)/, "the request carries the rev the screen read");
   assert.match(s, /baseRev: plan\.rev/);
-  assert.match(s, /e\.reason === "changed"[\s\S]{0,200}mv\.baseRev = plan\.rev[\s\S]{0,200}setMsg\(V\.CHANGED_TEXT, "info"\)[\s\S]{0,120}runPreview\(\)/, "changed: read again, new rev, say so, preview again");
+  assert.match(s, /e\.reason === "changed"[\s\S]{0,200}await load\(\{ quiet: true, forceSheet: true \}\)/, "changed: read again and draw the sheet from it");
+  assert.match(s, /function sheetReread\(force\) \{[\s\S]*?mv\.baseRev = plan\.rev;[\s\S]*?if \(force\) setMsg\(mv\.type === "done" \? V\.CHANGED_DONE_TEXT : V\.CHANGED_TEXT, "info"\);[\s\S]*?runPreview\(/,
+    "the sheet drawn again: new rev, say so, preview again");
+  assert.match(s, /if \(ok\) sheetReread\(!!opt\.forceSheet\);/, "every read of the mirror while a sheet is open draws it again when its plan moved on");
   assert.match(s, /mv\.timer = setTimeout\(runPreview, 300\)/, "the preview is debounced");
   assert.match(s, /seq !== mv\.seq\) return;/, "an older preview's answer is dropped");
   for (const m of s.matchAll(/\.innerHTML = ([^;]+);/g)) {
     const x = m[1].trim();
-    assert.ok(/^(note \+ )?(emptyHtml|sheetShell|previewHtml|detailHtml)\(|^note \+ \(state\.view|^'<|^"|^esc\(|^""$|^head \+/.test(x) || /^'<legend>/.test(x), "innerHTML = " + x.slice(0, 90));
+    assert.ok(/^(note \+ )?(emptyHtml|sheetShell|previewHtml|detailHtml|nowInner)\(|^note \+ \(state\.view|^'<|^"|^esc\(|^""$|^head \+|^html$/.test(x) || /^'<legend>/.test(x), "innerHTML = " + x.slice(0, 90));
   }
   assert.ok(!/insertAdjacentHTML|document\.write|outerHTML =/.test(s));
   // marketing and anyone who may not change the schedule get no action button (the database decides; this hides)
@@ -106,7 +109,7 @@ test("Home: the 📷 Shoot schedule card for admins and the photo team (photo_my
   assert.match(dash, /photoCard\(p, homeOpts\);/);
   const tasks = code(read("js/pages/my-tasks.js"));
   assert.match(tasks, /import\("\.\.\/repo\/photo\.js"\)\.then\(function \(m\) \{ return m\.shootForTask\(t\.id\); \}\)/);
-  assert.match(tasks, /'<a class="mt-photo" href="shoots\.html\?shoot=' \+ encodeURIComponent\(hit\.id\) \+ '">📅 Open in shoot schedule<\/a>'/);
+  assert.match(tasks, /'<a class="mt-photo" href="shoots\.html\?shoot=' \+ encodeURIComponent\(hit\.id\) \+ '">📷 Open in shoot schedule<\/a>'/);
   assert.match(tasks, /return !!\(t && t\.photo && S\.me && \(showsShoots\(S\.me\) \|\| photoHint\(S\.me\) === null\)\);/);
   assert.ok(read("my-tasks.html").includes(".mt-shootslot:not([hidden]){display:contents;}"));
 });
@@ -138,11 +141,11 @@ test("the office computer's line: nothing while it runs; off, paused and not see
 });
 
 test("the address: ?shoot=, ?plan=, ?task=, ?view=, ?month= (anything else ignored); the page's own links", () => {
-  assert.deepEqual(V.parseLink("?shoot=12"), { shoot: 12, plan: null, task: null, view: null, month: null });
-  assert.deepEqual(V.parseLink("?plan=3&view=month&month=2026-12"), { shoot: null, plan: 3, task: null, view: "month", month: "2026-12" });
-  assert.deepEqual(V.parseLink("?task=88"), { shoot: null, plan: null, task: 88, view: null, month: null });
-  assert.deepEqual(V.parseLink("?shoot=0&plan=-1&task=x&view=evil&month=2026-13"), { shoot: null, plan: null, task: null, view: null, month: null });
-  assert.deepEqual(V.parseLink("?shoot=1e3"), { shoot: null, plan: null, task: null, view: null, month: null });
+  assert.deepEqual(V.parseLink("?shoot=12"), { shoot: 12, plan: null, task: null, view: null, month: null, mine: false });
+  assert.deepEqual(V.parseLink("?plan=3&view=month&month=2026-12"), { shoot: null, plan: 3, task: null, view: "month", month: "2026-12", mine: false });
+  assert.deepEqual(V.parseLink("?task=88"), { shoot: null, plan: null, task: 88, view: null, month: null, mine: false });
+  assert.deepEqual(V.parseLink("?shoot=0&plan=-1&task=x&view=evil&month=2026-13"), { shoot: null, plan: null, task: null, view: null, month: null, mine: false });
+  assert.deepEqual(V.parseLink("?shoot=1e3"), { shoot: null, plan: null, task: null, view: null, month: null, mine: false });
   assert.equal(V.linkFor({ shoot: 12 }), "shoots.html?shoot=12");
   assert.equal(V.linkFor({ plan: 3, view: "job" }), "shoots.html?plan=3&view=job");
   assert.equal(V.linkFor({ view: "month", month: "2026-11" }), "shoots.html?view=month&month=2026-11");
@@ -238,14 +241,14 @@ test("after Apply, and when the office computer answered: the words", () => {
   assert.deepEqual(V.sentText({ id: 1, status: "new" }, { online: true, paused: false }), { text: "Sent - the office computer applies it in a minute or two.", kind: "ok" });
   assert.deepEqual(V.sentText({ id: 1, status: "new" }, { online: false, paused: false, minutesAgo: 90, lastSeen: "x" }), { text: "Sent - it waits until the office computer is back on.", kind: "info" });
   assert.equal(V.sentText({ needsOffice: true }, null).text, "Sent - the office computer passes it to the office to approve.");
-  assert.equal(V.sentText({ again: true }, null).text, "That change was sent already - it is on the shoot now.");
+  assert.equal(V.sentText({ again: true, status: "new", state: "new" }, null).text, "That change was sent already - it waits for the office computer.");
   assert.deepEqual(V.finishedText(ch()), { text: "Applied - 1 shoot moved", kind: "ok" });
   assert.deepEqual(V.finishedText(ch({ result: { outcome: "suggested", words: "Sent to the office: Framing start is Firm" } })),
     { text: "Sent to the office to approve: Framing start is Firm", kind: "info" }, "said once, not \"Sent to the office to approve: Sent to the office: …\"");
   assert.deepEqual(V.finishedText(ch({ status: "refused", result: null, error: { code: "past", message: "x" } })), { text: "Not done: That day has passed.", kind: "error" });
   assert.equal(V.finishedText(ch({ status: "new", result: null, requested_at: "2026-11-09T17:00:00Z" })), null, "still waiting");
   assert.equal(V.requestProblem({ reason: "changed" }), V.CHANGED_TEXT);
-  assert.equal(V.CHANGED_TEXT, "Someone changed this plan meanwhile - here is the new preview.");
+  assert.equal(V.CHANGED_TEXT, "Someone changed this job's shoots meanwhile - here is the new preview.");
   assert.equal(V.requestProblem({ reason: "pending" }), "A change of that shoot is already waiting for the office computer.");
   assert.equal(V.requestProblem({ reason: "firm" }, { milestone: "framing_start" }), "Framing start is Firm - only the office can set it back (move it instead and the office is asked).");
 });
@@ -262,9 +265,9 @@ test("the lists: a row's facts, a plan's header, Home's badge (late first, a pho
   const plans = [Object.assign({}, PLAN, { photographerProfileId: "u-pat" }), M.toPlan({ id: 2, status: "active" }), M.toPlan({ id: 3, status: "archived" })];
   const shoots = [shoot({ id: 1, planned_date: "2026-11-02" }), shoot({ id: 2, plan_id: 2, planned_date: "2026-11-01" }), shoot({ id: 3, plan_id: 2, planned_date: TODAY }),
     shoot({ id: 4, plan_id: 3, planned_date: "2026-10-01" })];
-  assert.deepEqual(V.homeBadge(plans, shoots, TODAY), { cls: "warn", text: "2 late", title: "2 shoots past their day and grace" });
+  assert.deepEqual(V.homeBadge(plans, shoots, TODAY), { cls: "warn", text: "2 late", title: "2 shoots past their day and grace on every job", mine: false });
   assert.equal(V.homeBadge(plans, shoots, TODAY, { mine: "u-pat" }).text, "1 late", "the photographer's own plan");
-  assert.deepEqual(V.homeBadge(plans, shoots.slice(2), TODAY), { cls: "", text: "1 today", title: "1 shoot today" });
+  assert.deepEqual(V.homeBadge(plans, shoots.slice(2), TODAY), { cls: "", text: "1 today", title: "1 shoot today on every job", mine: false });
   assert.equal(V.homeBadge(plans, [], TODAY), null);
   assert.equal(V.monthInRange("2027-12", TODAY), true);
   assert.equal(V.monthInRange("2028-01", TODAY), false);

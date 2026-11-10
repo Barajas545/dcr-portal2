@@ -25,7 +25,7 @@
       for the office computer", then Applied heard through the Realtime watch - and the shoots that moved in the database
       are exactly the preview's, on the preview's days; the job date moved on a Firm date: "Send to the office",
       answered "Sent to the office to approve"; PT409 (the office moved the same shoot meanwhile) -> "Someone changed
-      this plan meanwhile - here is the new preview", then Apply with the new rev; Mark done; Undo; the office computer
+      this job's shoots meanwhile - here is the new preview", then Apply with the new rev; Mark done; Undo; the office computer
       off (the header says so) and a change cancelled while new; My Tasks' "Open in shoot schedule"; a reminder's link
       (?shoot=) opened cold, and one to a shoot that is gone.
    2. Marketing reads only; a manager on no team is told no.
@@ -535,7 +535,8 @@ async function main() {
       await key(ph, "Escape");
       await ph.until(FINISHED, 4000);
       const said = await ph.eval("Array.from(document.querySelectorAll('.dcr2-toast')).map((t) => t.textContent).find((t) => /^Sent to the office to approve/.test(t))");
-      check("... it is said once the sheet closes, in plain words (Sent to the office to approve: Framing start is Firm)", said === "Sent to the office to approve: Framing start is Firm", said);
+      check("... it is said once the sheet closes, in plain words and named (Sent to the office to approve - Framing start moved to … (A000T9 Sample house): Framing start is Firm)",
+        /^Sent to the office to approve - Framing start moved to [A-Z][a-z]{2} [A-Z][a-z]{2} \d+(, \d{4})? \(A000T9 Sample house\): Framing start is Firm$/.test(said || ""), said);
       await ph.eval("document.getElementById('shBack').click(); true");
       await sleep(300);
       await row(ph, "Framing progress #2", "A000T9");
@@ -556,7 +557,7 @@ async function main() {
       await ph.eval("(() => { const R = DCR2Demo.engine.rows; const s = R.photo_shoots.find(x => x.id === " + id + "); const p = R.photo_plans.find(x => x.id === s.plan_id); " +
         "p.rev += 7; s.rev = p.rev; const d = new Date(Date.parse(s.planned_date + 'T12:00:00Z') + 9 * 86400000).toISOString().slice(0, 10); s.planned_date = d; s.fixed_date = d; return true; })()");
       await clickSel(ph, "#mvApply");
-      await ph.until("document.getElementById('mvMsg').textContent === 'Someone changed this plan meanwhile - here is the new preview.'", 8000);
+      await ph.until("document.getElementById('mvMsg').textContent === " + JSON.stringify("Someone changed this job's shoots meanwhile - here is the new preview."), 8000);
       await ph.until(PREVIEWED, 8000);
       check("PT409: said in plain words, the new preview shown, nothing queued", /→/.test(await text(ph, "#mvPreview")) &&
         (await db(ph, "R.photo_changes.filter(c => c.target_key === 'drone-check' && c.status === 'new').length")) === 0);

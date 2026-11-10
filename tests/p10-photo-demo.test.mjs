@@ -5,7 +5,7 @@
 // * a photographer: the Agenda, a shoot's sheet, Move… with the three choices ("Only this shoot" preselected), a day from
 //   the strip, the preview listing every shoot that moves (from -> to) and what stays, Apply with the rev the screen read,
 //   "Waiting for the office computer" with Cancel, the office computer's answer read again: Applied, the history entry;
-// * PT409: someone changed the plan meanwhile -> "Someone changed this plan meanwhile - here is the new preview", the new
+// * PT409: someone changed the plan meanwhile -> "Someone changed this job's shoots meanwhile - here is the new preview", the new
 //   rev, then Apply goes; never a silent overwrite;
 // * a Firm job date by a photographer: the sheet says the office approves, Apply reads "Send to the office", the office
 //   computer answers "suggested";
@@ -147,7 +147,7 @@ test("a photographer: the Agenda, a shoot, Move… (three choices, Only this sho
   await page._test.load({ quiet: true });
   const moved = S.shoots.find((s) => s.id === bf.id);
   assert.equal(moved.plannedDate, day);
-  assert.ok(toasts.some((t) => /^Applied - \d+ shoots? moved/.test(t[0])), JSON.stringify(toasts));
+  assert.ok(toasts.some((t) => /^Applied - Move Before framing to .* - and the later ones \(A000T9 Sample house\) \(\d+ shoots? moved\)$/.test(t[0])), JSON.stringify(toasts));
   assert.match(text("shDScroll"), /Your recent changes/);
   assert.match(text("shDScroll"), /Applied/);
   assert.match(text("shDScroll"), /by Jordan on the shoot schedule/);
@@ -176,7 +176,7 @@ test("PT409: someone changed the plan meanwhile - the page says so, shows the ne
   const before = E.rows.photo_changes.length;
   click("#mvApply");
   await until(() => S.mv && S.mv.msg === V.CHANGED_TEXT, 4000, "changed said");
-  assert.equal(text("mvMsg"), "Someone changed this plan meanwhile - here is the new preview.");
+  assert.equal(text("mvMsg"), "Someone changed this job's shoots meanwhile - here is the new preview.");
   assert.equal(E.rows.photo_changes.length, before, "nothing was queued");
   await ready();
   assert.ok(S.mv.baseRev > rev0, "the new rev the screen read");

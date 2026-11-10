@@ -22,8 +22,8 @@ import * as employees from "../repo/employees.js";
 import { scheduleText, hm, hoursText } from "../map/timesheets.js";
 import {
   offers, tick, diff, stateOf, saveProblem, photoPeople, photoGate, photoTick, photoStateOf, photoPayload, photoSummary, photoSaveProblem,
-  photoChanged, PHOTO_TITLE, PHOTO_SUB, PHOTO_ADMINS_NOTE, PHOTOGRAPHER_TIP, DEFAULT_TIP, MARKETING_TIP, EMAIL_TIP, PHOTO_CHANGED,
-  PHOTO_NOT_READY, PHOTO_NOT_READY_TEXT,
+  photoChanged, photoStale, PHOTO_TITLE, PHOTO_SUB, PHOTO_ADMINS_NOTE, PHOTOGRAPHER_TIP, DEFAULT_TIP, MARKETING_TIP, EMAIL_TIP, PHOTO_CHANGED,
+  PHOTO_STALE, PHOTO_NOT_READY, PHOTO_NOT_READY_TEXT,
 } from "../map/access.js";
 import * as photo from "../repo/photo.js";
 import { avatarInitials } from "./ts-shared.js";
@@ -415,6 +415,14 @@ async function loadPhoto(opts) {
     P.loaded = true;
     P.error = "";
     if (opts && opts.keepEdits === false) P.edits = {};
+    // an unsaved line whose row changed since its first tick (a save of another line moved the default off it, or
+    // someone saved it elsewhere): its old copy is put back and the line says so - never saved at the new version
+    Object.keys(P.edits).forEach(function (id) {
+      const x = photoPerson(id);
+      if (x && !photoStale(x, P.edits[id])) return;
+      delete P.edits[id];
+      if (x) P.msgs[id] = PHOTO_STALE;
+    });
   } catch (e) {
     if (e && e.missing) P.ready = false;
     else P.error = errorText(e);

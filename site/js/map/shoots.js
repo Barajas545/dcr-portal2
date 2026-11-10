@@ -5,19 +5,21 @@
 
    * the header:        pcHeader (the office computer's state in plain words - only when it is not running);
    * the address:       parseLink / linkFor (?shoot=<photo_shoots.id> - DCR Agents 2's reminders link here -, ?plan=<id>,
-                        ?task=<a My Tasks task id: its shoot>, ?view=agenda|job|month, ?month=YYYY-MM);
+                        ?task=<a My Tasks task id: its shoot>, ?view=agenda|job|month, ?month=YYYY-MM, ?mine=1);
    * a shoot's sheet:   dayLine (the day and its grace), historyLines (newest first), doneLine, briefSections (the safe
                         brief fields the mirror has), touches / shootChanges (the changes about one shoot), myOpen,
-                        recentMine, undoFor (my last applied change within 7 days - an admin's: anyone's; never "done");
+                        recentMine, lastRefused (the row's "Not done" chip), undoFor (my last applied change within 7
+                        days - an admin's: anyone's; never "done"; not once its shoots moved again), undoLabel;
    * the Move sheet:    bounds (the days the database takes), dayStrip (the plan's shoot days are the normal choice, a
-                        non-shoot day is allowed but marked), nonShootNote, officeLine, applyLabel, sentText;
+                        non-shoot day is allowed but marked), nonShootNote, officeLine, applyLabel, milestoneMove,
+                        previewSig (what the person was shown: Apply sends only that), sentText, sentDiffers;
    * the lists:         rowFacts (one line of the Agenda / By job), planFacts (a plan's header), homeBadge (Home's card);
-   * the change queue:  finishedText (what a change of mine came to, once the office computer answered).
+   * the change queue:  finishedText (what a change of mine came to, once the office computer answered, named).
 
    Every free text is the mirror's (already masked by the database and again by map/photo.js safeText). */
 
 import {
-  MILESTONES, MILESTONE_LABEL, PLAN_STATUS_LABEL, MOVE_KINDS, UNDO_DAYS, isDay, dayText, weekdayName, weekdayShort, isShootDay,
+  MILESTONES, MILESTONE_LABEL, PLAN_STATUS_LABEL, MOVE_KINDS, UNDO_DAYS, EXPIRE_DAYS, isDay, dayText, weekdayName, weekdayShort, isShootDay,
   shootDaysText, isOpen, isLate, followsMilestone, pcLine, canUndo, isOpenChange, changeStatusText, changeTitle, refusalText, safeText,
 } from "./photo.js";
 import { addDays, ymd, dayOfWeek } from "./pacific.js";
@@ -33,7 +35,15 @@ export const PLACEHOLDER = "Pick a shoot to see its day, its brief and its histo
 export const GONE_TEXT = "That shoot is not on the shoot schedule any more.";
 export const TASK_GONE_TEXT = "This task's shoot is not on the shoot schedule (yet).";
 export const PLAN_GONE_TEXT = "That job is not on the shoot schedule any more.";
-export const CHANGED_TEXT = "Someone changed this plan meanwhile - here is the new preview.";
+export const CHANGED_TEXT = "Someone changed this job's shoots meanwhile - here is the new preview.";
+export const CHANGED_DONE_TEXT = "Someone changed this shoot meanwhile - look at it again, then mark it done.";
+// the sheet was closed while its change was on its way, and the database said "changed": nothing was queued
+export const NOT_SENT_CHANGED = "Not sent: someone changed this job's shoots meanwhile - open Move… again to see the new preview.";
+// a request with no answer (a dropped connection, a gateway's 5xx): it may have reached the database - the same key is
+// sent again, so a second press never queues it twice (repo/photo.js attemptKey)
+export const NO_ANSWER_TEXT = "No answer - it may not have been sent. Press Apply again: it will not be sent twice.";
+// the sheet's Cancel while a change is on its way: closing it does not stop the change
+export const CLOSE_SENDING = "Close (still sending)";
 export const MOVE_MAX_DAYS = 365;      // §7.3 too_far: a shoot at most a year ahead
 export const MILESTONE_BACK_DAYS = 60; // §7.3 too_far: a job date at most 60 days back
 export const STRIP_DAYS = 14;
@@ -58,14 +68,16 @@ export function pcHeader(st) {
 
 /* ── the address ──────────────────────────────────────────────────────── */
 
-/** ?shoot=, ?plan=, ?task=, ?view=, ?month= -> {shoot, plan, task, view, month} (null for what is not there or not one). */
+/** ?shoot=, ?plan=, ?task=, ?view=, ?month=, ?mine=1 -> {shoot, plan, task, view, month, mine} (null / false for what is
+    not there or not one). mine: "Only my jobs" ticked (Home's card links so when its badge counted only my jobs). */
 export function parseLink(search) {
   let q;
   try { q = new URLSearchParams(str(search)); } catch (e) { q = new URLSearchParams(""); }
   const view = q.get("view");
   const month = q.get("month");
   return { shoot: posInt(q.get("shoot")), plan: posInt(q.get("plan")), task: posInt(q.get("task")),
-    view: VIEW_KEYS.indexOf(view) !== -1 ? view : null, month: /^\d{4}-(0[1-9]|1[0-2])$/.test(str(month)) ? month : null };
+    view: VIEW_KEYS.indexOf(view) !== -1 ? view : null, month: /^\d{4}-(0[1-9]|1[0-2])$/.test(str(month)) ? month : null,
+    mine: q.get("mine") === "1" };
 }
 
 /** The page's own address for what is shown: "shoots.html?shoot=12", "shoots.html?plan=3", "shoots.html?view=month". */
@@ -174,29 +186,82 @@ export function myOpen(changes, s, me) {
   return shootChanges(changes, s).filter((c) => me && c.requestedBy === me && isOpenChange(c));
 }
 
+/** When a finished change finished: its done_at; a "new" one nobody took for 7 days (it reads as expired before the PC's
+    purge writes done_at - a dead PC writes nothing) expired 7 days after it was asked. */
+export function finishedAt(c) {
+  if (!c) return 0;
+  if (c.doneAt) return Date.parse(c.doneAt) || 0;
+  const at = Date.parse(c.requestedAt || "") || 0;
+  return at && (c.state || "") === "expired" ? at + EXPIRE_DAYS * 86400000 : at;
+}
+
 /** My changes of this shoot that finished within 7 days (applied, refused, sent to the office, expired, cancelled),
-    newest first, at most `max` (3). */
+    newest first, at most `max` (3). An untaken change that expired by time shows its "Expired" for the 7 days after. */
 export function recentMine(changes, s, me, now, max) {
   const t = now instanceof Date ? now.getTime() : Date.now();
-  return shootChanges(changes, s).filter((c) => me && c.requestedBy === me && !isOpenChange(c) && when(c) >= t - UNDO_DAYS * 86400000)
+  return shootChanges(changes, s).filter((c) => me && c.requestedBy === me && !isOpenChange(c) && finishedAt(c) >= t - UNDO_DAYS * 86400000)
     .slice(0, max === undefined ? 3 : max);
+}
+
+/** My newest finished change that held this shoot (its target, or a job-date change of the date it follows - the
+    shoots pendingFor chips), when the office computer refused it within 7 days: the row's "Not done - see why" chip.
+    null when there is none, or when a newer change of mine about it finished since. */
+export function lastRefused(changes, s, me, now) {
+  if (!s || !me) return null;
+  const t = now instanceof Date ? now.getTime() : Date.now();
+  const holds = (c) => c.targetKey === s.key || (c.kind === "milestone" && followsMilestone(s) && c.args && c.args.milestone === s.anchor);
+  const mine = (Array.isArray(changes) ? changes : []).filter((c) => c && c.planId === s.planId && c.requestedBy === me && !isOpenChange(c) && holds(c))
+    .sort((a, b) => finishedAt(b) - finishedAt(a) || (b.id || 0) - (a.id || 0));
+  const last = mine[0];
+  return last && last.state === "refused" && finishedAt(last) >= t - UNDO_DAYS * 86400000 ? last : null;
+}
+
+/** Whether the shoots an applied change moved are still where it left them (the undo's own check, §8.6: every moved shoot
+    open and on its day; a job date as the change left it). shoots: the plan's shoots; plan: toPlan. Unknown: true. */
+export function undoStillFits(c, shoots, plan) {
+  if (!c || !c.result) return true;
+  if (c.kind === "milestone") {
+    const after = c.result.milestone_after && typeof c.result.milestone_after === "object" ? c.result.milestone_after : null;
+    const key = c.args && c.args.milestone;
+    const day = (after && isDay(after.date) && after.date) || (c.args && isDay(c.args.date) ? c.args.date : null);
+    const m = plan && plan.milestones && key ? plan.milestones[key] : null;
+    return !m || !day || m.date === day;
+  }
+  if (!Array.isArray(shoots)) return true;
+  const moved = Array.isArray(c.result.moved) ? c.result.moved : [];
+  return moved.every((m) => {
+    const s = m && shoots.find((x) => x.key === m.key);
+    return !s || !isDay(m.to) || (isOpen(s) && s.plannedDate === m.to);
+  });
 }
 
 /** The change the shoot's Undo offers: the newest applied move or job date about this shoot that `me` may undo now
     (map/photo.js canUndo: within 7 days, mine - an admin: anyone's -, never "done", never a suggestion), with no undo of
-    it already waiting. null when there is none. */
-export function undoFor(changes, s, me, access, now) {
+    it already waiting, and its shoots still where it left them (ctx: {shoots, plan}; a shoot moved again since is
+    refused "changed" - it is moved instead). null when there is none. */
+export function undoFor(changes, s, me, access, now, ctx) {
   const all = Array.isArray(changes) ? changes : [];
+  const x = ctx || {};
   const waiting = new Set(all.filter((u) => u && u.kind === "undo" && isOpenChange(u) && u.args).map((u) => Number(u.args.change)));
-  return shootChanges(all, s).find((c) => MOVE_KINDS.indexOf(c.kind) !== -1 && !waiting.has(Number(c.id)) && canUndo(c, me, access, now).ok) || null;
+  return shootChanges(all, s).find((c) => MOVE_KINDS.indexOf(c.kind) !== -1 && !waiting.has(Number(c.id)) && canUndo(c, me, access, now).ok &&
+    undoStillFits(c, x.shoots, x.plan)) || null;
 }
 
-/** One change as the sheet shows it: {id, title, status: {state, text, cls, words}, when}. */
+/** The Undo button's words: "Undo my last change…", or "Undo this change…" when it is someone else's (an admin's). */
+export function undoLabel(c, me) {
+  return c && me && c.requestedBy === me ? "Undo my last change…" : "Undo this change…";
+}
+
+/** One change as the sheet shows it: {id, title, status: {state, text, cls, words}, when, asked, answered}. asked (= when):
+    the day it was asked; answered: the day the office computer answered it, when that was another day. */
 export function changeLine(c, ctx) {
   const x = ctx || {};
   const st = changeStatusText(c, { now: x.now, pc: x.pc });
-  const d = dayOfStamp(c.doneAt || c.requestedAt);
-  return { id: c.id, title: changeTitle(c, { shoots: x.shoots, plan: x.plan, today: x.today }), status: st, when: d ? dayText(d, x.today) : "" };
+  const a = dayOfStamp(c.requestedAt);
+  const d = dayOfStamp(c.doneAt);
+  const asked = a ? dayText(a, x.today) : "";
+  const answered = d && d !== a ? dayText(d, x.today) : "";
+  return { id: c.id, title: changeTitle(c, { shoots: x.shoots, plan: x.plan, today: x.today }), status: st, when: asked || answered, asked, answered };
 }
 
 /* ── the Move sheet ───────────────────────────────────────────────────── */
@@ -258,26 +323,75 @@ export function applyLabel(words) {
   return words && words.office && !words.refused ? "Send to the office" : "Apply";
 }
 
-/** What the page says once a change was sent: {text, kind}. */
+/** What the page says once a change was sent: {text, kind}. An again: true answer (the same change sent before, §6.1
+    step 3 - a retry after a lost answer) says what became of it: still waiting, applied, sent to the office, refused
+    with its reason, expired or cancelled (the row's status, result and error, §17). */
 export function sentText(answer, pc) {
   const a = answer || {};
   const off = !!pc && !(pc.online && !pc.paused);
-  if (a.again) return { text: "That change was sent already - it is on the shoot now.", kind: "info" };
+  if (a.again) {
+    const head = "That change was sent already";
+    const st = a.state || a.status;
+    if (st === "new") {
+      return { text: head + " - " + (a.needsOffice ? "the office computer passes it to the office to approve." : off ? "it waits until the office computer is back on."
+        : "it waits for the office computer."), kind: "info" };
+    }
+    if (st === "taken") return { text: head + " - the office computer is applying it.", kind: "info" };
+    if (st === "cancelled") return { text: head + " and then cancelled - nothing changed.", kind: "info" };
+    const f = finishedText({ state: st, status: a.status, result: a.result, error: a.error, args: a.args || {}, needsOffice: a.needsOffice });
+    return f ? { text: head + ". " + f.text, kind: f.kind } : { text: head + ".", kind: "info" };
+  }
   if (a.needsOffice) return { text: "Sent - the office computer passes it to the office to approve.", kind: "ok" };
   if (off) return { text: "Sent - it waits until the office computer is back on.", kind: "info" };
   return { text: "Sent - the office computer applies it in a minute or two.", kind: "ok" };
 }
 
-/** What one of my changes came to, once answered (a toast): {text, kind} | null while it waits. */
+/** What one of my changes came to, once answered (a toast): {text, kind} | null while it waits. ctx: {pc, shoots, plan,
+    today}: with the plan (or its shoots) the toast names the change and its job ("Not done - Move Delivery day to Mon Nov
+    16 - only this shoot (A000T9 Sample house): That day has passed."), so two changes in flight are told apart. */
 export function finishedText(c, ctx) {
   if (!c || isOpenChange(c)) return null;
-  const st = changeStatusText(c, ctx || {});
-  const words = st.words ? ": " + st.words : "";
-  if (st.state === "applied" && c.result && c.result.outcome === "suggested") return { text: "Sent to the office to approve" + words, kind: "info" };
-  if (st.state === "applied") return { text: "Applied" + (st.words ? " - " + st.words : ""), kind: "ok" };
-  if (st.state === "refused") return { text: st.text, kind: "error" };
-  if (st.state === "expired") return { text: st.text, kind: "error" };
+  const x = ctx || {};
+  const st = changeStatusText(c, x);
+  const title = x.plan || x.shoots ? changeTitle(c, { shoots: x.shoots, plan: x.plan, today: x.today }) + (x.plan && x.plan.label ? " (" + x.plan.label + ")" : "") : "";
+  if (st.state === "applied" && c.result && c.result.outcome === "suggested") {
+    return { text: "Sent to the office to approve" + (title ? " - " + title : "") + (st.words ? ": " + st.words : ""), kind: "info" };
+  }
+  if (st.state === "applied") return { text: "Applied" + (title ? " - " + title + (st.words ? " (" + st.words + ")" : "") : st.words ? " - " + st.words : ""), kind: "ok" };
+  if (st.state === "refused") return { text: title ? "Not done - " + title + ": " + st.text.replace(/^Not done: /, "") : st.text, kind: "error" };
+  if (st.state === "expired") return { text: title ? "Expired - " + title + ": the office computer did not take it within 7 days" : st.text, kind: "error" };
   return null;
+}
+
+/** A preview reduced to what the person was shown (§6.3): every shoot that moves (key, from -> to, its notes), skipped,
+    stays and why, the series re-planned, the office's approval, a refusal, a done. Two previews with the same
+    signature list the same thing - Apply sends only what the sheet shows. */
+export function previewSig(pv) {
+  if (!pv || typeof pv !== "object") return "";
+  const items = (l, f) => (Array.isArray(l) ? l : []).filter((it) => it && typeof it === "object").map(f).sort();
+  return JSON.stringify([str(pv.kind), pv.refused ? str(pv.refused) : null, pv.needs_office === true,
+    items(pv.moved, (it) => [str(it.key), str(it.from), str(it.to), (Array.isArray(it.notes) ? it.notes.map(str).sort() : []).join(",")].join("|")),
+    items(pv.passed, (it) => [str(it.key), str(it.from), str(it.to)].join("|")),
+    items(pv.stays, (it) => [str(it.key), str(it.reason)].join("|")),
+    (Array.isArray(pv.replan) ? pv.replan.map(str) : []).sort(),
+    pv.done && typeof pv.done === "object" ? str(pv.done.key) : null]);
+}
+
+/** The words when a change was queued but the database's own preview of it is not the one the sheet showed (the schedule
+    changed in the moment it was sent): {text, kind}. words: previewWords of the queued preview. */
+export function sentDiffers(words) {
+  const w = words || {};
+  return { text: "Sent - but the schedule changed as it was sent, so it is not the preview you saw: " + (w.summary || "look at the shoot") +
+    ". If that is not what you want, cancel it on the shoot while it waits.", kind: "error" };
+}
+
+/** "Framing start: Thu Nov 19 → Mon Nov 23" - the job date's own move, the first line of "The job date moved"'s preview
+    ("Framing start: no date yet → Mon Nov 23"). */
+export function milestoneMove(plan, key, to, today) {
+  const label = MILESTONE_LABEL[key];
+  if (!label || !isDay(to)) return "";
+  const m = plan && plan.milestones ? plan.milestones[key] : null;
+  return label + ": " + (m && isDay(m.date) ? dayText(m.date, today) : "no date yet") + " → " + dayText(to, today);
 }
 
 /* ── the lists ────────────────────────────────────────────────────────── */
@@ -299,18 +413,21 @@ export function planFacts(plan) {
     shootDays: "Shoots " + shootDaysText(p.shootDays), suggestions: p.openSuggestions ? plural(p.openSuggestions, "suggestion") + " waiting for the office" : "" };
 }
 
-/** The Home card's badge: the late shoots of the live plans (red), else today's, else none. o.mine: only plans whose
-    photographer is that profile (a photographer's own), when they have any. -> {cls, text, title} | null */
+/** The Home card's badge: the late shoots (red), else today's, else none - counted over the same plans the page's header
+    counts (every plan but the archived ones). o.mine: only the plans whose photographer is that profile (a
+    photographer's own), when they have any; then `mine` is true and the card opens the page with "Only my jobs" ticked
+    (shoots.html?mine=1), so both say the same number. -> {cls, text, title, mine} | null */
 export function homeBadge(plans, shoots, today, o) {
   const opt = o || {};
-  const live = (plans || []).filter((p) => p.status === "active" || p.status === "paused");
-  const mineOnly = opt.mine && live.some((p) => p.photographerProfileId === opt.mine);
-  const ids = new Set(live.filter((p) => !mineOnly || p.photographerProfileId === opt.mine).map((p) => p.id));
+  const listed = (plans || []).filter((p) => p.status !== "archived");
+  const mineOnly = !!opt.mine && listed.some((p) => p.photographerProfileId === opt.mine);
+  const ids = new Set(listed.filter((p) => !mineOnly || p.photographerProfileId === opt.mine).map((p) => p.id));
   const open = (shoots || []).filter((s) => ids.has(s.planId) && isOpen(s));
+  const where = mineOnly ? " on your jobs" : " on every job";
   const late = open.filter((s) => isLate(s, today)).length;
-  if (late) return { cls: "warn", text: late + " late", title: plural(late, "shoot") + " past " + (late === 1 ? "its" : "their") + " day and grace" };
+  if (late) return { cls: "warn", text: late + " late", title: plural(late, "shoot") + " past " + (late === 1 ? "its" : "their") + " day and grace" + where, mine: mineOnly };
   const now = open.filter((s) => s.plannedDate === today).length;
-  return now ? { cls: "", text: now + " today", title: plural(now, "shoot") + " today" } : null;
+  return now ? { cls: "", text: now + " today", title: plural(now, "shoot") + " today" + where, mine: mineOnly } : null;
 }
 
 /** The weekday header of the Month grid, Sunday first (the site's calendars). */
