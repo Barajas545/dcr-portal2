@@ -19,6 +19,7 @@ const P8_REGISTER = new URL("../tools/fake/p8-register.js", import.meta.url); //
 const P8_CONTACTS = new URL("../tools/fake/p8-contacts.js", import.meta.url); // Books A3: contact pictures and a contact's reach
 const P8_BOOKS = new URL("../tools/fake/p8-books.js", import.meta.url);       // the Books program, release B: the money messages (after p8-register.js)
 const P8_ADVANCED = new URL("../tools/fake/p8-advanced.js", import.meta.url); // the Books program, release B part 2b: vendors and reports (after p8-books.js)
+const P10_PHOTO = new URL("../tools/fake/p10-photo.js", import.meta.url);   // the photographer screen program, P3: the shoot schedule (before engine.js)
 const ENGINE = new URL("../tools/fake/engine.js", import.meta.url);
 const QUICKXOR = new URL("../site/js/quickxor.js", import.meta.url); // the demo's OneDrive hashes saves with the site's own
 const PC = new URL("../tools/fake/pc-demo.js", import.meta.url);    // the made-up DCR server's answers
@@ -46,6 +47,7 @@ export async function loadFake() {
     if (existsSync(P8_BOOKS)) await import(P8_BOOKS.href);
     if (existsSync(P8_ADVANCED)) await import(P8_ADVANCED.href);
     if (existsSync(P8_CONTACTS)) await import(P8_CONTACTS.href);
+    if (existsSync(P10_PHOTO)) await import(P10_PHOTO.href);
     await import(ENGINE.href);
     if (existsSync(PC)) await import(PC.href);
     await import(SEED.href);

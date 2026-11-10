@@ -39,8 +39,10 @@ const FAKE_DIR = resolve(HERE, "fake");
 // up and cleared, spoiled blanks, a check number used once, the next number, check_register;
 // release B: p8-books.js after p8-register.js - the money messages (message_templates, money_messages, the outbox's money
 // kinds, the ask / tell RPCs, the renderer, the reminder PC's status and its __dev.reminderPc hook); release B part 2b:
-// p8-advanced.js after p8-books.js - vendor_profiles, the four Books report functions and the money history (money_events)
-const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "p7-web.js", "p7-onedrive.js", "p8-files.js", "p8-register.js", "p8-books.js", "p8-advanced.js", "engine.js", "p8-contacts.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
+// p8-advanced.js after p8-books.js - vendor_profiles, the four Books report functions and the money history (money_events);
+// the photographer screen program, P3: p10-photo.js before engine.js - the shoot schedule (photo_team, the mirror photo_plans /
+// photo_shoots, the change queue photo_changes, their RPCs and the demo DCR server that takes and applies the changes)
+const FAKE_PARTS = ["p6.js", "p5a-est.js", "p5a-pm.js", "p5b-ledger.js", "p5b-books.js", "p5c-lists.js", "p5c-sub.js", "p5c-sales.js", "p7-web.js", "p7-onedrive.js", "p8-files.js", "p8-register.js", "p8-books.js", "p8-advanced.js", "p10-photo.js", "engine.js", "p8-contacts.js", "pc-demo.js", "seed.js", "fake-supabase.js", "push-demo.js"];
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.DCR2_DEV_PORT || process.env.PORT || 8792);
 const DEMO = !process.argv.includes("--no-demo");
