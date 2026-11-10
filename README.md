@@ -252,6 +252,16 @@ tools/schema-check-p10-photo.mjs  repo/photo.js and map/photo.js on the REAL mig
                             marketing, people on no team, the agents account), the mirror seeded through the agents RPCs
                             from the demo's own plans, the demo's previews equal to the database's, the pages' parts (a
                             task's shoot, the Access tab's Photo team payloads), drift (schema-check runs it)
+tools/e2e-p10-photo.mjs     the shoot schedule in headless Chrome on the demo: every person (the admin, the photographer,
+                            marketing, a lead on no team) on a phone and on a desk, light and dark, every screen audited
+                            (nothing scrolls sideways at 375 px, tap targets of 40 px on a phone, WCAG AA contrast, the
+                            focus shown at every Tab stop, the sheets keep the keyboard, close with Escape and give the
+                            focus back); the three choices each applied by the demo's office computer and equal to their
+                            preview, a Firm job date, PT409, Undo, Mark done, Cancel, the office computer off (its answer
+                            held while a sheet is open), ?shoot= links; the Access tab's Photo team with a "changed" conflict
+tools/e2e-p10-photo-pglite.mjs  one pass of that walk on pglite-serve (the REAL migration 20261110000100): the team set
+                            through set_photo_team, a made-up mirror through agents_photo_mirror, and the office computer
+                            played by this script with the agents RPCs (feed, take, the plan mirrored again, done)
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
 ```
@@ -327,6 +337,8 @@ PGLITE_DIR=<folder> node tools/schema-check.mjs    # Portal 2's queries against 
 PGLITE_DIR=<folder> node tools/pglite-serve.mjs    # the site over PGlite with the real migrations (127.0.0.1:8793)
 PGLITE_DIR=<folder> node tools/e2e-p5b-pglite.mjs --out <folder>   # the P5b pages on it + screenshots (p5b_final_*.png)
 PGLITE_DIR=<folder> node tools/e2e-p5c-pglite.mjs --out <folder>   # the P5c pages on it + screenshots (p5c_final_*.png)
+node tools/e2e-p10-photo.mjs --out <folder>       # the shoot schedule walk + audits (shoots_*.png; --shots some|none)
+DCR_DESKTOP2_DIR=<folder> PGLITE_DIR=<folder> node tools/e2e-p10-photo-pglite.mjs --out <folder>   # on PGlite (pglite_*.png)
 ```
 
 - `tools/check-pages.mjs` and `tools/e2e-demo.mjs` start the demo server on a free port and run a

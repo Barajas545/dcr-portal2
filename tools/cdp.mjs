@@ -115,7 +115,8 @@ export async function launch(chrome) {
     phone); otherwise the tabs share one profile, as tabs of one browser do. */
 export async function newPage(cdp, name, out, isolated) {
   const ctx = isolated ? (await cdp.send("Target.createBrowserContext", { disposeOnDetach: true })).browserContextId : undefined;
-  const { targetId } = await cdp.send("Target.createTarget", Object.assign({ url: "about:blank", newWindow: false }, ctx ? { browserContextId: ctx } : {}));
+  // a context of its own has no window yet: headless Chrome opens its first tab only in a window of its own
+  const { targetId } = await cdp.send("Target.createTarget", Object.assign({ url: "about:blank", newWindow: !!ctx }, ctx ? { browserContextId: ctx } : {}));
   const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
   const p = new Page(cdp, sessionId, name);
   await p.call("Page.enable");
