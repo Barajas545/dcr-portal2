@@ -25,20 +25,33 @@ const ALSO_EMAIL_2_1_1 = [
    "\n    };\n  }"],
   ["\n        if (cur.rules && \"also_email\" in cur.rules) next.rules.also_email = !!cur.rules.also_email;", ""],
 ];
-function withoutAlsoEmail(src) {
-  for (const [from, to] of ALSO_EMAIL_2_1_1) {
+/* DCR Agents 2 2.3.0 added one thing to the Photo & Video tab's shoot page: the History line from the PC's
+   history_words (a skipped shoot brought back done says why; P5b review round 3). An older PC sends no
+   history_words and the page draws the moves as before. Taken out again, the module is the old portal's. */
+const HISTORY_WORDS_2_3_0 = [
+  ["\n    // DCR Agents 2 2.3.0's History line, entry by entry: the moves and the entries without days (a skipped shoot brought\n" +
+   "    // back done: \"brought back: its files were handed in (by Sam)\"); an older PC sends only the moves\n" +
+   "    var history = (Array.isArray(s.history_words) ? s.history_words : []).map(str).filter(Boolean).map(esc);", ""],
+  ["      (history.length ? '<p class=\"c-muted c-small\">History: ' + history.join(\"; \") + \"</p>\" :\n        moves.length ? '<p class=\"c-muted c-small\">Moves: '",
+   "      (moves.length ? '<p class=\"c-muted c-small\">Moves: '"],
+];
+function without(src, pieces, what) {
+  for (const [from, to] of pieces) {
     const n = typeof from === "string" ? src.split(from).length - 1 : (src.match(new RegExp(from.source, "g")) || []).length;
-    assert.equal(n, 1, "the 2.1.1 'Also e-mail every message' piece is in console-agents.js once: " + String(from).slice(0, 60));
+    assert.equal(n, 1, what + " is in the module once: " + String(from).slice(0, 60));
     src = src.replace(from, to);
   }
   return src;
 }
+const withoutAlsoEmail = (src) => without(src, ALSO_EMAIL_2_1_1, "the 2.1.1 'Also e-mail every message' piece");
+const withoutHistoryWords = (src) => without(src, HISTORY_WORDS_2_3_0, "the 2.3.0 History line piece");
 
-test("the console's eight tab modules are the old portal's, byte for byte (BLUEPRINT 3.3.10: they port unchanged) — but for the Agents tab's 2.1.1 'Also e-mail every message' box",
+test("the console's eight tab modules are the old portal's, byte for byte (BLUEPRINT 3.3.10: they port unchanged) — but for the Agents tab's 2.1.1 'Also e-mail every message' box and the Photo & Video tab's 2.3.0 History line",
   { skip: !existsSync(OLD + "console-agents.js") && "the old portal's source is not on this computer" }, () => {
     for (const m of MODULES) {
       const mine = lf(site("js/console/" + m));
-      assert.equal(m === "console-agents.js" ? withoutAlsoEmail(mine) : mine, lf(readFileSync(OLD + m, "utf8")), m);
+      const old = m === "console-agents.js" ? withoutAlsoEmail(mine) : m === "console-photo.js" ? withoutHistoryWords(mine) : mine;
+      assert.equal(old, lf(readFileSync(OLD + m, "utf8")), m);
     }
     for (const c of ["agents-console.css", "console-print.css"]) assert.equal(lf(site("css/" + c)), lf(readFileSync(OLD + c, "utf8")), c);
   });
@@ -131,7 +144,7 @@ test("the service worker keeps My Assistant ahead (a phone page), not the admins
   const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(sw)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
   for (const f of ["my-assistant.html", "js/pages/my-assistant.js", "js/repo/assistant.js", "js/map/assistant.js"]) assert.ok(shell.includes(f), f);
   for (const f of ["agents-console.html", "assistant-admin.html", "js/console/shell.js", "css/agents-console.css"]) assert.ok(!shell.includes(f), f);
-  assert.match(sw, /const CACHE = "dcr-portal2-v6";/);          // v6: the shoot schedule (v5: the takeoff frame; v4: check-off notes, DCR Desktop 2.26)
+  assert.match(sw, /const CACHE = "dcr-portal2-v8";/);          // v8: the photo files in the Office OneDrive (v7: the photo files; v6: the shoot schedule; v5: the takeoff frame; v4: check-off notes)
 });
 
 test("Guided Assist is not built (Q21 default: dropped)", () => {

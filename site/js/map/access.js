@@ -17,6 +17,9 @@
 
    Pure module: no DOM, no network (node tests import it). */
 
+import { WORDS as PHOTO_WORDS } from "./photo-words.js";
+import { memberText } from "./photo-files.js";
+
 export const SWITCHES = Object.freeze([
   { key: "can_see_prices", label: "Sees prices", edit: true },
   { key: "can_estimate", label: "Estimator", edit: true, newer: true },
@@ -110,15 +113,19 @@ export function saveProblem(err) {
    docs/DATABASE.md §39.1, the contract docs/PHOTO-SCHEDULE.md §3; the owner's decision 3 of 2026-11-09) ──────────────
 
    The same list as DCR Desktop 2 → Users → Photo team (dcrdesk/ui/pages/users_photo.py, backend/repos/photo_team.py):
-   each person's Photographer tick (moves shoots on the shoot schedule), Marketing tick (reads it; the shoot files come
-   later), exactly ONE default photographer whenever one is listed, and each marketing member's Google e-mail (checked
-   here, kept in lower case). Every save is ONE set_photo_team of that person's whole row at the version shown (repo/
-   photo.js setTeam - never a write of the table); a "changed" refusal reads the list again and says so. Admins can
-   always act and are never listed automatically. The rules below are hints the database enforces anyway:
+   each person's Photographer tick (moves shoots on the shoot schedule), Marketing tick (reads it and the shoot folders
+   in OneDrive), exactly ONE default photographer whenever one is listed, and each marketing member's Microsoft account
+   when it is not their DCR e-mail (checked here, kept in lower case; the column keeps its P1 name google_email, DCR
+   Desktop 2 docs/PHOTO-FILES-ONEDRIVE.md §0.4, §8.2). Every save is ONE set_photo_team of that person's whole row at
+   the version shown (repo/photo.js setTeam - never a write of the table); a "changed" refusal reads the list again and
+   says so. Admins can always act and are never listed automatically. Each marketing member's sharing line comes from
+   the share list (photo_drive_overview, an admin's; OD §8.4) - Portal 2 shows the line, the Mark as shared / removed
+   buttons are DCR Desktop 2's. The rules below are hints the database enforces anyway:
    * the first photographer becomes the default (ticked and locked);
    * the default stays the default until another photographer is made it ("Default photographer" moves it);
    * the default's Photographer tick cannot go while other photographers remain (pick_default_first);
-   * the Google e-mail is for marketing only (turning Marketing off forgets it at the save);
+   * the Microsoft account is for marketing only (turning Marketing off forgets it at the save); empty is the member's
+     DCR e-mail;
    * both ticks off takes the person off the team. */
 
 export const PHOTO_TITLE = "Photo team";
@@ -128,8 +135,40 @@ export const PHOTO_ADMINS_NOTE = "Admins can always move shoots and read the sho
 export const PHOTOGRAPHER_TIP = "Moves shoots and job dates on the shoot schedule. A move applies at once and stays in the shoot's history; " +
   "moving a Firm job date becomes a suggestion for the office.";
 export const DEFAULT_TIP = "The plans with no photographer of their own go to the default photographer. There is exactly one.";
-export const MARKETING_TIP = "Reads the shoot schedule. The shoot files and the Ready-for-marketing list come in a later update.";
-export const EMAIL_TIP = "The Google account they open the shoot files with (shared in a later update). Only marketing needs one.";
+export const MARKETING_TIP = "Reads the shoot schedule, opens the shoot folders in OneDrive and works the Ready for marketing list.";
+// the marketing member's Microsoft account (OD §8.2): the field's label and tip are the contract's (share.field_label,
+// share.field_tip) - the office shares DCR Photo & Video with that account by hand (OD §8.1)
+export const ACCOUNT_LABEL = PHOTO_WORDS.share.field_label;
+export const ACCOUNT_TIP = PHOTO_WORDS.share.field_tip;
+
+/** "Take Sam off marketing? Then remove their access to DCR Photo & Video in OneDrive and press Mark as removed."
+    (share.remove_ask) */
+export function marketingOffAsk(name) {
+  return PHOTO_WORDS.share.remove_ask.replace("{name}", String(name || "").trim() || "them");
+}
+
+/** The share list of photo_drive_overview by person: {profileId: entry}; null when there is none (not an admin, or a
+    database without the OneDrive edition). */
+export function shareEntries(overview) {
+  if (!overview || !Array.isArray(overview.share_list)) return null;
+  const out = {};
+  for (const e of overview.share_list) if (e && e.profile_id) out[pid(e.profile_id)] = e;
+  return out;
+}
+
+/** A marketing member's sharing line on the Access tab (OD §8.4; cases share_list, map/photo-files.js memberLine):
+    {code, text, tone} | null. Saved team rows only (what the database compares with the marks); none for a line that
+    is not on the share list. */
+export function shareLine(person, overview, today) {
+  const x = person || {};
+  const list = shareEntries(overview);
+  if (!list || !x.row) return null;
+  const entry = list[pid(x.id)];
+  if (!entry) return null;
+  const line = memberText(entry, overview.company_domains || [], { today });
+  if (!line) return null;
+  return Object.assign(line, { tone: line.code === "shared" ? "" : "warn" });
+}
 export const FIRST_DEFAULT = "The first photographer is the default photographer.";
 export const KEEP_DEFAULT = "This is the default photographer. To change it, make another photographer the default.";
 export const PICK_DEFAULT_FIRST = "Make another photographer the default first - then take this one off.";
@@ -138,7 +177,7 @@ export const PHOTO_CHANGED = "Someone changed the photo team meanwhile, so nothi
 export const PHOTO_STALE = "This line changed meanwhile (saved elsewhere, or the default photographer moved), so your unsaved ticks were put back. Look and tick again.";
 export const PHOTO_NOT_READY = "Not in the database yet";
 export const PHOTO_NOT_READY_TEXT = "The photo team arrives with the database update 20261110000100 (DCR Desktop 2.27).";
-export const PHOTO_BAD_EMAIL = "That doesn't look like an e-mail address (name@gmail.com, or the company's Google address).";
+export const PHOTO_BAD_EMAIL = "That doesn't look like an e-mail address (name@company.com).";
 export const PHOTO_NO_TICK = "Tick Photographer, Marketing or both.";
 export const PHOTO_EMAIL_MAX = 254;
 
@@ -148,13 +187,14 @@ const P_EDGE = new RegExp("^[" + P_WS + "]+|[" + P_WS + "]+$", "g");
 const P_INSIDE = new RegExp("[" + P_WS + "\\u0001-\\u001f\\u007f]");
 const P_GOOGLE = /^[^@]+@[^@]+\.[^@]+$/;
 
-/** The Google e-mail as the database keeps it: trimmed of white space of every kind, lower case; "" = none. */
+/** The Microsoft account as the database keeps it: trimmed of white space of every kind, lower case; "" = none (the
+    member's DCR e-mail). */
 export function photoEmail(text) {
   return String(text === null || text === undefined ? "" : text).replace(P_EDGE, "").toLowerCase();
 }
 
-/** Why `text` is not a Google e-mail the photo team takes (Desktop 2's rule: one @, a dot in the domain, no white space
-    or control character inside), or null (empty is fine: none yet). */
+/** Why `text` is not an account the photo team takes (Desktop 2's rule: one @, a dot in the domain, no white space or
+    control character inside), or null (empty is fine: the member's DCR e-mail). */
 export function photoEmailProblem(text) {
   const e = photoEmail(text);
   if (!e) return null;
@@ -236,10 +276,8 @@ export function photoGate(person, edit, team, names) {
     const who = now ? (names && names[pid(now.profileId)]) || now.name || "" : "";
     out.def = { on: !!e.isDefault, disabled: !x.active, note: who ? "Now: " + who + " - ticking it moves the default here." : "" };
   }
-  if (e.marketing) {
-    const problem = photoEmailProblem(e.googleEmail);
-    out.email.note = problem || (photoEmail(e.googleEmail) ? "" : "No Google e-mail yet");
-  }
+  // (an empty account is the member's DCR e-mail - OD §8.2: nothing to say)
+  if (e.marketing) out.email.note = photoEmailProblem(e.googleEmail) || "";
   if (x.row && !e.photographer && !e.marketing) out.offNote = BOTH_OFF;
   return out;
 }

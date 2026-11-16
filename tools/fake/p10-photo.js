@@ -357,7 +357,12 @@
       return mirror;
     }
     const beats = [];
-    const dev = { offline: false, offlineMinutes: 120, paused: false, auto: true };
+    // pcVersion: the demo's DCR Agents 2 - "2.3.0" brings a skipped / missed shoot with files back as done (§6.8); "2.2.0"
+    // (the LIVE one before P5b) refuses it not_open, which photo_drive_status then answers closed_old_pc
+    const dev = { offline: false, offlineMinutes: 120, paused: false, auto: true, pcVersion: "2.3.0" };
+    // P5b: the demo's photo files part (tools/fake/p10-photo-files.js, installed after this one into the same engine)
+    const files = () => E.photoFiles || null;
+    const hasFiles = (shootId) => { const f = files(); return !!(f && f.hasFiles(shootId)); };
     const iso = (v) => (v ? new Date(v).toISOString() : null);
     const nowMs = () => Date.parse(nowIso());
 
@@ -476,7 +481,12 @@
       if (kind === "done") {
         const s = shootOf(plan.id, args.shoot);
         if (!s) return Object.assign({}, head, empty, { refused: "unknown_shoot", done: null });
-        return Object.assign({}, head, empty, { refused: OPEN.indexOf(s.status) === -1 ? "not_open" : null, done: { key: s.key, id: s.id, name: s.name } });
+        // P5 (DCR Desktop 2 20261111000100_photo_files, docs/PHOTO-FILES.md §7.10): a skipped or missed shoot whose files
+        // were handed in may be marked done (its files are proof, §6.8) - the demo's files part says so (filesOf)
+        const closed = OPEN.indexOf(s.status) === -1;
+        const refused = s.status === "done" || (closed && !hasFiles(s.id)) ? "not_open" : null;
+        return Object.assign({}, head, empty, { refused, done: { key: s.key, id: s.id, name: s.name,
+          was: s.status === "skipped" || s.status === "missed" ? s.status : null } });
       }
       const u = undoCheck(plan.id, args.change, admin, me);
       if (u.code === "forbidden") throw err("42501", "forbidden", "Only the person who made a change, or an admin, can undo it.");
@@ -674,13 +684,17 @@
       const isDefault = ph && (dflt || others === 0 || (!!row && row.default_photographer));
       if (isDefault) for (const t of rows.photo_team.filter((x) => x.default_photographer && x.profile_id !== a.p_profile)) write(w, "photo_team", t, { default_photographer: false });
       const defaultId = () => (rows.photo_team.find((t) => t.default_photographer) || {}).profile_id || null;
+      // taken off marketing: the Ready cards they were on go back to ready (P5b's tg_photo_team_shares, v19 §42)
+      const offMarketing = () => { if (row && row.marketing && !mk && files() && files().rightsChanged) files().rightsChanged(a.p_profile); };
       if (!ph && !mk) {
         if (row) commitDelete("photo_team", row);
+        offMarketing();
         return { profile_id: a.p_profile, photographer: false, marketing: false, default_photographer: false, google_email: null, version: null, removed: true,
           default_profile_id: defaultId() };
       }
       const patch = { photographer: ph, marketing: mk, default_photographer: isDefault, google_email: email };
       const r = row ? write(w, "photo_team", row, patch) : add(w, "photo_team", Object.assign(clone(COLS.photo_team), patch, { profile_id: a.p_profile }));
+      offMarketing();
       return { profile_id: r.profile_id, photographer: r.photographer, marketing: r.marketing, default_photographer: r.default_photographer,
         google_email: r.google_email, version: r.version, removed: false, default_profile_id: defaultId() };
     }
@@ -844,7 +858,12 @@
       if (exp.shoot) {
         const s = shootOf(plan.id, exp.shoot.key);
         if (!s) return fail("gone", "That shoot or plan is no longer in the plan");
-        if (OPEN.indexOf(s.status) === -1) return fail("not_open", "That shoot is done, skipped or missed");
+        // DCR Agents 2 2.3.0 brings a skipped / missed shoot with files back as done (asked as a bring-back: the expect's
+        // status is skipped / missed); a done asked while it was open and skipped since is answered changed (§6.8 step 4).
+        // 2.2.0 refuses every done of a shoot that is not open (not_open).
+        const bring = c.kind === "done" && dev.pcVersion !== "2.2.0" && (s.status === "skipped" || s.status === "missed") && hasFiles(s.id);
+        if (bring && OPEN.indexOf(exp.shoot.status) !== -1) return fail("changed", "The shoot changed meanwhile - look again");
+        if (OPEN.indexOf(s.status) === -1 && !bring) return fail("not_open", "That shoot is done, skipped or missed");
         if (s.planned_date !== exp.shoot.planned_date || s.status !== exp.shoot.status) return fail("changed", "The shoot changed meanwhile - look again");
       }
       if (exp.milestone && jday((plan.milestones[exp.milestone.key] || {}).date) !== exp.milestone.date) return fail("changed", "The shoot changed meanwhile - look again");
@@ -903,7 +922,11 @@
       }
       if (c.kind === "done") {
         const s = shootOf(plan.id, a.shoot);
-        const rev = remirror(plan, [[s, { status: "done", done_at: at, done_source: "shoot page", done_note: a.note || null }]]);
+        const was = s.status;
+        const rev = remirror(plan, [[s, { status: "done", done_at: at, done_source: "shoot page", done_note: a.note || null, auto_skipped: false,
+          history: was === "skipped" || was === "missed" ? historyOf(s, { at, from: null, to: null, reason: a.note || "Brought back - its files are in Google Drive",
+            source: "shoot page", manual: true, by, change: c.id }) : s.history }]]);
+        if (files()) files().statusChanged(s.id, c.requested_by);
         return { result: { outcome: "applied", moved: [], passed: [], added: [], cancelled: [], milestone_before: null, suggestion: null,
           differs_from_preview: false, words: s.name + " marked done", rev } };
       }

@@ -109,7 +109,10 @@ test("preview: the database's own answer (ids and names, in-band refusals, resol
   const s = await photo.loadSchedule();
   const a = planNamed(s, "A000T9");
   const dl = shootNamed(s, a.id, "delivery");
-  const to = addDays(dl.plannedDate, 2);
+  // two days on - a Monday instead of a Sunday (the demo plan shoots Monday to Saturday: a Sunday would add not_shoot_day,
+  // whatever day the test runs)
+  let to = addDays(dl.plannedDate, 2);
+  if (new Date(to + "T00:00:00Z").getUTCDay() === 0) to = addDays(to, 1);
   const pv = await photo.preview(a.id, "move_later", { shoot: "delivery", to });
   assert.deepEqual([pv.plan_id, pv.rev, pv.today, pv.kind, pv.refused], [a.id, a.rev, today(), "move_later", null]);
   assert.deepEqual(pv.moved[0], { key: "delivery", from: dl.plannedDate, to, notes: ["heads_up_sent"], id: dl.id, name: "Delivery day" });

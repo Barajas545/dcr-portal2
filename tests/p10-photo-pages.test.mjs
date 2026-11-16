@@ -23,13 +23,18 @@ const TODAY = "2026-11-09";              // a Monday
 
 test("shoots.html: My Tasks' policy word for word, its module and styles, the top bar, the three views, the list / shoot / sheet slots, no inline script", () => {
   const h = read("shoots.html");
-  assert.equal(csp(h), csp(read("my-tasks.html")), "the same policy as My Tasks");
+  // My Tasks' policy, its connect-src naming the OneDrive host the project pages already name too (the phone's hand-in
+  // of the photo files, DCR Desktop 2 docs/PHOTO-FILES-ONEDRIVE.md §3.3 step 10; tests/core-site-guard.test.mjs)
+  assert.equal(csp(h), csp(read("my-tasks.html")).replace("https://nominatim.openstreetmap.org;", "https://nominatim.openstreetmap.org https://netorgft10120038-my.sharepoint.com;"),
+    "the same policy as My Tasks, and the OneDrive host");
   assert.ok(h.includes('<script type="module" src="js/pages/shoots.js"></script>') && h.includes('id="dcr2Topbar"'));
   assert.ok(h.includes('<link rel="stylesheet" href="css/styles.css" />') && h.includes('<link rel="stylesheet" href="css/shoots.css" />'));
   assert.ok(!/<script>(?!\s*<\/script>)/.test(h.replace(/<script[^>]*src=[^>]*><\/script>/g, "")), "no inline script");
   assert.ok(!/\son[a-z]+=/i.test(h), "no inline handler");
   assert.match(h, /<title>DCR Portal 2 — Shoot schedule<\/title>/);
-  assert.deepEqual(Array.from(h.matchAll(/data-view="([a-z]+)"/g)).map((m) => m[1]), ["agenda", "job", "month"]);
+  // P5b: the fourth view, Ready for marketing - hidden until photo_ready_list answers (tests/p10-photo-files-pages.test.mjs)
+  assert.deepEqual(Array.from(h.matchAll(/data-view="([a-z]+)"/g)).map((m) => m[1]), ["agenda", "job", "month", "ready"]);
+  assert.match(h, /data-view="ready" aria-pressed="false" hidden>Ready for marketing</);
   assert.match(h, /data-view="agenda" aria-pressed="true">Agenda</);
   for (const id of ["shList", "shDetail", "shDScroll", "shSheet", "shPc", "shLead", "shMine", "shArchived", "shBack", "shClose"]) assert.ok(h.includes('id="' + id + '"'), id);
   const css = read("css/shoots.css");
@@ -43,7 +48,8 @@ test("shoots.js: reads only through repo/photo.js (never a table write), the gat
   assert.ok(!/\.from\(|\.insert\(|\.update\(|\.upsert\(|\.delete\(/.test(s), "no table read or write of its own");
   assert.match(s, /import \* as repo from "\.\.\/repo\/photo\.js";/);
   const gate = s.indexOf("if (!access || !access.ready || !access.canRead) { render(); return; }");
-  assert.ok(gate > 0 && s.indexOf("await load();", gate) > gate, "the gates come before the first read");
+  // P5b: the first read (the mirror and the Ready list side by side) is drawn once the address is followed
+  assert.ok(gate > 0 && s.indexOf("await Promise.all([load({ hold: true }), loadReady({ quiet: true, hold: true })]);", gate) > gate, "the gates come before the first read");
   assert.match(s, /kind: "move_one", day: null/, "Only this shoot is preselected");
   assert.match(s, /repo\.request\(mv\.planId, want\.kind, want\.args, mv\.baseRev\)/, "the request carries the rev the screen read");
   assert.match(s, /baseRev: plan\.rev/);
@@ -55,7 +61,7 @@ test("shoots.js: reads only through repo/photo.js (never a table write), the gat
   assert.match(s, /seq !== mv\.seq\) return;/, "an older preview's answer is dropped");
   for (const m of s.matchAll(/\.innerHTML = ([^;]+);/g)) {
     const x = m[1].trim();
-    assert.ok(/^(note \+ )?(emptyHtml|sheetShell|previewHtml|detailHtml|nowInner)\(|^note \+ \(state\.view|^'<|^"|^esc\(|^""$|^head \+|^html$/.test(x) || /^'<legend>/.test(x), "innerHTML = " + x.slice(0, 90));
+    assert.ok(/^(note \+ )?(emptyHtml|sheetShell|previewHtml|detailHtml|nowInner|readyCardHtml)\(|^note \+ \(state\.view|^'<|^"|^esc\(|^""$|^head \+|^html$/.test(x) || /^'<legend>/.test(x), "innerHTML = " + x.slice(0, 90));
   }
   assert.ok(!/insertAdjacentHTML|document\.write|outerHTML =/.test(s));
   // marketing and anyone who may not change the schedule get no action button (the database decides; this hides)
@@ -63,9 +69,9 @@ test("shoots.js: reads only through repo/photo.js (never a table write), the gat
   assert.match(s, /T = \(v\) => esc\(safeText\(v\)\)/, "free text through the money masks, then escaped");
 });
 
-test("the service worker v6: the page, its styles and rules are kept for a cold start; the cache name is new", () => {
+test("the service worker (v6 brought the shoot schedule; v7 and v8 the photo files): the page, its styles and rules are kept for a cold start", () => {
   const sw = read("sw.js");
-  assert.match(sw, /^const CACHE = "dcr-portal2-v6";$/m);
+  assert.match(sw, /^const CACHE = "dcr-portal2-v8";$/m);
   const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(sw)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
   for (const f of ["shoots.html", "css/shoots.css", "js/pages/shoots.js", "js/repo/photo.js", "js/map/photo.js", "js/map/shoots.js"]) assert.ok(shell.includes(f), f);
   assert.match(sw, /v6 \(the shoot schedule/);
@@ -140,16 +146,22 @@ test("the office computer's line: nothing while it runs; off, paused and not see
   assert.equal(M.pcLine({ online: true, paused: true, minutesAgo: 1, lastSeen: "x" }).text, "DCR Agents 2 is paused on the office computer - changes wait until it runs again");
 });
 
-test("the address: ?shoot=, ?plan=, ?task=, ?view=, ?month= (anything else ignored); the page's own links", () => {
-  assert.deepEqual(V.parseLink("?shoot=12"), { shoot: 12, plan: null, task: null, view: null, month: null, mine: false });
-  assert.deepEqual(V.parseLink("?plan=3&view=month&month=2026-12"), { shoot: null, plan: 3, task: null, view: "month", month: "2026-12", mine: false });
-  assert.deepEqual(V.parseLink("?task=88"), { shoot: null, plan: null, task: 88, view: null, month: null, mine: false });
-  assert.deepEqual(V.parseLink("?shoot=0&plan=-1&task=x&view=evil&month=2026-13"), { shoot: null, plan: null, task: null, view: null, month: null, mine: false });
-  assert.deepEqual(V.parseLink("?shoot=1e3"), { shoot: null, plan: null, task: null, view: null, month: null, mine: false });
+test("the address: ?shoot=, ?plan=, ?task=, ?view=, ?month=, ?ready= (anything else ignored); the page's own links", () => {
+  assert.deepEqual(V.parseLink("?shoot=12"), { shoot: 12, plan: null, task: null, view: null, month: null, mine: false, ready: null });
+  assert.deepEqual(V.parseLink("?plan=3&view=month&month=2026-12"), { shoot: null, plan: 3, task: null, view: "month", month: "2026-12", mine: false, ready: null });
+  assert.deepEqual(V.parseLink("?task=88"), { shoot: null, plan: null, task: 88, view: null, month: null, mine: false, ready: null });
+  assert.deepEqual(V.parseLink("?shoot=0&plan=-1&task=x&view=evil&month=2026-13"), { shoot: null, plan: null, task: null, view: null, month: null, mine: false, ready: null });
+  assert.deepEqual(V.parseLink("?shoot=1e3"), { shoot: null, plan: null, task: null, view: null, month: null, mine: false, ready: null });
   assert.equal(V.linkFor({ shoot: 12 }), "shoots.html?shoot=12");
   assert.equal(V.linkFor({ plan: 3, view: "job" }), "shoots.html?plan=3&view=job");
   assert.equal(V.linkFor({ view: "month", month: "2026-11" }), "shoots.html?view=month&month=2026-11");
   assert.equal(V.linkFor({}), "shoots.html");
+  // P5b: the Ready for marketing view and a card of it (the push notice's link, §10.7)
+  assert.deepEqual(V.parseLink("?ready=4"), { shoot: null, plan: null, task: null, view: null, month: null, mine: false, ready: 4 });
+  assert.equal(V.parseLink("?view=ready").view, "ready");
+  assert.equal(V.parseLink("?ready=0").ready, null);
+  assert.equal(V.linkFor({ view: "ready" }), "shoots.html?view=ready");
+  assert.equal(V.linkFor({ view: "ready", ready: 4, shoot: 12 }), "shoots.html?ready=4");
 });
 
 const PLAN = M.toPlan({ id: 1, rev: 120, status: "active", project_code: "A000T9", project_label: "A000T9 Sample house", city: "Sandbox",
@@ -323,13 +335,13 @@ test("the Photo team's gates: the first photographer is the default; the default
   ed = A.photoTick(A.photoTick(A.photoStateOf(null), "marketing", true, { id: "u-ta", team }), "googleEmail", " Taylor.V@Example.COM\t", { id: "u-ta", team });
   const pay = A.photoPayload(taylor, ed, team);
   assert.deepEqual(pay, { next: { photographer: false, marketing: true, isDefault: false, googleEmail: "taylor.v@example.com" }, version: null, removing: false, problem: null });
-  for (const bad of ["taylor@example", "tay lor@example.com", "a@b@c.com", "@example.com", "x".repeat(250) + "@e.co"]) {
+  for (const bad of ["taylor@example", "tay lor@example.com", "a@b@example.com", "@example.com", "x".repeat(250) + "@e.co"]) {
     assert.equal(A.photoEmailProblem(bad), A.PHOTO_BAD_EMAIL, bad);
   }
   assert.equal(A.photoEmailProblem(""), null, "none yet is fine");
   assert.equal(A.photoGate(taylor, A.photoStateOf(null), team).email.disabled, true, "no Marketing tick: no e-mail");
   assert.equal(A.photoGate(taylor, ed, team).email.note, "");
-  assert.equal(A.photoGate(taylor, A.photoTick(ed, "googleEmail", "", {}), team).email.note, "No Google e-mail yet");
+  assert.equal(A.photoGate(taylor, A.photoTick(ed, "googleEmail", "", {}), team).email.note, "", "none: the member's DCR e-mail (the OneDrive edition, OD §8.2)");
   const mk = A.photoPayload(taylor, Object.assign({}, ed, { marketing: false, photographer: true }), team);
   assert.equal(mk.next.googleEmail, null, "Marketing off forgets the e-mail at the save");
   assert.equal(A.photoPayload(taylor, A.photoStateOf(null), team).problem, A.PHOTO_NO_TICK);

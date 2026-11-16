@@ -1,6 +1,6 @@
 /* DCR Employee Portal 2 service worker (BLUEPRINT 2.2.6).
 
-   - Cache "dcr-portal2-v6". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
+   - Cache "dcr-portal2-v7". On activate it deletes only OTHER "dcr-portal2-*" caches: never the old
      portal's "dcr-portal-*", nor the takeoff copy's "ptt-web-*", nor anything else on the device.
    - Never touches takeoff/ (the takeoff app's copy: its own worker keeps it; see v5 below).
    - Network FIRST for the site's own pages and files (always up to date online; the last copy
@@ -60,8 +60,19 @@
    its page module and its rules (repo/photo.js, map/photo.js, map/shoots.js) join the list, so a photographer's phone
    opens a reminder's link (shoots.html?shoot=<id>) from a cold start; the top bar (common2.js: the Shoot schedule entry),
    Home (its card) and My Tasks ("Open in shoot schedule") changed too: a new name, so every installed copy takes them at
-   once. Only the code is kept: no answer of the database (the mirror, the changes, the photo team) is ever kept here. */
-const CACHE = "dcr-portal2-v6";
+   once. Only the code is kept: no answer of the database (the mirror, the changes, the photo team) is ever kept here.
+   v7 (the photo files - the photographer screen program, P5b: completion and the Ready for marketing list): the shoot
+   sheet's Files section and the Ready view's modules (repo/photo-files.js, map/photo-files.js and its generated words
+   map/photo-words.js, pages/shoots-files.js) join the list, so a marketing member's phone opens the push notice's link
+   (shoots.html?ready=<id>) from a cold start; shoots.html (the fourth view), its styles, the Access tab and Home (the
+   Ready badge) changed too. Never published on its own: it goes out with v8.
+   v8 (the photo files in the Office OneDrive - DCR Desktop 2 docs/PHOTO-FILES-ONEDRIVE.md, cited OD): the shared cases
+   version 31's words, the OneDrive edition's Files lines, Open in OneDrive, the access lines, the Access tab's
+   Microsoft account and sharing line (photo_drive_overview), shoots.html's connect-src naming the OneDrive host the
+   project pages already name; the phone's hand-in modules (photo-send.js and its hash worker, OD §11.3) join the list
+   under this same name, as they go out with it. A new name, so every installed copy takes them at once. Still only the
+   code: no status, list, OneDrive link or upload address is ever kept here. */
+const CACHE = "dcr-portal2-v8";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
 // tests/core-sw.test.mjs checks it), so the installed app also opens offline from a cold start (a
@@ -109,6 +120,10 @@ const SHELL = [
   // the shoot schedule (v6): the page, its styles and rules (repo/photo.js reads the mirror; map/photo.js and map/shoots.js
   // put it into words)
   "shoots.html", "css/shoots.css", "js/pages/shoots.js", "js/repo/photo.js", "js/map/photo.js", "js/map/shoots.js",
+  // the photo files (v7, v8): the Files section and the Ready for marketing view (map/photo-words.js: the contract's words)
+  "js/pages/shoots-files.js", "js/repo/photo-files.js", "js/map/photo-files.js", "js/map/photo-words.js",
+  // the phone's hand-in (v8, OD §3.3): the send and its hash worker (js/quickxor.js is listed above)
+  "js/photo-send.js", "js/photo-hash-worker.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

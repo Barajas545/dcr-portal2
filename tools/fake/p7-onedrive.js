@@ -298,6 +298,26 @@
     // walk that cannot wait them)
     let ahead = 0;
     const nowMs = () => Date.parse(nowIso()) + ahead;
+    /* The photo files' phone hand-in (tools/fake/p10-photo-files.js, the photo-files stand-in) borrows this demo upload
+       address: open({size, name, commit(parts) -> a driveItem's JSON | null (the name was taken meanwhile: 409), full() ->
+       true while the demo's OneDrive is full (507 at the last chunk)}) -> {url, expires_at}. The same PUT (Content-Range,
+       202 + nextExpectedRanges, the last chunk's 201 + the item), GET (how far) and 404 once finished or run out as the
+       Files tab's; the parts are handed to commit and then let go (never kept here). */
+    E.onedriveUpload = {
+      open(spec) {
+        const token = "p" + (++sessionN) + "-" + Math.random().toString(36).slice(2, 10);
+        const exp = nowMs() + 24 * 3600 * 1000;
+        sessions.set(token, { photo: spec, size: Number(spec.size) || 0, name: String(spec.name || ""), offset: 0, parts: [], done: null, exp });
+        return { url: "https://" + HOST + "/__demo/up/" + token, expires_at: new Date(exp).toISOString() };
+      },
+      /** a session's address that runs out now (a node test's / an e2e's "the session expired") */
+      expire(url) {
+        const m = /\/__demo\/up\/([A-Za-z0-9-]+)$/.exec(String(url || ""));
+        const s = m ? sessions.get(m[1]) : null;
+        if (s) s.exp = 0;
+        return !!s;
+      },
+    };
 
     /* sealed tickets and cursors: the demo's stand-in for ticket.ts (tamper-evident, bound, short-lived) */
     function seal(kind, obj, exp) {
@@ -1481,14 +1501,33 @@
       if (method !== "PUT") return graphJson(405, { error: { code: "invalidRequest" } });
       if (h.authorization) return graphJson(401, { error: { code: "unauthenticated", message: "An upload URL takes no Authorization header" } });
       const cr = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(h["content-range"] || ""));
-      const len = body && typeof body.size === "number" ? body.size : body && typeof body.length === "number" ? body.length : 0;
+      // (a Blob, a string, or - the photo files' hashing transport - the ArrayBuffer it hashed)
+      const len = body && typeof body.size === "number" ? body.size : body && typeof body.length === "number" ? body.length
+        : body && typeof body.byteLength === "number" ? body.byteLength : 0;
       if (!cr || Number(cr[3]) !== s.size) return graphJson(400, { error: { code: "invalidRange" } });
       const a = Number(cr[1]), z = Number(cr[2]);
       if (a !== s.offset) return graphJson(416, Object.assign({ error: { code: "invalidRange" } }, nextRanges()));
       if (z - a + 1 !== len || len > MAX_CHUNK || (z + 1 < s.size && len % UNIT !== 0)) return graphJson(400, { error: { code: "invalidRange" } });
+      // the photo files' address: OneDrive full answers its last chunk 507 (the session is then dropped: the file goes
+      // again from byte 0 in a new one once there is room, OD §3.3 step 5)
+      if (s.photo && z + 1 >= s.size && typeof s.photo.full === "function" && s.photo.full()) {
+        sessions.forEach((v, k) => { if (v === s) sessions.delete(k); });
+        return graphJson(507, { error: { code: "quotaLimitReached", message: "Insufficient Space Available" } });
+      }
       s.parts.push(body);
       s.offset = z + 1;
       if (s.offset < s.size) return graphJson(202, nextRanges());
+      if (s.photo) {
+        const parts = s.parts;
+        s.parts = [];
+        const item = s.photo.commit(parts);
+        if (!item) {
+          sessions.forEach((v, k) => { if (v === s) sessions.delete(k); });
+          return graphJson(409, { error: { code: "nameAlreadyExists", message: "The specified item name already exists" } });
+        }
+        s.done = item.id;
+        return graphJson(201, item);
+      }
       if (s.plan) {
         during(s);
         // a deferred replace: its last chunk commits nothing (202, nothing more wanted) - plan_save_commit does; unless

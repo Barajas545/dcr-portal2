@@ -655,6 +655,23 @@ test("a shoot's actions: each one sends what its method takes, and the changes g
     "declined: asked, never done");
 });
 
+test("a shoot's History line: DCR Agents 2 2.3.0's history_words say why a skipped shoot turned done (escaped), never 'no date → no date'; an older PC's moves read as before", async () => {
+  const words = ["Thu Oct 1 → Tue Oct 6 (rain)", `brought back: its files were handed in (by Sam ${EVIL})`];
+  // 2.3.0 keeps the entry without days out of `history` (the moves) and gives every entry in words
+  const p = await open({ hash: "#/photo/plan/12/shoot/40", over: { "photo.shoot": shoot({ status: "done", history_words: words }) } });
+  noRaw(p.html());
+  assert.ok(p.html().includes("History: " + escHtml(words[0]) + "; " + escHtml(words[1])), "the History line, entry by entry");
+  assert.ok(!p.html().includes("Moves: "), "one line, not both");
+  assert.ok(!/no date → no date/.test(p.html()));
+  // an empty list or none at all (2.2.0): the moves as before
+  for (const hw of [undefined, [], [""]]) {
+    const q = await open({ hash: "#/photo/plan/12/shoot/40", over: { "photo.shoot": shoot(hw === undefined ? {} : { history_words: hw }) } });
+    noRaw(q.html());
+    assert.ok(q.html().includes("Moves: Thu Oct 1 → Tue Oct 6 (" + E + ")"), JSON.stringify(hw));
+    assert.ok(!q.html().includes("History: "), JSON.stringify(hw));
+  }
+});
+
 test("bring back asks for a day only when its own day has passed; a disabled action says why", async () => {
   const s = shoot({ status: "skipped", actions: [{ action: "send", enabled: false, why: `it is skipped ${EVIL}` },
     { action: "bring_back", enabled: true, why: "", needs_day: true }] });

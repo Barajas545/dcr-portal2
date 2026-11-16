@@ -2,3 +2,6 @@
 # holds the sha256 of every file as published, and tests/p8-takeoff-frame.test.mjs checks them): never a line-ending
 # change on any checkout, Windows or CI.
 site/takeoff/** -text
+# the photo files contract's shared cases (DCR Desktop 2 tools/pglite_check/photo_files_cases.json, docs/PHOTO-FILES.md
+# §15): a byte copy, LF only (tests/p10-photo-files-map.test.mjs compares it when DCR_DESKTOP2_DIR names Desktop 2)
+tests/vectors/photo_files_cases.json -text

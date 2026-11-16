@@ -117,6 +117,9 @@ export async function startPgliteServer(opts) {
   const J = await seed({ sql, one, asPerson, people });
   // P5c: the office lists, the sales tools and the public form's function (tools/pglite-p5c.mjs)
   const X = o.p5c ? await (await import("./pglite-p5c.mjs")).setupP5c({ db, client, catalog, sql, one, asPerson, J, people, REPO, D2 }) : null;
+  // P5 (opts.photoFiles): the photo files' function "photo-files" - played by its own service-role SQL over this database
+  // with a made-up OneDrive (tools/pglite-p10-photo-files.mjs); tools/e2e-p10-photo-files-pglite.mjs walks it
+  const G = o.photoFiles ? await (await import("./pglite-p10-photo-files.mjs")).setupPhotoFiles({ db, client, sql, asPerson, D2 }) : null;
   const PICTURE = png();
 
   const calls = [];
@@ -195,6 +198,7 @@ export async function startPgliteServer(opts) {
          role); any other answers as an unconfigured project would */
       case "fn":
         if (X && body.name === "subform") return await X.subform(body);
+        if (G && body.name === "photo-files") { const r = await G.photoFiles(uid, body.body); return { data: null, error: null, status: r.status, fn: r }; }
         return { data: null, error: null, status: 503, fn: { status: 503, body: { error: "push_not_configured" } } };
       /* the one signed upload a function minted (Storage's uploadToSignedUrl) */
       case "signedUpload":
@@ -247,7 +251,7 @@ export async function startPgliteServer(opts) {
     await lock.catch(() => {});
     try { await db.close(); } catch (e) { /* already closed */ }
   };
-  return { server, base, sql, one, asPerson, J, calls, client, catalog, close, people, p5c: X };
+  return { server, base, sql, one, asPerson, J, calls, client, catalog, close, people, p5c: X, photoFiles: G };
 }
 
 /* ── the made-up job ─────────────────────────────────────────────────── */

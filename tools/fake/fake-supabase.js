@@ -813,7 +813,8 @@
   const odExt = () => (engine.exts || []).find((x) => x && x.name === "p7-onedrive") || null;
   function odOwns(url) { const x = odExt(); return !!(x && x.owns(url)); }
   async function onedriveHttp(method, url, headers, body, onProgress) {
-    const size = body && body.size !== undefined ? body.size : 0;
+    // (a Blob, or the ArrayBuffer the photo files' hashing transport sends)
+    const size = body && body.size !== undefined ? body.size : body && typeof body.byteLength === "number" ? body.byteLength : 0;
     if (method === "PUT" && size) {
       const steps = Math.max(1, Math.min(12, Math.ceil(size / (256 * 1024))));
       const total = Math.max(state.uploadMs, Math.min(4000, (size / UPLOAD_SPEED) * 1000));

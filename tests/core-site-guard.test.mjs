@@ -33,10 +33,13 @@ export const PAGE_LIBS = { "timesheet.html": PDF_LIBS, "timesheet-mobile.html": 
 // admin's self-test); downloads themselves are navigations. js/repo/onedrive.js names the same host (ONEDRIVE_HOST).
 // The Plans Library (owner 2026-10-26) downloads saved plans from OneDrive in byte ranges (js/plan-library-worker.js) on
 // the pages where plans are saved: the Plans Library itself and Search (and the project page). The home page keeps
-// them up to date too, from the worker alone (a worker's policy is its own response's, not the page's).
+// them up to date too, from the worker alone (a worker's policy is its own response's, not the page's). The shoot
+// schedule's phone hand-in (the photo files in the Office OneDrive, DCR Desktop 2 docs/PHOTO-FILES-ONEDRIVE.md §3.3
+// step 10) sends its chunks to that same host: shoots.html names it too - no new identifier.
 export const ONEDRIVE = "https://netorgft10120038-my.sharepoint.com";
 const LIBRARY_PAGES = ["plans-library.html", "search.html"];
-export const PAGE_CONNECT = { "project.html": [ONEDRIVE], "plans-library.html": [ONEDRIVE], "search.html": [ONEDRIVE] };
+const PHOTO_PAGES = ["shoots.html"];
+export const PAGE_CONNECT = { "project.html": [ONEDRIVE], "plans-library.html": [ONEDRIVE], "search.html": [ONEDRIVE], "shoots.html": [ONEDRIVE] };
 // The pages that show the takeoff app in a frame on a phone or tablet (js/plan-frame.js: the 📐 menu of Search and of a
 // project, and the Plans Library) say so: frame-src 'self' - what default-src already allowed, written out so that the
 // frame keeps working whatever default-src becomes, and so nothing but this site's own page can ever be framed.
@@ -133,7 +136,7 @@ test("every page carries the security policy of BLUEPRINT 2.2.1, before any scri
   }
 });
 
-test("the OneDrive host: exactly the one js/repo/onedrive.js names, in connect-src of project.html and the Plans Library's pages only (D10, 2026-10-26)", () => {
+test("the OneDrive host: exactly the one js/repo/onedrive.js names, in connect-src of project.html, the Plans Library's pages and the shoot schedule only (D10, 2026-10-26; the photo files, OD §3.3)", () => {
   const repo = read(join(SITE, "js/repo/onedrive.js"));
   const host = /export const ONEDRIVE_HOST = "([^"]+)";/.exec(repo);
   assert.ok(host, "repo/onedrive.js exports ONEDRIVE_HOST");
@@ -142,7 +145,7 @@ test("the OneDrive host: exactly the one js/repo/onedrive.js names, in connect-s
   for (const f of html) {
     const csp = parseCsp(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(read(f))[1]);
     const has = Object.values(csp).some((v) => v.split(" ").includes(ONEDRIVE));
-    const may = rel(f) === "project.html" || LIBRARY_PAGES.includes(rel(f)) || rel(f) === VENDORED_PAGE;
+    const may = rel(f) === "project.html" || LIBRARY_PAGES.includes(rel(f)) || PHOTO_PAGES.includes(rel(f)) || rel(f) === VENDORED_PAGE;
     assert.equal(has, may, rel(f) + (has ? ": names the OneDrive host" : ": must name the OneDrive host in connect-src"));
     if (may) {
       for (const [d, v] of Object.entries(csp)) if (d !== "connect-src") assert.ok(!v.includes("sharepoint"), rel(f) + ": " + d + " names SharePoint");
@@ -232,7 +235,7 @@ test("Portal 2's own browser-side names, never the old portal's (Appendix C)", (
     [/sharepoint\.com/i, "SharePoint (only the OneDrive host, in project.html's policy and js/repo/onedrive.js)"],
     [/["'`]tsView["'`]/, "the old time-sheet view key"],
   ];
-  const HOST_OK = ["project.html", "js/repo/onedrive.js", VENDORED_PAGE].concat(LIBRARY_PAGES);
+  const HOST_OK = ["project.html", "js/repo/onedrive.js", VENDORED_PAGE].concat(LIBRARY_PAGES, PHOTO_PAGES);
   for (const f of scripts.concat(html)) {
     let src = read(f);
     // the one exact host string, in the two files that may name it (D10): stripped before the test

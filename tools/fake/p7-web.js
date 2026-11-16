@@ -106,7 +106,11 @@
           throw rule("23514", "this is the last active admin; make someone else admin first");
         }
         if (next.role !== cur.role) Object.assign(next, roleDefaults(next.role));
+        const was = cur;
         cur = save(w, cur, next);
+        // turned off, or no longer an admin: the Ready for marketing cards they were on go back to ready unless they can
+        // still act (the photo files part's tg_profiles trigger, P5b review round 9 - tools/fake/p10-photo-files.js)
+        if ((!cur.active || (was.role === "admin" && cur.role !== "admin")) && E.photoFiles && E.photoFiles.rightsChanged) E.photoFiles.rightsChanged(id);
       }
       // 2. the switches asked for (an admin holds them all, the agents account none: nothing to set)
       if (Object.keys(sw).length && !["admin", "agents"].includes(cur.role)) {

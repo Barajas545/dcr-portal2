@@ -766,8 +766,15 @@ export function shootActions(s, plan, access, o) {
   let why = "";
   if (!a.canEdit) why = a.marketing ? "Marketing reads the shoot schedule only." : REFUSAL.forbidden;
   else if (!plan || ACTIVE_PLAN.indexOf(plan.status) === -1) why = REFUSAL.plan_not_active;
-  else if (!isOpen(s)) why = s && s.status === "done" ? "A shoot that is done is not moved." : REFUSAL.not_open;
-  else if (opt.pending) why = REFUSAL.pending;
+  else if (!isOpen(s)) {
+    // P5b (DCR Desktop 2 docs/PHOTO-FILES.md §6.8, §13.7): a skipped or missed shoot whose files were handed in is brought
+    // back by Mark done - also while an old DCR Agents 2 cannot yet (closed_old_pc), never for a closed plan (closed_plan:
+    // the plan check above). o.files: the shoot's photo_drive_status. Move… stays refused.
+    const c = opt.files && opt.files.completion;
+    const bring = !!s && (s.status === "skipped" || s.status === "missed") && (c === "closed_files" || c === "closed_old_pc") && !opt.pending;
+    why = s && s.status === "done" ? "A shoot that is done is not moved." : REFUSAL.not_open;
+    if (bring) return { move: no(why), done: { ok: true, why: "" } };
+  } else if (opt.pending) why = REFUSAL.pending;
   return why ? { move: no(why), done: no(why) } : { move: { ok: true, why: "" }, done: { ok: true, why: "" } };
 }
 

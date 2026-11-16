@@ -25,7 +25,8 @@ import {
 import { addDays, ymd, dayOfWeek } from "./pacific.js";
 
 export const TITLE = "Shoot schedule";
-export const VIEWS = Object.freeze([["agenda", "Agenda"], ["job", "By job"], ["month", "Month"]]);
+// P5b: the Ready for marketing list is the fourth view (DCR Desktop 2 docs/PHOTO-FILES.md §13.5; its name is ready.view)
+export const VIEWS = Object.freeze([["agenda", "Agenda"], ["job", "By job"], ["month", "Month"], ["ready", "Ready for marketing"]]);
 export const VIEW_KEYS = Object.freeze(VIEWS.map((v) => v[0]));
 export const NO_ACCESS_TEXT = "The shoot schedule is for admins and the photo team. An admin puts people on the photo team " +
   "(Employees & crews → Access, or DCR Desktop 2 → Users).";
@@ -71,8 +72,10 @@ export function pcHeader(st) {
 
 /* ── the address ──────────────────────────────────────────────────────── */
 
-/** ?shoot=, ?plan=, ?task=, ?view=, ?month=, ?mine=1 -> {shoot, plan, task, view, month, mine} (null / false for what is
-    not there or not one). mine: "Only my jobs" ticked (Home's card links so when its badge counted only my jobs). */
+/** ?shoot=, ?plan=, ?task=, ?view=, ?month=, ?mine=1, ?ready= -> {shoot, plan, task, view, month, mine, ready} (null / false
+    for what is not there or not one). mine: "Only my jobs" ticked (Home's card links so when its badge counted only my
+    jobs). ready: a Ready for marketing card (photo_marketing.id - the push notice and the e-mail link there, §10.7);
+    it opens the Ready view. */
 export function parseLink(search) {
   let q;
   try { q = new URLSearchParams(str(search)); } catch (e) { q = new URLSearchParams(""); }
@@ -80,13 +83,14 @@ export function parseLink(search) {
   const month = q.get("month");
   return { shoot: posInt(q.get("shoot")), plan: posInt(q.get("plan")), task: posInt(q.get("task")),
     view: VIEW_KEYS.indexOf(view) !== -1 ? view : null, month: /^\d{4}-(0[1-9]|1[0-2])$/.test(str(month)) ? month : null,
-    mine: q.get("mine") === "1" };
+    mine: q.get("mine") === "1", ready: posInt(q.get("ready")) };
 }
 
 /** The page's own address for what is shown: "shoots.html?shoot=12", "shoots.html?plan=3", "shoots.html?view=month". */
 export function linkFor(o) {
   const x = o || {};
   const parts = [];
+  if (x.view === "ready") return "shoots.html?" + (posInt(x.ready) ? "ready=" + posInt(x.ready) : "view=ready");
   if (posInt(x.shoot)) parts.push("shoot=" + posInt(x.shoot));
   else if (posInt(x.plan)) parts.push("plan=" + posInt(x.plan));
   if (x.view && x.view !== "agenda" && VIEW_KEYS.indexOf(x.view) !== -1) parts.push("view=" + x.view);

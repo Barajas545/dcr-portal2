@@ -411,7 +411,7 @@ async function main() {
     const mk = await tab("pglite-marketing");
     await mk.size(375, 812, true);
     await attempt("PGlite: marketing reads only; a lead on no team is told no", async () => {
-      await signIn(mk, "viewer", "shoots.html");
+      await signIn(mk, "viewer", "shoots.html?view=agenda");     // P5b: marketing's first view is Ready for marketing
       await mk.until(LIST, 15000);
       await row(mk, "Framing complete", "A000T8");
       await mk.until("!!document.getElementById('shDTitle')", 8000);

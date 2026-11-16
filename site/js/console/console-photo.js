@@ -1440,6 +1440,9 @@
     var moves = (s.history || []).map(function (h) {
       return esc((dayText(h.from) || "no date") + " → " + (dayText(h.to) || "no date") + " (" + str(h.reason) + ")");
     });
+    // DCR Agents 2 2.3.0's History line, entry by entry: the moves and the entries without days (a skipped shoot brought
+    // back done: "brought back: its files were handed in (by Sam)"); an older PC sends only the moves
+    var history = (Array.isArray(s.history_words) ? s.history_words : []).map(str).filter(Boolean).map(esc);
     var fb = s.feedback || null;
     var light = '<div class="cph-light"><span id="cphLight" class="c-muted">' + esc(s.light) + "</span>" +
       (s.planned_date ? btn("Check the forecast", "shoot-wx", { method: "photo.shoot.conditions",
@@ -1471,7 +1474,8 @@
       '" placeholder="Drone notes — airspace, launch spot, wind" aria-label="Drone notes"></div>' +
       (notes.length ? '<div class="c-field"><span class="c-label">Notes from My Tasks</span><div class="c-pre c-muted c-small">' +
         notes.join("\n") + "</div></div>" : "") +
-      (moves.length ? '<p class="c-muted c-small">Moves: ' + moves.join("; ") + "</p>" : "") +
+      (history.length ? '<p class="c-muted c-small">History: ' + history.join("; ") + "</p>" :
+        moves.length ? '<p class="c-muted c-small">Moves: ' + moves.join("; ") + "</p>" : "") +
       (fb ? '<p class="c-muted c-small">Debrief: ' + esc("★★★★★".slice(0, int(fb.rating)) + " " + ratingWords(fb.rating) +
         (fb.note ? " — " + fb.note : "")) + "</p>" : "") +
       "</div>" + '<div class="cph-savebar c-actions" id="cphSaveBar"><span class="cph-warnline" id="cphDirty"></span>' +

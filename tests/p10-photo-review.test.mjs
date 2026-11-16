@@ -163,7 +163,8 @@ test("the Photo team: an unsaved line keeps the version it began from - a save o
   assert.equal(admin.role, "admin");
   // the card: a re-read drops every stale edit and says so on its line (PHOTO_STALE)
   const ad = code(read("js/pages/admin.js"));
-  assert.match(ad, /P\.team = await photo\.team\(\);[\s\S]{0,700}photoStale\(x, P\.edits\[id\]\)[\s\S]{0,120}delete P\.edits\[id\];\s*if \(x\) P\.msgs\[id\] = PHOTO_STALE;/);
+  // (the team is read with the share list since the OneDrive edition, OD §8.4: Promise.all, then P.team)
+  assert.match(ad, /P\.team = team;[\s\S]{0,700}photoStale\(x, P\.edits\[id\]\)[\s\S]{0,120}delete P\.edits\[id\];\s*if \(x\) P\.msgs\[id\] = PHOTO_STALE;/);
 });
 
 /* ── CONFIRMED: the Move sheet follows the mirror ─────────────────────── */
@@ -504,7 +505,7 @@ test("a poll or a watch read keeps the keyboard on its row, and the status regio
 test("a photo team change heard by the watch reads photo_my_access again: Move… comes and goes without a reload; someone taken off is told so", { skip }, async () => {
   const E = await engine();
   const viewer = await person("viewer");
-  await open(E, "viewer");
+  await open(E, "viewer", "?view=agenda");                       // P5b: marketing's first view is Ready for marketing
   const fc = shootBy("A000T8", "framing-complete");
   click('#shList [data-shoot="' + fc.id + '"]');
   assert.ok(!$("shDScroll").querySelector('[data-act="move"]'), "marketing reads only");
@@ -613,7 +614,8 @@ test("a change's dates, Undo's label and its stale offer, an untaken change that
   assert.equal(V.parseLink("?mine=1").mine, true);
   assert.equal(V.parseLink("?mine=yes").mine, false);
   const dash = code(read("js/shell/dashboard.js"));
-  assert.match(dash, /go\.setAttribute\("href", b && b\.mine \? "shoots\.html\?mine=1" : "shoots\.html"\)/);
+  // P5b: marketing's badge (the Ready list) links to the Ready view (tests/p10-photo-files-pages.test.mjs)
+  assert.match(dash, /go\.setAttribute\("href", b && b\.ready \? "shoots\.html\?view=ready" : b && b\.mine \? "shoots\.html\?mine=1" : "shoots\.html"\)/);
 });
 
 test("?mine=1 opens with Only my jobs ticked (the photographer's own); the words say job", { skip }, async () => {

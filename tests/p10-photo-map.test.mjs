@@ -323,7 +323,7 @@ test("who may act: can_photo may request (an admin, a photographer), marketing r
 test("the team: the Google e-mail as the database keeps it (white space of every kind trimmed, lower case, none inside); one default photographer", () => {
   assert.deepEqual(M.googleEmailProblem("\t Pat.Lens@Example.TEST \n\u00a0"), { value: "pat.lens@example.test", problem: "" });
   assert.deepEqual(M.googleEmailProblem(""), { value: null, problem: "" });
-  for (const bad of ["not-an-email", "@x", "pat @x.io", "pat\n@x.io", "pat@x\u00a0io", "pat@x.io\u0001", "a".repeat(250) + "@x.io"]) {
+  for (const bad of ["not-an-email", "@x", "pat @example.test", "pat\n@example.test", "pat@x\u00a0io", "pat@example.test\u0001", "a".repeat(250) + "@example.test"]) {
     assert.equal(M.googleEmailProblem(bad).problem, "That is not an e-mail address.", JSON.stringify(bad));
   }
   const team = [M.toTeamMember({ profile_id: "a", photographer: true, default_photographer: true, profile: { full_name: "Pat Lens" } }),

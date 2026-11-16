@@ -294,6 +294,15 @@ async function photoCard(p, homeOpts) {
     const map = await import("../map/shoots.js");
     const d = await repo.loadSchedule();
     painted.shoots = map.homeBadge(d.plans, d.shoots, companyToday(), { mine: a.photographer ? p.id : null });
+    // P5b (DCR Desktop 2 docs/PHOTO-FILES.md §13.5): marketing's badge is the Ready for marketing list - ready plus
+    // claimed by me ("3 ready for marketing"), linking to shoots.html?view=ready; a database without P5: the schedule's
+    if (a.marketing) {
+      const filesRepo = await import("../repo/photo-files.js");
+      const filesMap = await import("../map/photo-files.js");
+      const list = await filesRepo.readyList("open").catch(() => null);
+      const rb = list ? filesMap.homeBadge(list.counts) : null;
+      if (rb) painted.shoots = { cls: "", text: rb.text, title: rb.text, ready: true };
+    }
     shootsBadge();
   } catch (e) { /* no badge */ }
 }
@@ -305,7 +314,7 @@ function shootsBadge() {
   cardBadge("hmShoots", b);
   const card = $("hmShoots");
   const go = card ? card.querySelector("a.hm-card-go") : null;
-  if (go) go.setAttribute("href", b && b.mine ? "shoots.html?mine=1" : "shoots.html");
+  if (go) go.setAttribute("href", b && b.ready ? "shoots.html?view=ready" : b && b.mine ? "shoots.html?mine=1" : "shoots.html");
 }
 
 /** The cards drawn again (a card arrived: Sales estimates, the Shoot schedule, a lead's Batch Entry) with every badge and

@@ -381,7 +381,8 @@ async function main() {
           }
           await p.until("!!document.getElementById('hmShoots') && Array.from(document.querySelectorAll('#dcr2Nav a')).some((a) => a.getAttribute('href') === 'shoots.html')", 8000);
           check(W + ": Home's 📷 card and the top bar's Shoot schedule", true);
-          await open(p, "/shoots.html", LIST);
+          // P5b: someone only on marketing opens on Ready for marketing (tools/e2e-p10-photo-files.mjs): the Agenda asked for
+          await open(p, role === "viewer" ? "/shoots.html?view=agenda" : "/shoots.html", LIST);
           await audit(p, W + " Agenda", "#shRoot", phone);
           await focusShown(p, W + " Agenda", "#shRoot", "#shViews [data-view=agenda]", 14);
           await shots2(p, who.split(" ")[0] + "_agenda", device);
@@ -645,7 +646,7 @@ async function main() {
 
     /* ── 2. marketing and someone not on the team ───────────────────────── */
     await attempt("marketing reads only; a manager is told no", async () => {
-      await signIn(ph, "viewer", "shoots.html");
+      await signIn(ph, "viewer", "shoots.html?view=agenda");     // P5b: marketing's first view is Ready for marketing
       await ph.until(LIST, 8000);
       await row(ph, "Framing complete", "A000T8");
       await ph.until("!!document.getElementById('shDTitle')", 5000);

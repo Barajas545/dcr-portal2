@@ -194,7 +194,7 @@
       // server as the service role); any other answers as an unconfigured project would (the push function)
       this.functions = {
         invoke: async (name, o) => {
-          if (name === "subform") {
+          if (name === "subform" || name === "photo-files") {  // photo-files: the photo files (startPgliteServer({photoFiles: true}))
             const r = await call({ op: "fn", token: self.auth.token(), name, body: clone((o && o.body) || {}),
               ip: root.__pgliteIp || null, origin: root.__pgliteOrigin || null });
             const f = r.fn || { status: 500, body: { error: "server_error" } };

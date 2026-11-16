@@ -9,19 +9,21 @@
   /* WCAG AA on every surface of this page: the muted grey a shade darker than the site's (#61738a is 4.48:1 on the
      page, 4.33:1 on the second surface), and a fill white text reads on (5.0:1; the accent blue is 4.04:1) */
   --text-muted:#56677c; --fill:#1f6fc8; --fill-2:#1a5fae;
+  /* P5b: the "Needs you" chip - the late red a shade darker, AA on its own tint */
+  --need:#a3301a;
   max-width:1320px; margin:0 auto; padding:14px 16px calc(40px + env(safe-area-inset-bottom));
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .sh {
     --acc-text:#8cc4fa; --tint-2:rgba(77,155,240,.30); --late:#f0937f; --late-bg:rgba(240,147,127,.13);
     --ok-text:#6fd3a4; --ok-bg:rgba(111,211,164,.12); --gold:#e0b25a; --gold-bg:rgba(224,178,90,.14);
-    --firm:#c3a6f5; --firm-bg:rgba(195,166,245,.14); --text-muted:#9aa7b6;
+    --firm:#c3a6f5; --firm-bg:rgba(195,166,245,.14); --text-muted:#9aa7b6; --need:#f0937f;
   }
 }
 :root[data-theme="dark"] .sh {
   --acc-text:#8cc4fa; --tint-2:rgba(77,155,240,.30); --late:#f0937f; --late-bg:rgba(240,147,127,.13);
   --ok-text:#6fd3a4; --ok-bg:rgba(111,211,164,.12); --gold:#e0b25a; --gold-bg:rgba(224,178,90,.14);
-  --firm:#c3a6f5; --firm-bg:rgba(195,166,245,.14); --text-muted:#9aa7b6;
+  --firm:#c3a6f5; --firm-bg:rgba(195,166,245,.14); --text-muted:#9aa7b6; --need:#f0937f;
 }
 
 /* ── the header ─────────────────────────────────────────────────────── */
@@ -91,7 +93,7 @@
 .sh-chips { display:flex; flex-wrap:wrap; gap:4px 6px; }
 .sh-chip { display:inline-flex; align-items:center; padding:1px 8px; border-radius:10px; font-size:11.5px; font-weight:700;
   background:var(--surface-2); color:var(--text-muted); border:1px solid transparent; white-space:nowrap; }
-.sh-chip.late, .sh-chip.refused { background:var(--late-bg); color:var(--late); }
+.sh-chip.late, .sh-chip.refused { background:var(--late-bg); color:var(--need); }
 .sh-chip.due { background:var(--tint); color:var(--acc-text); }
 .sh-chip.warn, .sh-chip.pending, .sh-chip.office { background:var(--gold-bg); color:var(--gold); }
 .sh-chip.firm { background:var(--firm-bg); color:var(--firm); }
@@ -290,6 +292,63 @@ html.sh-locked, html.sh-locked body { overflow:hidden; }
 .mv-sum[hidden] { display:none; }
 .mv-sum:focus-visible { outline:2px solid var(--acc-text); outline-offset:2px; }
 
+/* ── P5b: the Files section (DCR Desktop 2 docs/PHOTO-FILES.md §13.1, §13.7) and the Ready for marketing view (§13.5) ── */
+.sh-seg { flex-wrap:wrap; }
+.sh-seg button[hidden] { display:none; }
+.sh-files { margin:0; }
+.sh-fskel { height:54px; margin:0; }
+.sh-fhelp { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 8px; }
+.sh-chip.need { background:var(--late-bg); color:var(--need); border-color:var(--need); }
+.sh-flines { display:flex; flex-direction:column; gap:6px; }
+.sh-fl { margin:0; padding:10px 12px; border-radius:10px; background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--border);
+  font-size:14px; line-height:1.45; overflow-wrap:anywhere; }
+.sh-fl.main { font-weight:700; }
+.sh-fl.ok { border-left-color:var(--ok-text); }
+.sh-fl.ok.main { color:var(--ok-text); background:var(--ok-bg); }
+.sh-fl.wait { border-left-color:var(--acc-text); }
+.sh-fl.warn { border-left-color:var(--gold); }
+.sh-fl.warn.main { background:var(--gold-bg); }
+.sh-fl.problem { border-left-color:var(--late); }
+.sh-fl.problem.main { background:var(--late-bg); }
+.sh-fdone { margin:10px 0 0; font-size:14px; line-height:1.45; font-weight:700; overflow-wrap:anywhere; }
+.sh-ftold { margin:6px 0 0; font-size:13px; line-height:1.45; color:var(--text-muted); overflow-wrap:anywhere; }
+/* a Ready card's tip under Open in OneDrive (ready.open_tip, OD §8.4) */
+.sh-rtip { margin:8px 0 0; font-size:13px; line-height:1.45; color:var(--text-muted); overflow-wrap:anywhere; }
+.sh-facts-b { margin-top:12px; padding-top:12px; }
+/* the phone's hand-in (OD §3.3): the file in flight and how far; the picker is the page's own input, off the screen */
+.sh-fprog { display:flex; flex-direction:column; gap:6px; margin:0; padding:10px 12px; border-radius:10px; background:var(--surface);
+  border:1px solid var(--border); }
+.sh-fprog-n { font-size:13px; font-weight:600; color:var(--text-muted); overflow-wrap:anywhere; }
+.sh-fbar { display:block; width:100%; height:10px; border:0; border-radius:5px; background:var(--surface-2); color:var(--fill); accent-color:var(--fill);
+  -webkit-appearance:none; appearance:none; overflow:hidden; }
+.sh-fbar::-webkit-progress-bar { background:var(--surface-2); border-radius:5px; }
+.sh-fbar::-webkit-progress-value { background:var(--fill); border-radius:5px; }
+.sh-fbar::-moz-progress-bar { background:var(--fill); border-radius:5px; }
+.sh-pick { position:fixed; left:-10000px; top:0; width:1px; height:1px; opacity:0; pointer-events:none; }
+.sh-rtabs { display:flex; gap:3px; padding:3px; margin:0 0 10px; background:var(--surface-2); border:1px solid var(--border); border-radius:12px; }
+.sh-rtab { flex:1; min-height:44px; padding:8px 12px; border:0; border-radius:9px; background:transparent; color:var(--text-muted); font-weight:700; font-size:14px; }
+.sh-rtab[aria-selected="true"] { background:var(--surface); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.14); }
+.sh-rtab:focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+.sh-rlist { display:flex; flex-direction:column; gap:8px; }
+.sh-rrow { display:flex; flex-direction:column; align-items:flex-start; gap:4px; width:100%; min-height:56px; padding:10px 12px; text-align:left;
+  background:var(--surface); color:var(--text); border:1px solid var(--border); border-left:4px solid var(--ok-text); border-radius:12px; font:inherit; cursor:pointer; }
+.sh-rrow.mine { border-left-color:var(--acc); }
+.sh-rrow:hover { background:var(--surface-2); }
+.sh-rrow:focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+.sh-rrow[aria-current="true"] { border-color:var(--acc); box-shadow:0 0 0 2px var(--tint-2); }
+.sh-rw-n { font-size:12.5px; font-weight:700; color:var(--gold); overflow-wrap:anywhere; }
+.sh-chip.mine { background:var(--tint); color:var(--acc-text); }
+.sh-chip.posted { background:var(--firm-bg); color:var(--firm); }
+.sh-rline { margin:4px 0 0; font-size:14px; line-height:1.45; color:var(--text-muted); overflow-wrap:anywhere; }
+.sh-rwarn .w { color:var(--text); font-size:14px; }
+.sh-rwarn.wait { border-left-color:var(--acc-text); }      /* the account's access on its way */
+.sh-rwarn.info { border-left-color:var(--border); }        /* not on the share list: a fact, not a fault */
+.sh-rposted a { display:inline-flex; align-items:center; min-height:44px; color:var(--acc-text); overflow-wrap:anywhere; }
+.rs-ticks { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; }
+.rs-tick { min-height:44px; }
+.rs-tick input { width:18px; height:18px; }
+.mv-reason + .mv-lab { margin-top:14px; }                  /* a label under a one-line field (Posted…'s note under its link) */
+
 @media (min-width:681px) {
   .sh-mo { align-items:center; padding:20px 20px 76px; }
   .sh-mo-msg { flex:1 1 200px; }
@@ -309,7 +368,8 @@ html.sh-locked, html.sh-locked body { overflow:hidden; }
   .sh-back { display:none; }
   .sh-x { display:inline-flex; }
   .sh-detail:not(.open) .sh-dbar { display:none; }
-  .sh-box, .sh-shots li { background:var(--bg); }
+  .sh-box, .sh-shots li, .sh-fl { background:var(--bg); }
+  .sh-rtabs { margin-top:0; }
   .sh-cell { min-height:96px; }
   .sh-dnum { min-height:30px; }
   .sh-evs { display:flex; }

@@ -12,8 +12,10 @@
      Estimator ticks prices too, which may be unticked again); financials, approving payments and sales estimates
      are shown and changed in DCR Desktop 2 → Users. Managers keep the page without this tab.
    - the Photo team (an admin only; the photographer screen program, P3 - the owner's decision 3 of 2026-11-09): each
-     person's Photographer and Marketing ticks, the one default photographer and the marketing member's Google e-mail,
-     through set_photo_team at the row's version (the same rules as DCR Desktop 2 → Users → Photo team).
+     person's Photographer and Marketing ticks, the one default photographer and the marketing member's Microsoft
+     account (if not their DCR e-mail), through set_photo_team at the row's version (the same rules as DCR Desktop 2 →
+     Users → Photo team); each marketing member's sharing line from the share list (photo_drive_overview, P5 - the
+     Mark as shared / removed buttons are DCR Desktop 2's, DCR Desktop 2 docs/PHOTO-FILES-ONEDRIVE.md §8.4).
    Never pay rates (Q16), never the old portal's address/password columns. The database refuses
    every write from anyone but an admin or a manager (the switches: an admin only). */
 
@@ -22,14 +24,16 @@ import * as employees from "../repo/employees.js";
 import { scheduleText, hm, hoursText } from "../map/timesheets.js";
 import {
   offers, tick, diff, stateOf, saveProblem, photoPeople, photoGate, photoTick, photoStateOf, photoPayload, photoSummary, photoSaveProblem,
-  photoChanged, photoStale, PHOTO_TITLE, PHOTO_SUB, PHOTO_ADMINS_NOTE, PHOTOGRAPHER_TIP, DEFAULT_TIP, MARKETING_TIP, EMAIL_TIP, PHOTO_CHANGED,
-  PHOTO_STALE, PHOTO_NOT_READY, PHOTO_NOT_READY_TEXT,
+  photoChanged, photoStale, marketingOffAsk, shareLine, PHOTO_TITLE, PHOTO_SUB, PHOTO_ADMINS_NOTE, PHOTOGRAPHER_TIP, DEFAULT_TIP, MARKETING_TIP,
+  ACCOUNT_LABEL, ACCOUNT_TIP, PHOTO_CHANGED, PHOTO_STALE, PHOTO_NOT_READY, PHOTO_NOT_READY_TEXT,
 } from "../map/access.js";
 import * as photo from "../repo/photo.js";
+import { overview as filesOverview } from "../repo/photo-files.js";
+import { companyToday } from "../common2.js";
 import { avatarInitials } from "./ts-shared.js";
 
 const state = { list: [], accounts: [], crews: [], tab: "emp", me: null, access: [], accReady: true, accLoaded: false, acc: {},
-  photo: { ready: null, team: [], edits: {}, busy: {}, msgs: {}, say: "", loaded: false, error: "" } };
+  photo: { ready: null, team: [], edits: {}, busy: {}, msgs: {}, say: "", loaded: false, error: "", share: null } };
 const ROLE_WORD = { admin: "Admin", manager: "Manager", accountant: "Accountant", lead: "Lead", field: "Field", viewer: "View only" };
 
 function account(id) { return state.accounts.find(function (a) { return String(a.id) === String(id); }) || null; }
@@ -323,9 +327,11 @@ async function loadAccess() {
 
 /* ── the photo team (admin; the photographer screen program, P3) ──────────
    The same list as DCR Desktop 2 → Users → Photo team: each person's Photographer and Marketing ticks, the ONE default
-   photographer and the marketing member's Google e-mail (map/access.js photo* words and gates it). Every save is one
-   set_photo_team of that person's whole row at the version shown (repo/photo.js setTeam - never a write of the table);
-   a "changed" refusal reads the list again and says so. A database without the photo team: "Not in the database yet". */
+   photographer and the marketing member's Microsoft account (map/access.js photo* words and gates it). Every save is
+   one set_photo_team of that person's whole row at the version shown (repo/photo.js setTeam - never a write of the
+   table); a "changed" refusal reads the list again and says so. A database without the photo team: "Not in the
+   database yet". Each marketing member's sharing line is the share list's (photo_drive_overview, read with the team;
+   none on a database without the OneDrive edition, or when it cannot be read - the team still shows). */
 
 function photoNames() {
   const m = {};
@@ -347,8 +353,10 @@ function photoNotes(x, g) {
   if (g.photographer.note) out.push(["warn", g.photographer.note]);
   if (g.def.on && g.def.note && (x.row || g.dirty) && !g.photographer.note) out.push(["", g.def.note]);
   else if (!g.def.on && !g.def.disabled && g.def.note && g.dirty) out.push(["", g.def.note]);
-  if (g.email.note) out.push([g.email.note === "No Google e-mail yet" ? "warn" : "err", g.email.note]);
+  if (g.email.note) out.push(["err", g.email.note]);
   if (g.offNote) out.push(["warn", g.offNote]);
+  const share = shareLine(x, state.photo.share, companyToday());
+  if (share) out.push([share.tone, share.text]);
   return out;
 }
 
@@ -366,8 +374,10 @@ function photoRowHtml(x, names) {
     box("photographer", "Photographer", g.photographer, PHOTOGRAPHER_TIP) +
     box("marketing", "Marketing", g.marketing, MARKETING_TIP) +
     box("isDefault", "Default photographer", g.def, DEFAULT_TIP) +
-    '<div class="ad-ph-mail"><input type="email" data-ph="googleEmail" inputmode="email" placeholder="Google e-mail (marketing)" aria-label="' +
-      esc("Google e-mail of " + x.name) + '" title="' + esc(EMAIL_TIP) + '" value="' + esc(g.email.value) + '"' + (g.email.disabled || busy ? " disabled" : "") +
+    // (its label above it where the column's head is hidden - a phone, where the placeholder alone is cut short)
+    '<div class="ad-ph-mail"><label class="ad-ph-lab" for="adPhMail' + esc(x.id) + '">' + esc(ACCOUNT_LABEL) + "</label>" +
+      '<input type="email" id="adPhMail' + esc(x.id) + '" data-ph="googleEmail" inputmode="email" placeholder="' + esc(ACCOUNT_LABEL) + '" aria-label="' +
+      esc(ACCOUNT_LABEL + " - " + x.name) + '" title="' + esc(ACCOUNT_TIP) + '" value="' + esc(g.email.value) + '"' + (g.email.disabled || busy ? " disabled" : "") +
       ' autocomplete="off" spellcheck="false" maxlength="254"></div>' +
     '<div class="ad-ph-notes" data-phnotes="1" style="display:contents">' + photoNotes(x, g).map(function (n) {
       return '<div class="ad-ph-note' + (n[0] ? " " + n[0] : "") + '">' + esc(n[1]) + "</div>";
@@ -397,7 +407,7 @@ function renderPhoto() {
   const names = photoNames();
   box.innerHTML = head + '<div class="sub" title="' + esc(PHOTO_SUB) + '">' + esc(photoSummary(rows)) + "</div>" +
     '<div class="ad-ph-say" role="status">' + esc(P.say) + "</div>" +
-    '<div class="ad-ph-head" aria-hidden="true"><span>Person</span><span>Photographer</span><span>Marketing</span><span>Default</span><span>Google e-mail</span></div>' +
+    '<div class="ad-ph-head" aria-hidden="true"><span>Person</span><span>Photographer</span><span>Marketing</span><span>Default</span><span>' + esc(ACCOUNT_LABEL) + "</span></div>" +
     (rows.length ? rows.map(function (x) { return photoRowHtml(x, names); }).join("") : '<div class="ad-empty">No sign-in accounts.</div>') +
     '<div class="note">' + esc(PHOTO_ADMINS_NOTE) + "</div>";
 }
@@ -410,7 +420,9 @@ async function loadPhoto(opts) {
       const a = await photo.myAccess();
       if (!a.ready) { P.ready = false; renderPhoto(); return; }
     }
-    P.team = await photo.team();
+    const [team, share] = await Promise.all([photo.team(), filesOverview().catch(function () { return null; })]);
+    P.team = team;
+    P.share = share;
     P.ready = true;
     P.loaded = true;
     P.error = "";
@@ -473,8 +485,13 @@ async function onPhotoClick(ev) {
   if (mail) P.edits[x.id] = photoTick(photoEdit(x), "googleEmail", mail.value, { id: x.id, team: P.team });
   const pay = photoPayload(x, photoEdit(x), P.team);
   if (pay.problem) { P.msgs[x.id] = pay.problem; renderPhoto(); return; }
-  if (pay.removing && !(await confirmBox(x.name + " can no longer move shoots or read the shoot schedule (unless they are an admin), and their Google " +
-    "e-mail is forgotten. The shoots' history stays.", { title: "Take " + x.name + " off the photo team?", okText: "Remove", danger: true }))) return;
+  // a marketing member taken off marketing: the office removes their access to the shoot folders in OneDrive by hand and
+  // marks it in DCR Desktop (share.remove_ask, OD §8.3, §8.5)
+  const offMarketing = !!x.row && photoStateOf(x.row).marketing && !pay.next.marketing;
+  if (pay.removing && !(await confirmBox(x.name + " can no longer move shoots or read the shoot schedule (unless they are an admin), and their " +
+    "Microsoft account is forgotten. The shoots' history stays." + (offMarketing ? " " + marketingOffAsk(x.name) : ""),
+    { title: "Take " + x.name + " off the photo team?", okText: "Remove", danger: true }))) return;
+  if (!pay.removing && offMarketing && !(await confirmBox(marketingOffAsk(x.name), { okText: "Save", danger: true }))) return;
   P.busy[x.id] = true;
   delete P.msgs[x.id];
   P.say = "";

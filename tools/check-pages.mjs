@@ -240,12 +240,23 @@ async function main() {
       check("P3 shoots: the Month grid (Sunday first)", (await ph.eval("Array.from(document.querySelectorAll('#shList .sh-wd')).map(n => n.textContent).join('')")) === "SunMonTueWedThuFriSat");
       check("P3 shoots: phone - no horizontal scroll (Month)", await ph.eval("document.documentElement.scrollWidth <= innerWidth + 1"));
       shots.push(await ph.shot("p3_shoots_month_phone.png"));
-      // marketing (the demo's view-only Taylor) reads only
+      // marketing (the demo's view-only Taylor) reads only; P5b: their first view is Ready for marketing (the photo files)
       await signIn(ph, "viewer@demo.test", true, "shoots.html");
+      await ph.until("document.querySelectorAll('#shList .sh-rrow').length > 0", 8000).catch(() => null);
+      check("P5b shoots: marketing opens on Ready for marketing (its cards)", await ph.eval("document.querySelector('#shViews [data-view=ready]').getAttribute('aria-pressed') === 'true' && document.querySelectorAll('#shList .sh-rrow').length > 0"));
+      check("P5b shoots: phone - no horizontal scroll (the Ready list, four views)", await ph.eval("document.documentElement.scrollWidth <= innerWidth + 1"));
+      shots.push(await ph.shot("p5b_shoots_ready_phone.png"));
+      await ph.eval("document.querySelector('#shList .sh-rrow').click(); true");
+      await sleep(400);
+      check("P5b shoots: a Ready card opens full screen, I'm on it offered", await ph.eval("document.getElementById('shDetail').classList.contains('open') && !!document.querySelector('#shDScroll [data-act=r-claim]')"));
+      shots.push(await ph.shot("p5b_shoots_card_phone.png"));
+      await ph.eval("document.getElementById('shBack').click(); document.querySelector('#shViews [data-view=agenda]').click(); true");
       await ph.until("document.querySelectorAll('#shList .sh-row').length > 3", 8000).catch(() => null);
       await ph.eval("document.querySelector('#shList .sh-row').click(); true");
       await sleep(400);
       check("P3 shoots: marketing reads only (no action button)", await ph.eval("!!document.getElementById('shDTitle') && !document.querySelector('#shRoot [data-act=move], #shRoot [data-act=done], #shRoot [data-act=undo]')"));
+      await ph.until("!!document.querySelector('#shDScroll .sh-flines')", 5000).catch(() => null);
+      check("P5b shoots: the shoot's Files section", await ph.eval("!!document.querySelector('#shDScroll .sh-files .sh-fl')"));
       // a manager is not on the team
       await signIn(ph, "manager@demo.test", true, "shoots.html");
       await ph.until("/Not for your account/.test(document.getElementById('shList').innerText)", 8000).catch(() => null);

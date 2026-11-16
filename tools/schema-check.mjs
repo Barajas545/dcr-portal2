@@ -2150,6 +2150,11 @@ section = "The photographer screen program, P3: the shoot schedule - the photo t
 // ===========================================================================================
 await (await import("./schema-check-p10-photo.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
 
+// ===========================================================================================
+section = "The photographer screen program, P5b: the photo files - the Files section's one read, the Ready for marketing list and its acts, a skipped shoot brought back, Realtime, drift (repo/photo-files.js, map/photo-files.js, migration 20261111000100_photo_files)";
+// ===========================================================================================
+await (await import("./schema-check-p10-photo-files.mjs")).run({ check, results, section, as, client, sql, one, PEOPLE, ok, same, refused, catalog, SITE, D2 });
+
 /* ── summary ──────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.ok);
 let last = "";

@@ -99,6 +99,7 @@
       .ad-ph-acts { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
       .ad-ph-head { display: grid; grid-template-columns: minmax(140px, 1fr) 128px 112px 182px minmax(180px, 1.2fr); gap: 4px 14px; padding: 0 4px 4px;
         font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+      .ad-ph-lab { display: none; }
       /* light: the card's grey and gold a shade darker - WCAG AA on a team member's tinted line (the site's grey is 4.3:1
          there, its gold under 3:1) */
       @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .ad-photo { --text-muted: #56677c; --gold: #8f5c0c; } }
@@ -111,6 +112,9 @@
       /* the photo team's line: the ticks under the name, the e-mail under them (a phone, a tablet, a narrow window) */
       @media (max-width: 900px) {
         .ad-ph-head { display: none; }
+        /* the e-mail box's label whole above it (the head is hidden; its placeholder alone is cut short on a phone) */
+        .ad-ph-lab { display: block; margin: 2px 0 4px; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+          color: var(--text-muted); }
         .ad-ph-row { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
         .ad-ph-who, .ad-ph-mail { grid-column: 1 / -1; }
         /* a finger's size: each tick's whole line, the e-mail box (16px: a phone does not zoom into it), Save / Cancel */

@@ -274,7 +274,9 @@ test("Mark done with a note; Undo my last change (the A000T8 move); Cancel a cha
 
 test("marketing reads only (no action button); someone not on the team reads nothing; a database without the schedule says so", { skip }, async () => {
   const E = await engine();
-  await open(E, "viewer");
+  // P5b: someone only on marketing opens on Ready for marketing (tests/p10-photo-files-demo.test.mjs); the schedule's
+  // own view is asked here
+  await open(E, "viewer", "?view=agenda");
   assert.equal(text("shLead"), V.READ_ONLY_TEXT);
   assert.match(text("shWho"), /marketing - read only/);
   const fc = shootBy("A000T8", "framing-complete");

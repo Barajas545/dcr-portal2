@@ -41,7 +41,33 @@
      refusal marks the row "Not done - see why". A photo team change heard by the watch reads photo_my_access again.
      A poll or watch read that changed nothing leaves the list and the status regions as they are (the keyboard stays).
    Every free text is the mirror's (masked by the database) and goes through the site's money masks again (map/photo.js
-   safeText) before it is put on the page escaped. */
+   safeText) before it is put on the page escaped.
+
+   P5 - the photo files in the Office OneDrive (DCR Desktop 2 migrations 20261111000100_photo_files and
+   20261114000100_photo_files_onedrive, the Edge Function photo-files; the contract DCR Desktop 2
+   docs/PHOTO-FILES-ONEDRIVE.md §3.3, §10; repo/photo-files.js, map/photo-files.js, pages/shoots-files.js):
+   * A shoot's sheet has a Files section: ONE read, photo_drive_status (the page decides no OneDrive fact itself), the
+     lines the contract's chooser gives for the phone, the completion line and who was told, and the phone's buttons -
+     [Open in OneDrive] only with can.open_folder (else the line of the viewer's access) and [Check again] (photo-files
+     check, never by itself: every call counts toward the person's 30 in 10 minutes; on a gone folder's line too). A
+     status without mode (the Google edition, OD §5.7) reads as no photo files: the section is hidden. Mark done…
+     also brings back a skipped or missed shoot whose files were handed in (closed_files / closed_old_pc).
+   * The phone's hand-in (OD §3.3, js/photo-send.js - one hand-in at a time on this page): [Add photos and videos]
+     (can.add_from_phone) opens the picker (photos and videos; HEIC named); the pick is planned and sent at once - the
+     big-video line first -, the file in flight's progress under the lines, [Hand in what's there] / [Cancel it] while
+     it sends (no separate Stop: locking the phone is the pause). Stopped on THIS phone (the status's hand-in of this
+     device, nothing of it running here - a reload): [Pick the rest again] (its keys held), [Hand in what's there],
+     [Cancel it]; after Hand in what's there found files in OneDrive unchecked: [Pick them again] / [Hand in without
+     them]. A phone hand-in stopped on another device: [Hand in what's there] (once something of it is in) / [Cancel it]
+     for its starter or an admin. While it sends another shoot, no shoot offers a hand-in. Leaving the shoot never stops
+     a send; every phase change reads the status again.
+   * The fourth view, Ready for marketing (?view=ready, ?ready=<id> - the push notice and the e-mail land on the card):
+     photo_ready_list's cards with their chip, warnings and buttons (I'm on it, Posted…, Not for posting…, Take it
+     over…, Not me any more, Not posted yet / Back on the list), each act a compare-and-set on the state shown. The
+     first view for someone only on marketing.
+   * Realtime: photo_marketing, photo_drive_folders and photo_shoot_uploads are only "read again" triggers (never shown);
+     a Ready row's arrival asks the push function to drain once per (id, ready_at) (§10.7). A database without P5 hides
+     all of it: P3 works as before. */
 
 import { boot, esc, toast, confirmBox, errorText, D } from "./shell.js";
 import { companyToday, rememberPhotoAccess } from "../common2.js";
@@ -52,6 +78,10 @@ import {
   MILESTONES, MILESTONE_LABEL, PHASE_LABEL, NOT_READY_TEXT, EMPTY_TEXT, NOTE_MAX, REASON_MAX, isOpenChange,
 } from "../map/photo.js";
 import * as V from "../map/shoots.js";
+import * as files from "../repo/photo-files.js";
+import { WORDS as FW, filesText, actText, word, marketingOnly, momentText, safe, reopenAsk, filesView } from "../map/photo-files.js";
+import { filesHtml, readyListHtml, readyCardHtml, postedBody, passBody, PHONE_BUSY, phoneButtons } from "./shoots-files.js";
+import { createPhoneSend, ACCEPT as PICK_ACCEPT } from "../photo-send.js";
 import { addDays } from "../map/pacific.js";
 
 const W = typeof window !== "undefined" ? window : {};
@@ -62,6 +92,15 @@ function freshState() {
     view: "agenda", month: "", mine: false, archived: false, planFocus: null, day: null, openClosed: false,
     sel: null, open: false, pushed: false, msg: "", lastDetail: null,
     mv: null, seen: {}, seenReady: false, loadSeq: 0, stopWatch: null, timers: [], wired: false, held: [], skipPop: 0,
+    // P5b: per shoot {st (photo_drive_status; null: no P5), err, busy, at}; p5: the database has the photo files (null: not
+    // known yet); rd: the Ready for marketing view (its two lists, the card open, whether it may be read at all; want: the
+    // card a ?ready=<id> link names, opened by the first read that has both lists - a read that failed leaves it waiting)
+    files: {}, p5: null, doneAt: {}, stopFiles: null, drainer: null,
+    // the phone's hand-in (js/photo-send.js, made when a shoot first needs it); pick: the picker's shoot and kind; pf:
+    // per shoot {planning, lines} (the pick's own lines: big_phone, a read that failed)
+    phone: null, phoneDeps: null, pick: null, pf: {}, phoneDraw: null, phoneSeen: null,
+    rd: { tab: "open", lists: { open: null, done: null }, err: "", sel: null, open: false, pushed: false, busy: false, msg: "", readable: false, seq: 0,
+      want: null },
   };
 }
 // the tasks' readers beside the task's own people (20261020000100: the office reads all; field and view-only their own)
@@ -121,6 +160,7 @@ async function load(o) {
     if (!state.loaded) state.failed = errorWords(e);
     else if (!opt.quiet) toast(errorWords(e), "error");
   }
+  if (opt.hold) return;                       // init: drawn once the address is followed
   render();
   if (ok) sheetReread(!!opt.forceSheet);
 }
@@ -205,7 +245,11 @@ function renderHead() {
     if (pcBox.getAttribute("data-state") !== (pc ? pc.state : "on")) pcBox.setAttribute("data-state", pc ? pc.state : "on");
   }
   const bar = $("shBar");
-  if (bar) bar.hidden = !(ok && state.loaded && !state.failed && state.plans.length);
+  if (bar) bar.hidden = !(ok && state.loaded && !state.failed && (state.plans.length || readyMay()));
+  const readyBtn = document.querySelector('#shViews [data-view="ready"]');
+  if (readyBtn && readyBtn.hidden !== !readyMay()) readyBtn.hidden = !readyMay();
+  const filters = document.querySelector("#shBar .sh-filters");
+  if (filters && filters.hidden !== (state.view === "ready")) filters.hidden = state.view === "ready";
   document.querySelectorAll("#shViews [data-view]").forEach((b) => b.setAttribute("aria-pressed", b.getAttribute("data-view") === state.view ? "true" : "false"));
   const mineBox = $("shMineBox");
   if (mineBox) mineBox.hidden = !state.plans.some((p) => p.photographerProfileId && p.photographerProfileId === meId());
@@ -216,12 +260,14 @@ function renderHead() {
     layout.classList.toggle("month", state.view === "month");
     // nothing to pick (not for this account, no schedule in the database, a failed read, no plan yet): no empty "Pick a
     // shoot" panel beside the words on a desk
-    layout.classList.toggle("solo", !!(state.accessError || (a && (!a.ready || !a.canRead)) || (state.loaded && (state.failed || !state.ready || !state.plans.length))));
+    const readyEmpty = state.view === "ready" && (!!(state.rd.err && state.rd.want) || !((state.rd.lists[state.rd.tab] || { items: [] }).items.length));
+    layout.classList.toggle("solo", !!(state.accessError || (a && (!a.ready || !a.canRead)) ||
+      (state.loaded && (state.failed || (state.view === "ready" ? readyEmpty : !state.ready || !state.plans.length)))));
   }
   const count = $("shCount");
   if (count) {
     let html = "";
-    if (ok && state.loaded && !state.failed && state.plans.length) {
+    if (ok && state.loaded && !state.failed && state.plans.length && state.view !== "ready") {
       const plans = visiblePlans(state.plans, { archived: state.archived, mine: mineOpt() });
       const ids = new Set(plans.map((p) => p.id));
       const open = state.shoots.filter((s) => ids.has(s.planId) && isOpen(s));
@@ -358,6 +404,7 @@ function listHtml() {
   if (!state.loaded) return null;
   if (!state.ready) return emptyHtml("Not in the database yet", NOT_READY_TEXT + ".");
   if (!state.plans.length) return note + emptyHtml("No shoot schedule yet", EMPTY_TEXT + ".");
+  if (state.view === "ready") return readyListHtml(state.rd, { today: state.today });
   return note + (state.view === "job" ? jobHtml() : state.view === "month" ? monthHtml() : agendaHtml());
 }
 
@@ -416,7 +463,7 @@ function actionsHtml(s, plan) {
     // only a change that holds this very shoot stops its Move… and Mark done… (the database's "pending" rule, §6.1 step
     // 10); a job-date change waiting shows as a chip and a box, and leaves both
     const pending = pendingTarget(state.changes, s);
-    const act = shootActions(s, plan, state.access, { pending });
+    const act = shootActions(s, plan, state.access, { pending, files: (state.files[s.id] || {}).st || null });
     const shoots = planShoots(plan, state.shoots);
     const undo = V.undoFor(state.changes, s, meId(), state.access, new Date(), { shoots, plan });
     if (act.move.ok) parts.push('<button type="button" class="sh-btn primary" data-act="move" data-shoot="' + esc(s.id) + '">Move…</button>');
@@ -462,10 +509,209 @@ function detailHtml(s, plan) {
     '<div class="sh-dplace"><button type="button" data-act="plan" data-plan="' + esc(plan.id) + '">' + T(plan.label) + "</button>" +
     (plan.city ? " · " + T(plan.city) : "") + (plan.status !== "active" ? " · " + esc(V.planFacts(plan).statusText) : "") + "</div>" +
     factsHtml(s, plan) +
+    filesBlock(s) +
     open.map((c) => changeBox(c, s, plan, c.requestedBy === me)).join("") +
     actionsHtml(s, plan) +
     (recent.length ? '<h3 class="sh-h3">Your recent changes</h3>' + recent.map((c) => changeBox(c, s, plan, true)).join("") : "") +
     briefHtml(s) + historyHtml(s);
+}
+
+/** The Files section (P5b): nothing on a database without the photo files. */
+function filesBlock(s) {
+  if (state.p5 === false) return "";
+  // a Mark done of this very shoot waiting for the office computer (the change Mark done… sent): its completion line says
+  // so (completion.done_sent), never "mark the shoot done" beside it - v14, §13.1 "A Mark done waiting", §37; who was
+  // told and how is an admin's line (photo_my_access), as on the Ready card - P5b review round 8, §41
+  const p = pendingTarget(state.changes, s);
+  const fs = state.files[s.id] || { st: undefined };
+  return filesHtml(fs, { today: state.today, now: Date.now(), doneSent: !!(p && p.kind === "done"),
+    admin: !!(state.access && state.access.admin), phone: phoneParts(s.id, fs.st) });
+}
+
+/* ── the phone's hand-in (OD §3.3; js/photo-send.js) ──────────────────── */
+
+/** A status that needs this phone's hand-in module: a phone may add here, or a phone hand-in of the shoot is open (this
+    phone's own device row is needed to tell it is this phone's). */
+function needsPhone(st) {
+  if (!st || typeof st !== "object") return false;
+  if (st.can && st.can.add_from_phone) return true;
+  return (Array.isArray(st.uploads) ? st.uploads : []).some((u) => u && u.source === "phone" && (u.state === "open" || u.state === "abandoned"));
+}
+
+/** The page's one phone hand-in module (made on first need; tests give its parts in state.phoneDeps). */
+function phone() {
+  if (state.phone) return state.phone;
+  const first = () => String((state.me && state.me.name) || "").trim().split(/\s+/)[0] || "";
+  state.phone = createPhoneSend(Object.assign({
+    by: first,
+    codes: () => { const v = state.phone && state.phone.view(); const f = v && v.shoot ? state.files[v.shoot] : null; return (f && f.st && f.st.mode_codes) || []; },
+    today: state.today,
+  }, state.phoneDeps || {}));
+  state.phone.onChange(onPhoneChange);
+  return state.phone;
+}
+
+/** What the Files section of shoot `id` draws of the phone's hand-in (shoots-files.js filesHtml o.phone). */
+function phoneParts(id, st) {
+  const ps = state.phone || (needsPhone(st) ? phone() : null);
+  const pf = state.pf[id] || {};
+  if (!ps) return { lines: pf.lines || [], planning: !!pf.planning };
+  const v = ps.view();
+  const mine = v.shoot === id && v.phase !== "idle";
+  const viewer = ps.viewer();
+  return {
+    view: mine ? v : null,
+    other: !mine && v.shoot !== null && PHONE_BUSY.indexOf(v.phase) !== -1,
+    knows: ps.knows(id),
+    viewer: { device_id: viewer.device_id, running_here: mine && viewer.running_here, phone_found: mine ? viewer.phone_found : 0 },
+    // this page's own counts while it draws the hand-in's buttons (as phoneCounts and phoneButtons): the line's {done}
+    // and its twin agree with the Hand in what's there they offer, else the status's (review round 4)
+    sending: mine && (PHONE_BUSY.indexOf(v.phase) !== -1 || v.buttons.length) ? ps.sending() : null,
+    planning: !!pf.planning,
+    lines: pf.lines || [],
+  };
+}
+
+/** The module's every change: the open shoot drawn again (at most every 150 ms while a file goes up); a new phase reads
+    the shoot's status again (the hand-in opened, stopped, asked, sealed or cancelled). */
+function onPhoneChange(v) {
+  const was = state.phoneSeen;
+  state.phoneSeen = { shoot: v.shoot, phase: v.phase };
+  if (v.shoot && (!was || was.phase !== v.phase || was.shoot !== v.shoot)) readFiles(v.shoot, { quiet: true });
+  if (state.phoneDraw) return;
+  state.phoneDraw = setTimeout(() => {
+    state.phoneDraw = null;
+    if (state.sel && state.view !== "ready") renderDetail();
+  }, 150);
+}
+
+/** The picker: one input of the page's own, outside the redrawn sheet (a redraw while the picker is open never loses the
+    pick); photos and videos only, HEIC named (OD §3.3 step 2). */
+function pickInput() {
+  let n = $("shPick");
+  if (n) return n;
+  try {
+    n = document.createElement("input");
+    n.setAttribute("type", "file");
+    n.setAttribute("id", "shPick");
+    n.setAttribute("multiple", "");
+    n.setAttribute("accept", PICK_ACCEPT);
+    n.setAttribute("tabindex", "-1");
+    n.setAttribute("aria-hidden", "true");
+    n.className = "sh-pick";
+    n.addEventListener("change", onPicked);
+    document.body.appendChild(n);
+  } catch (e) { return null; }
+  return n;
+}
+
+/** [Add photos and videos] / [Pick the rest again] / [Pick them again]: the picker for this shoot. */
+function pickStart(id, rest) {
+  const n = pickInput();
+  if (!n || !id) return;
+  state.pick = { shoot: Number(id), rest: !!rest };
+  try { n.value = ""; } catch (e) { /* */ }
+  n.click();
+}
+
+function onPicked(ev) {
+  const n = ev && ev.target;
+  const want = state.pick;
+  state.pick = null;
+  const list = n && n.files ? [...n.files] : [];
+  try { n.value = ""; } catch (e) { /* the same files may be picked again */ }
+  if (want && list.length) pickFiles(want.shoot, list, want.rest);
+}
+
+/** The picked files planned (js/photo-send.js plan: the kinds, the names, a matching file hashed first) and sent. */
+async function pickFiles(id, list, rest) {
+  const sid = Number(id);
+  const ps = phone();
+  const pf = state.pf[sid] || (state.pf[sid] = { planning: false, lines: [] });
+  if (pf.planning) return;
+  pf.planning = true;
+  pf.lines = [];
+  if (state.sel === sid) renderDetail();
+  let p = null;
+  try { p = await ps.plan(sid, list, { rest: !!rest }); } catch (e) { p = null; }
+  pf.planning = false;
+  // the pick's own lines: a read that failed, or nothing of it to send (not media, the same files again) - its lines;
+  // else the big-video line, first (the rest are the send's own, js/photo-send.js view)
+  const sends = !!p && !p.error && ((p.send || []).length > 0 || (p.resume || []).length > 0 || !!p.rest);
+  pf.lines = !p ? [] : sends ? p.lines.filter((l) => l.code === "big_phone") : p.lines;
+  if (p && !p.error) {
+    const v = await ps.start(p);
+    // (the hand-in the pick began recorded nothing of its own and is cancelled again: nothing goes, so no big-video line)
+    if (v && v.phase === "cancelled") pf.lines = pf.lines.filter((l) => l.code !== "big_phone");
+  }
+  if (state.sel === sid && state.view !== "ready") renderDetail();
+  readFiles(sid, { quiet: true });
+}
+
+/** The phone hand-in's counts for the asks: {sent: the files already in OneDrive, total: the files of the hand-in} -
+    this page's own while the page draws its buttons (its counts are newer than the status's beat, and the buttons
+    were offered by them), else the status's open phone hand-in of the shoot (a reload, or another device's). */
+function phoneCounts(sid) {
+  const ps = state.phone;
+  const v = ps ? ps.view() : null;
+  const own = v && v.shoot === sid && (PHONE_BUSY.indexOf(v.phase) !== -1 || v.buttons.length) ? ps.sending() : null;
+  if (own) return { sent: Number(own.sent) || 0, total: Number(own.total) || 0 };
+  const st = (state.files[sid] || {}).st || {};
+  const open = (Array.isArray(st.uploads) ? st.uploads : []).find((u) => u && u.source === "phone" && (u.state === "open" || u.state === "abandoned")) || null;
+  if (!open) return { sent: 0, total: 0 };
+  const total = open.files !== undefined && open.files !== null ? open.files : open.recorded_files;
+  return { sent: Number(open.sent_files) || 0, total: Number(total) || 0 };
+}
+
+/** Whether the Files section of shoot `sid` still offers `code` (files_buttons) now - as filesHtml draws it. */
+function phoneOffers(sid, code) {
+  const fs = state.files[sid] || {};
+  if (!fs.st) return false;
+  const ph = phoneParts(sid, fs.st);
+  const v = filesView(fs.st, { today: state.today, now: Date.now(), viewer: ph.viewer || {}, sending: ph.sending || null });
+  return phoneButtons(fs.st, v, ph).indexOf(code) !== -1;
+}
+
+/** [Hand in what's there] / [Cancel it] (OD §3.3 step 8, review round 1; PF's and DCR Desktop 2's rule): each asks first
+    in the page's own sheet, Keep it (copy.cancel_keep) focused, so Enter (or a stray tap beside the button) keeps the
+    hand-in going - Cancel it always (copy.cancel_ask_phone), Hand in what's there while files are still unsent
+    (copy.hand_in_ask_phone, {n} the files already in OneDrive - at least one: it is offered only then, review round 3);
+    all of them in, it hands in at once. */
+function phoneAsk(id, what) {
+  const sid = Number(id);
+  if (!sid || state.mv) return;
+  const cancel = what === "cancel";
+  const c = phoneCounts(sid);
+  // (none in OneDrive yet: nothing to hand in - Hand in what's there is not offered then, and never asks "Hand in the 0
+  // files…": the count rule has no _none twin for it; OD §3.3 step 8, review round 3)
+  if (!cancel && c.sent < 1) return;
+  if (!cancel && c.total <= c.sent) { phoneAct(sid, "hand_in"); return; }
+  const s = shootOf(sid);
+  const code = cancel ? "cancel_ask_phone" : "hand_in_ask_phone";
+  const ask = cancel ? FW.copy.cancel_ask_phone : word("copy", "hand_in_ask_phone", { n: c.sent });
+  const label = cancel ? FW.files_buttons.cancel_copy : FW.files_buttons.hand_in_there;
+  openSheetOf(cancel ? "phone_cancel" : "phone_hand_in", { shootId: sid, opener: cancel ? "files-cancel" : "files-hand-in", label, title: label,
+    keep: FW.copy.cancel_keep, cls: cancel ? "warn" : "ok",
+    body: (s ? '<p class="mv-now"><b>' + T(s.name) + "</b></p>" : "") + '<p class="mv-now" data-ask="' + code + '">' + esc(ask) + "</p>",
+    first: '#shMo .sh-mo-ft [data-act="mv-close"]' });
+}
+
+/** [Hand in what's there] / [Cancel it] / [Hand in without them]: this page's own hand-in of the shoot, or - after a
+    reload, or another device's - the status's stopped phone hand-in of it. */
+async function phoneAct(id, what) {
+  const sid = Number(id);
+  const ps = phone();
+  const st = (state.files[sid] || {}).st || {};
+  const open = (Array.isArray(st.uploads) ? st.uploads : []).find((u) => u && (u.state === "open" || u.state === "abandoned")) || null;
+  const o = { shootId: sid, uploadId: open ? open.id : null, deviceId: open ? open.pc_id : null };
+  state.pf[sid] = { planning: false, lines: [] };
+  try {
+    if (what === "without") await ps.handInWithout();
+    else if (what === "cancel") await ps.cancel(o);
+    else await ps.handIn(o);
+  } catch (e) { /* the module says what stopped it */ }
+  if (state.sel === sid && state.view !== "ready") renderDetail();
+  readFiles(sid, { quiet: true });
 }
 
 function lock(on) {
@@ -476,6 +722,10 @@ function renderDetail() {
   const box = $("shDetail");
   const sc = $("shDScroll");
   if (!box || !sc) return;
+  const back = $("shBack");
+  const backText = state.view === "ready" ? "‹ " + FW.ready.view : "‹ All shoots";
+  if (back && back.textContent !== backText) back.textContent = backText;
+  if (state.view === "ready") { renderCard(box, sc); return; }
   const s = state.sel ? shootOf(state.sel) : null;
   const plan = s ? planOf(s.planId) : null;
   box.classList.toggle("open", !!(s && plan) && (state.open || wide()));
@@ -493,6 +743,27 @@ function renderDetail() {
   lock((state.open && !wide()) || !!state.mv);
 }
 
+/** The Ready card open (the detail column; a phone: full screen). */
+function renderCard(box, sc) {
+  const r = state.rd;
+  const it = r.sel ? readyItem(r.sel) : null;
+  box.classList.toggle("open", !!it && (r.open || wide()));
+  if (!it) {
+    sc.innerHTML = '<div class="sh-ph">' + esc(r.sel && readyLoaded() ? FW.hint.no_item : FW.ready.view) + "</div>";
+    state.lastDetail = null;
+    lock(r.open && !wide() && !!r.sel);
+    return;
+  }
+  const list = r.lists[it.__tab] || r.lists.open;
+  const key = "r" + it.id;
+  const keep = state.lastDetail === key ? sc.scrollTop : 0;
+  const draw = () => { sc.innerHTML = readyCardHtml(it, list.me, { today: state.today, busy: r.busy }); };
+  if (state.lastDetail === key) keepFocus("shDScroll", draw); else draw();
+  sc.scrollTop = keep;
+  state.lastDetail = key;
+  lock((r.open && !wide()) || !!state.mv);
+}
+
 function render() {
   renderHead();
   renderList();
@@ -503,8 +774,10 @@ function render() {
 
 function setUrl(push) {
   try {
-    const url = V.linkFor({ shoot: state.sel, plan: state.view === "job" ? state.planFocus : null, view: state.view, month: state.month });
-    if (push && W.history && W.history.pushState) W.history.pushState({ sh: state.sel || 0 }, "", url);
+    // a link's card still waiting for its read keeps its address (a reload opens it)
+    const url = V.linkFor({ shoot: state.sel, plan: state.view === "job" ? state.planFocus : null, view: state.view, month: state.month,
+      ready: state.view === "ready" ? state.rd.sel || state.rd.want : null });
+    if (push && W.history && W.history.pushState) W.history.pushState({ sh: state.sel || 0, rd: state.view === "ready" ? state.rd.sel || 0 : 0 }, "", url);
     else if (W.history && W.history.replaceState) W.history.replaceState(W.history.state, "", url);
   } catch (e) { /* not important */ }
 }
@@ -523,6 +796,7 @@ function openShoot(id, o) {
     const t = $("shDTitle");
     if (t && (!wide() || (o && o.focus))) t.focus();
   } catch (e) { /* */ }
+  readFiles(s.id);
 }
 
 function closeShoot(fromHistory) {
@@ -545,7 +819,12 @@ function closeShoot(fromHistory) {
 
 function setView(v) {
   if (V.VIEW_KEYS.indexOf(v) === -1) return;
+  if (v === "ready" && !readyMay()) return;
+  const was = state.view;
   state.view = v;
+  state.lastDetail = null;
+  if (v !== "ready") state.rd.want = null;           // left before its card could be read: not opened later
+  if (v === "ready" && was !== "ready") loadReady({ quiet: true });
   if (v !== "job") state.planFocus = null;
   if (v === "month" && !state.month) state.month = state.today.slice(0, 7);
   setUrl(false);
@@ -554,6 +833,20 @@ function setView(v) {
 
 /** Follow the address once the mirror is read: a shoot (its own id, or a My Tasks task's), a plan, the view. */
 async function follow(link) {
+  if (link.ready || link.view === "ready") {
+    const r = state.rd;
+    // a database without the Ready list (read, no error): P3 as it was
+    if (!readyMay()) { if (link.ready) state.msg = FW.hint.no_item; return; }
+    state.view = "ready";
+    if (link.ready) {
+      // the card opens from the read that has both lists (wantedCard); a read that failed (a phone with poor signal)
+      // says so with Try again and opens the card then - never "isn't on the list any more" for a list not read
+      r.want = link.ready;
+      if (r.readable) await loadReady({ quiet: true, both: true });
+    }
+    setUrl(false);
+    return;
+  }
   if (link.view) state.view = link.view;
   if (link.month) state.month = link.month;
   // Home's card counted only my jobs (map/shoots.js homeBadge): the page opens counting the same ones
@@ -575,6 +868,7 @@ async function follow(link) {
     state.open = true;
     state.lastDetail = null;
     setUrl(false);
+    readFiles(s.id);
     return;
   }
   if (link.plan) {
@@ -646,7 +940,7 @@ function drawNow() {
     the new preview differs from the one shown; a Mark done sheet keeps its base (the database's own check says so). */
 function sheetReread(force) {
   const mv = state.mv;
-  if (!mv || (mv.busy && !force)) return;
+  if (!mv || (mv.busy && !force) || READY_SHEETS.indexOf(mv.type) !== -1) return;
   const s = mvShoot(), plan = mvPlan();
   if (!s || !plan) { setMsg(V.GONE_TEXT, "error"); mv.words = null; fillApply(); return; }
   if (!force && plan.rev === mv.baseRev) return;
@@ -909,6 +1203,18 @@ function fillApply() {
   const mv = state.mv;
   const b = $("mvApply");
   if (!mv || !b) return;
+  if (READY_SHEETS.indexOf(mv.type) !== -1) {
+    b.disabled = !!mv.busy;
+    b.textContent = mv.busy ? "Sending…" : mv.label;
+    // closing never stops an act on its way: while it is, Cancel / Keep it and the × say so, as Move… and Mark done… do
+    // (P5b review round 12 - "Cancel" closed the sheet and the card was posted after it with no word); its answer is
+    // then readyAct's toast, or the card moving on the list
+    document.querySelectorAll('#shMo .sh-mo-ft [data-act="mv-close"]').forEach((c) => { c.textContent = mv.busy ? V.CLOSE_SENDING : mv.keep || "Cancel"; });
+    const rx = document.querySelector('#shMo .sh-x[data-act="mv-close"]');
+    if (rx) rx.setAttribute("aria-label", mv.busy ? "Close - it is still being sent" : mv.closeLabel || "Close");
+    liftToasts();
+    return;
+  }
   const ok = mv.type === "done" ? !!mvShoot() : !!(mv.words && mv.words.ok && !mv.pending && !mv.pvError && argsNow(false));
   b.disabled = !ok || mv.busy;
   const label = mv.type === "done" ? "Mark done" : mv.type === "undo" ? "Undo" : V.applyLabel(mv.words);
@@ -963,11 +1269,18 @@ function openDone(id) {
   if (!s || !plan) return;
   state.mv = { type: "done", shootId: s.id, planId: plan.id, baseRev: plan.rev, busy: false, msg: "", msgKind: "", seq: 0, opener: "done" };
   const ahead = isDay(s.plannedDate) && s.plannedDate > state.today;
+  // P5b (§13.7): a skipped or missed shoot whose files were handed in is brought back (bring_back_sheet); an open one
+  // says when marketing hears of it once its files' status is known (phone_done_hint)
+  const st = (state.files[s.id] || {}).st || null;
+  const closed = s.status === "skipped" || s.status === "missed";
+  const tail = closed ? word("completion", "bring_back_sheet", { skipped_or_missed: s.status })
+    : "The office computer marks it done and closes its task on My Tasks. A shoot marked done is not undone here.";
   const body = nowLine(s, plan) +
-    (ahead ? '<div class="mv-note">' + esc("Its day (" + dayText(s.plannedDate, state.today) + ") is still ahead - mark it done only if it was shot.") + "</div>" : "") +
+    (ahead && !closed ? '<div class="mv-note">' + esc("Its day (" + dayText(s.plannedDate, state.today) + ") is still ahead - mark it done only if it was shot.") + "</div>" : "") +
     '<label class="mv-lab" for="dnNote">A note (optional)</label>' +
     '<textarea class="mv-text" id="dnNote" maxlength="' + NOTE_MAX + '" rows="3" placeholder="e.g. All shots taken, files on their way"></textarea>' +
-    '<p class="mv-now" style="margin-top:10px">' + esc("The office computer marks it done and closes its task on My Tasks. A shoot marked done is not undone here.") + "</p>";
+    '<p class="mv-now" style="margin-top:10px">' + esc(tail) + "</p>" +
+    (st && !closed ? '<p class="mv-now" data-hint="phone_done_hint">' + esc(FW.completion.phone_done_hint) + "</p>" : "");
   const foot = '<button type="button" class="sh-btn" data-act="mv-close">Cancel</button>' +
     '<button type="button" class="sh-btn ok" id="mvApply" data-act="mv-apply">Mark done</button>';
   state.mv.closeLabel = "Close without marking it done";
@@ -1019,7 +1332,7 @@ function closeSheet(fromHistory) {
   if (mv) clearTimeout(mv.timer);
   state.mv = null;
   if ($("shSheet")) $("shSheet").innerHTML = "";
-  lock(state.open && !wide());
+  lock((state.view === "ready" ? state.rd.open : state.open) && !wide());
   sheetOpen(false);
   if (mv && mv.pushed && !fromHistory) {
     state.skipPop += 1;                         // onPop: that entry going is not a Back
@@ -1050,6 +1363,7 @@ function sheetStops() {
     is on its way ("Close (still sending)"): the answer is then a toast. */
 async function apply() {
   const mv = state.mv;
+  if (mv && READY_SHEETS.indexOf(mv.type) !== -1) { applyReady(); return; }
   if (!mv || mv.busy || mv.pending) return;
   const want = argsNow(true);
   if (!want) return;
@@ -1102,6 +1416,7 @@ async function apply() {
     return;
   }
   if (r && r.id !== null && r.id !== undefined) { state.seen[r.id] = r.state || r.status || "new"; writeSeen(meId()); }
+  if (mv.type === "done") state.doneAt[mv.shootId] = Date.now();      // its files' status is read every 20 s for 3 minutes
   if (state.mv === mv) closeSheet();
   const queued = mv.type !== "done" && r && r.preview && typeof r.preview === "object" ? r.preview : null;
   if (queued && mv.pv && V.previewSig(queued) !== V.previewSig(mv.pv)) {
@@ -1163,11 +1478,38 @@ function onClick(ev) {
     return;
   }
   if (act === "mv-kind" || act === "mv-ms" || act === "mv-firm" || act === "mv-date") return;   // their change event does it
+  // P5b: the Files section and the Ready view
+  if (act === "files-reload") { if (state.sel) readFiles(state.sel); return; }
+  if (act === "files-check") { if (state.sel) checkNow(state.sel); return; }
+  if (act === "files-add-phone") { pickStart(state.sel, false); return; }
+  if (act === "files-pick-rest") { pickStart(state.sel, true); return; }
+  if (act === "files-hand-in") { if (state.sel) phoneAsk(state.sel, "hand_in"); return; }
+  if (act === "files-cancel") { if (state.sel) phoneAsk(state.sel, "cancel"); return; }
+  if (act === "files-hand-in-without") { if (state.sel) phoneAct(state.sel, "without"); return; }
+  if (act === "open-folder" || act === "r-open" || act === "r-shoot") return;                  // a link: the browser follows it
+  if (act === "ready-tab") {
+    state.rd.tab = a.getAttribute("data-tab") === "done" ? "done" : "open";
+    state.rd.msg = "";
+    if (state.rd.want) { state.rd.want = null; setUrl(false); }        // a tab picked: the link's card is not opened over it
+    loadReady({ quiet: true });
+    render();
+    return;
+  }
+  if (act === "ready-reload") { retryReady(); return; }
+  if (act === "r-claim" || act === "r-release") { readyAct(Number(a.getAttribute("data-ready")), act.slice(2)); return; }
+  if (act === "r-reopen") { reopen(Number(a.getAttribute("data-ready"))); return; }
+  if (act === "r-posted" || act === "r-pass") { openReadySheet(Number(a.getAttribute("data-ready")), act.slice(2)); return; }
+  if (act === "r-take-over") { takeOver(Number(a.getAttribute("data-ready"))); return; }
   if (act === "move") { openMove(a.getAttribute("data-shoot")); return; }
   if (act === "done") { openDone(a.getAttribute("data-shoot")); return; }
   if (act === "undo") { openUndo(a.getAttribute("data-shoot"), a.getAttribute("data-change")); return; }
   if (act === "cancel-change") { cancelChange(a.getAttribute("data-change")); return; }
-  if (act === "reload") { if (state.accessError && W.location) W.location.reload(); else load(); return; }
+  if (act === "reload") {
+    if (state.accessError && W.location) { W.location.reload(); return; }
+    load();
+    if (state.view === "ready" && state.rd.err) retryReady();     // no signal for both reads: one Try again reads both
+    return;
+  }
   if (act === "fold") { const det = a.closest("details"); state.openClosed = !(det && det.open); return; }
   if (act === "all-jobs") { state.planFocus = null; setUrl(false); render(); return; }
   if (act === "plan") {
@@ -1194,9 +1536,11 @@ function onClick(ev) {
     renderList();
     return;
   }
+  const card = t.closest("[data-ready]");
+  if (card && !t.closest("#shSheet") && !t.closest("#shDScroll")) { openCard(Number(card.getAttribute("data-ready")), { push: true }); return; }
   const row = t.closest("[data-shoot]");
   if (row && !t.closest("#shSheet") && !t.closest("#shDScroll")) { openShoot(Number(row.getAttribute("data-shoot")), { push: true }); return; }
-  if (t.closest("#shBack") || t.closest("#shClose")) { closeShoot(false); return; }
+  if (t.closest("#shBack") || t.closest("#shClose")) { if (state.view === "ready") closeCard(false); else closeShoot(false); return; }
   if (mv && t.id === "shMo") closeSheet();            // a tap on the shade
 }
 
@@ -1249,6 +1593,7 @@ function onKey(e) {
   }
   if (e.key !== "Escape") return;
   if (state.mv) { e.preventDefault(); closeSheet(); return; }
+  if (state.view === "ready") { if (state.rd.open && !wide() && state.rd.sel) { e.preventDefault(); closeCard(false); } return; }
   if (state.open && !wide() && state.sel) { e.preventDefault(); closeShoot(false); }
 }
 
@@ -1260,8 +1605,13 @@ function onPop() {
     closeSheet(true);
     if (own) return;                                            // the phone's Back closed the sheet only
   }
+  if (state.view === "ready") {
+    if (!link.ready && state.rd.open && !wide()) { closeCard(true); return; }
+    if (link.ready && readyItem(link.ready) && link.ready !== state.rd.sel) { state.rd.sel = link.ready; state.rd.open = true; render(); }
+    return;
+  }
   if (!link.shoot && state.open && !wide()) { closeShoot(true); return; }
-  if (link.shoot && shootOf(link.shoot) && link.shoot !== state.sel) { state.sel = link.shoot; state.open = true; render(); }
+  if (link.shoot && shootOf(link.shoot) && link.shoot !== state.sel) { state.sel = link.shoot; state.open = true; render(); readFiles(link.shoot); }
 }
 
 function wire() {
@@ -1293,6 +1643,346 @@ async function watch() {
     if (state.changes.some((c) => c.requestedBy === meId() && isOpenChange(c))) load({ quiet: true });
   }, 20000));
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") onWatch({ tables: ["photo_team"], join: false }); });
+  watchFilesParts();
+}
+
+/* ── P5b: the photo files (the Files section, the Ready for marketing view) ───────────────────── */
+
+// the photo files' sheets (openSheetOf): the Ready card's, and the phone hand-in's asks
+const READY_SHEETS = ["posted", "pass", "take_over", "reopen", "phone_cancel", "phone_hand_in"];
+const FILES_POLL_MS = 20000;
+const UPLOAD_POLL_MS = 60000;            // an open hand-in: running flips with time (its beat), so its line is read again
+const DONE_POLL_MS = 3 * 60000;          // after Mark done: every 20 s for 3 minutes, until the completion line moves
+const CHECK_WAIT_MS = 35000;             // photo-files answers within its 25 s budget; past this the button is free again
+const CHECK_HOLD_MAX_S = 300;            // a Retry-After holds Check again at most 5 minutes
+const READY_POLL_MS = 60000;
+
+/** Watch photo_marketing / photo_drive_folders / photo_shoot_uploads (only "read again" triggers: a payload is never
+    shown) and drain a Ready row's notices once per (id, ready_at); poll the Ready view and an open shoot's files. */
+async function watchFilesParts() {
+  if (state.p5 === false) return;
+  if (!state.drainer) state.drainer = new files.Drainer();
+  try { state.stopFiles = await files.watchFiles(onFilesWatch, { drainer: state.drainer }); } catch (e) { /* the polls below still read */ }
+  state.timers.push(setInterval(() => {
+    if (state.view === "ready" && visible()) loadReady({ quiet: true });
+  }, READY_POLL_MS));
+  state.timers.push(setInterval(() => {
+    const id = state.sel;
+    if (!id || state.view === "ready" || !visible()) return;
+    const f = state.files[id];
+    const st = f && f.st;
+    const since = f && f.at ? Date.now() - f.at : Infinity;
+    const doneAt = state.doneAt[id];
+    if (doneAt && Date.now() - doneAt < DONE_POLL_MS) { readFiles(id, { quiet: true }); return; }
+    if (st && (st.uploads || []).some((u) => u && u.state === "open") && since >= UPLOAD_POLL_MS - 1000) readFiles(id, { quiet: true });
+  }, FILES_POLL_MS));
+}
+
+function visible() {
+  try { return typeof document === "undefined" || document.visibilityState !== "hidden"; } catch (e) { return true; }
+}
+
+/** A photo files table moved (or a channel joined): the open shoot's files and the Ready view are read again. */
+async function onFilesWatch(what) {
+  const w = what || {};
+  if (state.sel && state.view !== "ready") await readFiles(state.sel, { quiet: true });
+  if (state.view === "ready" || (w.tables || []).indexOf("photo_marketing") !== -1) await loadReady({ quiet: true });
+}
+
+/** photo_drive_status of one shoot (the Files section's one read). null: a database without P5 (the section goes). */
+async function readFiles(id, o) {
+  const sid = Number(id);
+  if (!sid || state.p5 === false) return;
+  const f = state.files[sid] || (state.files[sid] = { st: undefined, err: "", busy: "", at: 0, seq: 0 });
+  const seq = ++f.seq;
+  try {
+    const st = await files.status(sid);
+    if (seq !== f.seq) return;
+    if (st === null) { state.p5 = false; f.st = null; }
+    else {
+      state.p5 = true;
+      const before = f.st && f.st.completion;
+      f.st = st;
+      if (st.marketing && state.drainer) state.drainer.saw(st.marketing.id, st.marketing.ready_at);
+      if (state.doneAt[sid] && before !== undefined && st.completion !== before) delete state.doneAt[sid];
+    }
+    f.err = "";
+    f.at = Date.now();
+  } catch (e) {
+    if (seq !== f.seq) return;
+    if (e && e.hint === "no_shoot") { f.st = null; }
+    else f.err = e && e.retryable ? "offline" : "error";
+  }
+  if (state.sel === sid && state.view !== "ready") renderDetail();
+}
+
+/** [Check again]: photo-files check - its answer IS a status, drawn as it comes. Never automatic. */
+async function checkNow(id) {
+  const f = state.files[id];
+  if (!f || f.busy) return;
+  f.busy = "check";
+  renderDetail();
+  const free = setTimeout(() => { if (f.busy === "check") { f.busy = ""; renderDetail(); toast(FW.hint.busy, "info"); } }, CHECK_WAIT_MS);
+  try {
+    const st = await files.check(id);
+    if (st && typeof st === "object" && st.shoot_id !== undefined) {
+      f.st = st;
+      f.at = Date.now();
+      f.err = "";
+      if (st.marketing && state.drainer) state.drainer.saw(st.marketing.id, st.marketing.ready_at);
+    }
+  } catch (e) {
+    const t = filesText(e, { codes: f.st && f.st.mode_codes });
+    if (t) toast(t, "error");
+    else await readFiles(id, { quiet: true });                 // 409 root_lost / not_connected: the status says it
+    // 429 rate / 503 busy: the button waits what photo-files' Retry-After asks (it exposes the header to this site)
+    if (e && e.retryAfter && (e.status === 429 || e.status === 503)) {
+      const ms = Math.min(Number(e.retryAfter), CHECK_HOLD_MAX_S) * 1000;
+      f.waitUntil = Date.now() + ms;
+      setTimeout(() => { if (f.waitUntil && Date.now() >= f.waitUntil - 50) { f.waitUntil = 0; if (state.sel === id) renderDetail(); } }, ms + 60);
+    }
+  }
+  clearTimeout(free);
+  if (f.busy === "check") f.busy = "";
+  if (state.sel === id) renderDetail();
+}
+
+/* the Ready view */
+
+function readyLoaded() { return !!(state.rd.lists.open || state.rd.lists.done); }
+
+/** A card by id, in whichever list has it (its tab noted). */
+function readyItem(id) {
+  for (const tab of ["open", "done"]) {
+    const l = state.rd.lists[tab];
+    const it = l && l.items.find((x) => x.id === Number(id));
+    if (it) { it.__tab = tab; return it; }
+  }
+  return null;
+}
+
+/** The Ready view may be shown: the list was read, or its read failed (no signal) - not a database without it. */
+function readyMay() { return !!(state.rd.readable || state.rd.err); }
+
+/** The card a link named (rd.want), once a read has both lists: open on its own tab, or hint.no_item when the list was
+    read and it is not in it. */
+function wantedCard() {
+  const r = state.rd;
+  const id = r.want;
+  r.want = null;
+  const it = id ? readyItem(id) : null;
+  if (!it) { r.msg = FW.hint.no_item; r.sel = null; r.open = false; setUrl(false); return; }
+  r.tab = it.__tab;
+  r.sel = it.id;
+  r.open = true;
+  r.msg = "";
+  state.lastDetail = null;
+  setUrl(false);
+}
+
+/** Try again (the Ready list's, or the page's when both reads failed): the list read again, a link's card opened then. */
+function retryReady() {
+  state.rd.err = "";
+  if (state.view === "ready") render();          // the list's place holders while it reads
+  return loadReady();
+}
+
+/** photo_ready_list: the open list always (its counts name the tab), the done list when shown (o.both: both; a link's
+    card waiting: both, then wantedCard). */
+async function loadReady(o) {
+  const opt = o || {};
+  const r = state.rd;
+  const seq = ++r.seq;
+  try {
+    const want = opt.both || r.tab === "done" || r.want ? ["open", "done"] : ["open"];
+    const got = await Promise.all(want.map((v) => files.readyList(v)));
+    if (seq !== r.seq) return;
+    if (got[0] === null) {
+      r.readable = false; r.err = ""; r.want = null; state.p5 = false;
+      if (state.view === "ready") state.view = "agenda";
+      if (!opt.hold) render();
+      return;
+    }
+    r.readable = true;
+    want.forEach((v, i) => { r.lists[v] = got[i]; });
+    r.err = "";
+    for (const v of want) for (const it of (r.lists[v] || { items: [] }).items) if (state.drainer) state.drainer.saw(it.id, it.ready_at);
+    if (r.want && want.length === 2) wantedCard();
+    if (opt.hold) return;
+  } catch (e) {
+    if (seq !== r.seq) return;
+    if (r.want && readyItem(r.want)) wantedCard();                   // the link's card is in the list read before
+    // said with Try again: no signal is the list's own words (ready.read_failed, as DCR Desktop 2's Ready view - never
+    // "the shoot schedule could not be read" over the Ready list; P5b review round 10), else the refusal's
+    else if (state.p5 !== false && (!readyLoaded() || r.want)) r.err = e && e.retryable ? FW.ready.read_failed : errorWords(e);
+    else if (!opt.quiet) toast(errorWords(e), "error");
+  }
+  if (state.view === "ready") render();
+}
+
+function openCard(id, o) {
+  const it = readyItem(id);
+  if (!it) return;
+  const r = state.rd;
+  const push = !!(o && o.push) && !wide() && !r.open;
+  r.want = null;
+  r.sel = it.id;
+  r.open = true;
+  r.msg = "";
+  state.lastDetail = null;
+  if (push) r.pushed = true;
+  setUrl(push);
+  render();
+  try { const t = $("shDTitle"); if (t && (!wide() || (o && o.focus))) t.focus(); } catch (e) { /* */ }
+}
+
+function closeCard(fromHistory) {
+  const r = state.rd;
+  if (!fromHistory && r.pushed && W.history && W.history.back) {
+    r.pushed = false;
+    W.history.back();
+    return;
+  }
+  const was = r.sel;
+  r.pushed = false;
+  r.open = false;
+  r.sel = null;
+  setUrl(false);
+  render();
+  try { const row = document.querySelector('.sh-listcol [data-ready="' + was + '"]'); if (row && row.focus) row.focus(); } catch (e) { /* */ }
+}
+
+// The refusals that end an act sent from a sheet (Posted…, Not for posting…, Take it over…, Not posted yet): the card
+// moved on, or it is not the viewer's - said in a toast, the sheet closed and the list read again. Every other one (no
+// signal, rate, a busy server, a field the database refused) is said IN the sheet, which keeps the ticks, the link and
+// the note typed: pressing its button again sends them (P5b review round 10 - closing it made "try again" mean typing
+// everything again). A send repeated after an answer lost on the way is the database's {again: true} (§11.2).
+const ACT_ENDS = Object.freeze(["taken", "changed", "not_now", "not_yours", "withdrawn", "no_item", "forbidden", "too_late"]);
+
+/** One act on a card (§11.2): sent with the state the card showed. -> true when it went through. A refusal outside
+    ACT_ENDS of an act sent from its sheet is said in that sheet, which stays open (applyReady closes it on the rest). */
+async function readyAct(id, action, o) {
+  const it = readyItem(id);
+  const r = state.rd;
+  if (!it || r.busy) return false;
+  // the sheet it is sent from (none for I'm on it / Not me any more, pressed on the card itself)
+  const mv = state.mv && state.mv.readyId === it.id && READY_SHEETS.indexOf(state.mv.type) !== -1 ? state.mv : null;
+  r.busy = true;
+  renderDetail();
+  let ok = false, inline = "";
+  try {
+    await files.act(it.id, action, it.state, o);
+    ok = true;
+  } catch (e) {
+    const code = (e && e.hint) || "";
+    const words = actText(e, action, it.state, { today: state.today });
+    if (mv && ACT_ENDS.indexOf(code) === -1) inline = words;
+    else toast(words, code === "changed" ? "info" : "error");
+  }
+  r.busy = false;
+  if (inline) {
+    renderDetail();                                  // the card's buttons free again behind the sheet
+    if (state.mv === mv) { mv.busy = false; setMsg(inline, "error"); fillApply(); }
+    else toast(inline, "error");                     // its sheet was closed while the act was on its way
+    return false;
+  }
+  await loadReady({ quiet: true, both: true });
+  render();
+  return ok;
+}
+
+/** Take it over… (§11.2): asked first in a sheet, with who has it and since when (ready.take_over_ask). */
+function takeOver(id) {
+  const it = readyItem(id);
+  if (!it || !it.claimed || state.mv) return;
+  const ask = word("ready", "take_over_ask", { name: safe(it.claimed.name) || FW.completion.someone, when: momentText(it.claimed.at, state.today) });
+  openSheetOf("take_over", { readyId: it.id, opener: "r-take-over", label: FW.ready.btn_take_over.replace(/…$/, ""), title: FW.ready.btn_take_over,
+    body: '<p class="mv-now"><b>' + esc(safe(it.shoot_name)) + '</b></p><p class="mv-now" data-ask="take_over">' + esc(ask) + "</p>", cls: "warn" });
+}
+
+/** Not posted yet / Back on the list (§11.2, §13.5): asked first when it clears what marketing wrote - where it was
+    posted, its link or note (ready.reopen_ask), why it isn't for posting (ready.reopen_passed_ask, always); the database
+    keeps none of it after a reopen. Keep it (copy.cancel_keep) has the focus, so Enter keeps it (v14, §37). */
+function reopen(id) {
+  const it = readyItem(id);
+  if (!it || state.mv) return;
+  const ask = reopenAsk(it);
+  if (!ask) { readyAct(it.id, "reopen"); return; }
+  const label = it.state === "passed" ? FW.ready.btn_reopen_passed : FW.ready.btn_reopen;
+  openSheetOf("reopen", { readyId: it.id, opener: "r-reopen", label, title: label, keep: FW.copy.cancel_keep, cls: "warn",
+    body: '<p class="mv-now"><b>' + esc(safe(it.shoot_name)) + '</b></p><p class="mv-now" data-ask="' + esc(ask) + '">' + esc(FW.ready[ask]) + "</p>",
+    first: '#shMo .sh-mo-ft [data-act="mv-close"]' });
+}
+
+/** Posted… / Not for posting…: the sheet with its fields. */
+function openReadySheet(id, type) {
+  const it = readyItem(id);
+  if (!it || state.mv) return;
+  const posted = type === "posted";
+  openSheetOf(type, { readyId: it.id, opener: "r-" + type, label: (posted ? FW.ready.btn_posted : FW.ready.btn_pass).replace(/…$/, ""),
+    title: posted ? FW.ready.btn_posted : FW.ready.btn_pass, body: posted ? postedBody(it) : passBody(it), cls: posted ? "ok" : "warn",
+    first: posted ? '#shMo input[name="rsWhere"]' : "#rsNote" });
+}
+
+/** One of the photo files' sheets (Posted…, Not for posting…, Take it over…, Use what's in Drive): P3's sheet - its focus
+    trap, Escape, focus return to its button and, on a phone, its own history entry. */
+function openSheetOf(type, o) {
+  state.mv = { type, readyId: o.readyId || null, shootId: o.shootId || null, busy: false, msg: "", msgKind: "", opener: o.opener, label: o.label,
+    closeLabel: "Close", keep: o.keep || "Cancel" };
+  const foot = '<button type="button" class="sh-btn" data-act="mv-close">' + esc(state.mv.keep) + "</button>" +
+    '<button type="button" class="sh-btn ' + esc(o.cls || "primary") + '" id="mvApply" data-act="mv-apply">' + esc(o.label) + "</button>";
+  $("shSheet").innerHTML = sheetShell(esc(o.title), o.body, foot, "Close");
+  fillApply();
+  lock(true);
+  sheetOpen(true);
+  sheetPushed();
+  try { const first = o.first ? document.querySelector(o.first) : $("mvApply"); if (first && first.focus) first.focus(); } catch (e) { /* */ }
+}
+
+async function applyReady() {
+  const mv = state.mv;
+  if (!mv || mv.busy) return;
+  // the phone's asks (phoneAsk): closed, then the act - only while the Files section still offers it (the hand-in may
+  // have sealed while the question was open: nothing is left to hand in or cancel)
+  if (mv.type === "phone_cancel" || mv.type === "phone_hand_in") {
+    const cancel = mv.type === "phone_cancel";
+    closeSheet();
+    if (phoneOffers(mv.shootId, cancel ? "cancel_copy" : "hand_in_there")) phoneAct(mv.shootId, cancel ? "cancel" : "hand_in");
+    return;
+  }
+  // (each closes on success or on a refusal that ends the act; one said in the sheet keeps it open - readyAct)
+  if (mv.type === "take_over") {
+    mv.busy = true;
+    setMsg("", "");
+    fillApply();
+    const ok = await readyAct(mv.readyId, "claim", { takeOver: true });
+    if (state.mv === mv && (ok || !mv.msg)) closeSheet();
+    return;
+  }
+  if (mv.type === "reopen") {
+    mv.busy = true;
+    setMsg("", "");
+    fillApply();
+    const ok = await readyAct(mv.readyId, "reopen");
+    if (state.mv === mv && (ok || !mv.msg)) closeSheet();
+    return;
+  }
+  const note = $("rsNote") ? String($("rsNote").value || "").trim() : "";
+  let o;
+  if (mv.type === "posted") {
+    const where = Array.prototype.filter.call(document.querySelectorAll('#shMo input[name="rsWhere"]'), (n) => n.checked).map((n) => n.value);
+    const link = $("rsLink") ? String($("rsLink").value || "").trim() : "";
+    if (link && !/^https:\/\/\S+$/.test(link)) { setMsg(FW.hint.bad_link, "error"); return; }
+    o = { where, link, note };
+  } else {
+    if (!note) { setMsg(FW.hint.reason_needed, "error"); return; }
+    o = { note };
+  }
+  mv.busy = true;
+  setMsg("", "");
+  fillApply();
+  const ok = await readyAct(mv.readyId, mv.type === "posted" ? "posted" : "pass", o);
+  if (state.mv === mv && (ok || !mv.msg)) closeSheet();
 }
 
 /** A watch read (repo/photo.js watchSchedule: {tables, join}): a photo team change (or a join, or the page shown again)
@@ -1317,7 +2007,7 @@ async function refreshAccess() {
   if (rememberPhotoAccess(state.me, a)) {
     try { if (typeof D().topbar === "function") D().topbar("shoots"); } catch (e) { /* */ }
   }
-  if (state.mv && !a.canEdit) closeSheet();
+  if (state.mv && !a.canEdit && READY_SHEETS.indexOf(state.mv.type) === -1) closeSheet();
   if (!a.ready || !a.canRead) {
     stop();
     state.plans = [];
@@ -1345,11 +2035,20 @@ export async function init(me, o) {
     try { if (typeof D().topbar === "function") D().topbar("shoots"); } catch (e) { /* */ }
   }
   if (!access || !access.ready || !access.canRead) { render(); return; }
-  await load();
-  await follow(V.parseLink(opt.search !== undefined ? opt.search : W.location ? W.location.search : ""));
+  // the mirror and the Ready list read side by side, drawn once the address is followed (one draw, as in P3)
+  await Promise.all([load({ hold: true }), loadReady({ quiet: true, hold: true })]);
+  const link = V.parseLink(opt.search !== undefined ? opt.search : W.location ? W.location.search : "");
+  // the first view for someone who is only on marketing (§13.5), unless the address names another
+  // (its read failed: still the Ready view, its words and Try again - not the Agenda)
+  if (readyMay() && marketingOnly(state.access) && !link.view && !link.shoot && !link.plan && !link.task && !link.ready) {
+    state.view = "ready";
+    setUrl(false);
+  }
+  await follow(link);
   render();
   if (state.sel && wide()) {
-    try { const row = document.querySelector('.sh-listcol [data-shoot="' + state.sel + '"]'); if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" }); } catch (e) { /* */ }
+    // a link's shoot: its row in the middle of the list (its neighbours in view; never flush against the window's edge)
+    try { const row = document.querySelector('.sh-listcol [data-shoot="' + state.sel + '"]'); if (row && row.scrollIntoView) row.scrollIntoView({ block: "center" }); } catch (e) { /* */ }
   } else if (state.sel && state.open) {
     try { const t = $("shDTitle"); if (t && t.focus) t.focus(); } catch (e) { /* */ }
   }
@@ -1360,6 +2059,8 @@ export async function init(me, o) {
 export function stop() {
   if (state.stopWatch) { try { state.stopWatch(); } catch (e) { /* */ } }
   state.stopWatch = null;
+  if (state.stopFiles) { try { state.stopFiles(); } catch (e) { /* */ } }
+  state.stopFiles = null;
   state.timers.forEach((t) => clearInterval(t));
   state.timers = [];
 }
@@ -1378,8 +2079,14 @@ if (typeof document !== "undefined" && typeof window !== "undefined" && document
 /** Tests: back to a fresh page (the listeners of a new document are wired again). */
 function reset() {
   stop();
+  if (state.phone) { try { state.phone.dispose(); } catch (e) { /* */ } }
+  if (state.phoneDraw) clearTimeout(state.phoneDraw);
+  const deps = state.phoneDeps;                  // (a test's parts for the phone's module stay for the next walk)
   Object.assign(state, freshState());
+  state.phoneDeps = deps;
 }
 
 export const _test = { state, reset, init, load, render, openShoot, closeShoot, openMove, openDone, openUndo, closeSheet, apply, runPreview, argsNow,
+  readFiles, checkNow, loadReady, openCard, closeCard, readyAct, takeOver, reopen, openReadySheet, applyReady, onFilesWatch,
+  pickFiles, pickStart, phoneAct, phoneAsk, phone, phoneParts, phoneDeps: (d) => { state.phoneDeps = d || null; },
   previewHtml, detailHtml: (id) => { const s = shootOf(id); return s ? detailHtml(s, planOf(s.planId)) : ""; }, follow, setView, stop, onWatch, onPop };
