@@ -105,6 +105,9 @@
 .sh-plan { background:var(--surface); border:1px solid var(--border); border-radius:14px; margin:0 0 14px; overflow:hidden; }
 .sh-plan.focus { border-color:var(--acc); box-shadow:0 0 0 2px var(--tint-2); }
 .sh-plan-hd { padding:12px 14px; background:var(--surface-2); border-bottom:1px solid var(--border); display:flex; flex-direction:column; gap:6px; }
+.sh-plan-top { display:flex; align-items:center; gap:12px; min-width:0; }
+.sh-plan-id { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.sh-plan-addr { font-size:13px; color:var(--text-muted); line-height:1.4; overflow-wrap:anywhere; }
 .sh-plan-t { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 10px; }
 .sh-plan-t b { font-size:16px; overflow-wrap:anywhere; }
 .sh-plan-t span { font-size:13px; color:var(--text-muted); }
@@ -170,6 +173,29 @@
 .sh-dplace button { display:inline-flex; align-items:center; padding:0; border:0; background:none; color:var(--acc-text); font:inherit; font-weight:700; text-decoration:underline;
   text-underline-offset:2px; min-height:44px; }
 .sh-dplace button:focus-visible { outline:2px solid var(--acc); outline-offset:1px; border-radius:4px; }
+/* P6 (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4): the job's place under its line - the picture, and the address as a
+   Google Maps link */
+.sh-place { display:flex; align-items:center; gap:12px; margin:8px 0 0; min-width:0; }
+.sh-addr { display:inline-flex; align-items:center; min-width:0; min-height:44px; padding:4px 0; color:var(--acc-text); font-size:14px; font-weight:600; line-height:1.4; overflow-wrap:anywhere;
+  text-decoration:underline; text-underline-offset:2px; }
+.sh-addr:focus-visible { outline:2px solid var(--acc); outline-offset:1px; border-radius:4px; }
+/* the job's picture, or the neutral tile in its place (no picture, not fetched yet, or one that failed to draw) */
+.sh-pic { flex:none; display:block; border-radius:10px; object-fit:cover; background:var(--surface-2); border:1px solid var(--border); }
+.sh-pic.s64 { width:64px; height:64px; }
+.sh-pic.s48 { width:48px; height:48px; border-radius:8px; }
+.sh-pic.none { background:var(--surface-2) linear-gradient(135deg, transparent 44%, var(--border) 44%, var(--border) 56%, transparent 56%); }
+/* the files icon (§1.6 "The rule, final", 7): the camera and the film and the up-arrow in the muted text colour whatever
+   the state but a problem (the warning colour) - the up-arrow alone says files are not in OneDrive yet -, the counts in
+   the text colour whatever the state (DCR Desktop 2's files_color and files_count_color; step 1's review, round 2: a
+   confirmed shoot was green here and grey on the desk) */
+.sh-fi { flex:none; display:inline-flex; align-items:center; gap:8px; padding:2px 0; color:var(--text); font-size:12.5px; font-weight:800;
+  line-height:1; white-space:nowrap; }
+.sh-fi-n { display:inline-flex; align-items:center; gap:3px; }
+.sh-fi svg { display:block; color:var(--text-muted); }
+.sh-fi-up { font-size:12px; font-weight:800; color:var(--text-muted); }
+.sh-fi.problem svg, .sh-fi.problem .sh-fi-up { color:var(--gold); }
+.sh-row .sh-fi { align-self:center; margin-left:auto; }
+.sh-dtop .sh-fi { padding:0 4px; }
 .sh-facts { display:grid; grid-template-columns:auto 1fr; gap:6px 14px; margin:14px 0 0; font-size:14px; }
 .sh-facts dt { color:var(--text-muted); font-weight:600; }
 .sh-facts dd { margin:0; overflow-wrap:anywhere; }

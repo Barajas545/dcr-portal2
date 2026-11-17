@@ -236,7 +236,7 @@ function portalWorker(scope) {
 
 test("site/sw.js v5: the takeoff copy is never answered, kept or precached by the portal's worker (its own worker, scope takeoff/, does); everything else as before", async () => {
   const sw = read("sw.js");
-  assert.match(sw, /^const CACHE = "dcr-portal2-v8";$/m);          // v6 (the shoot schedule), v7 and v8 (the photo files) keep the frame
+  assert.match(sw, /^const CACHE = "dcr-portal2-v9";$/m);          // v6 (the shoot schedule), v7 and v8 (the photo files), v9 (the job's place) keep the frame
   const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(sw)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
   assert.ok(!shell.some((f) => /^takeoff\//.test(f)), "no takeoff file in the portal's list");
   // the pass-through comes before anything else the fetch handler decides

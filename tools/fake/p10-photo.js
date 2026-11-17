@@ -1265,5 +1265,38 @@
         house_complete: ms(null, "estimate", false) } });
     shoot(d, 1, { key: "delivery", phase: "delivery", name: "Delivery day", anchor: "delivery", window_days: 0 });
     shoot(d, 2, { key: "framing-complete", phase: "framing_complete", name: "Framing complete", anchor: "framing_complete", offset_days: 1 });
+
+    // P6 (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4): the plans' jobs - made-up projects with made-up places, each
+    // street a "0000 ..." one put together here (never written as one piece). The schedule reads them live, as it reads
+    // the real projects; nothing of them is mirrored. A000T9 and A000T8 have a picture, A000T7 has none, A000T6 a town
+    // and no street (no address: nothing is said).
+    if (Array.isArray(out.projects) && Array.isArray(out.files)) {
+      const street = (...words) => ["0000"].concat(words).join(" ");
+      const JOBS = [[a, "Sample house", street("Sampleton", "Avenue"), "in_progress", true], [b, "Made-up garage", street("Madeup", "Garage", "Lane"), "in_progress", true],
+        [c, "Old sample deck", street("Oldsample", "Court"), "completed", false], [d, "Sample porch", "", "approved", false]];
+      let pid = out.projects.reduce((m, p) => Math.max(m, Number(p.id) || 0), 0);
+      let fid = out.files.reduce((m, f) => Math.max(m, Number(f.id) || 0), 0);
+      const made = at(120);
+      JOBS.forEach(([pl, name, address, status, picture], i) => {
+        pid += 1;
+        const row = Object.assign({ id: pid, number: pl.project_code, name, address: address || null, city: pl.city, state: "CA", zip: "9300" + (i + 1),
+          client_contact_id: null, client_name: "Sample client", client_phone: null, client_email: null, status, status_note: null,
+          scope: "Framing", tags: [], plans_url: null, start_date: null, completed_date: null, lat: null, lng: null, location_source: null,
+          thumbnail_file_id: null, folder_name: [pl.project_code, address || pl.city, pl.city, name].join(" - "), legacy_sp_id: null, deleted_at: null },
+          audit(made, P.admin));
+        out.projects.push(row);
+        if (Array.isArray(out.project_prices)) out.project_prices.push(Object.assign({ project_id: pid, labor_rate: 90, rate_source: "local" }, audit(made, P.admin)));
+        if (picture) {
+          fid += 1;
+          const key = "p/" + pid + "/thumbnail/" + ("d10a" + String(pid).padStart(28, "0")) + "/Project_picture.jpg";
+          out.files.push(Object.assign({ id: fid, project_id: pid, estimate_item_id: null, journal_entry_id: null, bill_id: null, folder: "thumbnail", subpath: "",
+            name: "Project picture.jpg", storage_path: key, size: 64000 + i * 1000, mime: "image/jpeg", version_no: 1, previous_id: null, is_financial: false,
+            storage: "cloud", rel_path: null, modified_at: null, description: null, preview_path: null, source: "import", deleted_at: null }, audit(made, P.admin)));
+          if (out.objects) out.objects[key] = { size: 64000 + i * 1000, mime: "image/jpeg", owner: P.admin, created_at: made };
+          row.thumbnail_file_id = fid;
+        }
+        pl.project_id = pid;
+      });
+    }
   });
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -70,6 +70,7 @@ async function open(E, key, search, wrap) {
   repo.useKeyStore(null);
   const me = await as(E, key, wrap);
   await page.init(me, { search: search || "", watch: false });
+  await S.side;                                  // the places and the rollups, asked beside the first schedule read
   return me;
 }
 const planBy = (code) => S.plans.find((p) => p.projectCode === code);
@@ -96,6 +97,17 @@ function pickDay(skipN) {
   return b.getAttribute("data-day");
 }
 const previewText = () => text("mvPreview");
+/** scan(), but the page's own picture of the job (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4: an img the page writes
+    itself - its fixed words, a blob: URL of its own as its src, nothing else) is not an element from the data; every
+    other img, handler or javascript: link still is. */
+function scanPage(root) {
+  const KEYS = ["class", "src", "alt", "title", "width", "height", "data-pic"];
+  const own = root.descendants().filter((e) => e.localName === "img" && /(^| )sh-pic( |$)/.test(e.getAttribute("class") || "") &&
+    /^blob:/.test(e.getAttribute("src") || "") && e.getAttribute("alt") === V.PICTURE_TEXT && [...e.attrs.keys()].every((k) => KEYS.includes(k))).length;
+  const out = scan(root);
+  for (let i = 0; i < own; i++) out.splice(out.indexOf("img"), 1);
+  return out;
+}
 const ready = () => until(() => S.mv && !S.mv.pending && (S.mv.words || S.mv.pvError) && !$("mvApply").disabled === !!(S.mv.words && S.mv.words.ok), 4000, "the preview");
 
 test("a photographer: the Agenda, a shoot, Move… (three choices, Only this shoot preselected), the preview of every shoot, Apply with the screen's rev, waiting, then Applied", { skip }, async () => {
@@ -152,7 +164,7 @@ test("a photographer: the Agenda, a shoot, Move… (three choices, Only this sho
   assert.match(text("shDScroll"), /Applied/);
   assert.match(text("shDScroll"), /by Jordan on the shoot schedule/);
   assert.ok($("shDScroll").querySelector('[data-act="undo"]'), "Undo my last change…");
-  assert.deepEqual(scan(document.body), []);
+  assert.deepEqual(scanPage(document.body), []);
 });
 
 test("PT409: someone changed the plan meanwhile - the page says so, shows the new preview and sends the new rev; never a silent overwrite", { skip }, async () => {
@@ -404,11 +416,11 @@ test("the mirror's words through the money masks and as text: no amount, no elem
   await open(E, "field");
   click('#shList [data-shoot="' + dc.id + '"]');
   assert.ok(text("shDScroll").includes(EVIL), "the markup is shown as text");
-  assert.deepEqual(scan(document.body), [], "no element from the data");
+  assert.deepEqual(scanPage(document.body), [], "no element from the data");
   const all = document.body.textContent;
   assert.ok(!AMOUNT.test(all), "no amount: " + (all.match(/.{0,30}\$\s?\d.{0,10}/) || [""])[0]);
   assert.ok(!/1,200|3,400|2,500/.test(all), "the amounts are masked");
   click('#shDScroll [data-act="move"]');
   assert.ok(text("mvTitle").includes(EVIL) && !AMOUNT.test(text("mvTitle")));
-  assert.deepEqual(scan(document.body), []);
+  assert.deepEqual(scanPage(document.body), []);
 });

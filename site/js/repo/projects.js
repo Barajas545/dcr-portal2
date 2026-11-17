@@ -15,6 +15,8 @@
    * setThumbnail(p, id)   the project's picture (projects.thumbnail_file_id), versioned;
    * pictureIds(ids)       [{id, thumbnailFileId}] of these live projects (the Plans Library's pictures: two
                            columns, the same RLS as every read);
+   * places(ids)           the shoot schedule's jobs' places (address, city, state, zip, the picture's file id),
+                           read live with the schedule, never kept;
    * setLocation(...)      rpc set_project_location (write-once rules live in the database). */
 
 import { db, must, versioned, pageAll, conflict, notFound, forbidden, idOf } from "./_db.js";
@@ -48,6 +50,29 @@ export async function pictureIds(ids) {
   return rows.filter(function (r) { return !r.deleted_at; }).map(function (r) {
     return { id: String(r.id), thumbnailFileId: r.thumbnail_file_id == null ? null : String(r.thumbnail_file_id) };
   });
+}
+
+/** The columns the shoot schedule reads of its plans' jobs (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4): the place
+    and the picture's file id - nothing else of the project. */
+export const PLACE_COLUMNS = "id, address, city, state, zip, thumbnail_file_id, deleted_at";
+/** At most this many ids a read. */
+export const PLACE_IDS = 100;
+
+/** The photo plans' jobs' places, read live with the schedule under the projects RLS (never kept, never mirrored):
+    [{id, address, city, state, zip, thumbnail_file_id}] of these live projects as this person sees them (a deleted one,
+    even for an admin, or one RLS hides, is absent). */
+export async function places(ids) {
+  const list = Array.from(new Set((ids || []).map(String).filter(function (v) { return /^\d{1,15}$/.test(v); })));
+  if (!list.length) return [];
+  const c = await db();
+  const out = [];
+  for (let i = 0; i < list.length; i += PLACE_IDS) {
+    const rows = must(await c.from("projects").select(PLACE_COLUMNS).in("id", list.slice(i, i + PLACE_IDS).map(idOf))) || [];
+    rows.forEach(function (r) {
+      if (r && !r.deleted_at) out.push({ id: r.id, address: r.address, city: r.city, state: r.state, zip: r.zip, thumbnail_file_id: r.thumbnail_file_id });
+    });
+  }
+  return out;
 }
 
 export async function getProject(id) {

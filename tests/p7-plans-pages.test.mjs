@@ -104,7 +104,7 @@ test("the offline list keeps the plan buttons' code (Search, the project page an
   const sw = read("sw.js");
   for (const f of ["js/map/plans.js", "js/pages/plan-buttons.js", "plans-library.html", "js/pages/plans-library.js", "js/plan-library.js",
     "js/plan-library-worker.js", "js/plan-handoff.js", "js/map/plan-library.js", "js/plan-pictures.js"]) assert.ok(sw.includes('"' + f + '"'), f + " is in SHELL");
-  assert.match(sw, /^const CACHE = "dcr-portal2-v8";$/m);          // v8: the photo files in the Office OneDrive (v7: the photo files; v6: the shoot schedule; v5: the takeoff frame; v4: check-off notes)
+  assert.match(sw, /^const CACHE = "dcr-portal2-v9";$/m);          // v9: the job's place and the files icon; v8: the photo files in the Office OneDrive (v7: the photo files; v6: the shoot schedule; v5: the takeoff frame; v4: check-off notes)
 });
 
 test("the Plans Library page: offline sign-in, the people who see prices only, the site's policy plus the OneDrive host, one page module", () => {

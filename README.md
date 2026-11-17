@@ -168,7 +168,24 @@ site/                       published as is
                             entry and Home's card for admins and the photo team (a hint kept per account: common2.js
                             showsShoots); My Tasks' "Open in shoot schedule"; the Access tab's Photo team (admin.js,
                             map/access.js photo*: set_photo_team at the version each line's edit began from - a line
-                            changed since is put back and said, never saved over)
+                            changed since is put back and said, never saved over). The job's place and the files icon
+                            (the owner's request of 2026-11-16, step 1; DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4,
+                            §1.6): the plans' jobs read live with the schedule (repo/projects.js places - never kept,
+                            never mirrored); the sheet's place block (the job's 64 px picture, the address as a Google
+                            Maps link in a new tab) and By job's header (48 px picture, the address line); the rows' and
+                            the sheet's files icon (map/shoots.js filesIcon: photos and videos in OneDrive, from the
+                            shoot folders' rollups - repo/photo-files.js folderStates, the counts and states only; the
+                            up-arrow only while files wait; a problem the Ready for marketing list holds - marketing's
+                            culls - no warning, a folder gone one; the glyphs and the arrow muted, or the warning colour
+                            for a problem, the counts in the text colour: SE §1.6 "The rule, final", DCR Desktop 2's
+                            files_mark and list_holds word for word - a test runs both on the same rollups, list rows
+                            and hand-ins, and holds the contract's examples line for line, when DCR_DESKTOP2_DIR names
+                            it)
+  js/shoot-pictures.js      the jobs' pictures on the shoot schedule: never a signed link in an img - each picture's
+                            bytes fetched once per file id from a fresh signed link and shown as a blob: URL for the
+                            page's life (the page stays open on site for hours); only the ones the page draws (By job's,
+                            the open sheet's); one refused or no picture never asked for again, one with no link or no
+                            signal after 10 minutes; a picture that fails to draw the neutral tile
   js/repo/photo-files.js, js/map/photo-files.js, js/map/photo-words.js, js/pages/shoots-files.js  the photo files (the
                             photographer screen program, P5b; DCR Desktop 2 migration 20261111000100_photo_files, its
                             function gdrive and docs/PHOTO-FILES.md): a shoot's Files section - ONE read,
@@ -303,7 +320,9 @@ tools/e2e-p10-photo-files-pglite.mjs  one pass on pglite-serve with the REAL mig
                             sent to marketing once, the card acted on, the Access tab's share_sync sharing the folder
 tools/publish-check.mjs     what pushing a branch to main would publish, read for a numbered street address: every
                             commit as pushed one by one (what one adds and a later one removes is still published by
-                            the one that added it), or --squash one squashed commit of the range; read-only
+                            the one that added it), or --squash one squashed commit of the range; each message and run
+                            of added lines also read with its line breaks folded (a wrapped address or picture); a
+                            picture file let through by its made-up name said in the report; read-only
 tools/pglite-rest.mjs       the supabase-js subset answered by PGlite as the Data API would
 tools/cdp.mjs               the small Chrome DevTools driver the two browser tools share
 ```

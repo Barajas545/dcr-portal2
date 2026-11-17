@@ -63,6 +63,9 @@ test("no real-looking value in the photo files' files: no numbered street, drive
   const files = ["tests/vectors/photo_files_cases.json", "tools/fake/p10-photo-files.js", "tools/fake/p10-photo.js", "site/js/map/photo-words.js",
     "site/js/map/photo-files.js", "site/js/repo/photo-files.js", "site/js/pages/shoots.js", "site/js/pages/shoots-files.js", "site/js/map/access.js",
     "site/js/pages/admin.js", "tools/photo-words.mjs", "tools/pglite-p10-photo-files.mjs", "tools/publish-check.mjs",
+    // the job's place and the files icon (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4, §1.6): the address code and its demo
+    "site/js/shoot-pictures.js", "site/js/repo/projects.js", "site/js/map/shoots.js", "site/css/shoots.css", "site/shoots.html", "site/sw.js",
+    "tests/core-sw.test.mjs",
     ...list("tools/", /^(e2e|schema-check)-p10-photo.*\.mjs$/), ...list("tests/", /^p10-photo.*\.test\.mjs$/), "tests/console/console-photo-page.test.mjs"];
   assert.ok(files.length > 15, "the scan sees the photo files' fakes, tests and checks");
   for (const f of files) {

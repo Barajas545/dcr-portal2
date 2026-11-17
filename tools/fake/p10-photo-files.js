@@ -367,9 +367,13 @@
     const ON_LIST = ["ready", "claimed", "posted", "passed"];
     /** app.photo_culled: how many of the folder's missing files are marketing's culls - files deleted or moved out after
         the shoot went on the Ready list (ready, claimed, posted, passed: never withdrawn), never more than missing; 0 off
-        the list (§6.7, §13.1 rules 7 and 9; v19 §42) */
+        the list (§6.7, §13.1 rules 7 and 9; v19 §42). A cull is a file of a hand-in sealed at or before ready_at
+        (app.photo_culled_row): a folder with no such hand-in has none (its culled card's own hand-in sealed after the
+        list - step 1's review, round 4); a second card sealed since keeps the first card's culls */
     function culledNow(f, m) {
       if (!f || !m || ON_LIST.indexOf(m.state) === -1 || !(f.missing > 0)) return 0;
+      const ready = Date.parse(m.ready_at || "");
+      if (!uploadsOf(f.id).some((u) => u.state === "sealed" && u.sealed_at && Date.parse(u.sealed_at) <= ready)) return 0;
       return Math.max(0, Math.min(int(f.culled), f.missing));
     }
     /** the help events that hold now (§10.8), the files' ones held while the shoot is marketing's (R9-L4); marketing's
@@ -491,8 +495,12 @@
         if (!r.counted) continue;
         c.counted++;
         c.bytes += r.size;
-        if (r.kind === "video") c.videos++; else if (r.kind === "photo" || r.kind === "raw") c.photos++; else c.others++;
-        if (r.state === "confirmed") { c.confirmed++; c.bytes_confirmed += r.size; if (r.kind !== "other") c.media_confirmed++; }
+        // (the photos, videos and others are the CONFIRMED ones, as app.photo_folder_rollup counts them - the schedule's
+        // files icon says "in OneDrive" of them; DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.6)
+        if (r.state === "confirmed") {
+          c.confirmed++; c.bytes_confirmed += r.size; if (r.kind !== "other") c.media_confirmed++;
+          if (r.kind === "video") c.videos++; else if (r.kind === "photo" || r.kind === "raw") c.photos++; else c.others++;
+        }
         else if (c[r.state] !== undefined) c[r.state]++;
       }
       c.files_state = filesState(Object.assign(roll(f), { counted: { confirmed: c.confirmed, waiting: c.waiting, mismatch: c.mismatch, missing: c.missing } }));
@@ -1506,6 +1514,17 @@
       // (photo_shoot_files has no read policy - the screens read it through photo_shoot_files_page; demo_photo_items is the
       // demo OneDrive's own)
       canRead(w, table) { return table !== "photo_shoot_files" && table !== ITEMS && canPhotoRead(w); },
+      // a folder as a table read sees it: the rollup under the migration's own names (files_state, files_counted,
+      // files_confirmed, files_waiting, files_problem - the mismatched, missing and wrong-owner files, as
+      // app.photo_folder_rollup counts them) - a folder row here keeps its counts under its own (counted, confirmed,
+      // waiting, mismatch, missing, wrong_owner) and its state comes from
+      // its hand-ins (roll), as the status answers it. The schedule's files icon reads the table so (repo/photo-files.js
+      // folderStates; DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.6). A database without the photo files has no such table.
+      views: { photo_drive_folders: () => {
+        if (!dev.p5) throw new PgErr("42P01", 'relation "public.photo_drive_folders" does not exist', 404);
+        return rows.photo_drive_folders.map((f) => Object.assign({}, f, { files_state: filesState(roll(f)), files_counted: int(f.counted),
+          files_confirmed: int(f.confirmed), files_waiting: int(f.waiting), files_problem: int(f.mismatch) + int(f.missing) + int(f.wrong_owner) }));
+      } },
       canInsert: () => false, canUpdate: () => false, canDelete: () => false,
       handles: (n) => Object.prototype.hasOwnProperty.call(SIGS, n), checkArgs, rpc,
       functions: ["photo-files"], invoke,
@@ -1579,6 +1598,13 @@
         counted: n, confirmed: n, photos: Math.round(n * 0.92), videos: n - Math.round(n * 0.92), bytes: size, bytes_confirmed: size,
         media_confirmed: n, checked_at: ago(12), complete_check_at: ago(12), next_check_at: new Date(now.getTime() + 30 * 60000).toISOString(),
         files_rev: 3 }, o.f || {}, audit(ago(60 * 26)));
+      // the rollup's photos and videos are the ones CONFIRMED in OneDrive (app.photo_folder_rollup): a folder whose seed
+      // confirms fewer files than it counts has as many photos and videos as it confirms (the schedule's files icon reads
+      // them - DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.6)
+      if (o.f && o.f.confirmed !== undefined && o.f.photos === undefined && o.f.videos === undefined) {
+        f.photos = Math.round(f.confirmed * 0.92);
+        f.videos = f.confirmed - f.photos;
+      }
       out.photo_drive_folders.push(f);
       if (o.up !== false && n) {
         uid += 1;
@@ -1645,9 +1671,12 @@
     // A000T8 Made-up garage
     const dB = byKey("A000T8", "delivery");                                      // claimed by the admin
     listed(dB, folder(dB, { n: 140, f: { drive_only: 0 } }), { state: "claimed", claimed_by: P.admin, claimed_at: ago(60 * 3), ready_at: ago(60 * 26) });
-    // posted by marketing, who culled 6 of its files in OneDrive first: marketing's culls, a calm line (PF §42)
+    // posted by marketing, who culled 6 of its files in OneDrive first: marketing's culls, a calm line (PF §42). Its one
+    // hand-in was sealed before it went on the list, as a cull needs (app.photo_culled_row, app.photo_help_held_by_list -
+    // the files icon reads it so: step 1's review, round 3)
     const pB1 = byKey("A000T8", "progress-1");
-    listed(pB1, folder(pB1, { n: 60, f: { confirmed: 54, missing: 6, culled: 6, media_confirmed: 54 } }), { state: "posted",
+    listed(pB1, folder(pB1, { n: 60, f: { confirmed: 54, missing: 6, culled: 6, media_confirmed: 54 },
+      upF: { started_at: ago(60 * 24 * 5 + 60), sealed_at: ago(60 * 24 * 5), beat_at: ago(60 * 24 * 5) } }), { state: "posted",
       ready_at: ago(60 * 24 * 4), claimed_by: P.viewer, claimed_at: ago(60 * 24 * 3),
       posted_by: P.viewer, posted_at: ago(60 * 24 * 2), posted_where: ["instagram", "website"], posted_link: "https://www.example.com/posts/garage-progress",
       posted_note: "Carousel of the wall framing", files_missing: 6 });
@@ -1691,8 +1720,10 @@
         if (!r.counted) continue;
         c.counted--;
         c.bytes -= r.size;
-        if (r.kind === "video") c.videos--; else if (r.kind === "photo" || r.kind === "raw") c.photos--; else c.others--;
-        if (r.state === "confirmed") { c.confirmed--; c.bytes_confirmed -= r.size; if (r.kind !== "other") c.media_confirmed--; }
+        if (r.state === "confirmed") {
+          c.confirmed--; c.bytes_confirmed -= r.size; if (r.kind !== "other") c.media_confirmed--;
+          if (r.kind === "video") c.videos--; else if (r.kind === "photo" || r.kind === "raw") c.photos--; else c.others--;
+        }
         else if (c[r.state] !== undefined) c[r.state]--;
       }
     }

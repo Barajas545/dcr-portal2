@@ -270,7 +270,7 @@ test("the three log views draw the box and the done line; the Log tab puts the t
 
 test("the service worker: a new name for the new log code, note-ticks.js kept for offline use", () => {
   const sw = read("sw.js");
-  assert.match(sw, /^const CACHE = "dcr-portal2-v8";$/m);          // v4 brought the new log code; v5 (the takeoff frame), v6 (the shoot schedule), v7 and v8 (the photo files) keep it
+  assert.match(sw, /^const CACHE = "dcr-portal2-v9";$/m);          // v4 brought the new log code; v5 (the takeoff frame), v6 (the shoot schedule), v7 and v8 (the photo files), v9 (the job's place) keep it
   assert.ok(sw.includes('"js/pages/note-ticks.js"'));
 });
 

@@ -144,7 +144,7 @@ test("the service worker keeps My Assistant ahead (a phone page), not the admins
   const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(sw)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
   for (const f of ["my-assistant.html", "js/pages/my-assistant.js", "js/repo/assistant.js", "js/map/assistant.js"]) assert.ok(shell.includes(f), f);
   for (const f of ["agents-console.html", "assistant-admin.html", "js/console/shell.js", "css/agents-console.css"]) assert.ok(!shell.includes(f), f);
-  assert.match(sw, /const CACHE = "dcr-portal2-v8";/);          // v8: the photo files in the Office OneDrive (v7: the photo files; v6: the shoot schedule; v5: the takeoff frame; v4: check-off notes)
+  assert.match(sw, /const CACHE = "dcr-portal2-v9";/);          // v9: the job's place and the files icon; v8: the photo files in the Office OneDrive (v7: the photo files; v6: the shoot schedule; v5: the takeoff frame; v4: check-off notes)
 });
 
 test("Guided Assist is not built (Q21 default: dropped)", () => {

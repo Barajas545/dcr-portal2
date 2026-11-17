@@ -67,7 +67,26 @@
      first view for someone only on marketing.
    * Realtime: photo_marketing, photo_drive_folders and photo_shoot_uploads are only "read again" triggers (never shown);
      a Ready row's arrival asks the push function to drain once per (id, ready_at) (§10.7). A database without P5 hides
-     all of it: P3 works as before. */
+     all of it: P3 works as before.
+
+   P6, step 1 - the job's place and the files icon (the owner's request of 2026-11-16; the contract DCR Desktop 2
+   docs/PHOTO-SHOOT-EDITS.md §1.4, §1.6, cited SE; no database change):
+   * the plans' jobs are read with the schedule (repo/projects.js places: the address and the picture's file id, under
+     the projects RLS - read live, never kept, never mirrored; no Realtime watch of projects). The shoot sheet has a place
+     block under its job line: a 64 px picture (a neutral tile without one) and the address as a Google Maps link in a
+     new tab; By job's header a 48 px picture left of the job and the address line under it. List rows stay "job · city".
+   * the pictures (js/shoot-pictures.js): never a signed link in an img - each picture's bytes fetched once per file id
+     and shown as a blob: URL for the page's life (the page stays open on site for hours); only the pictures the page
+     draws are asked for (By job's, the open sheet's - step 1's review, round 3); one that cannot be had is not asked
+     for again at every read (refused or no picture: never again; no link or no signal: after 10 minutes), one that
+     fails to draw shows the neutral tile. The page's security policy is not changed.
+   * the files icon (SE §1.6): Agenda and By job rows and the shoot sheet show a camera and a film with their counts when
+     a shoot has photos or videos in OneDrive (map/shoots.js filesIcon), from the shoot folders' rollups read with the
+     schedule and again on a photo_drive_folders or photo_marketing event (round 3: the Ready list holds marketing's
+     culls; round 4: so does a hold a second card lifted, for the first card's culls), at most every 2 s
+     (repo/photo-files.js folderStates: the counts and states only, under the tables' RLS - a reader without it sees no
+     icon); the newest read wins whatever order the answers land in, and the open sheet's icon is drawn again with the
+     rows (step 1's review, round 1). */
 
 import { boot, esc, toast, confirmBox, errorText, D } from "./shell.js";
 import { companyToday, rememberPhotoAccess } from "../common2.js";
@@ -83,6 +102,8 @@ import { WORDS as FW, filesText, actText, word, marketingOnly, momentText, safe,
 import { filesHtml, readyListHtml, readyCardHtml, postedBody, passBody, PHONE_BUSY, phoneButtons } from "./shoots-files.js";
 import { createPhoneSend, ACCEPT as PICK_ACCEPT } from "../photo-send.js";
 import { addDays } from "../map/pacific.js";
+import * as projectsRepo from "../repo/projects.js";
+import { createPictures } from "../shoot-pictures.js";
 
 const W = typeof window !== "undefined" ? window : {};
 /** The page's state (a function: the tests start each walk from a fresh one). */
@@ -101,6 +122,15 @@ function freshState() {
     phone: null, phoneDeps: null, pick: null, pf: {}, phoneDraw: null, phoneSeen: null,
     rd: { tab: "open", lists: { open: null, done: null }, err: "", sel: null, open: false, pushed: false, busy: false, msg: "", readable: false, seq: 0,
       want: null },
+    // P6 (SE §1.4, §1.6): the jobs' places by project id (map/shoots.js toPlace), the shoots' folder rollups by shoot id
+    // (the files icon; rollAsk: one more for every read of them begun, rollMark: per shoot the read its rollup came
+    // from - the newest question wins), the pictures (js/shoot-pictures.js, made on first need; tests give its parts in
+    // picDeps)
+    places: {}, rolls: {}, rollAsk: 0, rollMark: {}, rollAt: 0, rollTimer: null, pics: null, picDeps: null,
+    // (placeAsk / placeMark: the places' tickets, as the rollups'; side: the last schedule read's places and rollups read,
+    // settled - tests wait on it; drawn: the page was drawn once - before that, init draws them; rollRead: the last rollups
+    // read an event began, settled - tests wait on it)
+    placeAsk: 0, placeMark: 0, side: null, drawn: false, rollRead: null,
   };
 }
 // the tasks' readers beside the task's own people (20261020000100: the office reads all; field and view-only their own)
@@ -137,14 +167,15 @@ function errorWords(e) {
 async function load(o) {
   const opt = o || {};
   const seq = ++state.loadSeq;
-  let ok = false;
+  let sched = null, ok = false;
   try {
-    const [sched, ch, pc] = await Promise.all([
+    const [read, ch, pc] = await Promise.all([
       repo.loadSchedule({ archived: true }),
       repo.changes({}),
       repo.pcStatus().catch(() => state.pc),
     ]);
     if (seq !== state.loadSeq) return;
+    sched = read;
     state.today = companyToday();
     state.ready = sched.ready;
     state.plans = sched.plans;
@@ -160,9 +191,218 @@ async function load(o) {
     if (!state.loaded) state.failed = errorWords(e);
     else if (!opt.quiet) toast(errorWords(e), "error");
   }
+  // the jobs' places and the shoots' folder rollups (P6) are asked now and drawn when they answer: the schedule is drawn
+  // without waiting for them (step 1's review, round 2)
+  if (ok) state.side = sideReads(sched.plans, idsOf(sched.shoots));
   if (opt.hold) return;                       // init: drawn once the address is followed
   render();
   if (ok) sheetReread(!!opt.forceSheet);
+}
+
+/* ── P6: the job's place, its picture and the files icon (SE §1.4, §1.6) ── */
+
+/** The places and the rollups of a schedule read, asked beside it and never waited for by it: on a weak signal a request
+    of theirs that stalls (supabase-js has no time-out) never keeps the schedule on its loading state, nor a watch's
+    read of it a round trip later (step 1's review, round 2). Each read takes its ticket when it is asked, and the newest
+    question answered wins (takePlaces, takeRolls); one that fails keeps what the page had. Each is drawn when it
+    answers - the rows, and the open shoot's sheet -, and the jobs' pictures not shown yet are asked for once the places
+    are in. -> a promise of both settled (never rejected; tests wait on it as state.side) */
+function sideReads(plans, rollIds) {
+  const placeAsk = ++state.placeAsk;
+  const rollAsk = ++state.rollAsk;
+  const places = readPlaces(plans).then((got) => {
+    const moved = got ? takePlaces(placeAsk, got) : false;
+    wantPictures();
+    if (moved) sideDrawn();
+  });
+  const rolls = readRolls(rollIds).then((got) => {
+    if (got && takeRolls(rollAsk, rollIds, got).length) sideDrawn();
+  });
+  return Promise.all([places, rolls]).then(() => undefined, () => undefined);
+}
+
+/** A place or a rollup answered after the schedule was drawn: the rows and the open shoot's sheet again (nothing before
+    the page's first draw - init draws once the address is followed, with what has answered by then). */
+function sideDrawn() {
+  if (!state.drawn) return;
+  renderList();
+  if (state.view !== "ready") renderDetail();
+}
+
+/** The answer of the places read asked as `ask`: taken unless a read asked later already answered (the newest question
+    answered wins, as the rollups'). -> whether the places changed */
+function takePlaces(ask, places) {
+  if (state.placeMark > ask) return false;
+  state.placeMark = ask;
+  if (JSON.stringify(places) === JSON.stringify(state.places)) return false;
+  state.places = places;
+  return true;
+}
+
+/** {projectId: place} of these plans' jobs (repo/projects.js places, under the projects RLS), or null when the read
+    failed (the page keeps what it had). */
+async function readPlaces(plans) {
+  const ids = (plans || []).map((p) => p.projectId).filter((v) => v !== null && v !== undefined);
+  if (!ids.length) return {};
+  try {
+    const out = {};
+    for (const r of await projectsRepo.places(ids)) {
+      const p = V.toPlace(r);
+      if (p) out[p.id] = p;
+    }
+    return out;
+  } catch (e) { return null; }
+}
+
+/** The ids of these shoots (the ones a rollup read asks for). */
+function idsOf(shoots) {
+  return (shoots || []).map((s) => s.id).filter(Boolean);
+}
+
+/** {shootId: rollup} of these shoots' live folders (repo/photo-files.js folderStates: none on a database without the
+    photo files, or for a reader without photo_drive_folders' RLS), or null when the read failed (kept as it was). */
+async function readRolls(ids) {
+  if (state.p5 === false) return {};
+  if (!ids.length) return {};
+  try { return (await files.folderStates(ids)) || {}; } catch (e) { return null; }
+}
+
+/** The answer of the rollup read asked as `ask` (state.rollAsk when it began) for `ids`: each shoot's rollup is taken
+    unless a read asked later already answered for that shoot. On a weak signal reads overlap and their answers come
+    in any order: the newest question wins, so an older answer never puts back counts a newer one moved on from (the
+    review of step 1, round 1). A shoot the answer leaves out has no live folder (or is not readable): its icon goes.
+    -> the ids whose rollup changed */
+function takeRolls(ask, ids, rolls) {
+  const moved = [];
+  for (const id of ids) {
+    if ((state.rollMark[id] || 0) > ask) continue;
+    state.rollMark[id] = ask;
+    const next = rolls[id] || null;
+    if (JSON.stringify(next) === JSON.stringify(state.rolls[id] || null)) continue;
+    if (next) state.rolls[id] = next; else delete state.rolls[id];
+    moved.push(id);
+  }
+  return moved;
+}
+
+// the tables whose Realtime events move the icons (repo/photo-files.js TABLES; only "read again" triggers): a folder's
+// rollup, and a shoot going on or off the Ready list - which holds a files problem as marketing's (step 1's review, round
+// 3; a hand-in sealed since moves the folder's rollup too) - and how often at most they are read again for them (a
+// hand-in confirms file after file: DCR Desktop 2 reads them at most every 2 s too - SE §1.6)
+const ROLL_TABLES = ["photo_drive_folders", "photo_marketing"];
+const ROLL_EVERY_MS = 2000;
+
+/** A photo_drive_folders or photo_marketing event: the rollups read again now, or - within 2 s of the last such read -
+    once when the 2 s are up (one read for every event meanwhile). Never waited for by the event's other reads
+    (onFilesWatch): a rollup request that stalls never holds the open shoot's Files section or the Ready list (step 1's
+    review, round 2).
+    -> the read begun now (settled, never rejected), or nothing */
+function rollsSoon() {
+  if (state.rollTimer) return null;
+  const wait = state.rollAt + ROLL_EVERY_MS - Date.now();
+  if (wait <= 0) { state.rollAt = Date.now(); return rereadRolls(); }
+  state.rollTimer = setTimeout(() => { state.rollTimer = null; state.rollAt = Date.now(); state.rollRead = rereadRolls(); }, wait);
+  return null;
+}
+
+/** The rollups read again (not the schedule). Nothing changed: nothing drawn; else the rows, and the open shoot sheet
+    when its own shoot's rollup moved - its icon says what the row says (a read the 2 s wait put off lands after the
+    event's own redraw of the sheet: the review of step 1, round 1). Never rejects: a drawing that throws is let go (no
+    read waits on this one). */
+async function rereadRolls() {
+  try {
+    const ids = idsOf(state.shoots);
+    const ask = ++state.rollAsk;
+    const rolls = await readRolls(ids);
+    if (!rolls) return;                                // the read failed: the icons as they were
+    const moved = takeRolls(ask, ids, rolls);
+    if (!moved.length) return;
+    renderList();
+    if (state.sel && state.view !== "ready" && moved.some((id) => String(id) === String(state.sel))) renderDetail();
+  } catch (e) { /* the icons as they were */ }
+}
+
+function placeOf(plan) {
+  return plan && plan.projectId !== null && plan.projectId !== undefined ? state.places[plan.projectId] || null : null;
+}
+
+/** Whether the place's address line says the town (it ends with it): the job's own line then leaves it out. */
+function townSaid(place) {
+  return !!(V.placeLine(place) && place.city);
+}
+
+function pics() {
+  if (!state.pics) state.pics = createPictures(state.picDeps || undefined);
+  return state.pics;
+}
+
+/** The plans whose job's picture the page draws now (step 1's review, round 3: every plan's was fetched on each page
+    open, archived ones too, though the Agenda and Month draw none): By job's (the plans jobHtml lists) and the open
+    shoot sheet's. */
+function drawnPlans() {
+  const out = [];
+  if (state.view === "job") {
+    const plans = visiblePlans(state.plans, { archived: state.archived || !!state.planFocus, mine: state.planFocus ? null : mineOpt() });
+    for (const p of plans) if (!state.planFocus || p.id === state.planFocus) out.push(p);
+  }
+  const s = state.sel && state.view !== "ready" ? shootOf(state.sel) : null;
+  const sheet = s ? planOf(s.planId) : null;
+  if (sheet && out.indexOf(sheet) === -1) out.push(sheet);
+  return out;
+}
+
+/** The pictures the page draws now that it does not have yet (drawnPlans): fetched (once per file id - one that cannot
+    be had is not asked for again at every read: js/shoot-pictures.js), then the page drawn again. Asked when the places
+    answer and after every full drawing (a view, a filter, a sheet opened). */
+function wantPictures() {
+  const ids = drawnPlans().map((p) => { const pl = placeOf(p); return pl ? pl.pictureId : null; }).filter(Boolean);
+  if (!ids.length) return;
+  pics().want(ids).then((got) => { if (got) { renderList(); if (state.view !== "ready") renderDetail(); } }, () => null);
+}
+
+/** The job's picture: its blob: URL in an img (never a signed link), else the neutral tile. */
+function picHtml(place, size) {
+  const url = place && place.pictureId && state.pics ? state.pics.url(place.pictureId) : null;
+  if (url) {
+    return '<img class="sh-pic s' + size + '" src="' + esc(url) + '" alt="' + esc(V.PICTURE_TEXT) + '" title="' + esc(V.PICTURE_TEXT) + '" width="' + size +
+      '" height="' + size + '" data-pic="' + esc(place.pictureId) + '" />';
+  }
+  return '<span class="sh-pic s' + size + ' none" aria-hidden="true"></span>';
+}
+
+/** The shoot sheet's place block (SE §1.4): the 64 px picture (a neutral tile without one) and the address as a link
+    to Google Maps in a new tab. Nothing without a place, or with neither an address nor a picture. */
+function placeHtml(plan) {
+  const p = placeOf(plan);
+  const line = V.placeLine(p);
+  if (!p || (!line && !p.pictureId)) return "";
+  return '<div class="sh-place">' + picHtml(p, 64) + (line ? '<a class="sh-addr" href="' + esc(V.mapsUrl(p)) + '" target="_blank" rel="noopener noreferrer" title="' +
+    esc(V.MAPS_TEXT) + '">' + esc(line) + "</a>" : "") + "</div>";
+}
+
+const CAMERA = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" ' +
+  'd="M5.6 2.5h4.8l.9 1.5h2.2A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-7A1.5 1.5 0 0 1 2.5 4h2.2l.9-1.5ZM8 5.6a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4Zm0 1.5a1.7 1.7 0 1 1 0 3.4 1.7 1.7 0 0 1 0-3.4Z"/></svg>';
+const FILM = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" ' +
+  'd="M2.5 1.5h11a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1ZM3 3v1.6h1.6V3H3Zm0 3.2v1.6h1.6V6.2H3Zm0 3.2V11h1.6V9.4H3Zm0 2.4V13h1.6v-1.2H3Zm8.4-8.8v1.6H13V3h-1.6Zm0 3.2v1.6H13V6.2h-1.6Zm0 3.2V11H13V9.4h-1.6Zm0 2.4V13H13v-1.2h-1.6ZM5.8 3v10h4.4V3H5.8Z"/></svg>';
+
+/** The files icon of a shoot (SE §1.6): nothing, or the camera and the film with their counts (map/shoots.js
+    filesIcon); its label is the tooltip and what a screen reader says. */
+function filesIconHtml(s) {
+  const ic = s ? V.filesIcon(state.rolls[s.id]) : null;
+  if (!ic) return "";
+  return '<span class="sh-fi ' + esc(ic.tone) + '" role="img" aria-label="' + esc(ic.label) + '" title="' + esc(ic.label) + '" data-files="' + esc(ic.tone) + '">' +
+    (ic.photos ? '<span class="sh-fi-n">' + CAMERA + esc(ic.photos) + "</span>" : "") +
+    (ic.videos ? '<span class="sh-fi-n">' + FILM + esc(ic.videos) + "</span>" : "") +
+    (ic.sending ? '<span class="sh-fi-up" aria-hidden="true">↑</span>' : "") + "</span>";
+}
+
+/** A picture that failed to draw (its bytes were not a picture after all): the neutral tile now, fetched again at the
+    next read. */
+function onPicError(ev) {
+  const t = ev && ev.target;
+  const id = t && t.getAttribute ? t.getAttribute("data-pic") : null;
+  if (!id || !state.pics) return;
+  if (state.pics.broken(id)) { renderList(); if (state.view !== "ready") renderDetail(); }
 }
 
 /* what this device heard of my changes (localStorage, per account; any failure: this page's memory only) */
@@ -311,7 +551,7 @@ function rowHtml(s, plan, o) {
   return '<button type="button" class="' + cls + '" data-shoot="' + esc(s.id) + '"' + (state.sel === s.id ? ' aria-current="true"' : "") + ">" +
     dateHtml(s) + '<span class="sh-main"><span class="sh-name">' + T(s.name) + "</span>" +
     (o && o.noJob ? "" : '<span class="sh-job">' + T(f.job) + (f.city ? " · " + T(f.city) : "") + "</span>") +
-    (chips.length ? '<span class="sh-chips">' + chips.map(chipHtml).join("") + "</span>" : "") + "</span></button>";
+    (chips.length ? '<span class="sh-chips">' + chips.map(chipHtml).join("") + "</span>" : "") + "</span>" + filesIconHtml(s) + "</button>";
 }
 
 function emptyHtml(title, text, retry) {
@@ -336,10 +576,16 @@ function planHtml(p) {
   const f = V.planFacts(p);
   const shoots = planShoots(p, state.shoots);
   const meta = [f.photographer ? "Photographer: " + f.photographer : "", f.shootDays, f.suggestions].filter(Boolean).join(" · ");
+  // the job's place (SE §1.4): a 48 px picture left of the job (the neutral tile without one) and its address line under
+  // it - the line names the town, so the town is not said twice
+  const place = placeOf(p);
+  const line = V.placeLine(place);
   return '<section class="sh-plan' + (state.planFocus === p.id ? " focus" : "") + '" id="shPlan' + esc(p.id) + '" data-plan="' + esc(p.id) + '">' +
-    '<header class="sh-plan-hd"><div class="sh-plan-t"><b>' + T(f.label) + "</b>" + (f.city ? "<span>" + T(f.city) + "</span>" : "") +
+    '<header class="sh-plan-hd"><div class="sh-plan-top">' + picHtml(place, 48) + '<div class="sh-plan-id"><div class="sh-plan-t"><b>' + T(f.label) + "</b>" +
+    (f.city && !townSaid(place) ? "<span>" + T(f.city) + "</span>" : "") +
     (f.title && f.title !== f.label ? "<span>" + T(f.title) + "</span>" : "") +
     (f.statusText ? '<span class="sh-chip dim">' + esc(f.statusText) + "</span>" : "") + "</div>" +
+    (line ? '<div class="sh-plan-addr">' + esc(line) + "</div>" : "") + "</div></div>" +
     '<div class="sh-plan-meta">' + T(meta) + "</div>" +
     '<div class="sh-ms" aria-label="Job dates">' + milestoneChips(p, state.today).map((m) => '<span class="sh-chip' + (m.firm ? " firm" : m.date ? "" : " dim") + '">' +
       esc(m.text) + "</span>").join("") + "</div></header>" +
@@ -504,10 +750,14 @@ function detailHtml(s, plan) {
   const chips = shootChips(s, plan, state.today, { pending: pendingFor(state.changes, s) });
   const open = V.shootChanges(state.changes, s).filter((c) => isOpenChange(c));
   const recent = V.recentMine(state.changes, s, me, new Date());
-  return '<div class="sh-dtop">' + chips.map(chipHtml).join("") + "</div>" +
+  // the files icon beside the status (SE §1.6), before the other chips; the job line names the town only when the place
+  // block under it does not (its address line ends with the town: never said twice, as By job's header)
+  const placed = townSaid(placeOf(plan));
+  return '<div class="sh-dtop">' + chips.slice(0, 1).map(chipHtml).join("") + filesIconHtml(s) + chips.slice(1).map(chipHtml).join("") + "</div>" +
     '<h2 class="sh-dtitle" id="shDTitle" tabindex="-1">' + T(s.name) + "</h2>" +
     '<div class="sh-dplace"><button type="button" data-act="plan" data-plan="' + esc(plan.id) + '">' + T(plan.label) + "</button>" +
-    (plan.city ? " · " + T(plan.city) : "") + (plan.status !== "active" ? " · " + esc(V.planFacts(plan).statusText) : "") + "</div>" +
+    (plan.city && !placed ? " · " + T(plan.city) : "") + (plan.status !== "active" ? " · " + esc(V.planFacts(plan).statusText) : "") + "</div>" +
+    placeHtml(plan) +
     factsHtml(s, plan) +
     filesBlock(s) +
     open.map((c) => changeBox(c, s, plan, c.requestedBy === me)).join("") +
@@ -765,9 +1015,11 @@ function renderCard(box, sc) {
 }
 
 function render() {
+  state.drawn = true;
   renderHead();
   renderList();
   renderDetail();
+  wantPictures();
 }
 
 /* ── the address and opening a shoot ──────────────────────────────────── */
@@ -1620,6 +1872,8 @@ function wire() {
   const root = $("shRoot") || document;
   root.addEventListener("click", onClick);
   root.addEventListener("change", onChange);
+  // an img's error does not bubble: heard on its way down (a job's picture that fails to draw shows the neutral tile)
+  root.addEventListener("error", onPicError, true);
   document.addEventListener("keydown", onKey);
   if (W.addEventListener) W.addEventListener("popstate", onPop);
   try {
@@ -1685,6 +1939,10 @@ function visible() {
 /** A photo files table moved (or a channel joined): the open shoot's files and the Ready view are read again. */
 async function onFilesWatch(what) {
   const w = what || {};
+  // the files icon (P6, SE §1.6): a folder's rollup moved, a shoot went on or off the Ready list (round 3), or a channel
+  // joined - read again (at most every 2 s), never waited for: the reads below go on at once, and so does the next event
+  // (watchFiles hands them in one at a time; step 1's review, round 2)
+  if (w.join || (w.tables || []).some((t) => ROLL_TABLES.indexOf(t) !== -1)) state.rollRead = rollsSoon() || state.rollRead;
   if (state.sel && state.view !== "ready") await readFiles(state.sel, { quiet: true });
   if (state.view === "ready" || (w.tables || []).indexOf("photo_marketing") !== -1) await loadReady({ quiet: true });
 }
@@ -2013,6 +2271,9 @@ async function refreshAccess() {
     state.plans = [];
     state.shoots = [];
     state.changes = [];
+    state.places = {};
+    state.rolls = {};
+    state.rollMark = {};
     state.sel = null;
     state.open = false;
     lock(false);
@@ -2063,6 +2324,7 @@ export function stop() {
   state.stopFiles = null;
   state.timers.forEach((t) => clearInterval(t));
   state.timers = [];
+  if (state.rollTimer) { clearTimeout(state.rollTimer); state.rollTimer = null; }
 }
 
 async function start() {
@@ -2081,12 +2343,16 @@ function reset() {
   stop();
   if (state.phone) { try { state.phone.dispose(); } catch (e) { /* */ } }
   if (state.phoneDraw) clearTimeout(state.phoneDraw);
+  if (state.pics) { try { state.pics.dispose(); } catch (e) { /* */ } }
   const deps = state.phoneDeps;                  // (a test's parts for the phone's module stay for the next walk)
+  const picDeps = state.picDeps;                 // (and for the pictures')
   Object.assign(state, freshState());
   state.phoneDeps = deps;
+  state.picDeps = picDeps;
 }
 
 export const _test = { state, reset, init, load, render, openShoot, closeShoot, openMove, openDone, openUndo, closeSheet, apply, runPreview, argsNow,
   readFiles, checkNow, loadReady, openCard, closeCard, readyAct, takeOver, reopen, openReadySheet, applyReady, onFilesWatch,
   pickFiles, pickStart, phoneAct, phoneAsk, phone, phoneParts, phoneDeps: (d) => { state.phoneDeps = d || null; },
+  picDeps: (d) => { state.picDeps = d || null; }, rereadRolls,
   previewHtml, detailHtml: (id) => { const s = shootOf(id); return s ? detailHtml(s, planOf(s.planId)) : ""; }, follow, setView, stop, onWatch, onPop };

@@ -220,5 +220,13 @@ test("sw: the Accounting page and its money-message modules stay OUT of the offl
     "accounting.html", "js/pages/accounting.js", "js/repo/books.js", "js/map/books.js"]) {
     assert.ok(!shell.includes(f), f + " is not precached");
   }
-  assert.equal(CACHE, "dcr-portal2-v8", "the cache name (v8: the photo files in the Office OneDrive; v7: the photo files; v6: the shoot schedule; v5: the takeoff frame; v4: check-off notes) - the Books pages never changed it");
+  assert.equal(CACHE, "dcr-portal2-v9", "the cache name (v9: the job's place and the files icon on the shoot schedule; v8: the photo files in the Office OneDrive; v7: the photo files; v6: the shoot schedule; v5: the takeoff frame; v4: check-off notes) - the Books pages never changed it");
+});
+
+test("sw v9 (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4): the pictures' module is kept for a cold start; no picture, address or Storage answer ever is", () => {
+  const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(SRC)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
+  assert.ok(shell.includes("js/shoot-pictures.js"), "shoots.html's new module is in the list");
+  assert.ok(shell.includes("js/repo/projects.js") && shell.includes("js/repo/files.js"), "and what it reads through");
+  assert.ok(!shell.some((f) => /^(https?:|blob:|data:)/.test(f)), "only the site's own files");
+  assert.match(SRC, /if \(\/\\\.supabase\\\.\(co\|in\|net\)\$\/i\.test\(url\.hostname\)\) return;/, "Storage's signed links are never answered or kept by the worker");
 });

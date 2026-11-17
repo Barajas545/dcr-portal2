@@ -71,8 +71,13 @@
    Microsoft account and sharing line (photo_drive_overview), shoots.html's connect-src naming the OneDrive host the
    project pages already name; the phone's hand-in modules (photo-send.js and its hash worker, OD §11.3) join the list
    under this same name, as they go out with it. A new name, so every installed copy takes them at once. Still only the
-   code: no status, list, OneDrive link or upload address is ever kept here. */
-const CACHE = "dcr-portal2-v8";
+   code: no status, list, OneDrive link or upload address is ever kept here.
+   v9 (the job's place and the files icon on the shoot schedule - DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4, §1.6, the
+   owner's request of 2026-11-16): the shoot sheet's place block and By job's header (the address and the job's picture,
+   read live), the rows' files icon; the pictures' module (js/shoot-pictures.js) joins the list. A new name, so every
+   installed copy takes them at once. Still only the code: no address, picture or rollup is ever kept here - the
+   pictures live in the page's memory as blob: URLs, never in this cache, and Storage is never cached. */
+const CACHE = "dcr-portal2-v9";
 const PREFIX = "dcr-portal2-";
 // Every page below with every file it loads (its stylesheets and its whole static import graph:
 // tests/core-sw.test.mjs checks it), so the installed app also opens offline from a cold start (a
@@ -124,6 +129,8 @@ const SHELL = [
   "js/pages/shoots-files.js", "js/repo/photo-files.js", "js/map/photo-files.js", "js/map/photo-words.js",
   // the phone's hand-in (v8, OD §3.3): the send and its hash worker (js/quickxor.js is listed above)
   "js/photo-send.js", "js/photo-hash-worker.js",
+  // the job's place on the shoot schedule (v9): the pictures, fetched into the page's memory (never kept here)
+  "js/shoot-pictures.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png", "icons/logo.jpg",
 ];
 

@@ -470,6 +470,56 @@ async function main() {
       check("the phone's Back closes it (the list again)", !/shoot=/.test(await ph.eval("location.search")));
     }, ph);
 
+    // P6 (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4, §1.6): the job's place on the sheet and the files icon on the rows
+    await attempt("the job's place (its picture, the address as a Maps link) and the files icon", async () => {
+      // the rollups are asked beside the schedule and drawn when they answer (step 1's review, round 2)
+      await ph.until("!!document.querySelector('#shList .sh-fi.problem')", 8000);
+      const icon = await ph.eval("(() => { const r = Array.from(document.querySelectorAll('#shList .sh-row')).find((x) => x.querySelector('.sh-name') && " +
+        "x.querySelector('.sh-name').textContent === 'Framing progress #1' && x.textContent.indexOf('A000T9') !== -1); const i = r && r.querySelector('.sh-fi'); " +
+        "return i ? { label: i.getAttribute('aria-label'), title: i.getAttribute('title'), role: i.getAttribute('role'), svg: i.querySelectorAll('svg').length, " +
+        "w: Math.round(i.getBoundingClientRect().width), right: Math.round(r.getBoundingClientRect().right - i.getBoundingClientRect().right) } : null; })()");
+      check("the files icon on a row: a camera and a film with their counts, its label the tooltip and what a screen reader says, at the row's end",
+        !!icon && icon.role === "img" && icon.svg === 2 && /^\d+ photos · \d+ videos? in OneDrive$/.test(icon.label) && icon.title === icon.label && icon.w > 0 && icon.right < 20, icon);
+      const sending = await ph.eval("Array.from(document.querySelectorAll('#shList .sh-fi.sending')).map((i) => i.getAttribute('aria-label'))");
+      check("a shoot whose files are still on their way: muted, with the up-arrow and how many", sending.length > 0 && sending.every((l) => / not in OneDrive yet$/.test(l)) &&
+        (await ph.eval("!!document.querySelector('#shList .sh-fi.sending .sh-fi-up')")), sending);
+      check("a shoot whose files need a look: the warning colour", (await ph.eval("Array.from(document.querySelectorAll('#shList .sh-fi.problem')).map((i) => i.getAttribute('aria-label'))"))
+        .some((l) => / - needs a look$/.test(l)));
+      // marketing's culls (step 1's review, round 3): A000T8's posted Framing progress #1 lost 6 files to marketing's
+      // culls in OneDrive - the database counts them missing; the shoot is on the Ready list: the usual tone, no "needs a look"
+      const culled = await ph.eval("(() => { const r = Array.from(document.querySelectorAll('#shList .sh-row')).find((x) => x.querySelector('.sh-name') && " +
+        "x.querySelector('.sh-name').textContent === 'Framing progress #1' && x.textContent.indexOf('A000T8') !== -1); const i = r && r.querySelector('.sh-fi'); " +
+        "return i ? i.getAttribute('data-files') + '|' + i.getAttribute('aria-label') : ''; })()");
+      check("marketing's culls: the culled shoot's icon in the usual tone, never needs a look", /^ok\|\d+ photos · \d+ videos? in OneDrive$/.test(culled), culled);
+      // the colours as drawn (SE §1.6 "The rule, final", 7 - DCR Desktop 2's files_color and files_count_color): the
+      // glyphs and the up-arrow muted whatever the state but a problem (the warning colour) - all in OneDrive is never
+      // green here while the desk shows it grey -, the counts in the text colour whatever the state
+      const tones = await ph.eval("(() => { const col = (n) => (n ? getComputedStyle(n).color : null); " +
+        "const c = (t) => { const i = Array.from(document.querySelectorAll('#shList .sh-fi.' + t)).find((x) => !!x.querySelector('svg')); return i ? { glyph: col(i.querySelector('svg')), count: col(i.querySelector('.sh-fi-n')), " +
+        "arrow: col(i.querySelector('.sh-fi-up')) } : null; }; " +
+        "const m = document.createElement('span'); document.getElementById('shList').appendChild(m); const tok = (v) => { m.style.color = 'var(' + v + ')'; return getComputedStyle(m).color; }; " +
+        "const out = { ok: c('ok'), sending: c('sending'), problem: c('problem'), muted: tok('--text-muted'), gold: tok('--gold'), text: tok('--text') }; m.remove(); return out; })()");
+      check("the icon's colours: the glyphs and the arrow muted for files in OneDrive and on their way, the warning colour for a problem; the counts in the text colour",
+        !!tones.ok && !!tones.sending && !!tones.problem && tones.ok.glyph === tones.muted && tones.sending.glyph === tones.muted && tones.sending.arrow === tones.muted &&
+        tones.problem.glyph === tones.gold && tones.gold !== tones.muted && tones.text !== tones.muted &&
+        [tones.ok, tones.sending, tones.problem].every((t) => t.count === tones.text), tones);
+      await row(ph, "Drone airspace check", "A000T9");
+      await ph.until("!!document.querySelector('#shDScroll .sh-place img.sh-pic') && document.querySelector('#shDScroll .sh-place img.sh-pic').complete", 8000);
+      const pic = await ph.eval("(() => { const i = document.querySelector('#shDScroll .sh-place img.sh-pic'); const b = i.getBoundingClientRect(); " +
+        "return { src: i.getAttribute('src').slice(0, 5), drawn: i.naturalWidth > 0, w: Math.round(b.width), h: Math.round(b.height), alt: i.getAttribute('alt') }; })()");
+      check("the shoot sheet: the job's picture, 64 x 64, drawn from the page's own blob: / data: URL - never a signed link",
+        /^(blob:|data:)/.test(pic.src) && pic.drawn && pic.w === 64 && pic.h === 64 && pic.alt === "The job's picture", pic);
+      const a = await ph.eval("(() => { const a = document.querySelector('#shDScroll .sh-place a.sh-addr'); const b = a && a.getBoundingClientRect(); " +
+        "return a ? { t: a.textContent, href: a.getAttribute('href'), target: a.getAttribute('target'), rel: a.getAttribute('rel'), h: Math.round(b.height) } : null; })()");
+      check("the address: a Google Maps link in a new tab, a tap target", !!a && /^0000 .+ · Sandbox, CA \d{5}$/.test(a.t) && a.href.indexOf("https://www.google.com/maps/search/?api=1&query=0000%20") === 0 &&
+        a.target === "_blank" && /noopener/.test(a.rel) && a.h >= 40, a);
+      check("no img on the page holds a signed link", await ph.eval("Array.from(document.images).every((i) => !/token=|\\/storage\\/v1\\//.test(i.getAttribute('src') || ''))"));
+      await audit(ph, "the shoot's place", "#shDetail", true);
+      await shots2(ph, "photographer_place", "phone");
+      await ph.eval("history.back(); true");
+      await ph.until("!document.getElementById('shDetail').classList.contains('open')", 5000);
+    }, ph);
+
     await attempt("Move… only this shoot: the preview, Apply, waiting, Applied - exactly the preview's shoots", async () => {
       await row(ph, "Framing progress #1", "A000T9");
       await ph.until("!!document.querySelector('#shDScroll [data-act=move]')", 5000);
@@ -671,6 +721,15 @@ async function main() {
       await clickSel(dk, "#shViews [data-view=job]");
       await dk.until("document.querySelectorAll('#shList .sh-plan').length >= 3", 5000);
       check("By job: each plan with its job dates (Firm)", /Framing start .* · Firm/.test(await text(dk, "#shList")));
+      // P6 (SE §1.4): each job's 48 px picture left of it (the neutral tile without one) and its address line under it
+      await dk.until("Array.from(document.querySelectorAll('#shList .sh-plan-hd img.sh-pic')).some((i) => i.complete && i.naturalWidth > 0)", 8000);
+      const hd = await dk.eval("Array.from(document.querySelectorAll('#shList .sh-plan')).map((s) => { const p = s.querySelector('.sh-plan-hd .sh-pic'); const b = p.getBoundingClientRect(); " +
+        "const a = s.querySelector('.sh-plan-addr'); return { job: s.querySelector('.sh-plan-t b').textContent, img: p.localName === 'img', w: Math.round(b.width), h: Math.round(b.height), " +
+        "addr: a ? a.textContent : '' }; })");
+      const t9 = hd.find((x) => /^A000T9 /.test(x.job)), t6 = hd.find((x) => /^A000T6 /.test(x.job));
+      check("By job: A000T9's picture (48 x 48) and its address line; A000T6 (no street, no picture): the neutral tile, no line",
+        !!t9 && t9.img && t9.w === 48 && t9.h === 48 && /^0000 .+ · Sandbox, CA \d{5}$/.test(t9.addr) && !!t6 && !t6.img && t6.w === 48 && t6.addr === "", hd);
+      await shot(dk, "admin_by_job_place", "desktop", false);
       const hc = await db(dk, "R.photo_shoots.find((s) => s.key === 'house-complete' && R.photo_plans.find((p) => p.id === s.plan_id).project_code === 'A000T8').id");
       await open(dk, "/shoots.html?shoot=" + hc, "!!document.getElementById('shDTitle')");
       check("desk: a ?shoot= link opens the shoot on the right, its row marked in the list and in view",

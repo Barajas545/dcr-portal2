@@ -87,6 +87,7 @@ async function open(E, key, search, o) {
   repo.useKeyStore(null);
   const me = await as(E, key, opt.wrap);
   await page.init(me, { search: search || "", watch: false });
+  await S.side;                                  // the places and the rollups, asked beside the first schedule read
   return me;
 }
 const planBy = (codeName) => S.plans.find((p) => p.projectCode === codeName);

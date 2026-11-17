@@ -21,6 +21,9 @@
    * DCR Agents 2 mirrors the shoot done: the real ready check fires once - the page says "Sent to marketing"; the Ready
      card (?ready=<id>, the push notice's link) says why there is no Open in OneDrive yet; I'm on it, Posted… (where, an
      https link) in the database;
+   * marketing culls a photo in OneDrive: the files icon the usual tone (the list holds it); a second card sealed after
+     the list lifts the hold, and the first card's cull is still calm (the real photo_drive_status' files.culled - step
+     1's review, round 4); the second card's own missing photo needs a look;
    * the admin changes the marketing member's Microsoft account on the Access tab (saved, nothing shared by itself), and
      marks it shared (DCR Desktop 2's Photo team line): the member's next read has Open in OneDrive;
    * every screen audited (no sideways scroll, tap targets, AA contrast light and dark); no CSP violation, no console error.
@@ -108,6 +111,11 @@ async function main() {
     milestones: { framing_start: { date: day(-10), source: "admin", confirmed: true }, delivery: { date: day(-1), source: "admin", confirmed: true },
       framing_complete: { date: day(20), source: "estimate", confirmed: false }, house_complete: { date: null, source: "estimate", confirmed: false } },
     shoot_days: [0, 1, 2, 3, 4, 5], lead_days: 3, series: [], open_suggestions: 0, activated_at: new Date(Date.now() - 20 * 86400e3).toISOString() };
+  // P6 (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4): the plan's job - a made-up place, its street put together here -
+  // that the page reads live under the real projects RLS (no picture: the neutral tile)
+  const JOB_STREET = ["0000", "Sampleton", "Barn", "Road"].join(" ");
+  plan.project_id = Number((await sql("insert into public.projects (name, address, city, state, zip, client_name, status) values ($1, $2, 'Sandbox', 'CA', '93000', " +
+    "'Sample client', 'in_progress') returning id", ["Sample barn", JOB_STREET]))[0].id);
   const mirror = () => rpc(AGENTS.id, "agents_photo_mirror", { p_host: HOST, p_ledger: LEDGER, p_plan: plan, p_shoots: shoots, p_rev: ++REV });
   const m = await mirror();
   const shootId = Number(m.shoots[0].id);
@@ -150,6 +158,16 @@ async function main() {
         (await lines(ph)) === "sending,access_waiting" && /^Sending to OneDrive from PHOTO-PC: 0 of 3 files \(256 KB of 6 MB\) - about \d+ min left\.$/.test(await text(ph, "#shDScroll [data-line=sending]")),
         (await lines(ph)) + " | " + await text(ph, "#shDScroll [data-line=sending]"));
       check("PGlite: no Open in OneDrive yet", !(await ph.eval("!!document.querySelector('#shDScroll [data-act=open-folder]')")));
+      // P6: the job's place read live (the real projects RLS), and the files icon from the real folder rollup
+      // (photo_drive_folders under app.can_photo_read): nothing in OneDrive yet, 3 on their way - the up-arrow alone. Both
+      // are asked beside the schedule and drawn when they answer (step 1's review, round 2)
+      await ph.until("!!document.querySelector('#shDScroll .sh-place a.sh-addr') && !!document.querySelector('#shDScroll .sh-dtop .sh-fi')", 8000);
+      const place = await ph.eval("(() => { const a = document.querySelector('#shDScroll .sh-place a.sh-addr'); return a ? a.textContent + '|' + " +
+        "!!document.querySelector('#shDScroll .sh-place span.sh-pic.s64.none') : ''; })()");
+      check("PGlite: the job's place from the real projects row - its address as the Maps link, the neutral tile (no picture)",
+        place === JOB_STREET + " · Sandbox, CA 93000|true", place);
+      const sendingIcon = await ph.eval("(() => { const i = document.querySelector('#shDScroll .sh-dtop .sh-fi'); return i ? i.getAttribute('data-files') + '|' + i.getAttribute('aria-label') : ''; })()");
+      check("PGlite: the files icon from the real rollup - 3 files not in OneDrive yet, muted, no count", sendingIcon === "sending|3 files not in OneDrive yet", sendingIcon);
       await audit(ph, "PGlite phone the Files section (sending)", "#shDetail", true);
       await shots2(ph, "sending", "phone");
       // every file's last chunk in, read by id by its done before OneDrive has its hash
@@ -167,6 +185,12 @@ async function main() {
         /mark the shoot done to send it to marketing/.test(await text(ph, "#shDScroll")));
       await audit(ph, "PGlite phone the Files section (all in OneDrive)", "#shDetail", true);
       await shots2(ph, "confirmed", "phone");
+      // the rollup moved: read again with the schedule - two photos and a video, all in OneDrive
+      await open(ph, "/shoots.html?shoot=" + shootId, FILES + " && !!document.querySelector('#shDScroll .sh-dtop .sh-fi')");
+      const doneIcon = await ph.eval("(() => { const i = document.querySelector('#shDScroll .sh-dtop .sh-fi'); return i.getAttribute('data-files') + '|' + i.getAttribute('aria-label') + '|' + " +
+        "i.querySelectorAll('svg').length + '|' + !i.querySelector('.sh-fi-up'); })()");
+      check("PGlite: the files icon - a camera and a film, 2 photos · 1 video in OneDrive (the real rollup's confirmed photos and videos)",
+        doneIcon === "ok|2 photos · 1 video in OneDrive|2|true", doneIcon);
     }, ph);
 
     await attempt("PGlite phone: DCR Agents 2 marks it done - the real ready check fires once; the Ready card (?ready=), I'm on it, Posted…", async () => {
@@ -194,6 +218,56 @@ async function main() {
       const after = await marketingRow();
       check("PGlite: Posted - where and the link in the database", after.state === "posted" && JSON.stringify(after.posted_where) === JSON.stringify(["instagram"]) &&
         after.posted_link === "https://www.example.com/p/barn", JSON.stringify(after));
+    }, ph);
+
+    // marketing's culls (step 1's review, round 3): an Editor deletes a photo in OneDrive after the shoot went on the
+    // list - the real rollup counts it missing (files_state problem, files_problem 1), the real status calls it a calm
+    // cull; the files icon (photo_drive_folders and photo_marketing under app.can_photo_read) the usual tone, no "needs a
+    // look". Played here as the check that saw it would leave the rows: culls_from (the first complete check after Ready)
+    // and the row missing since now, the folder recounted by the database's own app.photo_folder_recount
+    await attempt("PGlite phone: marketing culls a photo in OneDrive after Posted - the real rollup says problem, the icon the usual tone (no needs a look), the Files section the calm culled line", async () => {
+      const row = (await sql("select f.id as folder, x.id as file from public.photo_drive_folders f join public.photo_shoot_files x on x.folder_id = f.id " +
+        "where f.shoot_id = $1 and f.kind = 'shoot' and f.retired_at is null and x.path = 'IMG_0001.JPG'", [shootId]))[0];
+      await sql("update public.photo_marketing set culls_from = ready_at where shoot_id = $1", [shootId]);
+      await sql("update public.photo_shoot_files set state = 'missing', missing_since = now() where id = $1", [row.file]);
+      await sql("select app.photo_folder_recount($1)", [row.folder]);
+      const roll = (await sql("select files_state, files_problem, photos, videos, app.photo_culled(id) as culled from public.photo_drive_folders where id = $1", [row.folder]))[0];
+      check("PGlite: the real rollup counts the culled photo as a problem, and app.photo_culled as a cull", roll.files_state === "problem" && Number(roll.files_problem) === 1 &&
+        Number(roll.culled) === 1 && Number(roll.photos) === 1 && Number(roll.videos) === 1, JSON.stringify(roll));
+      await open(ph, "/shoots.html?shoot=" + shootId, FILES + " && !!document.querySelector('#shDScroll .sh-dtop .sh-fi')");
+      const icon = await ph.eval("(() => { const i = document.querySelector('#shDScroll .sh-dtop .sh-fi'); return i.getAttribute('data-files') + '|' + i.getAttribute('aria-label'); })()");
+      check("PGlite: the culled shoot's icon - the usual tone, 1 photo · 1 video in OneDrive, never needs a look", icon === "ok|1 photo · 1 video in OneDrive", icon);
+      check("PGlite: its Files section says the cull calmly (the real status's files.culled)", (await lines(ph)).split(",").indexOf("confirmed_culled") !== -1, await lines(ph));
+      await shots2(ph, "culled", "phone");
+    }, ph);
+
+    // step 1's review, round 4: a second card - the phone's own hand-in - sealed after the shoot went on the list lifts the
+    // list's hold (app.photo_help_held_by_list), yet the first card's cull stays marketing's (app.photo_culled_row: a file
+    // of a hand-in sealed before the list) - the icon reads the real photo_drive_status' files.culled for that folder
+    // alone: still the usual tone, as the Files section's calm line. The second card's own missing photo needs a look.
+    await attempt("PGlite phone: a second card sealed after the list, then the first card's cull - the icon still the usual tone; the second card's own missing photo needs a look", async () => {
+      const folder = Number((await sql("select id from public.photo_drive_folders where shoot_id = $1 and kind = 'shoot' and retired_at is null", [shootId]))[0].id);
+      const card2 = Number((await sql("insert into public.photo_shoot_uploads (folder_id, shoot_id, source, state, client_key, started_by, started_at, sealed_by, sealed_at, " +
+        "files, bytes) values ($1, $2, 'phone', 'sealed', 'e2e_second_card', $3, now(), $3, now(), 0, 0) returning id", [folder, shootId, P.field.id]))[0].id);
+      const rules = async () => (await sql("select app.photo_help_held_by_list(f) as held, app.photo_culled(f.id) as culled, app.photo_sealed_state(f) as sealed, " +
+        "f.files_problem from public.photo_drive_folders f where f.id = $1", [folder]))[0];
+      const before = await rules();
+      check("PGlite: the real rules - the second card lifts the list's hold, the first card's photo still a cull, the sealed state confirmed",
+        before.held === false && Number(before.culled) === 1 && Number(before.files_problem) === 1 && before.sealed === "confirmed", JSON.stringify(before));
+      const iconOf = () => ph.eval("(() => { const i = document.querySelector('#shDScroll .sh-dtop .sh-fi'); return i ? i.getAttribute('data-files') + '|' + i.getAttribute('aria-label') : ''; })()");
+      await open(ph, "/shoots.html?shoot=" + shootId, FILES + " && !!document.querySelector('#shDScroll .sh-dtop .sh-fi')");
+      check("PGlite: after a second card, the first card's cull - the usual tone, 1 photo · 1 video in OneDrive, never needs a look", (await iconOf()) === "ok|1 photo · 1 video in OneDrive",
+        await iconOf());
+      check("PGlite: its Files section still says the cull calmly", (await lines(ph)).split(",").indexOf("confirmed_culled") !== -1, await lines(ph));
+      await sql("update public.photo_shoot_files set last_upload_id = $1, state = 'missing', missing_since = now() where folder_id = $2 and path = 'IMG_0002.JPG'", [card2, folder]);
+      await sql("select app.photo_folder_recount($1)", [folder]);
+      const after = await rules();
+      check("PGlite: the real rules - the second card's own photo missing is no cull: a problem", after.held === false && Number(after.culled) === 1 &&
+        Number(after.files_problem) === 2 && after.sealed === "problem", JSON.stringify(after));
+      await open(ph, "/shoots.html?shoot=" + shootId, FILES + " && !!document.querySelector('#shDScroll .sh-dtop .sh-fi')");
+      check("PGlite: the second card's own missing photo - the warning colour, needs a look", (await iconOf()) === "problem|1 video in OneDrive - needs a look", await iconOf());
+      check("PGlite: and its Files section says it is missing", (await lines(ph)).split(",").indexOf("problem_missing") !== -1, await lines(ph));
+      await shots2(ph, "culled_second_card", "phone");
     }, ph);
 
     const dk = await tab("admin-desk");

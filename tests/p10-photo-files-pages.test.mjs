@@ -37,9 +37,9 @@ test("shoots.html's connect-src (OD §3.3 step 10): exactly the OneDrive host th
   assert.equal(R.uploadUrlOk("https://example-my.sharepoint.com/personal/x/uploadSession?guid=1"), false, "another host: never used");
 });
 
-test("the service worker v8: the Files section's and the Ready view's modules are kept, so ?ready=<id> opens from a cold start", () => {
+test("the service worker v8 (and v9 after it): the Files section's and the Ready view's modules are kept, so ?ready=<id> opens from a cold start", () => {
   const sw = read("sw.js");
-  assert.match(sw, /^const CACHE = "dcr-portal2-v8";$/m);
+  assert.match(sw, /^const CACHE = "dcr-portal2-v9";$/m);          // v9: the job's place and the files icon keep them
   assert.match(sw, /v8 \(the photo files in the Office OneDrive/);
   const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(sw)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
   for (const f of ["js/pages/shoots-files.js", "js/repo/photo-files.js", "js/map/photo-files.js", "js/map/photo-words.js", "js/scrub-money.js", "js/money-mask.js",
@@ -76,14 +76,27 @@ test("every name a page imports from the photo files modules is one they export 
   assert.ok(seen > 20, "the imports are read");
 });
 
-test("shoots.js and its parts read no photo files table and never draw a Realtime payload; OneDrive hrefs pass link_ok; the check is a person's press", () => {
+test("shoots.js and its parts read no photo files table but the folders' rollup (its counts only) and what the Ready list holds, and never draw a Realtime payload; OneDrive hrefs pass link_ok; the check is a person's press", () => {
   const page = code(read("js/pages/shoots.js"));
   const parts = code(read("js/pages/shoots-files.js"));
   const repo = code(read("js/repo/photo-files.js"));
-  for (const s of [page, parts, repo]) {
-    assert.ok(!/(?<!Array)\.from\(/.test(s), "no table read");
+  // the table reads (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.6, the files icon): photo_drive_folders' rollup by its
+  // explicit columns - files_state, the counts and drive_state, never a OneDrive name, path or link - live shoot folders
+  // only; and, for a folder with a problem, what app.photo_help_held_by_list reads (step 1's review, round 3): the shoots'
+  // Ready list rows (shoot, state, ready_at) and the folders' sealed hand-ins (folder, state, sealed_at)
+  const READ = 'c.from("photo_drive_folders").select(FOLDER_COLUMNS.join(", ")).eq("kind", "shoot").is("retired_at", null)';
+  const LIST = 'c.from("photo_marketing").select(LISTED_COLUMNS.join(", ")).in("shoot_id", ';
+  const SEALED = 'c.from("photo_shoot_uploads").select(SEALED_COLUMNS.join(", ")).in("folder_id", ';
+  assert.equal(Array.from(repo.matchAll(/(?<!Array)\.from\(/g)).length, 3, "three table reads in repo/photo-files.js");
+  for (const r of [READ, LIST, SEALED]) assert.ok(repo.includes(r), r);
+  assert.match(repo, /export const FOLDER_COLUMNS = Object\.freeze\(\["id", "shoot_id", "files_state", "files_counted", "files_confirmed", "files_waiting", "files_problem", "photos", "videos",\s+"files_rev", "drive_state"\]\);/);
+  assert.match(repo, /export const LISTED_COLUMNS = Object\.freeze\(\["id", "shoot_id", "state", "ready_at", "version"\]\);/);
+  assert.match(repo, /export const SEALED_COLUMNS = Object\.freeze\(\["id", "folder_id", "state", "sealed_at"\]\);/);
+  for (const s of [page, parts, repo.replace(READ, "").replace(LIST, "").replace(SEALED, "")]) {
+    assert.ok(!/(?<!Array)\.from\(/.test(s), "no other table read");
     // (photo_shoot_files_page is the RPC the phone's pick reads - its paths scrubbed, never an item id - not the table)
-    assert.ok(!/photo_drive_folders"\)|photo_shoot_files(?!_page)|drive_path/.test(s.replace(/TABLES = Object\.freeze\(\[[^\]]*\]\)/, "")), "no OneDrive name read");
+    assert.ok(!/photo_drive_folders"\)|photo_shoot_files(?!_page)|drive_path|drive_name|drive_link/.test(s.replace(/TABLES = Object\.freeze\(\[[^\]]*\]\)/, "")
+      .replace(/ \(drive_name, drive_path, drive_link, name\)/, "")), "no OneDrive name read");
   }
   // a Realtime event: only its type, id and ready_at reach code (the drain's memory) - nothing of it is drawn
   assert.ok(!/evt\.new|\.new\./.test(page + parts), "the page never touches a payload");

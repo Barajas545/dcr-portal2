@@ -87,6 +87,7 @@ async function open(E, key, search, wrap) {
   useClient(wrap ? wrap(clientAs(E, p.id)) : clientAs(E, p.id));
   const me = { id: p.id, name: p.name, role: p.role, active: true };
   await page.init(me, { search: search || "", watch: false });
+  await S.side;                                  // the places and the rollups, asked beside the first schedule read
   return me;
 }
 function click(sel, root) {

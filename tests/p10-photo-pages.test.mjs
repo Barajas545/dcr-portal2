@@ -69,12 +69,13 @@ test("shoots.js: reads only through repo/photo.js (never a table write), the gat
   assert.match(s, /T = \(v\) => esc\(safeText\(v\)\)/, "free text through the money masks, then escaped");
 });
 
-test("the service worker (v6 brought the shoot schedule; v7 and v8 the photo files): the page, its styles and rules are kept for a cold start", () => {
+test("the service worker (v6 brought the shoot schedule; v7 and v8 the photo files; v9 the job's place and the files icon): the page, its styles and rules are kept for a cold start", () => {
   const sw = read("sw.js");
-  assert.match(sw, /^const CACHE = "dcr-portal2-v8";$/m);
+  assert.match(sw, /^const CACHE = "dcr-portal2-v9";$/m);
   const shell = JSON.parse("[" + /const SHELL = \[([\s\S]*?)\];/.exec(sw)[1].replace(/\/\/[^\n]*/g, "").replace(/,\s*$/, "") + "]");
-  for (const f of ["shoots.html", "css/shoots.css", "js/pages/shoots.js", "js/repo/photo.js", "js/map/photo.js", "js/map/shoots.js"]) assert.ok(shell.includes(f), f);
+  for (const f of ["shoots.html", "css/shoots.css", "js/pages/shoots.js", "js/repo/photo.js", "js/map/photo.js", "js/map/shoots.js", "js/shoot-pictures.js"]) assert.ok(shell.includes(f), f);
   assert.match(sw, /v6 \(the shoot schedule/);
+  assert.match(sw, /v9 \(the job's place and the files icon on the shoot schedule/);
 });
 
 test("the top bar: Shoot schedule for admins (until the database said no) and the photo team (once it said yes); never the agents account", () => {

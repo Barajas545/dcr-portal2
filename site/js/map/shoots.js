@@ -14,6 +14,9 @@
                         non-shoot day is allowed but marked), nonShootNote, officeLine, applyLabel, milestoneMove,
                         previewSig (what the person was shown: Apply sends only that), sentText, sentDiffers;
    * the lists:         rowFacts (one line of the Agenda / By job), planFacts (a plan's header), homeBadge (Home's card);
+   * the job's place:   toPlace (a projects row read live - never mirrored), placeLine ("0000 Sampleton Avenue · Sampleton,
+                        CA 93000"), mapsUrl (Google Maps' search, a new tab) - DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4;
+   * the files icon:    filesIcon (a shoot's photos and videos in OneDrive, from its folder's rollup - §1.6);
    * the change queue:  finishedText (what a change of mine came to, once the office computer answered, named).
 
    Every free text is the mirror's (already masked by the database and again by map/photo.js safeText). */
@@ -23,6 +26,7 @@ import {
   shootDaysText, isOpen, isLate, followsMilestone, pcLine, canUndo, isOpenChange, changeStatusText, changeTitle, refusalText, safeText,
 } from "./photo.js";
 import { addDays, ymd, dayOfWeek } from "./pacific.js";
+import { maskAmounts } from "../money-mask.js";
 
 export const TITLE = "Shoot schedule";
 // P5b: the Ready for marketing list is the fourth view (DCR Desktop 2 docs/PHOTO-FILES.md §13.5; its name is ready.view)
@@ -435,6 +439,119 @@ export function homeBadge(plans, shoots, today, o) {
   if (late) return { cls: "warn", text: late + " late", title: plural(late, "shoot") + " past " + (late === 1 ? "its" : "their") + " day and grace" + where, mine: mineOnly };
   const now = open.filter((s) => s.plannedDate === today).length;
   return now ? { cls: "", text: now + " today", title: plural(now, "shoot") + " today" + where, mine: mineOnly } : null;
+}
+
+/* ── the job's place and the files icon (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.4, §1.5, §1.6) ─────────── */
+
+/** The picture's words (its tooltip and alternative text). */
+export const PICTURE_TEXT = "The job's picture";
+/** The address link's tooltip on the phone (the address itself is the link). */
+export const MAPS_TEXT = "Open in Maps";
+
+// a place's part on one line, an amount typed into it masked (money-mask.js maskAmounts, DCR Agents 2's mask_amounts) -
+// never the money-word rule (scrub-money.js): it reads a 3+ digit number before a word like Price, Bid or Budget as an
+// amount, so a made-up "0000 Price Street" became "[amount] Street" and its Maps link searched for that (step 1's review,
+// round 2; DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.1)
+const oneLine = (v) => maskAmounts(str(v)).replace(/\s+/g, " ").trim();
+
+/** A projects row (repo/projects.js places: read live under the projects RLS, never mirrored) -> the job's place
+    {id, address, city, state, zip, pictureId} (null for a row without an id). The address carries no amount; one typed
+    into it is still masked, as the page masks every text, and the street is kept as the project holds it. */
+export function toPlace(r) {
+  const x = r || {};
+  const id = posInt(x.id);
+  if (!id) return null;
+  return { id, address: oneLine(x.address), city: oneLine(x.city), state: oneLine(x.state), zip: oneLine(x.zip), pictureId: posInt(x.thumbnail_file_id) };
+}
+
+function townOf(p) {
+  return [p.city, [p.state, p.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+}
+
+/** "0000 Sampleton Avenue · Sampleton, CA 93000" (§1.5); "" without a street address (no address: nothing is said). */
+export function placeLine(p) {
+  if (!p || !p.address) return "";
+  return [p.address, townOf(p)].filter(Boolean).join(" · ");
+}
+
+/** Google Maps' search for the place (the project overview's pattern), opened in a new tab; "" without a street. */
+export function mapsUrl(p) {
+  if (!p || !p.address) return "";
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent([p.address, townOf(p)].filter(Boolean).join(", "));
+}
+
+/** A rollup's count as a whole number (SE §1.6 "The rule, final", 1: missing, not a number or below 0 - 0; a
+    fraction cut to its whole part; a decimal text read as its number) - DCR Desktop 2's photo_view._count. */
+export function wholeCount(v) {
+  let x = 0;
+  if (typeof v === "number" || typeof v === "boolean") x = Number(v);
+  else if (typeof v === "string" && /^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\s*$/i.test(v)) x = Number(v);
+  return Number.isFinite(x) && x >= 1 ? Math.floor(x) : 0;
+}
+/** The states of a rollup whose files are still on their way (DCR Desktop 2's FILES_ON_THE_WAY). */
+export const FILES_ON_THE_WAY = Object.freeze(["copying", "waiting"]);
+/** The drive_state of a shoot folder gone: moved out of DCR Photo & Video, or deleted in OneDrive (FOLDER_GONE). */
+export const FOLDER_GONE = Object.freeze(["missing", "trashed"]);
+
+/** The files icon of one shoot (the owner's 2026-11-16 ask), from its live shoot folder's rollup (repo/photo-files.js
+    folderStates: {state: files_state, counted, confirmed, waiting: files_waiting - null for a read without it -,
+    problem: files_problem, photos, videos, driveState: drive_state, held, culled}; no such rollup - no folder, or a
+    reader who may not read it - nothing). DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.6 "The rule, final", step by step
+    and word for word with DCR Desktop 2's photo_view.files_mark (its parity test runs both on the same rollups):
+    1. The counts: photos, videos and files_problem as whole numbers (missing or below 0: 0); waiting is files_waiting,
+       a rollup without it (an older read) takes files_counted - files_confirmed - files_problem, at least 0; state is
+       files_state, "none" when empty.
+    2. Held on the Ready list (held: repo/photo-files.js listHolds - app.photo_help_held_by_list, the database's own
+       rule, read only for a folder with a files problem): marketing's culls - Editors delete and move the files in
+       OneDrive and the database counts them as missing - are marketing's, never a look here. Marketing's culls after a
+       later hand-in (step 1's review, round 4): a hand-in sealed since the list (a second card) lifts the hold, yet the
+       culls of the files handed in before stay no problem (app.photo_culled_row) - culled, the shoot's
+       photo_drive_status' files.culled, read for such a folder alone (repo/photo-files.js listLifted, culled); then, as
+       app.photo_sealed_state does, files_problem less culled (at least 0; waiting taken in step 1, before), and a state
+       of problem with none left is waiting when waiting > 0, else confirmed.
+    3. Gone: drive_state missing or trashed.
+    4. A problem: gone, or (state problem or files_problem > 0 - even while another copy is open; both after step 2's
+       culls) and not held.
+    5. Arriving: state copying or waiting, no problem, and waiting > 0 (an open copy with nothing counted yet, or one
+       given up days ago - abandoned stays copying until someone acts - has nothing waiting: no arrow, the usual tone).
+    6. Nothing when photos and videos are 0 and it is not arriving (a problem with nothing in OneDrive too - the Files
+       line says it).
+    7. What shows: the camera and photos when above 0, then the film and videos when above 0; the up-arrow after them
+       while arriving; the glyphs in the warning colour for a problem, else muted (the counts always in the text colour:
+       css/shoots.css).
+    8. The words (the tooltip and what a screen reader says): "{photos} photos" and "{videos} videos" above 0 ("1 photo",
+       "1 video") joined by " · ", then " in OneDrive"; then " - needs a look" for a problem; else, while arriving,
+       " - {waiting} files not in OneDrive yet" ("1 file"); with no part, only "{waiting} files not in OneDrive yet".
+       Never "still sending": a hand-in that stopped on a computer or stalled is copying or waiting too.
+    -> null | {photos, videos, tone: "problem" | "sending" (arriving) | "ok", sending (the up-arrow: arriving), label} */
+export function filesIcon(roll) {
+  if (!roll || typeof roll !== "object") return null;
+  const photos = wholeCount(roll.photos), videos = wholeCount(roll.videos);
+  let problems = wholeCount(roll.problem);
+  // (a rollup without files_waiting - an older read - counts the counted files neither confirmed nor a problem; the
+  // culls are missing files, so this counts them out before they are taken from the problem files below)
+  const waiting = roll.waiting !== undefined && roll.waiting !== null ? wholeCount(roll.waiting)
+    : Math.max(0, wholeCount(roll.counted) - wholeCount(roll.confirmed) - problems);
+  let state = str(roll.state) || "none";
+  // step 1's review, round 4: marketing's culls of the files handed in before the list (culled: read for a folder on the
+  // list whose hold a later hand-in lifted) taken out as the database does (app.photo_sealed_state)
+  const culled = wholeCount(roll.culled);
+  if (culled) {
+    problems = Math.max(0, problems - culled);
+    if (state === "problem" && !problems) state = waiting > 0 ? "waiting" : "confirmed";
+  }
+  const held = roll.held === true;
+  const gone = FOLDER_GONE.indexOf(str(roll.driveState)) !== -1;
+  const problem = gone || ((state === "problem" || problems > 0) && !held);
+  const arriving = FILES_ON_THE_WAY.indexOf(state) !== -1 && !problem && waiting > 0;
+  if (!photos && !videos && !arriving) return null;
+  const parts = [];
+  if (photos) parts.push(plural(photos, "photo"));
+  if (videos) parts.push(plural(videos, "video"));
+  let label = parts.length ? parts.join(" · ") + " in OneDrive" : "";
+  if (problem) label += " - needs a look";
+  else if (arriving) label = label ? label + " - " + plural(waiting, "file") + " not in OneDrive yet" : plural(waiting, "file") + " not in OneDrive yet";
+  return { photos, videos, tone: problem ? "problem" : arriving ? "sending" : "ok", sending: arriving, label };
 }
 
 /** The weekday header of the Month grid, Sunday first (the site's calendars). */

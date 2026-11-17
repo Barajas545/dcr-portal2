@@ -2,9 +2,16 @@
    Desktop 2 migrations 20261111000100_photo_files and 20261114000100_photo_files_onedrive and the Edge Function
    photo-files; the contract DCR Desktop 2 docs/PHOTO-FILES-ONEDRIVE.md §3.3, §4, §5.6, §5.7, cited OD).
 
-   Portal 2 reads NO photo files table: every name, path and link it shows comes from an RPC that scrubs it, and a
-   Realtime event is only a "read again" trigger (its ids, state and ready_at - never shown). An upload address the
-   function hands out stays in the caller's memory: it is never written anywhere by this module (OD §3.6).
+   Portal 2 reads three photo files tables, and only their ids, counts, states and times: the shoot folders' rollup the
+   schedule's files icon draws (photo_drive_folders' FOLDER_COLUMNS - files_state, the counts and drive_state, never a
+   OneDrive name, path or link; DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.6, as its PhotoDriveRepo.folder_states reads
+   it) and, for a rollup with a problem, whether the Ready for marketing list holds it (photo_marketing's LISTED_COLUMNS
+   and photo_shoot_uploads' SEALED_COLUMNS: app.photo_help_held_by_list - step 1's review, round 3) and, when a hand-in
+   sealed since lifted that hold, how many of its problem files are marketing's culls all the same (the shoot's
+   photo_drive_status' files.culled - round 4). Every name, path and link it shows
+   comes from an RPC that scrubs it, and a Realtime event is only a "read again" trigger (its ids, state and ready_at -
+   never shown). An upload address the function hands out stays in the caller's memory: it is never written anywhere by
+   this module (OD §3.6).
 
    Not available (OD §5.7): the OneDrive edition's status always answers `mode`; a status without it (the Google edition,
    after the OneDrive roll back) reads null here, as a database without the photo files does, and a NEW-only RPC that is
@@ -20,7 +27,12 @@
                                 {company_domains, share_list, share_todo}; null without the OneDrive edition;
    * rows(shootId)              rpc photo_shoot_files_page(p_shoot, p_filter, p_after, p_limit), every page: the shoot's
                                 rows [{id, path, size, md5, state, counted}] the phone plans a pick against (names
-                                taken, a file matched by name and size, its stopped hand-in's rows - OD §3.3 steps 2, 9).
+                                taken, a file matched by name and size, its stopped hand-in's rows - OD §3.3 steps 2, 9);
+   * folderStates(shootIds)     the live shoot folders' rollups {shootId: {state, counted, confirmed, waiting, problem,
+                                photos, videos, driveState, held, culled}} (the tables, under their RLS
+                                app.can_photo_read: a reader without it gets none; culled from a status, for a folder
+                                on the list whose hold a later hand-in lifted); null on a database without the photo
+                                files.
    Writes (the phone's hand-in, OD §3.3, §5.6):
    * begin(shootId, o)          rpc photo_upload_begin(p_shoot, p_client_key, p_device_key, p_device_label, p_source
                                 'phone', p_replaces) -> {upload, replaced, again, closed};
@@ -166,6 +178,198 @@ export async function rows(shootId) {
     }
     if (a.next === null || a.next === undefined || !Number.isSafeInteger(Number(a.next))) return out;
     after = Number(a.next);
+  }
+  return out;
+}
+
+/** The columns of a shoot folder's rollup the files icon reads (DCR Desktop 2 docs/PHOTO-SHOOT-EDITS.md §1.6): the
+    folder's id (its hand-ins below), its shoot, files_state, the counts, files_rev (bumped whenever one of its file rows
+    changes: a cull count read is kept until it moves - step 1's review, round 4) and drive_state (a state: missing or
+    trashed is a folder gone - round 3) - never a OneDrive name, path or link (drive_name, drive_path, drive_link, name). */
+export const FOLDER_COLUMNS = Object.freeze(["id", "shoot_id", "files_state", "files_counted", "files_confirmed", "files_waiting", "files_problem", "photos", "videos",
+  "files_rev", "drive_state"]);
+/** At most this many ids a read. */
+export const FOLDER_IDS = 100;
+/** The columns of a Ready for marketing row the files icon reads (step 1's review, round 3): its id, its shoot, its state,
+    when it went on the list and its version (round 4: a kept cull count is read again when they move) - never a name, a
+    link or a note. */
+export const LISTED_COLUMNS = Object.freeze(["id", "shoot_id", "state", "ready_at", "version"]);
+/** The states of a shoot ON the Ready for marketing list (the database's own: app.photo_help_held_by_list; withdrawn is
+    off it). */
+export const LISTED_STATES = Object.freeze(["ready", "claimed", "posted", "passed"]);
+/** The columns of a folder's sealed hand-in the files icon reads (round 3): its id (round 4: a kept cull count's key), its
+    folder, its state (sealed: the read asks for no other, and listHolds counts no other - DCR Desktop 2's list_holds)
+    and when it was sealed. */
+export const SEALED_COLUMNS = Object.freeze(["id", "folder_id", "state", "sealed_at"]);
+/** At most this many folders' cull counts kept (the oldest asked go first; DCR Desktop 2's CULLS_KEPT). */
+export const CULLS_KEPT = 500;
+
+/** A table read's rows; null for a table that is not there (o.refused: or not the reader's, 42501); throws on any other
+    refusal and on a network failure. */
+async function tableRows(q, o) {
+  let res;
+  try { res = await q; } catch (e) { throw photoError(Object.assign({ code: "NETWORK", status: 0, message: String(e && e.message) }, e)); }
+  if (res && res.error) {
+    const e = photoError(res.error);
+    if (isMissing(e) || (o && o.refused && e.code === "42501")) return null;
+    throw e;
+  }
+  return res && Array.isArray(res.data) ? res.data : [];
+}
+const msOf = (v) => { const t = Date.parse(typeof v === "string" ? v : ""); return Number.isFinite(t) ? t : null; };
+/** A rollup's count as a whole number - the same rule as map/shoots.js wholeCount (DCR Desktop 2's photo_view._count;
+    SE §1.6 "The rule, final", 1), kept here so the admin and Home pages that read this module load no schedule rules. */
+function wholeCount(v) {
+  let x = 0;
+  if (typeof v === "number" || typeof v === "boolean") x = Number(v);
+  else if (typeof v === "string" && /^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\s*$/i.test(v)) x = Number(v);
+  return Number.isFinite(x) && x >= 1 ? Math.floor(x) : 0;
+}
+
+/** app.photo_help_held_by_list, the database's own rule (step 1's review, round 3; DCR Desktop 2's photo_view.list_holds
+    word for word), for these folders ({id, shoot}): the folder ids whose shoot has a Ready for marketing row ready,
+    claimed, posted or passed whose ready_at is at or after the folder's last SEALED hand-in's sealed_at (or with no
+    sealed hand-in; a hand-in in another state never counts). On the list the files are marketing's - Editors delete,
+    move and re-organise them in OneDrive, and the database counts those as missing -, so their problem is the Ready
+    card's to say; a hand-in sealed after the shoot went on the list (a re-edit, a second card) lifts the hold: what goes
+    wrong with that copy is the photographer's. */
+export function listHolds(folders, listed, sealed) {
+  const ready = new Map();
+  for (const m of listed || []) {
+    const sid = Number(m && m.shoot_id), at = msOf(m && m.ready_at);
+    if (!m || LISTED_STATES.indexOf(m.state) === -1 || !Number.isSafeInteger(sid) || at === null) continue;
+    ready.set(sid, (ready.get(sid) || []).concat([at]));
+  }
+  const last = new Map();
+  for (const u of sealed || []) {
+    const fid = Number(u && u.folder_id), at = msOf(u && u.sealed_at);
+    if (!u || u.state !== "sealed" || !Number.isSafeInteger(fid) || at === null) continue;
+    last.set(fid, Math.max(last.has(fid) ? last.get(fid) : at, at));
+  }
+  const out = new Set();
+  for (const f of folders || []) {
+    if (!f || !ready.has(f.shoot)) continue;
+    const l = last.has(f.id) ? last.get(f.id) : null;
+    if (ready.get(f.shoot).some((at) => l === null || at >= l)) out.add(f.id);
+  }
+  return out;
+}
+
+/** Step 1's review, round 4 (DCR Desktop 2's photo_view.list_lifted word for word): the folders (of these, {id, shoot})
+    whose shoot IS on the Ready for marketing list (a row ready, claimed, posted or passed, with its ready_at) but that
+    listHolds did not hold (`held`) - a hand-in was sealed since (a second card, a re-edit). Their files problem is the
+    photographer's, except marketing's culls of the files handed in before (app.photo_culled): the only folders whose
+    cull count is read. */
+export function listLifted(folders, listed, held) {
+  const on = new Set();
+  for (const m of listed || []) {
+    const sid = Number(m && m.shoot_id);
+    if (m && LISTED_STATES.indexOf(m.state) !== -1 && msOf(m.ready_at) !== null && Number.isSafeInteger(sid)) on.add(sid);
+  }
+  const keep = held instanceof Set ? held : new Set(Array.isArray(held) ? held : []);
+  return (folders || []).filter((f) => f && Number.isSafeInteger(f.id) && on.has(f.shoot) && !keep.has(f.id));
+}
+
+// culled()'s reads: folder id -> {key, n} (the oldest asked first)
+const culls = new Map();
+
+/** Step 1's review, round 4 (SE §1.6; DCR Desktop 2's PhotoDriveRepo.culled): how many of the shoot's live folder's
+    problem files are marketing's culls - photo_drive_status' files.culled (app.photo_culled, the database's own count;
+    the Files section's own read). folderStates asks only for a folder with a problem whose shoot is on the Ready list
+    with a hand-in sealed since (listLifted). Kept for the folder while `key` (its files_rev - bumped whenever one of its
+    file rows changes -, its list rows and its sealed hand-ins) stays the same, so a send's rollups, read every 2 s for
+    as long as it sends, never ask again; 0 when the status is of another folder (the shoot's folder replaced
+    meanwhile) or there is none (a database without the photo files or the OneDrive edition): not kept. A refusal or a
+    failure throws as status does. */
+export async function culled(shootId, folderId, key) {
+  const fid = Number(folderId);
+  const got = culls.get(fid);
+  if (got && got.key === key) return got.n;
+  const st = await status(shootId);
+  const folder = st && st.folder && typeof st.folder === "object" ? st.folder : null;
+  if (!folder || folder.id !== fid) return 0;
+  const v = st.files && typeof st.files === "object" ? st.files.culled : null;
+  const n = Number.isSafeInteger(v) && v > 0 ? v : 0;
+  culls.delete(fid);
+  culls.set(fid, { key, n });
+  while (culls.size > CULLS_KEPT) culls.delete(culls.keys().next().value);
+  return n;
+}
+
+/** The live shoot folders' rollups of these shoots (photo_drive_folders: kind shoot, retired_at null; under its RLS,
+    app.can_photo_read - a reader without it reads none, and the icon is simply absent): {shootId: {state, counted,
+    confirmed, waiting, problem, photos, videos, driveState, held, culled}} (the counts whole numbers, below 0 or
+    missing 0; waiting, problem: files_waiting, files_problem - the counted files waiting for OneDrive and those with a
+    problem; waiting null for a row without files_waiting, so map/shoots.js filesIcon counts the counted files neither
+    confirmed nor a problem, as DCR Desktop 2's files_mark does; driveState: drive_state) - a shoot with no folder is
+    absent. held (step 1's review, round 3): the folder's problem is marketing's - the shoot on the Ready list with no
+    hand-in sealed since (listHolds), read only for the folders whose rollup has a problem (usually none: nothing more is
+    read) from photo_marketing's LISTED_COLUMNS and photo_shoot_uploads' SEALED_COLUMNS under the same RLS; a reader or
+    a database without them reads it as not held. culled (round 4): of a folder with a problem on the list whose hold a
+    hand-in sealed since lifted (listLifted; usually none), how many problem files are marketing's culls of the files
+    handed in before (culled: the shoot's photo_drive_status' files.culled) - 0 for every other folder, and for a status
+    refused (not the reader's, no OneDrive edition, the shoot gone). null on a database without the photo files; a read
+    that fails throws (the page keeps what it shows - never a culled shoot's warning for a moment). */
+export async function folderStates(shootIds) {
+  const ids = Array.from(new Set((shootIds || []).map(Number).filter((v) => Number.isSafeInteger(v) && v > 0)));
+  const out = {};
+  if (!ids.length) return out;
+  const c = await db();
+  const n = wholeCount;
+  const byFolder = new Map();                            // the folders with a problem: id -> {id, shoot}
+  const rawOf = new Map();                               // and their rows as read (a kept cull count's key)
+  for (let i = 0; i < ids.length; i += FOLDER_IDS) {
+    const got = await tableRows(c.from("photo_drive_folders").select(FOLDER_COLUMNS.join(", ")).eq("kind", "shoot").is("retired_at", null)
+      .in("shoot_id", ids.slice(i, i + FOLDER_IDS)));
+    if (got === null) return null;
+    for (const r of got) {
+      const sid = Number(r && r.shoot_id);
+      if (!Number.isSafeInteger(sid) || sid < 1) continue;
+      out[sid] = { state: typeof r.files_state === "string" ? r.files_state : "none", counted: n(r.files_counted), confirmed: n(r.files_confirmed),
+        waiting: r.files_waiting === null || r.files_waiting === undefined ? null : n(r.files_waiting), problem: n(r.files_problem),
+        photos: n(r.photos), videos: n(r.videos), driveState: typeof r.drive_state === "string" ? r.drive_state : "", held: false, culled: 0 };
+      if ((out[sid].problem > 0 || out[sid].state === "problem") && Number.isSafeInteger(Number(r.id))) {
+        byFolder.set(Number(r.id), { id: Number(r.id), shoot: sid });
+        rawOf.set(Number(r.id), r);
+      }
+    }
+  }
+  const probs = Array.from(byFolder.values());
+  if (!probs.length) return out;
+  // the folders with a problem: their shoots on the Ready list, then those folders' sealed hand-ins
+  const listed = [];
+  const shoots = Array.from(new Set(probs.map((f) => f.shoot)));
+  for (let i = 0; i < shoots.length; i += FOLDER_IDS) {
+    const got = await tableRows(c.from("photo_marketing").select(LISTED_COLUMNS.join(", ")).in("shoot_id", shoots.slice(i, i + FOLDER_IDS))
+      .in("state", LISTED_STATES.slice()), { refused: true });
+    if (got === null) return out;                       // not there, or not the reader's: not held
+    listed.push(...got);
+  }
+  const on = new Set(listed.map((m) => Number(m && m.shoot_id)));
+  const folders = probs.filter((f) => on.has(f.shoot));
+  const sealed = [];
+  for (let i = 0; i < folders.length; i += FOLDER_IDS) {
+    const got = await tableRows(c.from("photo_shoot_uploads").select(SEALED_COLUMNS.join(", ")).in("folder_id", folders.slice(i, i + FOLDER_IDS).map((f) => f.id))
+      .eq("state", "sealed"), { refused: true });
+    if (got === null) return out;
+    sealed.push(...got);
+  }
+  const held = listHolds(folders, listed, sealed);
+  for (const f of probs) if (held.has(f.id)) out[f.shoot].held = true;
+  // round 4: a hold a later hand-in lifted keeps marketing's culls of the files handed in before out of the problem
+  for (const f of listLifted(folders, listed, held)) {
+    const r = rawOf.get(f.id) || {};
+    const key = JSON.stringify([r.files_rev, r.files_problem, r.files_state,
+      listed.filter((m) => m && Number(m.shoot_id) === f.shoot).map((m) => JSON.stringify([m.id, m.state, m.ready_at, m.version])).sort(),
+      sealed.filter((u) => u && Number(u.folder_id) === f.id).map((u) => JSON.stringify([u.id, u.state, u.sealed_at])).sort()]);
+    let k;
+    try {
+      k = await culled(f.shoot, f.id, key);
+    } catch (e) {
+      if (e && (e.code === "42501" || e.code === "PT404" || isMissing(e))) continue;
+      throw e;
+    }
+    if (k > 0) out[f.shoot].culled = k;
   }
   return out;
 }
